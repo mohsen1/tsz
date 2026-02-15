@@ -5,10 +5,6 @@ pub(crate) use tsz_solver::type_queries_extended::{
     ArrayLikeKind, ElementIndexableKind, IndexKeyKind, LiteralKeyKind, TypeQueryKind,
 };
 
-pub(crate) fn widened_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    tsz_solver::type_queries_extended::get_widened_literal_type(db, type_id)
-}
-
 pub(crate) fn tuple_list_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleListId> {
     tsz_solver::type_queries_extended::get_tuple_list_id(db, type_id)
 }

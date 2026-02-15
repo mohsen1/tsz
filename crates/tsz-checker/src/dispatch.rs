@@ -27,11 +27,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 
     /// Resolve a literal type: preserve the narrow literal if we're in a const
-    /// assertion or contextual typing expects it, otherwise widen to `widened`.
+    /// assertion, contextual typing expects it, or we're computing a type for
+    /// a compound expression (conditional/logical) that should preserve literals.
     fn resolve_literal(&mut self, literal_type: Option<TypeId>, widened: TypeId) -> TypeId {
         match literal_type {
             Some(lit)
                 if self.checker.ctx.in_const_assertion
+                    || self.checker.ctx.preserve_literal_types
                     || self.checker.contextual_literal_type(lit).is_some() =>
             {
                 lit
@@ -788,22 +790,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.get_type_of_template_expression(idx)
             }
 
-            // No-substitution template literal - preserve literal type when contextual typing expects it.
-            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
-                let literal_type = self.checker.literal_type_from_initializer(idx);
-                if let Some(literal_type) = literal_type {
-                    // Preserve literal type if in const assertion OR if contextual typing allows it
-                    if self.checker.ctx.in_const_assertion
-                        || self.checker.contextual_literal_type(literal_type).is_some()
-                    {
-                        literal_type
-                    } else {
-                        TypeId::STRING
-                    }
-                } else {
-                    TypeId::STRING
-                }
-            }
+            // No-substitution template literal - always preserve literal type.
+            // Widening happens at binding sites, not at expression evaluation.
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => self.resolve_literal(
+                self.checker.literal_type_from_initializer(idx),
+                TypeId::STRING,
+            ),
 
             // =========================================================================
             // Type Nodes - Delegate to TypeNodeChecker

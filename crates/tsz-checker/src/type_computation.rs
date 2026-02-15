@@ -146,6 +146,11 @@ impl<'a> CheckerState<'a> {
         // the union is checked against the contextual type.
         let prev_context = self.ctx.contextual_type;
 
+        // Preserve literal types in conditional branches so that
+        // `const x = cond ? "a" : "b"` infers `"a" | "b"` (tsc behavior).
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
+
         // Compute branch types with the outer contextual type for inference.
         // Branch typing may mutate contextual state while recursing, so restore
         // it explicitly before each branch.
@@ -155,6 +160,7 @@ impl<'a> CheckerState<'a> {
         let when_false = self.get_type_of_node(cond.when_false);
 
         self.ctx.contextual_type = prev_context;
+        self.ctx.preserve_literal_types = prev_preserve;
 
         // Use Solver API for type computation (Solver-First architecture)
         expression_ops::compute_conditional_expression_type(
@@ -2406,6 +2412,18 @@ impl<'a> CheckerState<'a> {
                         property_context_type,
                     );
 
+                    // Widen literal types for object literal properties (tsc behavior).
+                    // Object literal properties are mutable by default, so `{ x: "a" }`
+                    // produces `{ x: string }`.  Only preserve literals when:
+                    // - A const assertion is active (`as const`)
+                    // - A contextual type narrows the property to a literal
+                    let value_type =
+                        if !self.ctx.in_const_assertion && property_context_type.is_none() {
+                            self.widen_literal_type(value_type)
+                        } else {
+                            value_type
+                        };
+
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
                     // and the property value type is 'any'
@@ -2579,6 +2597,14 @@ impl<'a> CheckerState<'a> {
                         value_type,
                         property_context_type,
                     );
+
+                    // Widen literal types for shorthand properties (same as named properties)
+                    let value_type =
+                        if !self.ctx.in_const_assertion && property_context_type.is_none() {
+                            self.widen_literal_type(value_type)
+                        } else {
+                            value_type
+                        };
 
                     // TS7008: Member implicitly has an 'any' type
                     // Report this error when noImplicitAny is enabled, the object literal has a contextual type,

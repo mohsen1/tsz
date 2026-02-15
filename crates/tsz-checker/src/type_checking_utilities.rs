@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
     /// let z = true;     // Type: boolean (not true)
     /// ```
     pub(crate) fn widen_literal_type(&self, type_id: TypeId) -> TypeId {
-        query::widened_literal_type(self.ctx.types, type_id).unwrap_or(type_id)
+        tsz_solver::widening::widen_type(self.ctx.types, type_id)
     }
 
     /// Widen a mutable binding initializer type (let/var semantics).
@@ -1168,7 +1168,15 @@ impl<'a> CheckerState<'a> {
         self.ctx.node_types.retain(|k, _| cached_before.contains(k));
         *self.ctx.flow_analysis_cache.borrow_mut() = flow_cache_before;
 
-        result
+        // Widen inferred return types when there is no contextual return type.
+        // `function f() { return "a"; }` → return type `string` (widened).
+        // But `const g: () => "a" = () => "a"` → return type `"a"` (preserved
+        // by contextual typing).
+        if return_context.is_none() {
+            self.widen_literal_type(result)
+        } else {
+            result
+        }
     }
 
     /// Inner implementation of return type inference (no diagnostic/cache cleanup).
