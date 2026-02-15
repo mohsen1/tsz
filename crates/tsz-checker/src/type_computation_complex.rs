@@ -2604,14 +2604,9 @@ impl<'a> CheckerState<'a> {
             // For block-scoped variable TDZ reads, TypeScript also reports TS2454
             // ("used before being assigned") in strict-null mode.
             if self.ctx.strict_null_checks()
-                && self
-                    .ctx
-                    .binder
-                    .symbols
-                    .get(sym_id)
-                    .is_some_and(|sym| {
-                        sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-                    })
+                && self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
+                    sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                })
                 && let Some(usage_node) = self.ctx.arena.get(idx)
             {
                 let key = (usage_node.pos, sym_id);
