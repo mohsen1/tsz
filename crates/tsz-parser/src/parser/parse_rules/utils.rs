@@ -1,31 +1,16 @@
-//! Common parsing utilities
-//!
-//! This module contains shared parsing utilities that eliminate code duplication
-//! across the parser. It consolidates repeated patterns like look-ahead functions
-//! and modifier parsing.
+//! Shared parsing helpers used by parser modules.
+//! Keep this module focused on reusable token lookahead and token classification
+//! logic without pulling in parser state behavior.
 
 use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::ScannerState;
 
-// Re-export token validation functions for use in look_ahead helpers
-pub use self::token_validation::*;
+/// Check if a token is an identifier or any keyword token.
+pub fn is_identifier_or_keyword(token: SyntaxKind) -> bool {
+    token == SyntaxKind::Identifier || tsz_scanner::token_is_keyword(token)
+}
 
-// =============================================================================
-// Look-Ahead Utilities (Consolidates 24 look_ahead functions)
-// =============================================================================
-
-/// Look ahead to check if current token is followed by a specific token.
-///
-/// This consolidates the repeated pattern:
-/// ```rust,ignore
-/// let snapshot = self.scanner.save_state();
-/// let current = self.current_token;
-/// self.next_token();
-/// let result = /* check condition */;
-/// self.scanner.restore_state(snapshot);
-/// self.current_token = current;
-/// result
-/// ```
+/// Look ahead to check if current token is followed by a token matching `check`.
 pub fn look_ahead_is<F>(scanner: &mut ScannerState, _current_token: SyntaxKind, check: F) -> bool
 where
     F: FnOnce(SyntaxKind) -> bool,
@@ -37,15 +22,6 @@ where
 
     scanner.restore_state(snapshot);
     result
-}
-
-/// Look ahead to check if current token is followed by one of multiple tokens.
-pub fn look_ahead_is_any_of(
-    scanner: &mut ScannerState,
-    current_token: SyntaxKind,
-    kinds: &[SyntaxKind],
-) -> bool {
-    look_ahead_is(scanner, current_token, |token| kinds.contains(&token))
 }
 
 /// Look ahead to check if "async" is followed by a declaration keyword.
@@ -83,264 +59,7 @@ pub fn look_ahead_is_abstract_declaration(
     })
 }
 
-/// Look ahead to check if "accessor" is followed by a declaration keyword.
-pub fn look_ahead_is_accessor_keyword(
-    scanner: &mut ScannerState,
-    current_token: SyntaxKind,
-) -> bool {
-    look_ahead_is(scanner, current_token, |token| {
-        matches!(
-            token,
-            SyntaxKind::ClassKeyword | SyntaxKind::InterfaceKeyword | SyntaxKind::EnumKeyword
-        )
-    })
-}
-
-// =============================================================================
-// Modifier Parsing Utilities
-// =============================================================================
-
-/// A modifier that was parsed.
-#[derive(Debug, Clone, Copy)]
-pub struct ParsedModifier {
-    pub kind: SyntaxKind,
-    pub start_pos: u32,
-}
-
-/// Parse a single modifier token.
-///
-/// Returns None if the current token is not a modifier.
-/// Returns Some(ParsedModifier) with the modifier kind and position.
-///
-/// This consolidates the repeated pattern:
-/// ```rust,ignore
-/// SyntaxKind::StaticKeyword => {
-///     self.next_token();
-///     self.arena.create_modifier(SyntaxKind::StaticKeyword, start_pos)
-/// }
-/// ```
-#[must_use]
-pub fn parse_modifier_token(token: SyntaxKind, start_pos: u32) -> Option<ParsedModifier> {
-    match token {
-        SyntaxKind::StaticKeyword
-        | SyntaxKind::PublicKeyword
-        | SyntaxKind::PrivateKeyword
-        | SyntaxKind::ProtectedKeyword
-        | SyntaxKind::ReadonlyKeyword
-        | SyntaxKind::AbstractKeyword
-        | SyntaxKind::OverrideKeyword
-        | SyntaxKind::AsyncKeyword
-        | SyntaxKind::DeclareKeyword
-        | SyntaxKind::AccessorKeyword
-        | SyntaxKind::ConstKeyword
-        | SyntaxKind::ExportKeyword
-        | SyntaxKind::DefaultKeyword
-        | SyntaxKind::InKeyword => Some(ParsedModifier {
-            kind: token,
-            start_pos,
-        }),
-        _ => None,
-    }
-}
-
-/// Check if a token is a valid class member modifier.
-#[must_use]
-pub fn is_class_member_modifier(token: SyntaxKind) -> bool {
-    matches!(
-        token,
-        SyntaxKind::StaticKeyword
-            | SyntaxKind::PublicKeyword
-            | SyntaxKind::PrivateKeyword
-            | SyntaxKind::ProtectedKeyword
-            | SyntaxKind::ReadonlyKeyword
-            | SyntaxKind::AbstractKeyword
-            | SyntaxKind::OverrideKeyword
-            | SyntaxKind::AsyncKeyword
-            | SyntaxKind::DeclareKeyword
-            | SyntaxKind::AccessorKeyword
-            | SyntaxKind::ConstKeyword
-            | SyntaxKind::ExportKeyword
-    )
-}
-
-/// Check if a token is a valid declaration modifier.
-#[must_use]
-pub fn is_declaration_modifier(token: SyntaxKind) -> bool {
-    matches!(
-        token,
-        SyntaxKind::ExportKeyword
-            | SyntaxKind::DefaultKeyword
-            | SyntaxKind::AsyncKeyword
-            | SyntaxKind::DeclareKeyword
-            | SyntaxKind::ConstKeyword
-            | SyntaxKind::AbstractKeyword
-            | SyntaxKind::AccessorKeyword
-            | SyntaxKind::InKeyword
-    )
-}
-
-/// Check if a token is a valid parameter modifier.
-#[must_use]
-pub fn is_parameter_modifier(token: SyntaxKind) -> bool {
-    matches!(
-        token,
-        SyntaxKind::PublicKeyword
-            | SyntaxKind::PrivateKeyword
-            | SyntaxKind::ProtectedKeyword
-            | SyntaxKind::ReadonlyKeyword
-            | SyntaxKind::AsyncKeyword
-            | SyntaxKind::AccessorKeyword
-    )
-}
-
-// =============================================================================
-// Token Validation Utilities
-// =============================================================================
-
-mod token_validation {
-    use super::SyntaxKind;
-
-    /// Check if a token can start a type.
-    #[must_use]
-    pub fn can_token_start_type(token: SyntaxKind) -> bool {
-        matches!(
-            token,
-            SyntaxKind::VoidKeyword
-                | SyntaxKind::AnyKeyword
-                | SyntaxKind::UnknownKeyword
-                | SyntaxKind::NumberKeyword
-                | SyntaxKind::BigIntKeyword
-                | SyntaxKind::StringKeyword
-                | SyntaxKind::BooleanKeyword
-                | SyntaxKind::SymbolKeyword
-                | SyntaxKind::NeverKeyword
-                | SyntaxKind::ObjectKeyword
-                | SyntaxKind::TrueKeyword
-                | SyntaxKind::FalseKeyword
-                | SyntaxKind::NullKeyword
-                | SyntaxKind::UndefinedKeyword
-                | SyntaxKind::ThisKeyword
-                | SyntaxKind::OpenParenToken
-                | SyntaxKind::OpenBracketToken
-                | SyntaxKind::LessThanToken
-                | SyntaxKind::StringLiteral
-                | SyntaxKind::NoSubstitutionTemplateLiteral
-                | SyntaxKind::TemplateHead
-                | SyntaxKind::Identifier
-        )
-    }
-
-    /// Check if a token is an identifier or keyword (can be used as identifier).
-    #[must_use]
-    pub fn is_identifier_or_keyword(token: SyntaxKind) -> bool {
-        // Match TypeScript's isIdentifierOrKeyword: Identifier or any keyword
-        token == SyntaxKind::Identifier || tsz_scanner::token_is_keyword(token)
-    }
-
-    /// Check if a token is a valid property name.
-    #[must_use]
-    pub fn is_property_name(token: SyntaxKind) -> bool {
-        matches!(
-            token,
-            SyntaxKind::Identifier
-                | SyntaxKind::StringLiteral
-                | SyntaxKind::NumericLiteral
-                | SyntaxKind::BigIntLiteral
-                | SyntaxKind::OpenBracketToken
-                | SyntaxKind::BreakKeyword
-                | SyntaxKind::CaseKeyword
-                | SyntaxKind::CatchKeyword
-                | SyntaxKind::ClassKeyword
-                | SyntaxKind::ConstKeyword
-                | SyntaxKind::ContinueKeyword
-                | SyntaxKind::DebuggerKeyword
-                | SyntaxKind::DefaultKeyword
-                | SyntaxKind::DeleteKeyword
-                | SyntaxKind::DoKeyword
-                | SyntaxKind::ElseKeyword
-                | SyntaxKind::EnumKeyword
-                | SyntaxKind::ExportKeyword
-                | SyntaxKind::ExtendsKeyword
-                | SyntaxKind::FalseKeyword
-                | SyntaxKind::FinallyKeyword
-                | SyntaxKind::ForKeyword
-                | SyntaxKind::FunctionKeyword
-                | SyntaxKind::IfKeyword
-                | SyntaxKind::ImportKeyword
-                | SyntaxKind::InKeyword
-                | SyntaxKind::InstanceOfKeyword
-                | SyntaxKind::NewKeyword
-                | SyntaxKind::NullKeyword
-                | SyntaxKind::ReturnKeyword
-                | SyntaxKind::SuperKeyword
-                | SyntaxKind::SwitchKeyword
-                | SyntaxKind::ThisKeyword
-                | SyntaxKind::ThrowKeyword
-                | SyntaxKind::TrueKeyword
-                | SyntaxKind::TryKeyword
-                | SyntaxKind::TypeOfKeyword
-                | SyntaxKind::VarKeyword
-                | SyntaxKind::VoidKeyword
-                | SyntaxKind::WhileKeyword
-                | SyntaxKind::WithKeyword
-                | SyntaxKind::ConstructorKeyword
-                | SyntaxKind::InterfaceKeyword
-                | SyntaxKind::ReadonlyKeyword
-                | SyntaxKind::TypeKeyword
-                | SyntaxKind::AbstractKeyword
-                | SyntaxKind::AccessorKeyword
-                | SyntaxKind::AsyncKeyword
-                | SyntaxKind::AwaitKeyword
-                | SyntaxKind::DeclareKeyword
-                | SyntaxKind::InferKeyword
-                | SyntaxKind::IsKeyword
-                | SyntaxKind::KeyOfKeyword
-                | SyntaxKind::ModuleKeyword
-                | SyntaxKind::NamespaceKeyword
-                | SyntaxKind::NeverKeyword
-                | SyntaxKind::OutKeyword
-                | SyntaxKind::ProtectedKeyword
-                | SyntaxKind::PublicKeyword
-                | SyntaxKind::PrivateKeyword
-                | SyntaxKind::OverrideKeyword
-                | SyntaxKind::StaticKeyword
-                | SyntaxKind::FromKeyword
-                | SyntaxKind::AsKeyword
-                | SyntaxKind::UsingKeyword
-                | SyntaxKind::GetKeyword
-                | SyntaxKind::SetKeyword
-                | SyntaxKind::AssertsKeyword
-                | SyntaxKind::AssertKeyword
-                | SyntaxKind::GlobalKeyword
-                | SyntaxKind::RequireKeyword
-                | SyntaxKind::SatisfiesKeyword
-                | SyntaxKind::IntrinsicKeyword
-                | SyntaxKind::DeferKeyword
-        )
-    }
-}
-
-/// Check if a token is a literal.
-#[must_use]
-pub fn is_literal(token: SyntaxKind) -> bool {
-    matches!(
-        token,
-        SyntaxKind::NullKeyword
-            | SyntaxKind::TrueKeyword
-            | SyntaxKind::FalseKeyword
-            | SyntaxKind::NumericLiteral
-            | SyntaxKind::BigIntLiteral
-            | SyntaxKind::StringLiteral
-            | SyntaxKind::NoSubstitutionTemplateLiteral
-    )
-}
-
-/// Look ahead to check if "namespace"/"module" starts a declaration.
-///
-/// After `namespace`/`module`, a declaration follows if the next token is:
-/// - An identifier or keyword (e.g., `namespace Foo`, `namespace global`, `namespace string`)
-/// - A string literal (e.g., `module "foo"`)
-/// - An open brace (e.g., `module { }` - anonymous, but should be parsed as module)
+/// Look ahead to check if `namespace`/`module` is followed by a declaration name.
 pub fn look_ahead_is_module_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
@@ -353,11 +72,7 @@ pub fn look_ahead_is_module_declaration(
     })
 }
 
-/// Look ahead to check if "type" starts a type alias declaration.
-/// Matches tsc's `nextTokenIsIdentifierOnSameLine`: accepts both `Identifier`
-/// and contextual keywords (e.g. `type type = ...` where `type` is the name).
-/// This is needed because the scanner returns keyword `SyntaxKind` for identifiers
-/// that happen to match keyword text (including via unicode escapes).
+/// Look ahead to check if `type` begins a type alias declaration.
 pub fn look_ahead_is_type_alias_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
@@ -365,41 +80,34 @@ pub fn look_ahead_is_type_alias_declaration(
     look_ahead_is(scanner, current_token, is_identifier_or_keyword)
 }
 
-/// Look ahead to check if we have "const enum".
+/// Look ahead to check if we have `const enum`.
 pub fn look_ahead_is_const_enum(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
     look_ahead_is(scanner, current_token, |token| {
         token == SyntaxKind::EnumKeyword
     })
 }
 
-/// Look ahead to check if we have "import identifier =" (import equals).
-///
-/// This is a two-token look-ahead: skip 'import', check for identifier, then check for '='.
+/// Look ahead to check if current token begins an import equals declaration.
 pub fn look_ahead_is_import_equals(
     scanner: &mut ScannerState,
     _current_token: SyntaxKind,
-    is_identifier_fn: impl FnOnce(SyntaxKind) -> bool,
+    is_identifier_fn: impl Fn(SyntaxKind) -> bool,
 ) -> bool {
     let snapshot = scanner.save_state();
 
-    // Skip 'import'
     let next1 = scanner.scan();
-
-    // Check for identifier or keyword that can be used as identifier
     if !is_identifier_fn(next1) {
         scanner.restore_state(snapshot);
         return false;
     }
 
-    // Skip identifier, check for '='
     let next2 = scanner.scan();
     if next2 == SyntaxKind::EqualsToken {
         scanner.restore_state(snapshot);
         return true;
     }
 
-    // Also handle `import type X =` where `type` is modifier and X is the name
-    if next1 == SyntaxKind::TypeKeyword && is_identifier_or_keyword(next2) {
+    if next1 == SyntaxKind::TypeKeyword && is_identifier_fn(next2) {
         let next3 = scanner.scan();
         if next3 == SyntaxKind::EqualsToken {
             scanner.restore_state(snapshot);
@@ -411,7 +119,7 @@ pub fn look_ahead_is_import_equals(
     false
 }
 
-/// Look ahead to check if we have "import (" (dynamic import).
+/// Look ahead to check if we have `import (`/`import.` (dynamic import forms).
 pub fn look_ahead_is_import_call(scanner: &mut ScannerState, current_token: SyntaxKind) -> bool {
     look_ahead_is(scanner, current_token, |token| {
         matches!(token, SyntaxKind::OpenParenToken | SyntaxKind::DotToken)

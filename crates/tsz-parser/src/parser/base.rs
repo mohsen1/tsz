@@ -4,7 +4,7 @@
 //! available even if the legacy fat AST is disabled.
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 /// A text range with start and end positions.
 /// All positions are character indices (not byte indices).
