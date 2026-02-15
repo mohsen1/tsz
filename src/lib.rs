@@ -1,7 +1,7 @@
 use once_cell::sync::Lazy;
 use rustc_hash::FxHashMap;
 use std::sync::Mutex;
-use wasm_bindgen::prelude::{wasm_bindgen, JsValue};
+use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 type LibFileCache = FxHashMap<(String, u64), Arc<lib_loader::LibFile>>;
 

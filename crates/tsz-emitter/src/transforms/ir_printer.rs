@@ -23,8 +23,8 @@ use std::fmt::Write;
 use crate::emitter::{Printer as AstPrinter, PrinterOptions};
 use crate::transform_context::TransformContext;
 use crate::transforms::ir::{
-    EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty,
-    IRPropertyKey, IRPropertyKind, IRSwitchCase,
+    EnumMember, EnumMemberValue, IRMethodName, IRNode, IRParam, IRProperty, IRPropertyKey,
+    IRPropertyKind, IRSwitchCase,
 };
 use tsz_parser::parser::base::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
