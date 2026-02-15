@@ -440,9 +440,13 @@ impl ParserState {
 
         let first_name = self.parse_type_identifier_or_keyword();
         let type_name = self.parse_qualified_name_rest(first_name);
-        let type_arguments = self
-            .is_less_than_or_compound()
-            .then(|| self.parse_type_arguments());
+        // Only parse type arguments if `<` is on the same line (no preceding line break).
+        // A line break before `<` means it's a new construct (e.g., a call signature
+        // in a type literal), not type arguments for this type reference.
+        // This matches tsc's `!scanner.hasPrecedingLineBreak()` check.
+        let type_arguments = (self.is_less_than_or_compound()
+            && !self.scanner.has_preceding_line_break())
+        .then(|| self.parse_type_arguments());
 
         self.arena.add_type_ref(
             syntax_kind_ext::TYPE_REFERENCE,
