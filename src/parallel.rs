@@ -1344,7 +1344,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             module_exports.insert(result.file_name.clone(), exports);
         }
 
-        for (module_key, exports_table) in result.module_exports.iter() {
+        for (module_key, exports_table) in &result.module_exports {
             if module_key == &result.file_name {
                 continue;
             }
@@ -1354,7 +1354,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             }
         }
 
-        for (old_id, &new_id) in id_remap.iter() {
+        for (old_id, &new_id) in &id_remap {
             // Skip lib-originated symbols - they were already set up by Phase 1 + 1.5
             if result.lib_symbol_ids.contains(old_id) {
                 continue;
@@ -1432,7 +1432,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // Note: node_symbols primarily maps user file nodes to user symbols,
         // but lib symbols referenced in user code need remapping too
         let mut remapped_node_symbols = FxHashMap::default();
-        for (node_idx, old_sym_id) in result.node_symbols.iter() {
+        for (node_idx, old_sym_id) in &result.node_symbols {
             if let Some(&new_sym_id) = id_remap.get(old_sym_id) {
                 remapped_node_symbols.insert(*node_idx, new_sym_id);
             }

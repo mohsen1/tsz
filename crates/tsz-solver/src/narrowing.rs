@@ -544,7 +544,7 @@ impl<'a> NarrowingContext<'a> {
 
         let mut matching: Vec<TypeId> = Vec::new();
 
-        for &member in members.iter() {
+        for &member in members {
             // Special case: any and unknown always match
             if member.is_any_or_unknown() {
                 trace!("Member {} is any/unknown, keeping in true branch", member.0);
@@ -684,7 +684,7 @@ impl<'a> NarrowingContext<'a> {
 
         let mut remaining: Vec<TypeId> = Vec::new();
 
-        for &member in members.iter() {
+        for &member in members {
             // Special case: any and unknown always kept (could have any property value)
             if member.is_any_or_unknown() {
                 trace!(

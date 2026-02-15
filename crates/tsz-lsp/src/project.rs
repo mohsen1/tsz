@@ -1350,7 +1350,7 @@ impl Project {
         // Iterate through all files to find those that import the renamed file
         // We can't use dependency_graph.get_dependents() directly because it stores
         // raw import specifiers (e.g., "./utils/math") not resolved file paths
-        for (dependent_path, dep_file) in self.files.iter() {
+        for (dependent_path, dep_file) in &self.files {
             // Create a provider to find import nodes
             let provider = FileRenameProvider::new(
                 dep_file.arena(),

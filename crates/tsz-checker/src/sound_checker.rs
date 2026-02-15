@@ -139,7 +139,7 @@ impl<'a> SoundFlowAnalyzer<'a> {
             return None;
         }
 
-        for s_prop in source_shape.properties.iter() {
+        for s_prop in &source_shape.properties {
             let found = target_shape
                 .properties
                 .iter()

@@ -1102,7 +1102,7 @@ impl<'a> SignatureHelpProvider<'a> {
             return;
         };
 
-        for &member in class_data.members.nodes.iter() {
+        for &member in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member) else {
                 continue;
             };
@@ -1179,7 +1179,7 @@ impl<'a> SignatureHelpProvider<'a> {
                 continue;
             };
 
-            for &member in class_data.members.nodes.iter() {
+            for &member in &class_data.members.nodes {
                 let Some(member_node) = self.arena.get(member) else {
                     continue;
                 };
@@ -1364,7 +1364,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let sf = self.arena.get_source_file(root_node)?;
         let mut matches = Vec::new();
 
-        for &stmt in sf.statements.nodes.iter() {
+        for &stmt in &sf.statements.nodes {
             let Some(node) = self.arena.get(stmt) else {
                 continue;
             };
@@ -1391,7 +1391,7 @@ impl<'a> SignatureHelpProvider<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
         property_name: &str,
     ) -> bool {
-        for &member in class_data.members.nodes.iter() {
+        for &member in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member) else {
                 continue;
             };
@@ -1416,7 +1416,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let Some(modifiers) = method.modifiers.as_ref() else {
             return false;
         };
-        for &mod_idx in modifiers.nodes.iter() {
+        for &mod_idx in &modifiers.nodes {
             let Some(mod_node) = self.arena.get(mod_idx) else {
                 continue;
             };
@@ -1459,7 +1459,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let mut total_params = 0;
         let mut has_rest = false;
 
-        for &param_idx in params.nodes.iter() {
+        for &param_idx in &params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
                 continue;
             };

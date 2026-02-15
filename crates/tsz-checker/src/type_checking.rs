@@ -2867,7 +2867,7 @@ impl<'a> CheckerState<'a> {
                     // Multiple lib files (es5, es2015, etc.) each have their own
                     // symbol for types like Function, String, etc. User code can
                     // reference any of them, so all must resolve to the same type.
-                    for ctx in self.ctx.lib_contexts.iter() {
+                    for ctx in &self.ctx.lib_contexts {
                         if let Some(sym_id) = ctx.binder.file_locals.get(name) {
                             let def_id = self.ctx.get_or_create_def_id(sym_id);
                             env.insert_def(def_id, ty);

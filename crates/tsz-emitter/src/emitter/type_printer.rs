@@ -236,7 +236,7 @@ impl<'a> TypePrinter<'a> {
         }
 
         let mut members = Vec::new();
-        for property in shape.properties.iter() {
+        for property in &shape.properties {
             let mut member = String::new();
 
             // Property name

@@ -1550,7 +1550,7 @@ impl<'a> RecursiveTypeCollector<'a> {
             }
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.visit(prop.type_id);
                     self.visit(prop.write_type);
                 }
@@ -1580,7 +1580,7 @@ impl<'a> RecursiveTypeCollector<'a> {
             }
             TypeData::Function(shape_id) => {
                 let shape = self.types.function_shape(*shape_id);
-                for param in shape.params.iter() {
+                for param in &shape.params {
                     self.visit(param.type_id);
                 }
                 self.visit(shape.return_type);
@@ -1592,7 +1592,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                 {
                     self.visit(type_id);
                 }
-                for type_param in shape.type_params.iter() {
+                for type_param in &shape.type_params {
                     if let Some(constraint) = type_param.constraint {
                         self.visit(constraint);
                     }
@@ -1603,8 +1603,8 @@ impl<'a> RecursiveTypeCollector<'a> {
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.types.callable_shape(*shape_id);
-                for sig in shape.call_signatures.iter() {
-                    for param in sig.params.iter() {
+                for sig in &shape.call_signatures {
+                    for param in &sig.params {
                         self.visit(param.type_id);
                     }
                     self.visit(sig.return_type);
@@ -1616,7 +1616,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                     {
                         self.visit(type_id);
                     }
-                    for type_param in sig.type_params.iter() {
+                    for type_param in &sig.type_params {
                         if let Some(constraint) = type_param.constraint {
                             self.visit(constraint);
                         }
@@ -1625,8 +1625,8 @@ impl<'a> RecursiveTypeCollector<'a> {
                         }
                     }
                 }
-                for sig in shape.construct_signatures.iter() {
-                    for param in sig.params.iter() {
+                for sig in &shape.construct_signatures {
+                    for param in &sig.params {
                         self.visit(param.type_id);
                     }
                     self.visit(sig.return_type);
@@ -1638,7 +1638,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                     {
                         self.visit(type_id);
                     }
-                    for type_param in sig.type_params.iter() {
+                    for type_param in &sig.type_params {
                         if let Some(constraint) = type_param.constraint {
                             self.visit(constraint);
                         }
@@ -1647,7 +1647,7 @@ impl<'a> RecursiveTypeCollector<'a> {
                         }
                     }
                 }
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.visit(prop.type_id);
                     self.visit(prop.write_type);
                 }
@@ -1678,7 +1678,7 @@ impl<'a> RecursiveTypeCollector<'a> {
             TypeData::Application(app_id) => {
                 let app = self.types.type_application(*app_id);
                 self.visit(app.base);
-                for &arg in app.args.iter() {
+                for &arg in &app.args {
                     self.visit(arg);
                 }
             }
