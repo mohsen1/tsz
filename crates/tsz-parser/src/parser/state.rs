@@ -1855,6 +1855,7 @@ impl ParserState {
                 | SyntaxKind::IntrinsicKeyword
                 | SyntaxKind::OutKeyword
                 | SyntaxKind::InferKeyword
+                | SyntaxKind::ConstructorKeyword
                 | SyntaxKind::UsingKeyword
                 | SyntaxKind::KeyOfKeyword
                 | SyntaxKind::UniqueKeyword
