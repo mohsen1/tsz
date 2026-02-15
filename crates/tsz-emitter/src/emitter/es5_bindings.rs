@@ -13,8 +13,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Pre-register block-scoped names in this declaration list to handle shadowing.
-        // For plain `var` declarations, preserve source names (tsc keeps them as-is).
+        // Pre-register all variable names in this declaration list to handle shadowing.
+        // For let/const: use register_variable (renames for any scope conflict including current)
+        // For var: use register_var_declaration (only renames for parent scope conflicts,
+        // allowing same-scope redeclarations like `var cl; var cl = Point();`)
         let flags = node.flags as u32;
         let is_block_scoped = (flags & tsz_parser::parser::node_flags::LET != 0)
             || (flags & tsz_parser::parser::node_flags::CONST != 0);
@@ -24,6 +26,14 @@ impl<'a> Printer<'a> {
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
                     self.pre_register_binding_name(decl.name);
+                }
+            }
+        } else {
+            for &decl_idx in &decl_list.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                {
+                    self.pre_register_var_binding_name(decl.name);
                 }
             }
         }
@@ -1022,9 +1032,11 @@ impl<'a> Printer<'a> {
         source_expr: NodeIndex,
         _first: &mut bool,
     ) {
+        #[allow(clippy::print_stderr)]
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-            tracing::debug!("emit_es5_destructuring_with_read_node entered");
+            eprintln!("emit_es5_destructuring_with_read_node entered");
         }
+
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return;
         };
@@ -1057,9 +1069,7 @@ impl<'a> Printer<'a> {
         let read_temp = self.get_temp_var_name();
         self.write(&read_temp);
         self.write(" = __read(");
-        self.destructuring_read_depth += 1;
         self.emit(source_expr);
-        self.destructuring_read_depth -= 1;
         if element_count > 0 {
             self.write(", ");
             self.write(&element_count.to_string());
@@ -1090,7 +1100,7 @@ impl<'a> Printer<'a> {
                     self.emit_es5_destructuring_pattern_idx(elem.name, &rest_temp);
                 } else if self.has_identifier_text(elem.name) {
                     self.write(", ");
-                    self.emit(elem.name);
+                    self.emit_expression(elem.name);
                     self.write(" = ");
                     self.write(&read_temp);
                     self.write(".slice(");
@@ -1101,16 +1111,14 @@ impl<'a> Printer<'a> {
             }
 
             let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
+            #[allow(clippy::print_stderr)]
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                 let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
-                tracing::debug!(
+                eprintln!(
                     "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
-                    index,
-                    elem.name,
-                    unwrapped_name,
-                    elem_kind
+                    index, elem.name, unwrapped_name, elem_kind
                 );
-                tracing::debug!(
+                eprintln!(
                     "downlevel-bp-kind-bytes: elem={} unwrapped={}",
                     self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
                     SyntaxKind::Identifier as u16
@@ -1121,7 +1129,7 @@ impl<'a> Printer<'a> {
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if elem.initializer.is_none() {
                         self.write(", ");
-                        self.emit(elem.name);
+                        self.emit_expression(elem.name);
                         self.write(" = ");
                         self.write(&elem_source);
                     } else {
@@ -1131,7 +1139,7 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.write(&elem_source);
                         self.write(", ");
-                        self.emit(elem.name);
+                        self.emit_expression(elem.name);
                         self.write(" = ");
                         self.write(&value_name);
                         self.write(" === void 0 ? ");
@@ -1145,15 +1153,14 @@ impl<'a> Printer<'a> {
                     };
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                        #[allow(clippy::print_stderr)]
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-                            tracing::debug!(
+                            eprintln!(
                                 "downlevel-nested-array index={} unwrapped={} source={}",
-                                index,
-                                unwrapped_name.0,
-                                elem_source
+                                index, unwrapped_name.0, elem_source
                             );
                         }
-                         self.write(", ");
+                        self.write(", ");
                         let source_expr = if elem.initializer.is_none() {
                             elem_source
                         } else {
@@ -1308,20 +1315,19 @@ impl<'a> Printer<'a> {
         &mut self,
         pattern_idx: NodeIndex,
         source_expr: &str,
-        first: &mut bool,
+        _first: &mut bool,
     ) {
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return;
         };
 
-        if !*first {
-            self.write(", ");
-        }
-        *first = false;
-
         // Only handle array binding patterns for now
         if pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
             let temp_name = self.get_temp_var_name();
+            if !*_first {
+                self.write(", ");
+            }
+            *_first = false;
             self.write(&temp_name);
             self.write(" = ");
             self.write(source_expr);
@@ -1348,6 +1354,7 @@ impl<'a> Printer<'a> {
 
         // Emit: _d = __read(expr, N)
         let read_temp = self.get_temp_var_name();
+        // Note: caller has already handled the comma and set first=false
         self.write(&read_temp);
         self.write(" = __read(");
         self.write(source_expr);
@@ -2974,6 +2981,11 @@ impl<'a> Printer<'a> {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
+                        if !first {
+                            self.write(", ");
+                        }
+                        first = false;
+
                         // Check if name is a binding pattern (array or object destructuring)
                         if self.is_binding_pattern(decl.name) {
                             // For downlevelIteration with binding patterns, use __read
@@ -2985,10 +2997,6 @@ impl<'a> Printer<'a> {
                                 &mut first,
                             );
                         } else {
-                            if !first {
-                                self.write(", ");
-                            }
-                            first = false;
                             // Simple identifier binding
                             self.emit(decl.name);
                             self.write(" = ");
@@ -3042,20 +3050,11 @@ impl<'a> Printer<'a> {
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             && let Some(decl_list) = self.arena.get_variable(init_node)
         {
-            let is_var_declaration = {
-                let flags = init_node.flags as u32;
-                (flags & tsz_parser::parser::node_flags::LET) == 0
-                    && (flags & tsz_parser::parser::node_flags::CONST) == 0
-            };
             for &decl_idx in &decl_list.declarations.nodes {
                 if let Some(decl_node) = self.arena.get(decl_idx)
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                 {
-                    if is_var_declaration {
-                        self.pre_register_var_binding_name(decl.name);
-                    } else {
-                        self.pre_register_binding_name(decl.name);
-                    }
+                    self.pre_register_binding_name(decl.name);
                 }
             }
         }
@@ -3117,8 +3116,8 @@ impl<'a> Printer<'a> {
         } else if matches!(
             name_node.kind,
             syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        )
-            && let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+        ) {
+            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
                 for &elem_idx in &pattern.elements.nodes {
                     if let Some(elem_node) = self.arena.get(elem_idx)
                         && let Some(elem) = self.arena.get_binding_element(elem_node)
@@ -3127,6 +3126,16 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
+            if let Some(pattern) = self.arena.get_binding_pattern(name_node) {
+                for &elem_idx in &pattern.elements.nodes {
+                    if let Some(elem_node) = self.arena.get(elem_idx)
+                        && let Some(elem) = self.arena.get_binding_element(elem_node)
+                    {
+                        self.pre_register_var_binding_name(elem.name);
+                    }
+                }
+            }
+        }
     }
 
     /// Emit variable binding for array-indexed for-of pattern:
