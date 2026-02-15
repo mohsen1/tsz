@@ -329,28 +329,25 @@ fn compare_output_structure(tsc_output: &str, tsz_output: &str) -> Option<String
             if let (Some(tsc_code_msg), Some(tsz_code_msg)) = (
                 tsc_line.split("error TS").nth(1),
                 tsz_line.split("error TS").nth(1),
-            ) {
-                if tsc_code_msg != tsz_code_msg {
-                    diffs.push(format!(
-                        "Line {}: error message differs:\n  tsc: error TS{}\n  tsz: error TS{}",
-                        i + 1,
-                        tsc_code_msg,
-                        tsz_code_msg
-                    ));
-                }
+            ) && tsc_code_msg != tsz_code_msg
+            {
+                diffs.push(format!(
+                    "Line {}: error message differs:\n  tsc: error TS{}\n  tsz: error TS{}",
+                    i + 1,
+                    tsc_code_msg,
+                    tsz_code_msg
+                ));
             }
         }
 
         // For "Found N errors" lines, should match exactly
-        if tsc_line.starts_with("Found ") {
-            if tsc_line != tsz_line {
-                diffs.push(format!(
-                    "Line {}: summary differs:\n  tsc: {}\n  tsz: {}",
-                    i + 1,
-                    tsc_line,
-                    tsz_line
-                ));
-            }
+        if tsc_line.starts_with("Found ") && tsc_line != tsz_line {
+            diffs.push(format!(
+                "Line {}: summary differs:\n  tsc: {}\n  tsz: {}",
+                i + 1,
+                tsc_line,
+                tsz_line
+            ));
         }
 
         // For "Errors  Files" header, should match exactly

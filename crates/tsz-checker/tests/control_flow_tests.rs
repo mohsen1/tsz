@@ -2649,8 +2649,10 @@ function test() {
 
     let types = tsz_solver::TypeInterner::new();
     // TS2454 requires strictNullChecks (matches tsc behavior)
-    let mut opts = crate::context::CheckerOptions::default();
-    opts.strict_null_checks = true;
+    let opts = crate::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
     let mut checker = CheckerState::new(arena, &binder, &types, "test.ts".to_string(), opts);
     checker.check_source_file(root);
 

@@ -991,47 +991,46 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             };
 
             // Remap parent
-            if !lib_sym.parent.is_none() {
-                if let Some(&new_parent) = lib_symbol_remap.get(&(lib_binder_ptr, lib_sym.parent)) {
-                    if let Some(sym) = global_symbols.get_mut(global_id) {
-                        sym.parent = new_parent;
-                    }
-                }
+            if !lib_sym.parent.is_none()
+                && let Some(&new_parent) = lib_symbol_remap.get(&(lib_binder_ptr, lib_sym.parent))
+                && let Some(sym) = global_symbols.get_mut(global_id)
+            {
+                sym.parent = new_parent;
             }
 
             // Remap exports: replace local IDs with global IDs
-            if let Some(exports) = &lib_sym.exports {
-                if let Some(sym) = global_symbols.get_mut(global_id) {
-                    if sym.exports.is_none() {
-                        sym.exports = Some(Box::new(SymbolTable::new()));
-                    }
-                    if let Some(existing) = sym.exports.as_mut() {
-                        for (name, &export_id) in exports.iter() {
-                            if let Some(&new_export_id) =
-                                lib_symbol_remap.get(&(lib_binder_ptr, export_id))
-                            {
-                                // Always overwrite — Phase 1 alloc_from copied local IDs
-                                // that need to be replaced with global IDs
-                                existing.set(name.clone(), new_export_id);
-                            }
+            if let Some(exports) = &lib_sym.exports
+                && let Some(sym) = global_symbols.get_mut(global_id)
+            {
+                if sym.exports.is_none() {
+                    sym.exports = Some(Box::new(SymbolTable::new()));
+                }
+                if let Some(existing) = sym.exports.as_mut() {
+                    for (name, &export_id) in exports.iter() {
+                        if let Some(&new_export_id) =
+                            lib_symbol_remap.get(&(lib_binder_ptr, export_id))
+                        {
+                            // Always overwrite — Phase 1 alloc_from copied local IDs
+                            // that need to be replaced with global IDs
+                            existing.set(name.clone(), new_export_id);
                         }
                     }
                 }
             }
 
             // Remap members: replace local IDs with global IDs
-            if let Some(members) = &lib_sym.members {
-                if let Some(sym) = global_symbols.get_mut(global_id) {
-                    if sym.members.is_none() {
-                        sym.members = Some(Box::new(SymbolTable::new()));
-                    }
-                    if let Some(existing) = sym.members.as_mut() {
-                        for (name, &member_id) in members.iter() {
-                            if let Some(&new_member_id) =
-                                lib_symbol_remap.get(&(lib_binder_ptr, member_id))
-                            {
-                                existing.set(name.clone(), new_member_id);
-                            }
+            if let Some(members) = &lib_sym.members
+                && let Some(sym) = global_symbols.get_mut(global_id)
+            {
+                if sym.members.is_none() {
+                    sym.members = Some(Box::new(SymbolTable::new()));
+                }
+                if let Some(existing) = sym.members.as_mut() {
+                    for (name, &member_id) in members.iter() {
+                        if let Some(&new_member_id) =
+                            lib_symbol_remap.get(&(lib_binder_ptr, member_id))
+                        {
+                            existing.set(name.clone(), new_member_id);
                         }
                     }
                 }
@@ -1104,12 +1103,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     let mut resolved_global_id = None;
                     if let Some(&(binder_ptr, original_local_id)) =
                         result.lib_symbol_reverse_remap.get(&old_id)
-                    {
-                        if let Some(&global_id) =
+                        && let Some(&global_id) =
                             lib_symbol_remap.get(&(binder_ptr, original_local_id))
-                        {
-                            resolved_global_id = Some(global_id);
-                        }
+                    {
+                        resolved_global_id = Some(global_id);
                     }
                     // Fallback: look up by name in merged_symbols or lib_name_to_global
                     if resolved_global_id.is_none() {

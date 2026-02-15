@@ -180,11 +180,19 @@ mod ts2307_path_mapping_tests {
         std::fs::write(pkg_dir.join("entrypoint.d.ts"), "export {};").unwrap();
         std::fs::write(base_dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
 
-        let mut options = ResolvedCompilerOptions::default();
-        options.module_resolution = Some(ModuleResolutionKind::Node16);
-        options.resolve_package_json_exports = true;
-        options.printer.module = ModuleKind::Node16;
-        options.checker.module = ModuleKind::Node16;
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            printer: tsz::emitter::PrinterOptions {
+                module: ModuleKind::Node16,
+                ..Default::default()
+            },
+            checker: tsz::checker::context::CheckerOptions {
+                module: ModuleKind::Node16,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
 
         let mut cache = ModuleResolutionCache::default();
         let result = resolve_for_test(

@@ -245,10 +245,10 @@ impl TsProgram {
 
         for bound_file in &merged.files {
             // Filter by file if specified
-            if let Some(ref name) = file_name {
-                if &bound_file.file_name != name {
-                    continue;
-                }
+            if let Some(ref name) = file_name
+                && &bound_file.file_name != name
+            {
+                continue;
             }
 
             for diag in &bound_file.parse_diagnostics {
@@ -283,10 +283,10 @@ impl TsProgram {
 
         for file_result in &check_result.file_results {
             // Filter by file if specified
-            if let Some(ref name) = file_name {
-                if &file_result.file_name != name {
-                    continue;
-                }
+            if let Some(ref name) = file_name
+                && &file_result.file_name != name
+            {
+                continue;
             }
 
             for diag in &file_result.diagnostics {

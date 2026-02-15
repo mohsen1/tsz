@@ -116,10 +116,10 @@ impl BlockScopeState {
     /// PARENT scope, e.g. `var a = 0` inside a for-of body where `a` exists in the outer scope.
     pub fn register_var_declaration(&mut self, original_name: &str) -> String {
         // If already registered in current scope, reuse that name (var redeclaration)
-        if let Some(current) = self.scope_stack.last() {
-            if let Some(existing) = current.get(original_name) {
-                return existing.clone();
-            }
+        if let Some(current) = self.scope_stack.last()
+            && let Some(existing) = current.get(original_name)
+        {
+            return existing.clone();
         }
 
         // Check ONLY parent scopes (skip current) for conflicts

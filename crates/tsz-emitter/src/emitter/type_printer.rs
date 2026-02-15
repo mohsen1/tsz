@@ -79,12 +79,11 @@ impl<'a> TypePrinter<'a> {
         // Check if it's exported
         if symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
             // Check parentage - if parent is a function/method, it's local and must be inlined
-            if !symbol.parent.is_none() {
-                if let Some(parent) = arena.get(symbol.parent) {
-                    if parent.has_any_flags(symbol_flags::FUNCTION | symbol_flags::METHOD) {
-                        return false; // Local to function, must inline
-                    }
-                }
+            if !symbol.parent.is_none()
+                && let Some(parent) = arena.get(symbol.parent)
+                && parent.has_any_flags(symbol_flags::FUNCTION | symbol_flags::METHOD)
+            {
+                return false; // Local to function, must inline
             }
             return true;
         }
@@ -475,14 +474,14 @@ impl<'a> TypePrinter<'a> {
         };
 
         // If we have a symbol and it's visible, use the name
-        if let Some(sym_id) = sym_id {
-            if self.is_symbol_visible(sym_id) {
-                // Get the symbol name
-                if let Some(arena) = self.symbol_arena {
-                    if let Some(symbol) = arena.get(sym_id) {
-                        return symbol.escaped_name.clone();
-                    }
-                }
+        if let Some(sym_id) = sym_id
+            && self.is_symbol_visible(sym_id)
+        {
+            // Get the symbol name
+            if let Some(arena) = self.symbol_arena
+                && let Some(symbol) = arena.get(sym_id)
+            {
+                return symbol.escaped_name.clone();
             }
         }
 
@@ -493,14 +492,12 @@ impl<'a> TypePrinter<'a> {
 
     fn print_enum(&self, def_id: tsz_solver::def::DefId, _members_id: TypeId) -> String {
         // Try to resolve the enum name via DefId -> SymbolId -> symbol name
-        if let Some(cache) = self.type_cache {
-            if let Some(&sym_id) = cache.def_to_symbol.get(&def_id) {
-                if let Some(arena) = self.symbol_arena {
-                    if let Some(symbol) = arena.get(sym_id) {
-                        return symbol.escaped_name.clone();
-                    }
-                }
-            }
+        if let Some(cache) = self.type_cache
+            && let Some(&sym_id) = cache.def_to_symbol.get(&def_id)
+            && let Some(arena) = self.symbol_arena
+            && let Some(symbol) = arena.get(sym_id)
+        {
+            return symbol.escaped_name.clone();
         }
         // Fallback: print the member type structure
         format!("enum({})", def_id.0)

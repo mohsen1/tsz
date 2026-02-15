@@ -894,15 +894,13 @@ impl<'a> Completions<'a> {
                     || prev_byte == b'b'
                 {
                     let node_idx_check = find_node_at_offset(self.arena, offset.saturating_sub(1));
-                    if !node_idx_check.is_none() {
-                        if let Some(node) = self.arena.get(node_idx_check) {
-                            if node.kind == SyntaxKind::NumericLiteral as u16
-                                || node.kind == SyntaxKind::BigIntLiteral as u16
-                            {
-                                // We're right after a numeric/BigInt literal
-                                return true;
-                            }
-                        }
+                    if !node_idx_check.is_none()
+                        && let Some(node) = self.arena.get(node_idx_check)
+                        && (node.kind == SyntaxKind::NumericLiteral as u16
+                            || node.kind == SyntaxKind::BigIntLiteral as u16)
+                    {
+                        // We're right after a numeric/BigInt literal
+                        return true;
                     }
                 }
             }
@@ -910,40 +908,39 @@ impl<'a> Completions<'a> {
 
         // Check if we're inside a string literal using the AST
         let node_idx = find_node_at_offset(self.arena, offset);
-        if !node_idx.is_none() {
-            if let Some(node) = self.arena.get(node_idx) {
-                let kind = node.kind;
-                // String literal (not inside an import/require module specifier)
-                if kind == SyntaxKind::StringLiteral as u16 {
-                    // Check if parent is an import declaration's module specifier
-                    if let Some(ext) = self.arena.get_extended(node_idx) {
-                        let parent = self.arena.get(ext.parent);
-                        if let Some(p) = parent {
-                            if p.kind == syntax_kind_ext::IMPORT_DECLARATION
-                                || p.kind == syntax_kind_ext::EXPORT_DECLARATION
-                                || p.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
-                            {
-                                return false; // Module specifier - allow completions
-                            }
-                        }
+        if !node_idx.is_none()
+            && let Some(node) = self.arena.get(node_idx)
+        {
+            let kind = node.kind;
+            // String literal (not inside an import/require module specifier)
+            if kind == SyntaxKind::StringLiteral as u16 {
+                // Check if parent is an import declaration's module specifier
+                if let Some(ext) = self.arena.get_extended(node_idx) {
+                    let parent = self.arena.get(ext.parent);
+                    if let Some(p) = parent
+                        && (p.kind == syntax_kind_ext::IMPORT_DECLARATION
+                            || p.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            || p.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE)
+                    {
+                        return false; // Module specifier - allow completions
                     }
-                    return true; // Regular string literal - no completions
                 }
-                // No-substitution template literal
-                if kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
-                    return true;
-                }
-                // Template head/middle/tail (inside template literal parts, not expressions)
-                if kind == SyntaxKind::TemplateHead as u16
-                    || kind == SyntaxKind::TemplateMiddle as u16
-                    || kind == SyntaxKind::TemplateTail as u16
-                {
-                    return true;
-                }
-                // Regular expression literal
-                if kind == SyntaxKind::RegularExpressionLiteral as u16 {
-                    return true;
-                }
+                return true; // Regular string literal - no completions
+            }
+            // No-substitution template literal
+            if kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                return true;
+            }
+            // Template head/middle/tail (inside template literal parts, not expressions)
+            if kind == SyntaxKind::TemplateHead as u16
+                || kind == SyntaxKind::TemplateMiddle as u16
+                || kind == SyntaxKind::TemplateTail as u16
+            {
+                return true;
+            }
+            // Regular expression literal
+            if kind == SyntaxKind::RegularExpressionLiteral as u16 {
+                return true;
             }
         }
 
@@ -1064,12 +1061,11 @@ impl<'a> Completions<'a> {
         }
 
         // Case 4: function parameter names at opening paren: "function foo(|"
-        if check_before.ends_with('(') {
-            if self.is_in_parameter_list(offset)
-                || self.text_looks_like_parameter_list(check_before)
-            {
-                return true;
-            }
+        if check_before.ends_with('(')
+            && (self.is_in_parameter_list(offset)
+                || self.text_looks_like_parameter_list(check_before))
+        {
+            return true;
         }
 
         // Case 4b: "...name" in parameter list - rest parameter
@@ -1089,12 +1085,11 @@ impl<'a> Completions<'a> {
         }
 
         // Case 6: type parameter list opener: "class A<|", "interface B<|"
-        if check_before.ends_with('<') {
-            if self.is_in_type_parameter_list(offset)
-                || self.text_looks_like_type_param_opener(check_before)
-            {
-                return true;
-            }
+        if check_before.ends_with('<')
+            && (self.is_in_type_parameter_list(offset)
+                || self.text_looks_like_type_param_opener(check_before))
+        {
+            return true;
         }
 
         // Case 7: enum member position
@@ -1374,12 +1369,11 @@ impl<'a> Completions<'a> {
         let mut current = start;
         let mut depth = 0;
         while !current.is_none() && depth < 50 {
-            if let Some(node) = self.arena.get(current) {
-                if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-                    || node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                {
-                    return true;
-                }
+            if let Some(node) = self.arena.get(current)
+                && (node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    || node.kind == syntax_kind_ext::VARIABLE_STATEMENT)
+            {
+                return true;
             }
             if let Some(ext) = self.arena.get_extended(current) {
                 if ext.parent == current {
@@ -1443,10 +1437,10 @@ impl<'a> Completions<'a> {
         let mut current = start;
         let mut depth = 0;
         while !current.is_none() && depth < 50 {
-            if let Some(node) = self.arena.get(current) {
-                if node.kind == syntax_kind_ext::TYPE_PARAMETER {
-                    return true;
-                }
+            if let Some(node) = self.arena.get(current)
+                && node.kind == syntax_kind_ext::TYPE_PARAMETER
+            {
+                return true;
             }
             if let Some(ext) = self.arena.get_extended(current) {
                 if ext.parent == current {
@@ -1848,14 +1842,12 @@ impl<'a> Completions<'a> {
         }
 
         // 9. If inside a function, also add "arguments" as a local variable
-        if inside_func {
-            if !seen_names.contains("arguments") {
-                seen_names.insert("arguments".to_string());
-                let mut item =
-                    CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
-                item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
-                completions.push(item);
-            }
+        if inside_func && !seen_names.contains("arguments") {
+            seen_names.insert("arguments".to_string());
+            let mut item =
+                CompletionItem::new("arguments".to_string(), CompletionItemKind::Variable);
+            item.sort_text = Some(sort_priority::LOCAL_DECLARATION.to_string());
+            completions.push(item);
         }
 
         // 10. Add keywords for non-member completions
@@ -2092,7 +2084,7 @@ impl<'a> Completions<'a> {
         &self,
         type_id: TypeId,
         interner: &TypeInterner,
-        checker: &mut CheckerState,
+        _checker: &mut CheckerState,
         visited: &mut FxHashSet<TypeId>,
         props: &mut FxHashMap<String, PropertyCompletion>,
     ) {
@@ -2116,14 +2108,14 @@ impl<'a> Completions<'a> {
         {
             let members = interner.type_list(members);
             for &member in members.iter() {
-                self.collect_properties_for_type(member, interner, checker, visited, props);
+                self.collect_properties_for_type(member, interner, _checker, visited, props);
             }
             return;
         }
 
         if let Some(app) = visitor::application_id(interner, type_id) {
             let app = interner.type_application(app);
-            self.collect_properties_for_type(app.base, interner, checker, visited, props);
+            self.collect_properties_for_type(app.base, interner, _checker, visited, props);
             return;
         }
 

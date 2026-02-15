@@ -293,12 +293,11 @@ impl<'a> CallHierarchyProvider<'a> {
         ident_idx: NodeIndex,
     ) -> Option<(tsz_binder::SymbolId, NodeIndex, String)> {
         // 1. Check if the node itself is a declaration in node_symbols
-        if let Some(&sym_id) = self.binder.node_symbols.get(&ident_idx.0) {
-            if let Some(symbol) = self.binder.symbols.get(sym_id) {
-                if let Some(&decl) = symbol.declarations.first() {
-                    return Some((sym_id, decl, symbol.escaped_name.clone()));
-                }
-            }
+        if let Some(&sym_id) = self.binder.node_symbols.get(&ident_idx.0)
+            && let Some(symbol) = self.binder.symbols.get(sym_id)
+            && let Some(&decl) = symbol.declarations.first()
+        {
+            return Some((sym_id, decl, symbol.escaped_name.clone()));
         }
 
         // 2. Get the identifier's escaped_text and look it up in file_locals
@@ -306,12 +305,11 @@ impl<'a> CallHierarchyProvider<'a> {
         let ident_data = self.arena.get_identifier(node)?;
         let name = &ident_data.escaped_text;
 
-        if let Some(sym_id) = self.binder.file_locals.get(name) {
-            if let Some(symbol) = self.binder.symbols.get(sym_id) {
-                if let Some(&decl) = symbol.declarations.first() {
-                    return Some((sym_id, decl, name.clone()));
-                }
-            }
+        if let Some(sym_id) = self.binder.file_locals.get(name)
+            && let Some(symbol) = self.binder.symbols.get(sym_id)
+            && let Some(&decl) = symbol.declarations.first()
+        {
+            return Some((sym_id, decl, name.clone()));
         }
 
         None
@@ -346,16 +344,15 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // If the node is an identifier, check if its parent is a function-like
         // declaration (i.e., we are on the function name).
-        if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ext) = self.arena.get_extended(node_idx) {
-                let parent = ext.parent;
-                if !parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(parent) {
-                        if self.is_function_like(parent_node.kind) {
-                            return Some(parent);
-                        }
-                    }
-                }
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(node_idx)
+        {
+            let parent = ext.parent;
+            if !parent.is_none()
+                && let Some(parent_node) = self.arena.get(parent)
+                && self.is_function_like(parent_node.kind)
+            {
+                return Some(parent);
             }
         }
 

@@ -661,18 +661,18 @@ fn strip_jsonc(input: &str) -> String {
             continue;
         }
 
-        if ch == '/' {
-            if let Some(&next) = chars.peek() {
-                if next == '/' {
-                    chars.next();
-                    in_line_comment = true;
-                    continue;
-                }
-                if next == '*' {
-                    chars.next();
-                    in_block_comment = true;
-                    continue;
-                }
+        if ch == '/'
+            && let Some(&next) = chars.peek()
+        {
+            if next == '/' {
+                chars.next();
+                in_line_comment = true;
+                continue;
+            }
+            if next == '*' {
+                chars.next();
+                in_block_comment = true;
+                continue;
             }
         }
 
@@ -717,10 +717,10 @@ fn remove_trailing_commas(input: &str) -> String {
                 break;
             }
 
-            if let Some(next) = lookahead.peek().copied() {
-                if next == '}' || next == ']' {
-                    continue;
-                }
+            if let Some(next) = lookahead.peek().copied()
+                && (next == '}' || next == ']')
+            {
+                continue;
             }
         }
 

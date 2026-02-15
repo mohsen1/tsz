@@ -53,15 +53,18 @@ pub(crate) fn are_types_overlapping_with_env(
 }
 
 pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
-    sound_mode: bool,
+    inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
 ) -> bool {
+    let AssignabilityQueryInputs {
+        db,
+        resolver,
+        source,
+        target,
+        flags,
+        inheritance_graph,
+        sound_mode,
+    } = *inputs;
     let policy = tsz_solver::RelationPolicy::from_flags(flags)
         .with_strict_subtype_checking(sound_mode)
         .with_strict_any_propagation(sound_mode);
@@ -70,17 +73,28 @@ pub(crate) fn is_assignable_with_overrides<R: tsz_solver::TypeResolver>(
         inheritance_graph: Some(inheritance_graph),
         class_check: None,
     };
-    tsz_solver::query_relation_with_overrides(
-        db,
+    tsz_solver::query_relation_with_overrides(tsz_solver::RelationQueryInputs {
+        interner: db.as_type_database(),
         resolver,
         source,
         target,
-        tsz_solver::RelationKind::Assignable,
+        kind: tsz_solver::RelationKind::Assignable,
         policy,
         context,
         overrides,
-    )
+    })
     .is_related()
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AssignabilityQueryInputs<'a, R: tsz_solver::TypeResolver> {
+    pub db: &'a dyn QueryDatabase,
+    pub resolver: &'a R,
+    pub source: TypeId,
+    pub target: TypeId,
+    pub flags: u16,
+    pub inheritance_graph: &'a tsz_solver::InheritanceGraph,
+    pub sound_mode: bool,
 }
 
 pub(crate) fn is_assignable_with_resolver<R: tsz_solver::TypeResolver>(
@@ -207,27 +221,12 @@ pub(crate) struct AssignabilityGateResult {
 }
 
 pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
-    db: &dyn QueryDatabase,
-    resolver: &R,
-    source: TypeId,
-    target: TypeId,
-    flags: u16,
-    inheritance_graph: &tsz_solver::InheritanceGraph,
-    sound_mode: bool,
+    inputs: &AssignabilityQueryInputs<'_, R>,
     overrides: &dyn tsz_solver::AssignabilityOverrideProvider,
     ctx: Option<&crate::context::CheckerContext<'_>>,
     collect_failure_analysis: bool,
 ) -> AssignabilityGateResult {
-    let related = is_assignable_with_overrides(
-        db,
-        resolver,
-        source,
-        target,
-        flags,
-        inheritance_graph,
-        sound_mode,
-        overrides,
-    );
+    let related = is_assignable_with_overrides(inputs, overrides);
 
     if !collect_failure_analysis || related {
         return AssignabilityGateResult {
@@ -238,11 +237,11 @@ pub(crate) fn check_assignable_gate_with_overrides<R: tsz_solver::TypeResolver>(
 
     let analysis = ctx.map(|ctx| {
         analyze_assignability_failure_with_context(
-            db.as_type_database(),
+            inputs.db.as_type_database(),
             ctx,
-            resolver,
-            source,
-            target,
+            inputs.resolver,
+            inputs.source,
+            inputs.target,
         )
     });
 

@@ -122,9 +122,16 @@ pub fn query_relation_with_resolver<'a, R: TypeResolver>(
     context: RelationContext<'a>,
 ) -> RelationResult {
     let overrides = NoopOverrideProvider;
-    query_relation_with_overrides(
-        interner, resolver, source, target, kind, policy, context, &overrides,
-    )
+    query_relation_with_overrides(RelationQueryInputs {
+        interner,
+        resolver,
+        source,
+        target,
+        kind,
+        policy,
+        context,
+        overrides: &overrides,
+    })
 }
 
 /// Query a relation using a custom resolver and checker-provided overrides.
@@ -133,14 +140,16 @@ pub fn query_relation_with_overrides<
     R: TypeResolver,
     P: AssignabilityOverrideProvider + ?Sized,
 >(
-    interner: &'a dyn TypeDatabase,
-    resolver: &'a R,
-    source: TypeId,
-    target: TypeId,
-    kind: RelationKind,
-    policy: RelationPolicy,
-    context: RelationContext<'a>,
-    overrides: &P,
+    RelationQueryInputs {
+        interner,
+        resolver,
+        source,
+        target,
+        kind,
+        policy,
+        context,
+        overrides,
+    }: RelationQueryInputs<'a, R, P>,
 ) -> RelationResult {
     let (related, depth_exceeded) = match kind {
         RelationKind::Assignable => {
@@ -181,6 +190,18 @@ pub fn query_relation_with_overrides<
         related,
         depth_exceeded,
     }
+}
+
+/// Bundled inputs for relation queries.
+pub struct RelationQueryInputs<'a, R: TypeResolver, P: AssignabilityOverrideProvider + ?Sized> {
+    pub interner: &'a dyn TypeDatabase,
+    pub resolver: &'a R,
+    pub source: TypeId,
+    pub target: TypeId,
+    pub kind: RelationKind,
+    pub policy: RelationPolicy,
+    pub context: RelationContext<'a>,
+    pub overrides: &'a P,
 }
 
 fn configured_compat_checker<'a, R: TypeResolver>(

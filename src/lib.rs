@@ -277,9 +277,9 @@ use crate::lsp::diagnostics::convert_diagnostic;
 use crate::lsp::position::{LineMap, Position, Range};
 use crate::lsp::resolver::ScopeCache;
 use crate::lsp::{
-    CodeActionContext, CodeActionProvider, Completions, DocumentSymbolProvider, FindReferences,
-    GoToDefinition, HoverProvider, ImportCandidate, ImportCandidateKind, RenameProvider,
-    SemanticTokensProvider, SignatureHelpProvider,
+    CodeActionContext, CodeActionKind, CodeActionProvider, Completions, DocumentSymbolProvider,
+    FindReferences, GoToDefinition, HoverProvider, ImportCandidate, ImportCandidateKind,
+    RenameProvider, SemanticTokensProvider, SignatureHelpProvider,
 };
 use crate::parser::ParserState;
 use crate::transform_context::TransformContext;
@@ -296,6 +296,17 @@ struct ImportCandidateInput {
     export_name: Option<String>,
     #[serde(default)]
     is_type_only: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodeActionContextInput {
+    #[serde(default)]
+    diagnostics: Vec<tsz_lsp::diagnostics::LspDiagnostic>,
+    #[serde(default)]
+    only: Option<Vec<CodeActionKind>>,
+    #[serde(default)]
+    import_candidates: Vec<ImportCandidateInput>,
 }
 
 /// Compiler options passed from JavaScript/WASM.
@@ -907,8 +918,10 @@ impl Parser {
     #[wasm_bindgen(js_name = emit)]
     pub fn emit(&self) -> String {
         if let Some(root_idx) = self.source_file_idx {
-            let mut options = PrinterOptions::default();
-            options.target = ScriptTarget::ES5;
+            let options = PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            };
 
             let mut ctx = EmitContext::with_options(options);
             ctx.auto_detect_module = true;
@@ -923,8 +936,10 @@ impl Parser {
     #[wasm_bindgen(js_name = emitModern)]
     pub fn emit_modern(&self) -> String {
         if let Some(root_idx) = self.source_file_idx {
-            let mut options = PrinterOptions::default();
-            options.target = ScriptTarget::ES2015;
+            let options = PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            };
 
             let ctx = EmitContext::with_options(options);
 
@@ -952,33 +967,35 @@ impl Parser {
     /// Generate transform directives based on compiler options.
     #[wasm_bindgen(js_name = generateTransforms)]
     pub fn generate_transforms(&self, target: u32, module: u32) -> WasmTransformContext {
-        let mut options = PrinterOptions::default();
-        options.target = match target {
-            0 => ScriptTarget::ES3,
-            1 => ScriptTarget::ES5,
-            2 => ScriptTarget::ES2015,
-            3 => ScriptTarget::ES2016,
-            4 => ScriptTarget::ES2017,
-            5 => ScriptTarget::ES2018,
-            6 => ScriptTarget::ES2019,
-            7 => ScriptTarget::ES2020,
-            8 => ScriptTarget::ES2021,
-            9 => ScriptTarget::ES2022,
-            _ => ScriptTarget::ESNext,
-        };
-        options.module = match module {
-            0 => ModuleKind::None,
-            1 => ModuleKind::CommonJS,
-            2 => ModuleKind::AMD,
-            3 => ModuleKind::UMD,
-            4 => ModuleKind::System,
-            5 => ModuleKind::ES2015,
-            6 => ModuleKind::ES2020,
-            7 => ModuleKind::ES2022,
-            99 => ModuleKind::ESNext,
-            100 => ModuleKind::Node16,
-            199 => ModuleKind::NodeNext,
-            _ => ModuleKind::None,
+        let options = PrinterOptions {
+            target: match target {
+                0 => ScriptTarget::ES3,
+                1 => ScriptTarget::ES5,
+                2 => ScriptTarget::ES2015,
+                3 => ScriptTarget::ES2016,
+                4 => ScriptTarget::ES2017,
+                5 => ScriptTarget::ES2018,
+                6 => ScriptTarget::ES2019,
+                7 => ScriptTarget::ES2020,
+                8 => ScriptTarget::ES2021,
+                9 => ScriptTarget::ES2022,
+                _ => ScriptTarget::ESNext,
+            },
+            module: match module {
+                0 => ModuleKind::None,
+                1 => ModuleKind::CommonJS,
+                2 => ModuleKind::AMD,
+                3 => ModuleKind::UMD,
+                4 => ModuleKind::System,
+                5 => ModuleKind::ES2015,
+                6 => ModuleKind::ES2020,
+                7 => ModuleKind::ES2022,
+                99 => ModuleKind::ESNext,
+                100 => ModuleKind::Node16,
+                199 => ModuleKind::NodeNext,
+                _ => ModuleKind::None,
+            },
+            ..Default::default()
         };
 
         let ctx = EmitContext::with_options(options);
@@ -1756,34 +1773,29 @@ impl Parser {
         start_char: u32,
         end_line: u32,
         end_char: u32,
-        diagnostics: JsValue,
-        only: JsValue,
-        import_candidates: JsValue,
+        context: JsValue,
     ) -> Result<JsValue, JsValue> {
         self.ensure_bound()?;
         self.ensure_line_map();
 
-        let diagnostics = if diagnostics.is_null() || diagnostics.is_undefined() {
-            Vec::new()
+        let context = if context.is_null() || context.is_undefined() {
+            CodeActionContext {
+                diagnostics: Vec::new(),
+                only: None,
+                import_candidates: Vec::new(),
+            }
         } else {
-            serde_wasm_bindgen::from_value(diagnostics)?
-        };
-
-        let only = if only.is_null() || only.is_undefined() {
-            None
-        } else {
-            Some(serde_wasm_bindgen::from_value(only)?)
-        };
-
-        let import_candidates = if import_candidates.is_null() || import_candidates.is_undefined() {
-            Vec::new()
-        } else {
-            let inputs: Vec<ImportCandidateInput> =
-                serde_wasm_bindgen::from_value(import_candidates)?;
-            inputs
+            let context_input: CodeActionContextInput = serde_wasm_bindgen::from_value(context)?;
+            let import_candidates = context_input
+                .import_candidates
                 .into_iter()
                 .map(ImportCandidate::try_from)
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?;
+            CodeActionContext {
+                diagnostics: context_input.diagnostics,
+                only: context_input.only,
+                import_candidates,
+            }
         };
 
         let root = self
@@ -1812,12 +1824,6 @@ impl Parser {
             Position::new(start_line, start_char),
             Position::new(end_line, end_char),
         );
-
-        let context = CodeActionContext {
-            diagnostics,
-            only,
-            import_candidates,
-        };
 
         let result = provider.provide_code_actions(root, range, context);
         Ok(serde_wasm_bindgen::to_value(&result)?)

@@ -198,28 +198,26 @@ impl<'a> LoweringPass<'a> {
                 }
             }
             k if k == SyntaxKind::Identifier as u16 => {
-                if self.this_capture_level > 0 {
-                    if let Some(text) = self.get_identifier_text_ref(idx)
-                        && text == "this"
-                    {
-                        let capture_name = self
-                            .enclosing_capture_names
-                            .last()
-                            .cloned()
-                            .unwrap_or_else(|| Arc::from("_this"));
-                        self.transforms
-                            .insert(idx, TransformDirective::SubstituteThis { capture_name });
-                    }
+                if self.this_capture_level > 0
+                    && let Some(text) = self.get_identifier_text_ref(idx)
+                    && text == "this"
+                {
+                    let capture_name = self
+                        .enclosing_capture_names
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| Arc::from("_this"));
+                    self.transforms
+                        .insert(idx, TransformDirective::SubstituteThis { capture_name });
                 }
 
                 // Check if this is the 'arguments' identifier
-                if self.arguments_capture_level > 0 {
-                    if let Some(text) = self.get_identifier_text_ref(idx) {
-                        if text == "arguments" {
-                            self.transforms
-                                .insert(idx, TransformDirective::SubstituteArguments);
-                        }
-                    }
+                if self.arguments_capture_level > 0
+                    && let Some(text) = self.get_identifier_text_ref(idx)
+                    && text == "arguments"
+                {
+                    self.transforms
+                        .insert(idx, TransformDirective::SubstituteArguments);
                 }
             }
             _ => self.visit_children(idx),
@@ -1502,16 +1500,16 @@ impl<'a> LoweringPass<'a> {
             // capture independently within constructor/method bodies.
             if captures_this {
                 self.this_capture_level += 1;
-                if !self.in_es5_class {
-                    if let Some(&enclosing_body) = self.enclosing_function_bodies.last() {
-                        let capture_name = self
-                            .enclosing_capture_names
-                            .last()
-                            .cloned()
-                            .unwrap_or_else(|| Arc::from("_this"));
-                        self.transforms
-                            .mark_this_capture_scope(enclosing_body, capture_name);
-                    }
+                if !self.in_es5_class
+                    && let Some(&enclosing_body) = self.enclosing_function_bodies.last()
+                {
+                    let capture_name = self
+                        .enclosing_capture_names
+                        .last()
+                        .cloned()
+                        .unwrap_or_else(|| Arc::from("_this"));
+                    self.transforms
+                        .mark_this_capture_scope(enclosing_body, capture_name);
                 }
             }
 
@@ -1628,20 +1626,21 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Check if call has spread arguments and needs ES5 transformation
-        if self.ctx.target_es5 && !is_super_call {
-            if let Some(ref args) = call.arguments {
-                let has_spread = args
-                    .nodes
-                    .iter()
-                    .any(|&arg_idx| self.is_spread_element(arg_idx));
-                if has_spread {
-                    self.transforms
-                        .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
-                    // __spreadArray is only needed when spread arguments must be merged
-                    // with additional segments (not for plain foo(...args)).
-                    if self.call_spread_needs_spread_array(args.nodes.as_slice()) {
-                        self.transforms.helpers_mut().spread_array = true;
-                    }
+        if self.ctx.target_es5
+            && !is_super_call
+            && let Some(ref args) = call.arguments
+        {
+            let has_spread = args
+                .nodes
+                .iter()
+                .any(|&arg_idx| self.is_spread_element(arg_idx));
+            if has_spread {
+                self.transforms
+                    .insert(idx, TransformDirective::ES5CallSpread { call_expr: idx });
+                // __spreadArray is only needed when spread arguments must be merged
+                // with additional segments (not for plain foo(...args)).
+                if self.call_spread_needs_spread_array(args.nodes.as_slice()) {
+                    self.transforms.helpers_mut().spread_array = true;
                 }
             }
         }
@@ -2144,21 +2143,20 @@ impl<'a> LoweringPass<'a> {
         };
 
         // Check if initializer is a variable declaration list
-        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-            if let Some(var_data) = self.arena.get_variable(init_node) {
-                // Check each declaration in the list
-                for &decl_idx in &var_data.declarations.nodes {
-                    if let Some(decl_node) = self.arena.get(decl_idx) {
-                        if let Some(decl_data) = self.arena.get_variable_declaration(decl_node) {
-                            if let Some(name_node) = self.arena.get(decl_data.name) {
-                                // Check if name is an ARRAY binding pattern
-                                // __read helper is only needed for array destructuring, not object destructuring
-                                // Object destructuring accesses properties by name, not by iterator position
-                                if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                                    return true;
-                                }
-                            }
-                        }
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(var_data) = self.arena.get_variable(init_node)
+        {
+            // Check each declaration in the list
+            for &decl_idx in &var_data.declarations.nodes {
+                if let Some(decl_node) = self.arena.get(decl_idx)
+                    && let Some(decl_data) = self.arena.get_variable_declaration(decl_node)
+                    && let Some(name_node) = self.arena.get(decl_data.name)
+                {
+                    // Check if name is an ARRAY binding pattern
+                    // __read helper is only needed for array destructuring, not object destructuring
+                    // Object destructuring accesses properties by name, not by iterator position
+                    if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                        return true;
                     }
                 }
             }
@@ -2740,10 +2738,10 @@ impl<'a> LoweringPass<'a> {
             let Some(param_node) = self.arena.get(param_idx) else {
                 continue;
             };
-            if let Some(param) = self.arena.get_parameter(param_node) {
-                if self.get_identifier_text_ref(param.name) == Some(name) {
-                    return true;
-                }
+            if let Some(param) = self.arena.get_parameter(param_node)
+                && self.get_identifier_text_ref(param.name) == Some(name)
+            {
+                return true;
             }
         }
         false
@@ -2783,29 +2781,28 @@ impl<'a> LoweringPass<'a> {
                                 let Some(decl_node) = self.arena.get(decl_idx) else {
                                     continue;
                                 };
-                                if let Some(decl) = self.arena.get_variable_declaration(decl_node) {
-                                    if self.get_identifier_text_ref(decl.name) == Some(name) {
-                                        return true;
-                                    }
+                                if let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                                    && self.get_identifier_text_ref(decl.name) == Some(name)
+                                {
+                                    return true;
                                 }
                             }
                         }
                         // Also handle VariableDeclaration directly (in case it's not nested)
-                        if let Some(decl) = self.arena.get_variable_declaration(decl_list_node) {
-                            if self.get_identifier_text_ref(decl.name) == Some(name) {
-                                return true;
-                            }
+                        if let Some(decl) = self.arena.get_variable_declaration(decl_list_node)
+                            && self.get_identifier_text_ref(decl.name) == Some(name)
+                        {
+                            return true;
                         }
                     }
                 }
             }
             // Also check function declarations (their name occupies the scope)
-            if stmt.kind == syntax_kind_ext::FUNCTION_DECLARATION {
-                if let Some(func) = self.arena.get_function(stmt) {
-                    if self.get_identifier_text_ref(func.name) == Some(name) {
-                        return true;
-                    }
-                }
+            if stmt.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                && let Some(func) = self.arena.get_function(stmt)
+                && self.get_identifier_text_ref(func.name) == Some(name)
+            {
+                return true;
             }
         }
 

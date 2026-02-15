@@ -378,15 +378,19 @@ impl<'a> Printer<'a> {
 
     /// Create a new Printer targeting ES5.
     pub fn new_es5(arena: &'a NodeArena) -> Self {
-        let mut options = PrinterOptions::default();
-        options.target = ScriptTarget::ES5;
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
         Self::with_options(arena, options)
     }
 
     /// Create a new Printer targeting ES6+.
     pub fn new_es6(arena: &'a NodeArena) -> Self {
-        let mut options = PrinterOptions::default();
-        options.target = ScriptTarget::ES2015;
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
         Self::with_options(arena, options)
     }
 
@@ -509,14 +513,14 @@ impl<'a> Printer<'a> {
         node1: tsz_parser::parser::NodeIndex,
         node2: tsz_parser::parser::NodeIndex,
     ) -> bool {
-        if let Some(text) = self.source_text {
-            if let (Some(n1), Some(n2)) = (self.arena.get(node1), self.arena.get(node2)) {
-                let start = std::cmp::min(n1.end as usize, text.len());
-                let end = std::cmp::min(n2.pos as usize, text.len());
-                if start < end {
-                    // Check if there's a newline between the two nodes
-                    return !text[start..end].contains('\n');
-                }
+        if let Some(text) = self.source_text
+            && let (Some(n1), Some(n2)) = (self.arena.get(node1), self.arena.get(node2))
+        {
+            let start = std::cmp::min(n1.end as usize, text.len());
+            let end = std::cmp::min(n2.pos as usize, text.len());
+            if start < end {
+                // Check if there's a newline between the two nodes
+                return !text[start..end].contains('\n');
             }
         }
         false
@@ -1441,16 +1445,16 @@ impl<'a> Printer<'a> {
         self.write("_super.call(this");
 
         // Emit arguments if any
-        if let Some(ref args) = call.arguments {
-            if !args.nodes.is_empty() {
-                self.write(", ");
-                // Emit arguments separated by commas
-                for (i, &arg_idx) in args.nodes.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    self.emit(arg_idx);
+        if let Some(ref args) = call.arguments
+            && !args.nodes.is_empty()
+        {
+            self.write(", ");
+            // Emit arguments separated by commas
+            for (i, &arg_idx) in args.nodes.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
                 }
+                self.emit(arg_idx);
             }
         }
 
@@ -2197,16 +2201,13 @@ impl<'a> Printer<'a> {
                         is_erased = true;
                     }
                     // Also check if it's an export declaration wrapping an interface/type
-                    else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                        if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                            if let Some(inner_node) = self.arena.get(export.export_clause) {
-                                if inner_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                                    || inner_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                {
-                                    is_erased = true;
-                                }
-                            }
-                        }
+                    else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                        && let Some(export) = self.arena.get_export_decl(stmt_node)
+                        && let Some(inner_node) = self.arena.get(export.export_clause)
+                        && (inner_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                            || inner_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                    {
+                        is_erased = true;
                     }
 
                     if is_erased {

@@ -178,16 +178,16 @@ fn query_relation_with_overrides_can_short_circuit_assignability() {
     let overrides = AlwaysRejectOverride;
     let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
 
-    let result = query_relation_with_overrides(
-        &interner,
-        &resolver,
-        TypeId::NUMBER,
-        TypeId::NUMBER,
-        RelationKind::Assignable,
+    let result = query_relation_with_overrides(RelationQueryInputs {
+        interner: &interner,
+        resolver: &resolver,
+        source: TypeId::NUMBER,
+        target: TypeId::NUMBER,
+        kind: RelationKind::Assignable,
         policy,
-        RelationContext::default(),
-        &overrides,
-    );
+        context: RelationContext::default(),
+        overrides: &overrides,
+    });
 
     assert!(!result.is_related());
 }

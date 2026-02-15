@@ -155,25 +155,21 @@ impl<'a> TypeHierarchyProvider<'a> {
                 k if k == syntax_kind_ext::CLASS_DECLARATION
                     || k == syntax_kind_ext::CLASS_EXPRESSION =>
                 {
-                    if let Some(class) = self.arena.get_class(node) {
-                        if self
+                    if let Some(class) = self.arena.get_class(node)
+                        && self
                             .heritage_clauses_reference_name(&class.heritage_clauses, &target_name)
-                        {
-                            if let Some(item) = self.make_type_hierarchy_item(candidate_idx) {
-                                results.push(item);
-                            }
-                        }
+                        && let Some(item) = self.make_type_hierarchy_item(candidate_idx)
+                    {
+                        results.push(item);
                     }
                 }
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(node) {
-                        if self
+                    if let Some(iface) = self.arena.get_interface(node)
+                        && self
                             .heritage_clauses_reference_name(&iface.heritage_clauses, &target_name)
-                        {
-                            if let Some(item) = self.make_type_hierarchy_item(candidate_idx) {
-                                results.push(item);
-                            }
-                        }
+                        && let Some(item) = self.make_type_hierarchy_item(candidate_idx)
+                    {
+                        results.push(item);
                     }
                 }
                 _ => {}
@@ -213,16 +209,15 @@ impl<'a> TypeHierarchyProvider<'a> {
 
         // If the node is an identifier, check if its parent is a class/interface
         // declaration (i.e., we are on the type name).
-        if node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(ext) = self.arena.get_extended(node_idx) {
-                let parent = ext.parent;
-                if !parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(parent) {
-                        if self.is_type_declaration(parent_node.kind) {
-                            return Some(parent);
-                        }
-                    }
-                }
+        if node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.arena.get_extended(node_idx)
+        {
+            let parent = ext.parent;
+            if !parent.is_none()
+                && let Some(parent_node) = self.arena.get(parent)
+                && self.is_type_declaration(parent_node.kind)
+            {
+                return Some(parent);
             }
         }
 
@@ -424,17 +419,17 @@ impl<'a> TypeHierarchyProvider<'a> {
         };
 
         // Simple identifier: `Foo`
-        if expr_node.kind == SyntaxKind::Identifier as u16 {
-            if let Some(text) = self.get_identifier_text(expr_idx) {
-                return text == target_name;
-            }
+        if expr_node.kind == SyntaxKind::Identifier as u16
+            && let Some(text) = self.get_identifier_text(expr_idx)
+        {
+            return text == target_name;
         }
 
         // Property access: `Ns.Foo` - check the rightmost name
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(expr_node) {
-                return self.expression_matches_name(access.name_or_argument, target_name);
-            }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            return self.expression_matches_name(access.name_or_argument, target_name);
         }
 
         false
@@ -455,10 +450,10 @@ impl<'a> TypeHierarchyProvider<'a> {
         }
 
         // Property access: `Ns.Foo` - return the rightmost name
-        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let Some(access) = self.arena.get_access_expr(expr_node) {
-                return self.extract_expression_name(access.name_or_argument);
-            }
+        if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(expr_node)
+        {
+            return self.extract_expression_name(access.name_or_argument);
         }
 
         None
@@ -475,21 +470,19 @@ impl<'a> TypeHierarchyProvider<'a> {
                 k if k == syntax_kind_ext::CLASS_DECLARATION
                     || k == syntax_kind_ext::CLASS_EXPRESSION =>
                 {
-                    if let Some(class) = self.arena.get_class(node) {
-                        if let Some(text) = self.get_identifier_text(class.name) {
-                            if text == name {
-                                return self.make_type_hierarchy_item(candidate_idx);
-                            }
-                        }
+                    if let Some(class) = self.arena.get_class(node)
+                        && let Some(text) = self.get_identifier_text(class.name)
+                        && text == name
+                    {
+                        return self.make_type_hierarchy_item(candidate_idx);
                     }
                 }
                 k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(iface) = self.arena.get_interface(node) {
-                        if let Some(text) = self.get_identifier_text(iface.name) {
-                            if text == name {
-                                return self.make_type_hierarchy_item(candidate_idx);
-                            }
-                        }
+                    if let Some(iface) = self.arena.get_interface(node)
+                        && let Some(text) = self.get_identifier_text(iface.name)
+                        && text == name
+                    {
+                        return self.make_type_hierarchy_item(candidate_idx);
                     }
                 }
                 _ => {}

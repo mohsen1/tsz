@@ -259,28 +259,23 @@ impl<'a> Printer<'a> {
         let mut static_field_inits: Vec<(String, NodeIndex, u32)> = Vec::new(); // (name, init, member_pos)
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
-                if let Some(member_node) = self.arena.get(member_idx) {
-                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                        if let Some(prop) = self.arena.get_property_decl(member_node) {
-                            if prop.initializer.is_none()
-                                || self.has_modifier(
-                                    &prop.modifiers,
-                                    SyntaxKind::AbstractKeyword as u16,
-                                )
-                            {
-                                continue;
-                            }
-                            let name = self.get_identifier_text_idx(prop.name);
-                            if name.is_empty() {
-                                continue;
-                            }
-                            if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
-                            {
-                                static_field_inits.push((name, prop.initializer, member_node.pos));
-                            } else {
-                                field_inits.push((name, prop.initializer));
-                            }
-                        }
+                if let Some(member_node) = self.arena.get(member_idx)
+                    && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                    && let Some(prop) = self.arena.get_property_decl(member_node)
+                {
+                    if prop.initializer.is_none()
+                        || self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                    {
+                        continue;
+                    }
+                    let name = self.get_identifier_text_idx(prop.name);
+                    if name.is_empty() {
+                        continue;
+                    }
+                    if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {
+                        static_field_inits.push((name, prop.initializer, member_node.pos));
+                    } else {
+                        field_inits.push((name, prop.initializer));
                     }
                 }
             }
@@ -340,21 +335,14 @@ impl<'a> Printer<'a> {
         let mut emitted_any_member = false;
         for &member_idx in &class.members.nodes {
             // Skip property declarations that were lowered
-            if needs_class_field_lowering {
-                if let Some(member_node) = self.arena.get(member_idx) {
-                    if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                        if let Some(prop) = self.arena.get_property_decl(member_node) {
-                            if !prop.initializer.is_none()
-                                && !self.has_modifier(
-                                    &prop.modifiers,
-                                    SyntaxKind::AbstractKeyword as u16,
-                                )
-                            {
-                                continue; // Skip - lowered to constructor or after class
-                            }
-                        }
-                    }
-                }
+            if needs_class_field_lowering
+                && let Some(member_node) = self.arena.get(member_idx)
+                && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(prop) = self.arena.get_property_decl(member_node)
+                && !prop.initializer.is_none()
+                && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+            {
+                continue; // Skip - lowered to constructor or after class
             }
 
             // Emit leading comments before this member
@@ -722,88 +710,86 @@ impl<'a> Printer<'a> {
         ns_name: &str,
     ) {
         let ns_name = ns_name.to_string();
-        if let Some(body_node) = self.arena.get(module.body) {
-            if let Some(block) = self.arena.get_module_block(body_node) {
-                if let Some(ref stmts) = block.statements {
-                    for &stmt_idx in &stmts.nodes {
-                        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                            continue;
-                        };
+        if let Some(body_node) = self.arena.get(module.body)
+            && let Some(block) = self.arena.get_module_block(body_node)
+            && let Some(ref stmts) = block.statements
+        {
+            for &stmt_idx in &stmts.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
 
-                        // Skip erased declarations (interface, type alias) and their comments
-                        if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                            || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                        {
-                            self.skip_comments_for_erased_node(stmt_node);
-                            continue;
-                        }
+                // Skip erased declarations (interface, type alias) and their comments
+                if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                {
+                    self.skip_comments_for_erased_node(stmt_node);
+                    continue;
+                }
 
-                        // Also handle export { interface/type } by checking export clause
-                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                            if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                                let inner_kind =
-                                    self.arena.get(export.export_clause).map_or(0, |n| n.kind);
-                                if inner_kind == syntax_kind_ext::INTERFACE_DECLARATION
-                                    || inner_kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                {
-                                    self.skip_comments_for_erased_node(stmt_node);
-                                    continue;
-                                }
-                            }
-                        }
+                // Also handle export { interface/type } by checking export clause
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export) = self.arena.get_export_decl(stmt_node)
+                {
+                    let inner_kind = self.arena.get(export.export_clause).map_or(0, |n| n.kind);
+                    if inner_kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        || inner_kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    {
+                        self.skip_comments_for_erased_node(stmt_node);
+                        continue;
+                    }
+                }
 
-                        // Emit leading comments before this statement
-                        self.emit_comments_before_pos(stmt_node.pos);
+                // Emit leading comments before this statement
+                self.emit_comments_before_pos(stmt_node.pos);
 
-                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                            // Strip "export" and handle inner clause
-                            if let Some(export) = self.arena.get_export_decl(stmt_node) {
-                                let inner_idx = export.export_clause;
-                                let inner_kind = self.arena.get(inner_idx).map_or(0, |n| n.kind);
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                    // Strip "export" and handle inner clause
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        let inner_idx = export.export_clause;
+                        let inner_kind = self.arena.get(inner_idx).map_or(0, |n| n.kind);
 
-                                if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                                    // export var x = 10; → ns.x = 10;
-                                    self.emit_namespace_exported_variable(inner_idx, &ns_name);
-                                } else {
-                                    // class/function/enum: emit without export, then add assignment
-                                    let export_names = self.get_export_names_from_clause(inner_idx);
-                                    self.emit(inner_idx);
-
-                                    if !export_names.is_empty() {
-                                        if !self.writer.is_at_line_start() {
-                                            self.write_line();
-                                        }
-                                        for export_name in &export_names {
-                                            self.write(&ns_name);
-                                            self.write(".");
-                                            self.write(export_name);
-                                            self.write(" = ");
-                                            self.write(export_name);
-                                            self.write(";");
-                                            self.write_line();
-                                        }
-                                    } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
-                                        // Don't write extra newline for namespaces - they already call write_line()
-                                        self.write_line();
-                                    }
-                                }
-                            }
-                        } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                            // Non-exported class in namespace: just emit it
-                            let prev = self.in_namespace_iife;
-                            self.in_namespace_iife = true;
-                            self.emit(stmt_idx);
-                            self.in_namespace_iife = prev;
-                            self.write_line();
-                        } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                            // Nested namespace: recurse (emit_namespace_iife adds its own newline)
-                            self.emit(stmt_idx);
+                        if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                            // export var x = 10; → ns.x = 10;
+                            self.emit_namespace_exported_variable(inner_idx, &ns_name);
                         } else {
-                            // Regular statement
-                            self.emit(stmt_idx);
-                            self.write_line();
+                            // class/function/enum: emit without export, then add assignment
+                            let export_names = self.get_export_names_from_clause(inner_idx);
+                            self.emit(inner_idx);
+
+                            if !export_names.is_empty() {
+                                if !self.writer.is_at_line_start() {
+                                    self.write_line();
+                                }
+                                for export_name in &export_names {
+                                    self.write(&ns_name);
+                                    self.write(".");
+                                    self.write(export_name);
+                                    self.write(" = ");
+                                    self.write(export_name);
+                                    self.write(";");
+                                    self.write_line();
+                                }
+                            } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                                // Don't write extra newline for namespaces - they already call write_line()
+                                self.write_line();
+                            }
                         }
                     }
+                } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                    // Non-exported class in namespace: just emit it
+                    let prev = self.in_namespace_iife;
+                    self.in_namespace_iife = true;
+                    self.emit(stmt_idx);
+                    self.in_namespace_iife = prev;
+                    self.write_line();
+                } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                    // Nested namespace: recurse (emit_namespace_iife adds its own newline)
+                    self.emit(stmt_idx);
+                } else {
+                    // Regular statement
+                    self.emit(stmt_idx);
+                    self.write_line();
                 }
             }
         }
@@ -866,30 +852,27 @@ impl<'a> Printer<'a> {
                 }
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(node) {
-                    if let Some(name_node) = self.arena.get(func.name) {
-                        if let Some(ident) = self.arena.get_identifier(name_node) {
-                            return vec![ident.escaped_text.clone()];
-                        }
-                    }
+                if let Some(func) = self.arena.get_function(node)
+                    && let Some(name_node) = self.arena.get(func.name)
+                    && let Some(ident) = self.arena.get_identifier(name_node)
+                {
+                    return vec![ident.escaped_text.clone()];
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(node) {
-                    if let Some(name_node) = self.arena.get(class.name) {
-                        if let Some(ident) = self.arena.get_identifier(name_node) {
-                            return vec![ident.escaped_text.clone()];
-                        }
-                    }
+                if let Some(class) = self.arena.get_class(node)
+                    && let Some(name_node) = self.arena.get(class.name)
+                    && let Some(ident) = self.arena.get_identifier(name_node)
+                {
+                    return vec![ident.escaped_text.clone()];
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = self.arena.get_enum(node) {
-                    if let Some(name_node) = self.arena.get(enum_decl.name) {
-                        if let Some(ident) = self.arena.get_identifier(name_node) {
-                            return vec![ident.escaped_text.clone()];
-                        }
-                    }
+                if let Some(enum_decl) = self.arena.get_enum(node)
+                    && let Some(name_node) = self.arena.get(enum_decl.name)
+                    && let Some(ident) = self.arena.get_identifier(name_node)
+                {
+                    return vec![ident.escaped_text.clone()];
                 }
             }
             _ => {}
@@ -1071,12 +1054,11 @@ impl<'a> Printer<'a> {
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
                 && let Some(param) = self.arena.get_parameter(param_node)
+                && self.has_parameter_property_modifier(&param.modifiers)
             {
-                if self.has_parameter_property_modifier(&param.modifiers) {
-                    let name = self.get_identifier_text_idx(param.name);
-                    if !name.is_empty() {
-                        names.push(name);
-                    }
+                let name = self.get_identifier_text_idx(param.name);
+                if !name.is_empty() {
+                    names.push(name);
                 }
             }
         }

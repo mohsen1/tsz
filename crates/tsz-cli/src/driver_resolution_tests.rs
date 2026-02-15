@@ -18,12 +18,20 @@ fn test_exports_js_target_does_not_substitute_dts() {
     fs::write(dir.join("node_modules/pkg/entrypoint.d.ts"), "export {};").unwrap();
     fs::write(dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
 
-    let mut options = ResolvedCompilerOptions::default();
-    options.module_resolution = Some(ModuleResolutionKind::Node16);
-    options.resolve_package_json_exports = true;
-    options.module_suffixes = vec![String::new()];
-    options.printer.module = ModuleKind::Node16;
-    options.checker.module = ModuleKind::Node16;
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node16),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::Node16,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     let mut cache = ModuleResolutionCache::default();
     let known_files: FxHashSet<PathBuf> = FxHashSet::default();
@@ -150,12 +158,20 @@ fn test_resolve_type_package_entry_with_exports_map() {
     fs::write(pkg_dir.join("index.d.mts"), "export {};").unwrap();
     fs::write(pkg_dir.join("index.d.cts"), "export {};").unwrap();
 
-    let mut options = ResolvedCompilerOptions::default();
-    options.module_resolution = Some(ModuleResolutionKind::Bundler);
-    options.resolve_package_json_exports = true;
-    options.module_suffixes = vec![String::new()];
-    options.printer.module = ModuleKind::ESNext;
-    options.checker.module = ModuleKind::ESNext;
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        module_suffixes: vec![String::new()],
+        printer: tsz::emitter::PrinterOptions {
+            module: ModuleKind::ESNext,
+            ..Default::default()
+        },
+        checker: tsz::checker::context::CheckerOptions {
+            module: ModuleKind::ESNext,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
 
     let result = resolve_type_package_entry(&pkg_dir, &options);
     assert!(
@@ -184,8 +200,10 @@ fn test_resolve_type_package_entry_node10_restricted_extensions() {
     .unwrap();
     fs::write(pkg_dir.join("index.d.mts"), "export {};").unwrap();
 
-    let mut options = ResolvedCompilerOptions::default();
-    options.module_resolution = Some(ModuleResolutionKind::Node);
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Node),
+        ..Default::default()
+    };
 
     let result = resolve_type_package_entry(&pkg_dir, &options);
     assert!(
@@ -224,9 +242,11 @@ fn test_resolve_type_package_entry_with_mode_require() {
     fs::write(pkg_dir.join("index.d.mts"), "export {};").unwrap();
     fs::write(pkg_dir.join("index.d.cts"), "export {};").unwrap();
 
-    let mut options = ResolvedCompilerOptions::default();
-    options.module_resolution = Some(ModuleResolutionKind::Bundler);
-    options.resolve_package_json_exports = true;
+    let options = ResolvedCompilerOptions {
+        module_resolution: Some(ModuleResolutionKind::Bundler),
+        resolve_package_json_exports: true,
+        ..Default::default()
+    };
 
     let result = resolve_type_package_entry_with_mode(&pkg_dir, "require", &options);
     assert!(result.is_some(), "Should resolve with require mode");

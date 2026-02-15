@@ -249,21 +249,18 @@ pub fn collect_export_names_categorized(
             }
         }
         // Wrapped: ExportDeclaration { clause: FunctionDeclaration }
-        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-            if let Some(export_decl) = arena.get_export_decl(node)
-                && !export_decl.is_type_only
-                && !export_decl.is_default_export
-                && export_decl.module_specifier.is_none()
-                && let Some(clause_node) = arena.get(export_decl.export_clause)
-                && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-            {
-                if let Some(func) = arena.get_function(clause_node)
-                    && !has_declare_modifier_from_list(arena, &func.modifiers)
-                    && let Some(name) = get_identifier_text(arena, func.name)
-                {
-                    func_exports.push(name);
-                }
-            }
+        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            && let Some(export_decl) = arena.get_export_decl(node)
+            && !export_decl.is_type_only
+            && !export_decl.is_default_export
+            && export_decl.module_specifier.is_none()
+            && let Some(clause_node) = arena.get(export_decl.export_clause)
+            && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = arena.get_function(clause_node)
+            && !has_declare_modifier_from_list(arena, &func.modifiers)
+            && let Some(name) = get_identifier_text(arena, func.name)
+        {
+            func_exports.push(name);
         }
     }
 

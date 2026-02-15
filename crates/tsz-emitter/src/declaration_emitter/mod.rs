@@ -331,33 +331,33 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Default import: import Def from './mod'
-        if !clause.name.is_none() {
-            if let Some(&sym_id) = binder.node_symbols.get(&clause.name.0) {
-                // Get the name from the symbol
-                if let Some(symbol) = binder.symbols.get(sym_id) {
-                    symbols.push((symbol.escaped_name.clone(), sym_id));
-                }
+        if !clause.name.is_none()
+            && let Some(&sym_id) = binder.node_symbols.get(&clause.name.0)
+        {
+            // Get the name from the symbol
+            if let Some(symbol) = binder.symbols.get(sym_id) {
+                symbols.push((symbol.escaped_name.clone(), sym_id));
             }
         }
 
         // Named imports: import { A, B, C as D } from './mod'
-        if !clause.named_bindings.is_none() {
-            if let Some(bindings) = arena.get_named_imports_at(clause.named_bindings) {
-                // Process each specifier
-                for &spec_idx in &bindings.elements.nodes {
-                    if let Some(spec) = arena.get_specifier_at(spec_idx) {
-                        // Use the property_name if present (for 'as' imports), otherwise use name
-                        let name_idx = if !spec.property_name.is_none() {
-                            spec.property_name
-                        } else {
-                            spec.name
-                        };
+        if !clause.named_bindings.is_none()
+            && let Some(bindings) = arena.get_named_imports_at(clause.named_bindings)
+        {
+            // Process each specifier
+            for &spec_idx in &bindings.elements.nodes {
+                if let Some(spec) = arena.get_specifier_at(spec_idx) {
+                    // Use the property_name if present (for 'as' imports), otherwise use name
+                    let name_idx = if !spec.property_name.is_none() {
+                        spec.property_name
+                    } else {
+                        spec.name
+                    };
 
-                        if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
-                            // Get the name from the symbol
-                            if let Some(symbol) = binder.symbols.get(sym_id) {
-                                symbols.push((symbol.escaped_name.clone(), sym_id));
-                            }
+                    if let Some(&sym_id) = binder.node_symbols.get(&name_idx.0) {
+                        // Get the name from the symbol
+                        if let Some(symbol) = binder.symbols.get(sym_id) {
+                            symbols.push((symbol.escaped_name.clone(), sym_id));
                         }
                     }
                 }
@@ -587,11 +587,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else if is_implementation {
             // This is an implementation - check if we've seen overloads for this name
-            if let Some(ref name) = function_name {
-                if self.function_names_with_overloads.contains(name) {
-                    // Skip implementation signature when overloads exist
-                    return;
-                }
+            if let Some(ref name) = function_name
+                && self.function_names_with_overloads.contains(name)
+            {
+                // Skip implementation signature when overloads exist
+                return;
             }
         }
 
@@ -619,13 +619,12 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0) {
-                if let Some(return_type_id) =
+            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
+                && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, *func_type_id)
-                {
-                    self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
-                }
+            {
+                self.write(": ");
+                self.write(&self.print_type_id(return_type_id));
             }
         }
 
@@ -789,11 +788,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else if is_implementation {
             // This is an implementation - check if we've seen overloads for this name
-            if let Some(ref name) = method_name {
-                if self.method_names_with_overloads.contains(name) {
-                    // Skip implementation signature when overloads exist
-                    return;
-                }
+            if let Some(ref name) = method_name
+                && self.method_names_with_overloads.contains(name)
+            {
+                // Skip implementation signature when overloads exist
+                return;
             }
         }
 
@@ -1165,18 +1164,18 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("[");
 
                     // Get the TypeParameter data
-                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter) {
-                        if let Some(type_param) = self.arena.get_type_parameter(type_param_node) {
-                            // Emit the parameter name (e.g., "P")
-                            self.emit_node(type_param.name);
+                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter)
+                        && let Some(type_param) = self.arena.get_type_parameter(type_param_node)
+                    {
+                        // Emit the parameter name (e.g., "P")
+                        self.emit_node(type_param.name);
 
-                            // Emit " in "
-                            self.write(" in ");
+                        // Emit " in "
+                        self.write(" in ");
 
-                            // Emit the constraint (e.g., "keyof T")
-                            if !type_param.constraint.is_none() {
-                                self.emit_type(type_param.constraint);
-                            }
+                        // Emit the constraint (e.g., "keyof T")
+                        if !type_param.constraint.is_none() {
+                            self.emit_type(type_param.constraint);
                         }
                     }
 
@@ -1303,18 +1302,18 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("[");
 
                     // Get the TypeParameter data
-                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter) {
-                        if let Some(type_param) = self.arena.get_type_parameter(type_param_node) {
-                            // Emit the parameter name (e.g., "P")
-                            self.emit_node(type_param.name);
+                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter)
+                        && let Some(type_param) = self.arena.get_type_parameter(type_param_node)
+                    {
+                        // Emit the parameter name (e.g., "P")
+                        self.emit_node(type_param.name);
 
-                            // Emit " in "
-                            self.write(" in ");
+                        // Emit " in "
+                        self.write(" in ");
 
-                            // Emit constraint
-                            if !type_param.constraint.is_none() {
-                                self.emit_type(type_param.constraint);
-                            }
+                        // Emit constraint
+                        if !type_param.constraint.is_none() {
+                            self.emit_type(type_param.constraint);
                         }
                     }
 
@@ -2095,11 +2094,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else if is_implementation {
             // This is an implementation - check if we've seen overloads for this name
-            if let Some(ref name) = function_name {
-                if self.function_names_with_overloads.contains(name) {
-                    // Skip implementation signature when overloads exist
-                    return;
-                }
+            if let Some(ref name) = function_name
+                && self.function_names_with_overloads.contains(name)
+            {
+                // Skip implementation signature when overloads exist
+                return;
             }
         }
 
@@ -2125,13 +2124,12 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it
-            if let Some(func_type_id) = cache.node_types.get(&func_idx.0) {
-                if let Some(return_type_id) =
+            if let Some(func_type_id) = cache.node_types.get(&func_idx.0)
+                && let Some(return_type_id) =
                     type_queries::get_return_type(*interner, *func_type_id)
-                {
-                    self.write(": ");
-                    self.write(&self.print_type_id(return_type_id));
-                }
+            {
+                self.write(": ");
+                self.write(&self.print_type_id(return_type_id));
             }
         }
 
@@ -3025,18 +3023,18 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("[");
 
                     // Get the TypeParameter data
-                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter) {
-                        if let Some(type_param) = self.arena.get_type_parameter(type_param_node) {
-                            // Emit the parameter name (e.g., "P")
-                            self.emit_node(type_param.name);
+                    if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter)
+                        && let Some(type_param) = self.arena.get_type_parameter(type_param_node)
+                    {
+                        // Emit the parameter name (e.g., "P")
+                        self.emit_node(type_param.name);
 
-                            // Emit " in "
-                            self.write(" in ");
+                        // Emit " in "
+                        self.write(" in ");
 
-                            // Emit the constraint (e.g., "keyof T")
-                            if !type_param.constraint.is_none() {
-                                self.emit_type(type_param.constraint);
-                            }
+                        // Emit the constraint (e.g., "keyof T")
+                        if !type_param.constraint.is_none() {
+                            self.emit_type(type_param.constraint);
                         }
                     }
 
@@ -3369,39 +3367,30 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(binder) = &self.binder
         {
             // Check default import
-            if !import.import_clause.is_none() {
-                if let Some(clause_node) = self.arena.get(import.import_clause) {
-                    if let Some(clause) = self.arena.get_import_clause(clause_node) {
-                        if !clause.name.is_none() {
-                            if let Some(&sym_id) = binder.node_symbols.get(&clause.name.0) {
-                                if used.contains_key(&sym_id) {
-                                    default_count = 1;
-                                }
-                            }
-                        }
+            if !import.import_clause.is_none()
+                && let Some(clause_node) = self.arena.get(import.import_clause)
+                && let Some(clause) = self.arena.get_import_clause(clause_node)
+            {
+                if !clause.name.is_none()
+                    && let Some(&sym_id) = binder.node_symbols.get(&clause.name.0)
+                    && used.contains_key(&sym_id)
+                {
+                    default_count = 1;
+                }
 
-                        // Count named imports
-                        if !clause.named_bindings.is_none() {
-                            if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
-                                if let Some(bindings) = self.arena.get_named_imports(bindings_node)
-                                {
-                                    for &spec_idx in &bindings.elements.nodes {
-                                        // Get the specifier's name to check its symbol
-                                        if let Some(spec_node) = self.arena.get(spec_idx)
-                                            && let Some(specifier) =
-                                                self.arena.get_specifier(spec_node)
-                                        {
-                                            if let Some(&sym_id) =
-                                                binder.node_symbols.get(&specifier.name.0)
-                                            {
-                                                if used.contains_key(&sym_id) {
-                                                    named_count += 1;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                // Count named imports
+                if !clause.named_bindings.is_none()
+                    && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                    && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+                {
+                    for &spec_idx in &bindings.elements.nodes {
+                        // Get the specifier's name to check its symbol
+                        if let Some(spec_node) = self.arena.get(spec_idx)
+                            && let Some(specifier) = self.arena.get_specifier(spec_node)
+                            && let Some(&sym_id) = binder.node_symbols.get(&specifier.name.0)
+                            && used.contains_key(&sym_id)
+                        {
+                            named_count += 1;
                         }
                     }
                 }
@@ -3496,54 +3485,54 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // For class/function/interface, the name is in a specific field
-        if let Some(func) = self.arena.get_function(decl_node) {
-            if let Some(name_node) = self.arena.get(func.name) {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    return Some(ident.escaped_text.clone());
-                }
-                if let Some(lit) = self.arena.get_literal(name_node) {
-                    return Some(lit.text.clone());
-                }
+        if let Some(func) = self.arena.get_function(decl_node)
+            && let Some(name_node) = self.arena.get(func.name)
+        {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return Some(ident.escaped_text.clone());
+            }
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return Some(lit.text.clone());
             }
         }
-        if let Some(class) = self.arena.get_class(decl_node) {
-            if let Some(name_node) = self.arena.get(class.name) {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    return Some(ident.escaped_text.clone());
-                }
-                if let Some(lit) = self.arena.get_literal(name_node) {
-                    return Some(lit.text.clone());
-                }
+        if let Some(class) = self.arena.get_class(decl_node)
+            && let Some(name_node) = self.arena.get(class.name)
+        {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return Some(ident.escaped_text.clone());
+            }
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return Some(lit.text.clone());
             }
         }
-        if let Some(iface) = self.arena.get_interface(decl_node) {
-            if let Some(name_node) = self.arena.get(iface.name) {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    return Some(ident.escaped_text.clone());
-                }
-                if let Some(lit) = self.arena.get_literal(name_node) {
-                    return Some(lit.text.clone());
-                }
+        if let Some(iface) = self.arena.get_interface(decl_node)
+            && let Some(name_node) = self.arena.get(iface.name)
+        {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return Some(ident.escaped_text.clone());
+            }
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return Some(lit.text.clone());
             }
         }
-        if let Some(alias) = self.arena.get_type_alias(decl_node) {
-            if let Some(name_node) = self.arena.get(alias.name) {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    return Some(ident.escaped_text.clone());
-                }
-                if let Some(lit) = self.arena.get_literal(name_node) {
-                    return Some(lit.text.clone());
-                }
+        if let Some(alias) = self.arena.get_type_alias(decl_node)
+            && let Some(name_node) = self.arena.get(alias.name)
+        {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return Some(ident.escaped_text.clone());
+            }
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return Some(lit.text.clone());
             }
         }
-        if let Some(enum_data) = self.arena.get_enum(decl_node) {
-            if let Some(name_node) = self.arena.get(enum_data.name) {
-                if let Some(ident) = self.arena.get_identifier(name_node) {
-                    return Some(ident.escaped_text.clone());
-                }
-                if let Some(lit) = self.arena.get_literal(name_node) {
-                    return Some(lit.text.clone());
-                }
+        if let Some(enum_data) = self.arena.get_enum(decl_node)
+            && let Some(name_node) = self.arena.get(enum_data.name)
+        {
+            if let Some(ident) = self.arena.get_identifier(name_node) {
+                return Some(ident.escaped_text.clone());
+            }
+            if let Some(lit) = self.arena.get_literal(name_node) {
+                return Some(lit.text.clone());
             }
         }
 

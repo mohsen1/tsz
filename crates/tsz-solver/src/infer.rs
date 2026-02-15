@@ -298,6 +298,12 @@ pub const MAX_CONSTRAINT_ITERATIONS: usize = 100;
 /// Maximum recursion depth for type containment checks.
 pub const MAX_TYPE_RECURSION_DEPTH: usize = 100;
 
+struct VarianceState<'a> {
+    target_param: Atom,
+    covariant: &'a mut u32,
+    contravariant: &'a mut u32,
+}
+
 /// Type inference context for a single function call or expression.
 pub struct InferenceContext<'a> {
     interner: &'a dyn TypeDatabase,
@@ -3327,18 +3333,15 @@ impl<'a> InferenceContext<'a> {
     pub fn compute_variance(&self, ty: TypeId, target_param: Atom) -> (u32, u32, u32, u32) {
         let mut covariant = 0u32;
         let mut contravariant = 0u32;
-        let mut invariant = 0u32;
-        let mut bivariant = 0u32;
-
-        self.compute_variance_helper(
-            ty,
+        let invariant = 0u32;
+        let bivariant = 0u32;
+        let mut state = VarianceState {
             target_param,
-            true,
-            &mut covariant,
-            &mut contravariant,
-            &mut invariant,
-            &mut bivariant,
-        );
+            covariant: &mut covariant,
+            contravariant: &mut contravariant,
+        };
+
+        self.compute_variance_helper(ty, true, &mut state);
 
         (covariant, contravariant, invariant, bivariant)
     }
@@ -3346,132 +3349,56 @@ impl<'a> InferenceContext<'a> {
     fn compute_variance_helper(
         &self,
         ty: TypeId,
-        target_param: Atom,
         polarity: bool, // true = covariant, false = contravariant
-        covariant: &mut u32,
-        contravariant: &mut u32,
-        invariant: &mut u32,
-        bivariant: &mut u32,
+        state: &mut VarianceState<'_>,
     ) {
         match self.interner.lookup(ty) {
-            Some(TypeData::TypeParameter(info)) if info.name == target_param => {
+            Some(TypeData::TypeParameter(info)) if info.name == state.target_param => {
                 if polarity {
-                    *covariant += 1;
+                    *state.covariant += 1;
                 } else {
-                    *contravariant += 1;
+                    *state.contravariant += 1;
                 }
             }
             Some(TypeData::Array(elem)) => {
-                self.compute_variance_helper(
-                    elem,
-                    target_param,
-                    polarity,
-                    covariant,
-                    contravariant,
-                    invariant,
-                    bivariant,
-                );
+                self.compute_variance_helper(elem, polarity, state);
             }
             Some(TypeData::Tuple(elements)) => {
                 let elements = self.interner.tuple_list(elements);
                 for elem in elements.iter() {
-                    self.compute_variance_helper(
-                        elem.type_id,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(elem.type_id, polarity, state);
                 }
             }
             Some(TypeData::Union(members)) | Some(TypeData::Intersection(members)) => {
                 let members = self.interner.type_list(members);
                 for &member in members.iter() {
-                    self.compute_variance_helper(
-                        member,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(member, polarity, state);
                 }
             }
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
                     // Properties are covariant in their type (read position)
-                    self.compute_variance_helper(
-                        prop.type_id,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(prop.type_id, polarity, state);
                     // Properties are contravariant in their write type (write position)
                     if prop.write_type != prop.type_id && !prop.readonly {
-                        self.compute_variance_helper(
-                            prop.write_type,
-                            target_param,
-                            !polarity,
-                            covariant,
-                            contravariant,
-                            invariant,
-                            bivariant,
-                        );
+                        self.compute_variance_helper(prop.write_type, !polarity, state);
                     }
                 }
             }
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop in &shape.properties {
-                    self.compute_variance_helper(
-                        prop.type_id,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(prop.type_id, polarity, state);
                     if prop.write_type != prop.type_id && !prop.readonly {
-                        self.compute_variance_helper(
-                            prop.write_type,
-                            target_param,
-                            !polarity,
-                            covariant,
-                            contravariant,
-                            invariant,
-                            bivariant,
-                        );
+                        self.compute_variance_helper(prop.write_type, !polarity, state);
                     }
                 }
                 if let Some(index) = shape.string_index.as_ref() {
-                    self.compute_variance_helper(
-                        index.value_type,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(index.value_type, polarity, state);
                 }
                 if let Some(index) = shape.number_index.as_ref() {
-                    self.compute_variance_helper(
-                        index.value_type,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(index.value_type, polarity, state);
                 }
             }
             Some(TypeData::Application(app_id)) => {
@@ -3479,82 +3406,26 @@ impl<'a> InferenceContext<'a> {
                 // Variance depends on the generic type definition
                 // For now, assume covariant for all type arguments
                 for &arg in &app.args {
-                    self.compute_variance_helper(
-                        arg,
-                        target_param,
-                        polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(arg, polarity, state);
                 }
             }
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 // Parameters are contravariant
                 for param in &shape.params {
-                    self.compute_variance_helper(
-                        param.type_id,
-                        target_param,
-                        !polarity,
-                        covariant,
-                        contravariant,
-                        invariant,
-                        bivariant,
-                    );
+                    self.compute_variance_helper(param.type_id, !polarity, state);
                 }
                 // Return type is covariant
-                self.compute_variance_helper(
-                    shape.return_type,
-                    target_param,
-                    polarity,
-                    covariant,
-                    contravariant,
-                    invariant,
-                    bivariant,
-                );
+                self.compute_variance_helper(shape.return_type, polarity, state);
             }
             Some(TypeData::Conditional(cond_id)) => {
                 let cond = self.interner.conditional_type(cond_id);
                 // Conditional types are invariant in their type parameters
-                self.compute_variance_helper(
-                    cond.check_type,
-                    target_param,
-                    false,
-                    covariant,
-                    contravariant,
-                    invariant,
-                    bivariant,
-                );
-                self.compute_variance_helper(
-                    cond.extends_type,
-                    target_param,
-                    false,
-                    covariant,
-                    contravariant,
-                    invariant,
-                    bivariant,
-                );
+                self.compute_variance_helper(cond.check_type, false, state);
+                self.compute_variance_helper(cond.extends_type, false, state);
                 // But can be either in the result
-                self.compute_variance_helper(
-                    cond.true_type,
-                    target_param,
-                    polarity,
-                    covariant,
-                    contravariant,
-                    invariant,
-                    bivariant,
-                );
-                self.compute_variance_helper(
-                    cond.false_type,
-                    target_param,
-                    polarity,
-                    covariant,
-                    contravariant,
-                    invariant,
-                    bivariant,
-                );
+                self.compute_variance_helper(cond.true_type, polarity, state);
+                self.compute_variance_helper(cond.false_type, polarity, state);
             }
             _ => {}
         }
@@ -3665,73 +3536,65 @@ impl<'a> InferenceContext<'a> {
         let mut on_stack: FxHashSet<InferenceVar> = FxHashSet::default();
         let mut sccs: Vec<Vec<InferenceVar>> = Vec::new();
 
-        fn strongconnect(
-            var: InferenceVar,
-            graph: &FxHashMap<InferenceVar, FxHashSet<InferenceVar>>,
-            index_counter: &mut usize,
-            indices: &mut FxHashMap<InferenceVar, usize>,
-            lowlink: &mut FxHashMap<InferenceVar, usize>,
-            stack: &mut Vec<InferenceVar>,
-            on_stack: &mut FxHashSet<InferenceVar>,
-            sccs: &mut Vec<Vec<InferenceVar>>,
-        ) {
-            indices.insert(var, *index_counter);
-            lowlink.insert(var, *index_counter);
-            *index_counter += 1;
-            stack.push(var);
-            on_stack.insert(var);
+        struct TarjanState<'a> {
+            graph: &'a FxHashMap<InferenceVar, FxHashSet<InferenceVar>>,
+            index_counter: &'a mut usize,
+            indices: &'a mut FxHashMap<InferenceVar, usize>,
+            lowlink: &'a mut FxHashMap<InferenceVar, usize>,
+            stack: &'a mut Vec<InferenceVar>,
+            on_stack: &'a mut FxHashSet<InferenceVar>,
+            sccs: &'a mut Vec<Vec<InferenceVar>>,
+        }
 
-            if let Some(neighbors) = graph.get(&var) {
+        fn strongconnect(var: InferenceVar, state: &mut TarjanState) {
+            state.indices.insert(var, *state.index_counter);
+            state.lowlink.insert(var, *state.index_counter);
+            *state.index_counter += 1;
+            state.stack.push(var);
+            state.on_stack.insert(var);
+
+            if let Some(neighbors) = state.graph.get(&var) {
                 for &neighbor in neighbors {
-                    if !indices.contains_key(&neighbor) {
-                        strongconnect(
-                            neighbor,
-                            graph,
-                            index_counter,
-                            indices,
-                            lowlink,
-                            stack,
-                            on_stack,
-                            sccs,
-                        );
-                        let neighbor_low = *lowlink.get(&neighbor).unwrap_or(&0);
-                        let var_low = lowlink.get_mut(&var).unwrap();
+                    if !state.indices.contains_key(&neighbor) {
+                        strongconnect(neighbor, state);
+                        let neighbor_low = *state.lowlink.get(&neighbor).unwrap_or(&0);
+                        let var_low = state.lowlink.get_mut(&var).unwrap();
                         *var_low = (*var_low).min(neighbor_low);
-                    } else if on_stack.contains(&neighbor) {
-                        let neighbor_idx = *indices.get(&neighbor).unwrap_or(&0);
-                        let var_low = lowlink.get_mut(&var).unwrap();
+                    } else if state.on_stack.contains(&neighbor) {
+                        let neighbor_idx = *state.indices.get(&neighbor).unwrap_or(&0);
+                        let var_low = state.lowlink.get_mut(&var).unwrap();
                         *var_low = (*var_low).min(neighbor_idx);
                     }
                 }
             }
 
-            if *lowlink.get(&var).unwrap_or(&0) == *indices.get(&var).unwrap_or(&0) {
+            if *state.lowlink.get(&var).unwrap_or(&0) == *state.indices.get(&var).unwrap_or(&0) {
                 let mut scc = Vec::new();
                 loop {
-                    let w = stack.pop().unwrap();
-                    on_stack.remove(&w);
+                    let w = state.stack.pop().unwrap();
+                    state.on_stack.remove(&w);
                     scc.push(w);
                     if w == var {
                         break;
                     }
                 }
-                sccs.push(scc);
+                state.sccs.push(scc);
             }
         }
 
         // Run Tarjan's on all nodes
         for &var in graph.keys() {
             if !indices.contains_key(&var) {
-                strongconnect(
-                    var,
-                    &graph,
-                    &mut index_counter,
-                    &mut indices,
-                    &mut lowlink,
-                    &mut stack,
-                    &mut on_stack,
-                    &mut sccs,
-                );
+                let mut state = TarjanState {
+                    graph: &graph,
+                    index_counter: &mut index_counter,
+                    indices: &mut indices,
+                    lowlink: &mut lowlink,
+                    stack: &mut stack,
+                    on_stack: &mut on_stack,
+                    sccs: &mut sccs,
+                };
+                strongconnect(var, &mut state);
             }
         }
 
