@@ -134,7 +134,6 @@ fn benchmark_fast_tracer() {
 
     // FastTracer should be very fast (millions of checks per second)
     let checks_per_second = iterations as f64 / fast_duration.as_secs_f64();
-    println!("FastTracer: {:.2} checks/second", checks_per_second);
 
     // We expect at least 100k checks/second even in debug mode
     // In release mode, this should be millions
