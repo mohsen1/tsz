@@ -1172,7 +1172,11 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let Some(last_node) = obj.elements.nodes.last().and_then(|&idx| self.arena.get(idx))
+            let Some(last_node) = obj
+                .elements
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
             else {
                 return false;
             };
@@ -1236,7 +1240,6 @@ impl<'a> Printer<'a> {
                 // Fall through to the regular object-literal formatter so comments/trailing
                 // commas on property assignments are preserved.
             } else {
-
                 let newline_before_prop = self.source_text.is_some_and(|text| {
                     let start = std::cmp::min(node.pos as usize, text.len());
                     let prop_start = std::cmp::min(prop_node.pos as usize, text.len());
