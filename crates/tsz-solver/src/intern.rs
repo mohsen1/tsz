@@ -864,7 +864,11 @@ impl TypeInterner {
 
         if base == 10 {
             let normalized = digits.trim_start_matches('0');
-            return if normalized.is_empty() { "0".to_string() } else { normalized.to_string() };
+            return if normalized.is_empty() {
+                "0".to_string()
+            } else {
+                normalized.to_string()
+            };
         }
 
         let mut decimal: Vec<u8> = vec![0];

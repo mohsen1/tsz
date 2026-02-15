@@ -838,9 +838,7 @@ impl<'a> CheckerState<'a> {
             }
 
             let instance_type = self.get_class_instance_type(decl_idx, class);
-            self.ctx
-                .symbol_instance_types
-                .insert(sym_id, instance_type);
+            self.ctx.symbol_instance_types.insert(sym_id, instance_type);
             self.pop_type_parameters(updates);
             return Some((instance_type, params));
         }

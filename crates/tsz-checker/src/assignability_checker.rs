@@ -196,17 +196,18 @@ impl<'a> CheckerState<'a> {
 
         // Distribution pass: normalize compound types so mixed representations do not
         // leak into relation checks (for example, `Lazy(Class)` + resolved class object).
-        if let Some(members) = tsz_solver::type_queries::get_union_members(self.ctx.types, evaluated) {
+        if let Some(members) =
+            tsz_solver::type_queries::get_union_members(self.ctx.types, evaluated)
+        {
             let factory = self.ctx.types.factory();
             let members: Vec<TypeId> = members
                 .into_iter()
                 .map(|member| self.evaluate_type_for_assignability(member))
                 .collect();
             evaluated = factory.union(members);
-        } else if let Some(members) = tsz_solver::type_queries::get_intersection_members(
-            self.ctx.types,
-            evaluated,
-        ) {
+        } else if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, evaluated)
+        {
             let factory = self.ctx.types.factory();
             let members: Vec<TypeId> = members
                 .into_iter()

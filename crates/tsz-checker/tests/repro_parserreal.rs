@@ -1,27 +1,37 @@
-use crate::{CheckerOptions, CheckerState};
 use crate::diagnostics::diagnostic_codes;
+use crate::{CheckerOptions, CheckerState};
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
-use tsz_parser::parser::{node::NodeAccess, NodeIndex, ParserState};
+use tsz_parser::parser::{NodeIndex, ParserState, node::NodeAccess};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeData, TypeId, TypeInterner};
 
 #[cfg(test)]
 #[test]
 fn repro_parser_real_14_type_ids() {
-    let source = include_str!("/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts");
+    let source = include_str!(
+        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts"
+    );
     run_and_print_source_line(source, "parserRealSource14.ts", 36, 20, "clone");
 }
 
 #[cfg(test)]
 #[test]
 fn repro_parser_harness_type_ids() {
-    let source = include_str!("/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts");
+    let source = include_str!(
+        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts"
+    );
     run_and_print_source_line(source, "parserharness.ts", 611, 64, "Dataset");
 }
 
 #[cfg(test)]
-fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column: usize, expected_token: &str) {
+fn run_and_print_source_line(
+    source: &str,
+    file_name: &str,
+    line: usize,
+    column: usize,
+    expected_token: &str,
+) {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -29,7 +39,13 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut checker = CheckerState::new(parser.get_arena(), &binder, &types, file_name.to_string(), CheckerOptions::default());
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        CheckerOptions::default(),
+    );
     checker.ctx.report_unresolved_imports = true;
 
     checker.check_source_file(root);
@@ -44,7 +60,10 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
 
     let mut target_pos: u32 = 0;
     if line > 0 && column > 0 {
-        let line_start = line_starts.get(line - 1).copied().unwrap_or(*line_starts.last().unwrap_or(&0));
+        let line_start = line_starts
+            .get(line - 1)
+            .copied()
+            .unwrap_or(*line_starts.last().unwrap_or(&0));
         target_pos = (line_start + column - 1) as u32;
     }
 
@@ -64,19 +83,17 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
 
         let node_idx = NodeIndex(idx as u32);
         let node_type = checker.get_type_of_node(node_idx);
-        let text = parser.get_arena().get_identifier_text(node_idx).unwrap_or("");
+        let text = parser
+            .get_arena()
+            .get_identifier_text(node_idx)
+            .unwrap_or("");
         let kind = node.kind;
         seen.insert(node_type.0);
 
         if kind == SyntaxKind::Identifier as u16 {
             println!(
                 "cover id node={} kind={} pos={}..{} text={} -> {}",
-                idx,
-                kind,
-                node.pos,
-                node.end,
-                text,
-                node_type.0
+                idx, kind, node.pos, node.end, text, node_type.0
             );
 
             if let Some(symbol) = checker.resolve_identifier_symbol(NodeIndex(idx as u32)) {
@@ -95,11 +112,7 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
         } else {
             println!(
                 "cover node={} kind={} pos={}..{} -> {}",
-                idx,
-                kind,
-                node.pos,
-                node.end,
-                node_type.0
+                idx, kind, node.pos, node.end, node_type.0
             );
         }
 
@@ -118,7 +131,10 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
     }
 
     if !found {
-        println!("Note: expected token '{}' not found directly under target cover", expected_token);
+        println!(
+            "Note: expected token '{}' not found directly under target cover",
+            expected_token
+        );
     }
 
     for &idx in &[2453, 2547, 2548, 1531] {
@@ -127,10 +143,7 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
         };
         println!(
             "inspect node {} => kind={} pos={}..{}",
-            idx,
-            node.kind,
-            node.pos,
-            node.end
+            idx, node.kind, node.pos, node.end
         );
         if let Some(class) = parser.get_arena().get_class(node) {
             if let Some(name_text) = parser.get_arena().get_identifier_text(class.name) {
@@ -143,17 +156,25 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
         }
     }
 
-    if let Some(ast_path_class_sym) = find_symbol_id_by_text(&checker, parser.get_arena(), "AstPath") {
-        if let Some(ast_path_instance) = checker.class_instance_type_from_symbol(ast_path_class_sym) {
+    if let Some(ast_path_class_sym) =
+        find_symbol_id_by_text(&checker, parser.get_arena(), "AstPath")
+    {
+        if let Some(ast_path_instance) = checker.class_instance_type_from_symbol(ast_path_class_sym)
+        {
             println!(
                 "class_instance_type_from_symbol(AstPath) => {}",
                 ast_path_instance.0
             );
-            if let TypeData::ObjectWithIndex(shape_id) = checker.ctx.types.lookup(ast_path_instance).unwrap() {
+            if let TypeData::ObjectWithIndex(shape_id) =
+                checker.ctx.types.lookup(ast_path_instance).unwrap()
+            {
                 let shape = checker.ctx.types.object_shape(shape_id);
                 println!(
                     "AstPath shape: symbol={:?} props={} string_index={:?} number_index={:?}",
-                    shape.symbol, shape.properties.len(), shape.string_index, shape.number_index
+                    shape.symbol,
+                    shape.properties.len(),
+                    shape.string_index,
+                    shape.number_index
                 );
             }
         }
@@ -165,20 +186,26 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
                 "class_instance_type_from_symbol(Dataset) => {}",
                 dataset_instance.0
             );
-            if let TypeData::ObjectWithIndex(shape_id) = checker.ctx.types.lookup(dataset_instance).unwrap() {
+            if let TypeData::ObjectWithIndex(shape_id) =
+                checker.ctx.types.lookup(dataset_instance).unwrap()
+            {
                 let shape = checker.ctx.types.object_shape(shape_id);
                 println!(
                     "Dataset shape: symbol={:?} props={} string_index={:?} number_index={:?}",
-                    shape.symbol, shape.properties.len(), shape.string_index, shape.number_index
+                    shape.symbol,
+                    shape.properties.len(),
+                    shape.string_index,
+                    shape.number_index
                 );
             }
         }
     }
 
-    if let Some(TypeData::Union(members_id)) = checker.ctx.types.lookup(
-        checker
-            .get_type_of_node(NodeIndex(2532)),
-    ) {
+    if let Some(TypeData::Union(members_id)) = checker
+        .ctx
+        .types
+        .lookup(checker.get_type_of_node(NodeIndex(2532)))
+    {
         println!("Members of node 2532 (|| expression) union:");
         for member in checker.ctx.types.type_list(members_id).iter() {
             match checker.ctx.types.lookup(*member) {
@@ -210,7 +237,10 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
         println!("  {:?} ({}) => {}", sym.0, symbol_name, ty.0);
     }
 
-    println!("class_instance_type_cache size={}", checker.ctx.class_instance_type_cache.len());
+    println!(
+        "class_instance_type_cache size={}",
+        checker.ctx.class_instance_type_cache.len()
+    );
     for (class_idx, ty) in checker.ctx.class_instance_type_cache.iter() {
         match checker.ctx.types.lookup(*ty) {
             Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
@@ -238,9 +268,7 @@ fn run_and_print_source_line(source: &str, file_name: &str, line: usize, column:
             has_ts2322 = true;
             println!(
                 "diag: pos={} len={} msg={}",
-                d.start,
-                d.length,
-                d.message_text
+                d.start, d.length, d.message_text
             );
         }
     }
