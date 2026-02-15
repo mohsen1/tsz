@@ -39,11 +39,8 @@ fn test_debugger_records_events() {
     assert_eq!(debugger.merge_events[0].name, "MyInterface");
 
     // Record a lookup
-    debugger.record_lookup(
-        "MyClass",
-        vec!["local".into(), "file".into()],
-        Some(SymbolId(1)),
-    );
+    let scope_path = vec!["local".to_string(), "file".to_string()];
+    debugger.record_lookup("MyClass", &scope_path, Some(SymbolId(1)));
 
     assert_eq!(debugger.lookup_events.len(), 1);
     assert!(debugger.lookup_events[0].found);
