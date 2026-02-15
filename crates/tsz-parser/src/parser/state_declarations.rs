@@ -615,10 +615,17 @@ impl ParserState {
             );
         }
 
-        // Parse colon and parameter type
-        self.parse_expected(SyntaxKind::ColonToken);
-        let param_type_token = self.token();
-        let param_type = self.parse_type();
+        // Parse colon and parameter type.
+        // If the next token is already `]`, skip — the signature is malformed
+        // (e.g., `[...a]` or `[a?]`) and we've already emitted the primary error.
+        let (param_type_token, param_type) = if self.is_token(SyntaxKind::CloseBracketToken) {
+            (self.token(), NodeIndex::NONE)
+        } else {
+            self.parse_expected(SyntaxKind::ColonToken);
+            let tok = self.token();
+            let ty = self.parse_type();
+            (tok, ty)
+        };
 
         // TS1020: initializer in index signature
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
@@ -675,20 +682,18 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::CloseBracketToken);
 
-        // Detect known-invalid keyword types for index signature parameters.
-        // TS1268 is emitted by the checker; the parser only tracks this to suppress
-        // the TS1021 (missing type annotation) error when the param type is invalid.
-        let has_invalid_param_type = matches!(
+        // Detect non-valid index signature parameter types.
+        // Valid types are: string, number, symbol, or template literal types.
+        // TS1268 is emitted by the checker for anything else; the parser suppresses
+        // TS1021 (missing type annotation) when the param type will trigger TS1268.
+        let is_valid_param_type = matches!(
             param_type_token,
-            SyntaxKind::AnyKeyword
-                | SyntaxKind::BooleanKeyword
-                | SyntaxKind::VoidKeyword
-                | SyntaxKind::NeverKeyword
-                | SyntaxKind::UnknownKeyword
-                | SyntaxKind::ObjectKeyword
-                | SyntaxKind::BigIntKeyword
-                | SyntaxKind::UndefinedKeyword
+            SyntaxKind::StringKeyword | SyntaxKind::NumberKeyword | SyntaxKind::SymbolKeyword
+        ) || matches!(
+            param_type_token,
+            SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead
         );
+        let has_invalid_param_type = !param_type.is_none() && !is_valid_param_type;
 
         // Index signatures must have a type annotation (TS1021).
         // Suppress when the parameter type is already invalid (TS1268),
