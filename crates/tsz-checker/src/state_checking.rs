@@ -1366,6 +1366,24 @@ impl<'a> CheckerState<'a> {
             None
         };
 
+        // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.
+        if let Some(ref name) = var_name
+            && name == "let"
+            && let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            {
+                use tsz_parser::parser::node_flags;
+                let parent_flags = parent_node.flags as u32;
+                if parent_flags & node_flags::LET != 0 || parent_flags & node_flags::CONST != 0 {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        var_decl.name,
+                        diagnostic_messages::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+                        diagnostic_codes::LET_IS_NOT_ALLOWED_TO_BE_USED_AS_A_NAME_IN_LET_OR_CONST_DECLARATIONS,
+                    );
+                }
+            }
+
         // TS1100/TS1210: invalid use of 'arguments'/'eval' in strict mode
         // Use class-specific messaging in class bodies.
         if self.is_strict_mode_for_node(var_decl.name)
