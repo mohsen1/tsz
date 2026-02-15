@@ -1157,42 +1157,46 @@ impl<'a> Printer<'a> {
             }
             !text[start..end].contains('\n')
         });
-        let has_multiline_object_member = obj.elements.nodes.iter().any(|&prop| {
-            let Some(prop_node) = self.arena.get(prop) else {
-                return false;
-            };
+        let has_multiline_object_member = if obj.elements.nodes.len() == 1 {
+            false
+        } else {
+            obj.elements.nodes.iter().any(|&prop| {
+                let Some(prop_node) = self.arena.get(prop) else {
+                    return false;
+                };
 
-            match prop_node.kind {
-                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                    let Some(method) = self.arena.get_method_decl(prop_node) else {
-                        return false;
-                    };
-                    if method.body.is_none() {
-                        return false;
+                match prop_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.arena.get_method_decl(prop_node) else {
+                            return false;
+                        };
+                        if method.body.is_none() {
+                            return false;
+                        }
+                        self.node_text_contains_node(method.body)
                     }
-                    self.node_text_contains_node(method.body)
-                }
-                k if k == syntax_kind_ext::GET_ACCESSOR => {
-                    let Some(accessor) = self.arena.get_accessor(prop_node) else {
-                        return false;
-                    };
-                    if accessor.body.is_none() {
-                        return false;
+                    k if k == syntax_kind_ext::GET_ACCESSOR => {
+                        let Some(accessor) = self.arena.get_accessor(prop_node) else {
+                            return false;
+                        };
+                        if accessor.body.is_none() {
+                            return false;
+                        }
+                        self.node_text_contains_node(accessor.body)
                     }
-                    self.node_text_contains_node(accessor.body)
-                }
-                k if k == syntax_kind_ext::SET_ACCESSOR => {
-                    let Some(accessor) = self.arena.get_accessor(prop_node) else {
-                        return false;
-                    };
-                    if accessor.body.is_none() {
-                        return false;
+                    k if k == syntax_kind_ext::SET_ACCESSOR => {
+                        let Some(accessor) = self.arena.get_accessor(prop_node) else {
+                            return false;
+                        };
+                        if accessor.body.is_none() {
+                            return false;
+                        }
+                        self.node_text_contains_node(accessor.body)
                     }
-                    self.node_text_contains_node(accessor.body)
+                    _ => false,
                 }
-                _ => false,
-            }
-        });
+            })
+        };
 
         let should_emit_single_line = source_single_line && !has_multiline_object_member;
         if should_emit_single_line {

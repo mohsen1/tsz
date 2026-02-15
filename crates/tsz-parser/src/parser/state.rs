@@ -1533,10 +1533,17 @@ impl ParserState {
     }
 
     /// Resynchronize after a parse error by skipping to the next statement boundary
-    /// This prevents cascading errors by finding a known good synchronization point
-    pub(crate) fn resync_after_error(&mut self) {
+    /// This prevents cascading errors by finding a known good synchronization point.
+    /// `allow_statement_starts` controls whether token kinds that begin statements
+    /// (especially identifiers) are valid sync points.
+    pub(crate) fn resync_after_error_with_statement_starts(
+        &mut self,
+        allow_statement_starts: bool,
+    ) {
         // If we're already at a sync point or EOF, no need to resync
-        if self.is_resync_sync_point() || self.is_token(SyntaxKind::EndOfFileToken) {
+        if self.is_resync_sync_point_with_statement_starts(allow_statement_starts)
+            || self.is_token(SyntaxKind::EndOfFileToken)
+        {
             return;
         }
 
@@ -1583,7 +1590,7 @@ impl ParserState {
                     // Found closing paren at same level - could be end of expression
                     // Skip it and check if next token is a sync point
                     self.next_token();
-                    if self.is_resync_sync_point() {
+                    if self.is_resync_sync_point_with_statement_starts(allow_statement_starts) {
                         break;
                     }
                     continue;
@@ -1615,7 +1622,7 @@ impl ParserState {
             if brace_depth == 0
                 && paren_depth == 0
                 && bracket_depth == 0
-                && self.is_resync_sync_point()
+                && self.is_resync_sync_point_with_statement_starts(allow_statement_starts)
             {
                 break;
             }
@@ -1623,6 +1630,16 @@ impl ParserState {
             // Keep skipping tokens
             self.next_token();
         }
+    }
+
+    fn is_resync_sync_point_with_statement_starts(&self, allow_statement_starts: bool) -> bool {
+        self.is_resync_sync_point()
+            && (allow_statement_starts || self.token() != SyntaxKind::Identifier)
+    }
+
+    /// Default resync behavior: allow statement starts as sync points.
+    pub(crate) fn resync_after_error(&mut self) {
+        self.resync_after_error_with_statement_starts(true);
     }
 
     // =========================================================================
