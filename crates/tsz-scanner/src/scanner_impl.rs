@@ -3022,9 +3022,10 @@ mod tests {
             {
                 break;
             }
-            if token == SyntaxKind::EndOfFileToken {
-                panic!("failed to reach template token");
-            }
+            assert!(
+                token != SyntaxKind::EndOfFileToken,
+                "failed to reach template token"
+            );
         }
 
         let token = scanner.re_scan_template_head_or_no_substitution_template();
