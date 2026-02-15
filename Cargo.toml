@@ -114,7 +114,6 @@ empty_line_after_doc_comments = "allow"
 explicit_auto_deref = "allow"
 mem_replace_with_default = "allow"
 mixed_read_write_in_expression = "allow"
-useless_conversion = "allow"
 clone_on_ref_ptr = "allow"
 needless_pass_by_value = "allow"
 
