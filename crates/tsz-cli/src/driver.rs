@@ -793,8 +793,8 @@ fn compile_inner(
 
     // Create a unified effective cache reference that works for both cases
     // This follows Gemini's recommended pattern to handle the two cache sources
-    let mut local_cache_ref = local_cache.as_mut();
-    let mut effective_cache = local_cache_ref.as_deref_mut().or(cache.as_deref_mut());
+    let local_cache_ref = local_cache.as_mut();
+    let mut effective_cache = local_cache_ref.or(cache.as_deref_mut());
 
     let read_sources_start = Instant::now();
     let SourceReadResult {
