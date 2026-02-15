@@ -4,7 +4,7 @@ use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::{NodeIndex, ParserState, node::NodeAccess};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeData, TypeId, TypeInterner};
+use tsz_solver::{TypeId, TypeInterner};
 
 #[cfg(test)]
 #[test]
@@ -164,18 +164,10 @@ fn run_and_print_source_line(
             "class_instance_type_from_symbol(AstPath) => {}",
             ast_path_instance.0
         );
-        if let TypeData::ObjectWithIndex(shape_id) =
-            checker.ctx.types.lookup(ast_path_instance).unwrap()
-        {
-            let shape = checker.ctx.types.object_shape(shape_id);
-            println!(
-                "AstPath shape: symbol={:?} props={} string_index={:?} number_index={:?}",
-                shape.symbol,
-                shape.properties.len(),
-                shape.string_index,
-                shape.number_index
-            );
-        }
+        println!(
+            "AstPath instance type: {:?}",
+            checker.ctx.types.lookup(ast_path_instance)
+        );
     }
 
     if let Some(dataset_sym) = find_symbol_id_by_text(&checker, parser.get_arena(), "Dataset")
@@ -185,44 +177,19 @@ fn run_and_print_source_line(
             "class_instance_type_from_symbol(Dataset) => {}",
             dataset_instance.0
         );
-        if let TypeData::ObjectWithIndex(shape_id) =
-            checker.ctx.types.lookup(dataset_instance).unwrap()
-        {
-            let shape = checker.ctx.types.object_shape(shape_id);
-            println!(
-                "Dataset shape: symbol={:?} props={} string_index={:?} number_index={:?}",
-                shape.symbol,
-                shape.properties.len(),
-                shape.string_index,
-                shape.number_index
-            );
-        }
+        println!(
+            "Dataset instance type: {:?}",
+            checker.ctx.types.lookup(dataset_instance)
+        );
     }
 
-    if let Some(TypeData::Union(members_id)) = checker
-        .ctx
-        .types
-        .lookup(checker.get_type_of_node(NodeIndex(2532)))
-    {
-        println!("Members of node 2532 (|| expression) union:");
-        for member in checker.ctx.types.type_list(members_id).iter() {
-            match checker.ctx.types.lookup(*member) {
-                Some(TypeData::ObjectWithIndex(shape_id)) => {
-                    let shape = checker.ctx.types.object_shape(shape_id);
-                    println!(
-                        "  member {} => symbol {:?} props {}",
-                        member.0,
-                        shape.symbol,
-                        shape.properties.len()
-                    );
-                }
-                Some(other) => {
-                    println!("  member {} => {:?}", member.0, other);
-                }
-                None => println!("  member {} => <missing>", member.0),
-            }
-        }
-    }
+    println!(
+        "node 2532 (|| expression) type => {:?}",
+        checker
+            .ctx
+            .types
+            .lookup(checker.get_type_of_node(NodeIndex(2532)))
+    );
 
     println!("symbol_instance_types cached:");
     for (sym, ty) in checker.ctx.symbol_instance_types.iter() {
@@ -240,24 +207,12 @@ fn run_and_print_source_line(
         checker.ctx.class_instance_type_cache.len()
     );
     for (class_idx, ty) in checker.ctx.class_instance_type_cache.iter() {
-        match checker.ctx.types.lookup(*ty) {
-            Some(tsz_solver::TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = checker.ctx.types.object_shape(shape_id);
-                println!(
-                    "  node {} => {} (ObjectWithIndex symbol={:?} props={})",
-                    class_idx.0,
-                    ty.0,
-                    shape.symbol,
-                    shape.properties.len()
-                );
-            }
-            Some(other) => {
-                println!("  node {} => {} ({:?})", class_idx.0, ty.0, other);
-            }
-            None => {
-                println!("  node {} => {} (missing type)", class_idx.0, ty.0);
-            }
-        }
+        println!(
+            "  node {} => {} ({:?})",
+            class_idx.0,
+            ty.0,
+            checker.ctx.types.lookup(*ty)
+        );
     }
 
     let mut has_ts2322 = false;
