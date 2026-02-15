@@ -93,6 +93,10 @@ impl<'a> Printer<'a> {
         (count, has_rest)
     }
 
+    fn emit_commonjs_binding_target(&mut self, name: NodeIndex) {
+        self.emit(name);
+    }
+
     /// For single-binding array patterns with complex expressions,
     /// find the single effective binding's index and emit inline.
     fn emit_single_array_binding_inline(
