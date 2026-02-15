@@ -1,6 +1,6 @@
 //! Type Checking Module
 //!
-//! This module contains type checking methods for CheckerState
+//! This module contains type checking methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Statement checking
 //! - Declaration validation
 //!
-//! This module extends CheckerState with additional methods for type-related
+//! This module extends `CheckerState` with additional methods for type-related
 //! validation operations, providing cleaner APIs for common patterns.
 
 use crate::query_boundaries::type_checking as query;
@@ -38,7 +38,7 @@ impl<'a> CheckerState<'a> {
     /// Get modifiers from a declaration node, consolidating duplicated match statements.
     ///
     /// This helper eliminates the repeated pattern of matching declaration kinds
-    /// and extracting their modifiers. Used in has_export_modifier and similar functions.
+    /// and extracting their modifiers. Used in `has_export_modifier` and similar functions.
     pub(crate) fn get_declaration_modifiers(
         &self,
         node: &tsz_parser::parser::node::Node,
@@ -118,7 +118,7 @@ impl<'a> CheckerState<'a> {
     /// Get identifier text from a node, if it's an identifier.
     ///
     /// This helper eliminates the repeated pattern of checking for identifier
-    /// and extracting escaped_text.
+    /// and extracting `escaped_text`.
     pub(crate) fn get_identifier_text(
         &self,
         node: &tsz_parser::parser::node::Node,
@@ -163,7 +163,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a class member name for computed property validation.
     ///
-    /// This dispatches to check_computed_property_name for properties,
+    /// This dispatches to `check_computed_property_name` for properties,
     /// methods, and accessors that use computed names.
     pub(crate) fn check_class_member_name(&mut self, member_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -182,7 +182,7 @@ impl<'a> CheckerState<'a> {
     /// If duplicates are found, it emits TS2308 errors for each duplicate.
     ///
     /// ## Duplicate Detection:
-    /// - Collects all member names into a HashSet
+    /// - Collects all member names into a `HashSet`
     /// - Reports error for each name that appears more than once
     /// - Error TS2308: "Duplicate identifier '{name}'"
     pub(crate) fn check_enum_duplicate_members(&mut self, enum_idx: NodeIndex) {
@@ -535,7 +535,7 @@ impl<'a> CheckerState<'a> {
                 };
                 self.error_at_node(
                     name_idx,
-                    &format!("Duplicate identifier '{}'.", name),
+                    &format!("Duplicate identifier '{name}'."),
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
                 );
                 // Also mark the first occurrence
@@ -547,7 +547,7 @@ impl<'a> CheckerState<'a> {
                     };
                     self.error_at_node(
                         prev_name_idx,
-                        &format!("Duplicate identifier '{}'.", name),
+                        &format!("Duplicate identifier '{name}'."),
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
                 }
@@ -836,9 +836,9 @@ impl<'a> CheckerState<'a> {
     /// Check if current compiler options support top-level await.
     ///
     /// Top-level await is supported when:
-    /// - module is ES2022, ESNext, System, Node16, NodeNext, or Preserve
+    /// - module is ES2022, `ESNext`, System, Node16, `NodeNext`, or Preserve
     /// - target is ES2017 or higher
-    fn supports_top_level_await(&self) -> bool {
+    const fn supports_top_level_await(&self) -> bool {
         use tsz_common::common::{ModuleKind, ScriptTarget};
 
         // Check module kind supports top-level await
@@ -952,11 +952,6 @@ impl<'a> CheckerState<'a> {
                     {
                         stack.push(access_expr.expression);
                     }
-                }
-                syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
-                    // Element access is stored differently - need to check the actual structure
-                    // The expression and argument are stored in specific data_index positions
-                    // For now, skip this to avoid breaking the build
                 }
                 syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                     if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node)
@@ -1254,7 +1249,7 @@ impl<'a> CheckerState<'a> {
                         if should_error {
                             self.error_at_node(
                                 access_node_idx,
-                                &format!("Property '{}' is used before its initialization.", name),
+                                &format!("Property '{name}' is used before its initialization."),
                                 diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
                             );
                         }
@@ -1294,7 +1289,7 @@ impl<'a> CheckerState<'a> {
     /// ## Parameters
     /// - `node_idx`: The expression node index to search
     ///
-    /// Returns a list of (property_name, access_node) tuples.
+    /// Returns a list of (`property_name`, `access_node`) tuples.
     pub(crate) fn collect_this_property_accesses(
         &self,
         node_idx: NodeIndex,
@@ -1419,7 +1414,10 @@ impl<'a> CheckerState<'a> {
 
     // 18. AST Context Checking (4 functions)
 
-    /// Get the name of a method declaration for symbol/key comparisons.
+    /// Get the name of a method declaration.
+    ///
+    /// Handles both identifier names and numeric literal names
+    /// (for methods like `0()`, `1()`, etc.).
     ///
     /// ## Parameters
     /// - `member_idx`: The class member node index
@@ -1694,7 +1692,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a function is within a namespace or module context.
     ///
-    /// Uses AST-based parent traversal to detect ModuleDeclaration in the parent chain.
+    /// Uses AST-based parent traversal to detect `ModuleDeclaration` in the parent chain.
     ///
     /// ## Parameters
     /// - `func_idx`: The function node index
@@ -1728,7 +1726,7 @@ impl<'a> CheckerState<'a> {
     /// This uses proper AST-based detection by:
     /// 1. Checking the node's flags for the AMBIENT flag
     /// 2. Walking up the parent chain to find if enclosed in an ambient context
-    /// 3. Checking modifiers on declaration nodes for DeclareKeyword
+    /// 3. Checking modifiers on declaration nodes for `DeclareKeyword`
     ///
     /// ## Parameters
     /// - `var_idx`: The variable declaration node index
@@ -2394,12 +2392,12 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Check if a statement is a super() call.
+    /// Check if a statement is a `super()` call.
     ///
     /// ## Parameters
     /// - `stmt_idx`: The statement node index
     ///
-    /// Returns true if the statement is an expression statement calling super().
+    /// Returns true if the statement is an expression statement calling `super()`.
     pub(crate) fn is_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return false;
@@ -2738,7 +2736,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Verify that a declaration node actually has a name matching the expected symbol name.
-    /// This is used to filter out false matches when lib declarations' NodeIndex values
+    /// This is used to filter out false matches when lib declarations' `NodeIndex` values
     /// overlap with user arena indices and point to unrelated user nodes.
     fn declaration_name_matches(&self, decl_idx: NodeIndex, expected_name: &str) -> bool {
         let Some(name_node_idx) = self.get_declaration_name_node(decl_idx) else {
@@ -2814,7 +2812,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the display string for a property key.
     ///
-    /// Converts a PropertyKey enum into its string representation
+    /// Converts a `PropertyKey` enum into its string representation
     /// for use in error messages and diagnostics.
     ///
     /// ## Parameters
@@ -2825,26 +2823,26 @@ impl<'a> CheckerState<'a> {
         match key {
             PropertyKey::Ident(s) => s.clone(),
             PropertyKey::Computed(ComputedKey::Ident(s)) => {
-                format!("[{}]", s)
+                format!("[{s}]")
             }
             PropertyKey::Computed(ComputedKey::String(s)) => {
-                format!("[\"{}\"]", s)
+                format!("[\"{s}\"]")
             }
             PropertyKey::Computed(ComputedKey::Number(n)) => {
-                format!("[{}]", n)
+                format!("[{n}]")
             }
-            PropertyKey::Private(s) => format!("#{}", s),
+            PropertyKey::Private(s) => format!("#{s}"),
         }
     }
 
     /// Get the Symbol property name from an expression.
     ///
-    /// Extracts the name from a Symbol() expression, e.g., Symbol("foo") -> "Symbol.foo".
+    /// Extracts the name from a `Symbol()` expression, e.g., Symbol("foo") -> "Symbol.foo".
     ///
     /// ## Parameters
     /// - `expr_idx`: The expression node index
     ///
-    /// Returns the Symbol property name if the expression is a Symbol() call.
+    /// Returns the Symbol property name if the expression is a `Symbol()` call.
     pub(crate) fn get_symbol_property_name_from_expr(&self, expr_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;
 
@@ -2897,7 +2895,7 @@ impl<'a> CheckerState<'a> {
     /// - `node_idx`: The potential descendant node
     /// - `root_idx`: The potential ancestor node
     ///
-    /// Returns true if node_idx is within root_idx.
+    /// Returns true if `node_idx` is within `root_idx`.
     pub(crate) fn is_node_within(&self, node_idx: NodeIndex, root_idx: NodeIndex) -> bool {
         if node_idx == root_idx {
             return true;
@@ -2934,11 +2932,11 @@ impl<'a> CheckerState<'a> {
     /// of the file (position 0).
     ///
     /// This function checks for:
-    /// 1. Core 8 types when --noLib is used: Array, Boolean, Function, IArguments,
-    ///    Number, Object, RegExp, String
+    /// 1. Core 8 types when --noLib is used: Array, Boolean, Function, `IArguments`,
+    ///    Number, Object, `RegExp`, String
     /// 2. ES2015+ types when they should be available but aren't: Awaited,
-    ///    IterableIterator, AsyncIterableIterator, TypedPropertyDescriptor,
-    ///    CallableFunction, NewableFunction, Disposable, AsyncDisposable
+    ///    `IterableIterator`, `AsyncIterableIterator`, `TypedPropertyDescriptor`,
+    ///    `CallableFunction`, `NewableFunction`, Disposable, `AsyncDisposable`
     ///
     /// This matches TypeScript's behavior in tests like noCrashOnNoLib.ts,
     /// generatorReturnTypeFallback.2.ts, missingDecoratorType.ts, etc.
@@ -2984,7 +2982,7 @@ impl<'a> CheckerState<'a> {
         self.check_feature_specific_global_types();
     }
 
-    /// Register boxed types (String, Number, Boolean, etc.) from lib.d.ts in TypeEnvironment.
+    /// Register boxed types (String, Number, Boolean, etc.) from lib.d.ts in `TypeEnvironment`.
     ///
     /// This enables primitive property access to use lib.d.ts definitions instead of
     /// hardcoded lists. For example, "foo".length will look up the String interface
@@ -3154,9 +3152,9 @@ impl<'a> CheckerState<'a> {
     /// only checked when the feature is potentially used in the code.
     ///
     /// Examples:
-    /// - TypedPropertyDescriptor: Required for decorators
-    /// - IterableIterator: Required for generators
-    /// - AsyncIterableIterator: Required for async generators
+    /// - `TypedPropertyDescriptor`: Required for decorators
+    /// - `IterableIterator`: Required for generators
+    /// - `AsyncIterableIterator`: Required for async generators
     /// - Disposable/AsyncDisposable: Required for using declarations
     /// - Awaited: Required for await type operator
     pub(crate) fn check_feature_specific_global_types(&mut self) {
@@ -3213,12 +3211,6 @@ impl<'a> CheckerState<'a> {
                     // TSC emits TS2318 for Awaited when Promise-like types are used, even without explicit await
                     // Check if async/await is used OR if noLib is true (TSC checks it in that case)
                     self.ctx.async_depth > 0 || self.ctx.no_lib()
-                }
-                // CallableFunction/NewableFunction are needed for strict checks
-                "CallableFunction" | "NewableFunction" => {
-                    // These are emitted in certain strict scenarios
-                    // Check if we're in a context that would use them
-                    false // Don't emit for now - too broad
                 }
                 _ => false,
             };
@@ -3872,8 +3864,8 @@ impl<'a> CheckerState<'a> {
         !func.body.is_none()
     }
 
-    /// Get the NodeIndex of the nearest enclosing MODULE_DECLARATION (namespace) for a declaration.
-    /// Returns NodeIndex::NONE if the declaration is not inside a namespace.
+    /// Get the `NodeIndex` of the nearest enclosing `MODULE_DECLARATION` (namespace) for a declaration.
+    /// Returns `NodeIndex::NONE` if the declaration is not inside a namespace.
     fn get_enclosing_namespace(&self, decl_idx: NodeIndex) -> NodeIndex {
         use tsz_parser::parser::syntax_kind_ext;
         let mut current = decl_idx;
@@ -3898,9 +3890,9 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the NodeIndex of the nearest enclosing block scope for a declaration.
-    /// Returns the first Block, CaseBlock, ForStatement, etc. ancestor.
-    /// Returns NodeIndex::NONE if the declaration is directly in a function/module scope.
+    /// Get the `NodeIndex` of the nearest enclosing block scope for a declaration.
+    /// Returns the first Block, `CaseBlock`, `ForStatement`, etc. ancestor.
+    /// Returns `NodeIndex::NONE` if the declaration is directly in a function/module scope.
     fn get_enclosing_block_scope(&self, decl_idx: NodeIndex) -> NodeIndex {
         use tsz_parser::parser::syntax_kind_ext;
         let mut current = decl_idx;
@@ -4396,15 +4388,15 @@ impl<'a> CheckerState<'a> {
                             || (flags & symbol_flags::REGULAR_ENUM) != 0
                             || (flags & symbol_flags::CONST_ENUM) != 0;
                         let (msg, code) = if is_type_only {
-                            (format!("'{}' is declared but never used.", name), 6196)
+                            (format!("'{name}' is declared but never used."), 6196)
                         } else if is_write_only {
                             (
-                                format!("'{}' is assigned a value but never used.", name),
+                                format!("'{name}' is assigned a value but never used."),
                                 6198,
                             )
                         } else {
                             (
-                                format!("'{}' is declared but its value is never read.", name),
+                                format!("'{name}' is declared but its value is never read."),
                                 6133,
                             )
                         };
@@ -4440,7 +4432,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_param {
-                    let msg = format!("'{}' is declared but its value is never read.", name);
+                    let msg = format!("'{name}' is declared but its value is never read.");
                     let start = decl_node.pos;
                     let length = decl_node.end.saturating_sub(decl_node.pos);
                     self.ctx.push_diagnostic(Diagnostic {
@@ -4531,7 +4523,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Find the parent IMPORT_DECLARATION node for an import symbol's declaration.
+    /// Find the parent `IMPORT_DECLARATION` node for an import symbol's declaration.
     fn find_parent_import_declaration(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -4559,8 +4551,8 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Find the parent VARIABLE_DECLARATION node for a variable symbol's declaration.
-    /// This returns the VARIABLE_DECLARATION node itself, not the VARIABLE_DECLARATION_LIST.
+    /// Find the parent `VARIABLE_DECLARATION` node for a variable symbol's declaration.
+    /// This returns the `VARIABLE_DECLARATION` node itself, not the `VARIABLE_DECLARATION_LIST`.
     fn find_parent_variable_decl_node(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -4588,7 +4580,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Find the parent VARIABLE_DECLARATION_LIST node for a variable symbol's declaration.
+    /// Find the parent `VARIABLE_DECLARATION_LIST` node for a variable symbol's declaration.
     /// This allows us to track all variables declared in a single statement (e.g., `var x, y;`).
     fn find_parent_variable_declaration(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
@@ -4617,7 +4609,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Find the parent BINDING_PATTERN (OBJECT_BINDING_PATTERN or ARRAY_BINDING_PATTERN)
+    /// Find the parent `BINDING_PATTERN` (`OBJECT_BINDING_PATTERN` or `ARRAY_BINDING_PATTERN`)
     /// for a binding element declaration. This is used to track TS6198 (all destructured
     /// elements are unused).
     fn find_parent_binding_pattern(&self, mut idx: NodeIndex) -> Option<NodeIndex> {

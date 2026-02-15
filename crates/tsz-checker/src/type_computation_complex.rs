@@ -1,6 +1,6 @@
 //! Type Computation (Complex Operations)
 //!
-//! Extracted from type_computation.rs: Second half of CheckerState impl
+//! Extracted from `type_computation.rs`: Second half of `CheckerState` impl
 //! containing complex type computation methods for new expressions,
 //! call expressions, constructability, union/keyof types, and identifiers.
 
@@ -482,8 +482,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     idx,
                     &format!(
-                        "No overload expects {} arguments, but overloads do exist that expect either {} or {} arguments.",
-                        actual, expected_low, expected_high
+                        "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
                     ),
                     diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
                 );
@@ -735,12 +734,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the construct type from a TypeId, used for new expressions.
+    /// Get the construct type from a `TypeId`, used for new expressions.
     ///
-    /// This is similar to get_construct_signature_return_type but returns
+    /// This is similar to `get_construct_signature_return_type` but returns
     /// the full construct type (not just the return type) for new expressions.
     ///
-    /// The emit_error parameter controls whether we emit TS2507 errors.
+    /// The `emit_error` parameter controls whether we emit TS2507 errors.
     /// Resolve Ref types to their actual types.
     ///
     /// For symbol references (Ref), this resolves them to the symbol's declared type.
@@ -771,14 +770,13 @@ impl<'a> CheckerState<'a> {
                     type_id
                 }
             }
-            query::LazyTypeKind::NotLazy => type_id,
-            _ => type_id, // Handle deprecated variants for compatibility
+            _ => type_id, // Handle all cases
         }
     }
 
     /// Resolve type parameter constraints for construct expressions.
     ///
-    /// When the constructor type is a TypeParameter (e.g., `T extends Constructable`),
+    /// When the constructor type is a `TypeParameter` (e.g., `T extends Constructable`),
     /// the solver's `resolve_new` tries to look through the constraint. But if the
     /// constraint is a Lazy type (interface), the solver can't resolve it because it
     /// lacks the type environment. This method pre-resolves the constraint so the
@@ -802,7 +800,7 @@ impl<'a> CheckerState<'a> {
         // Create a new TypeParameter with the resolved constraint
         let new_info = tsz_solver::TypeParamInfo {
             constraint: Some(resolved_constraint),
-            ..info.clone()
+            ..info
         };
         factory.type_param(new_info)
     }
@@ -854,7 +852,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get type from an intersection type node (A & B).
     ///
-    /// Uses CheckerState's get_type_from_type_node for each member to ensure
+    /// Uses `CheckerState`'s `get_type_from_type_node` for each member to ensure
     /// typeof expressions are resolved via binder (same reason as union types).
     pub(crate) fn get_type_from_intersection_type(&mut self, idx: NodeIndex) -> TypeId {
         let factory = self.ctx.types.factory();
@@ -884,7 +882,7 @@ impl<'a> CheckerState<'a> {
     /// Get type from a type operator node (readonly T[], readonly [T, U], unique symbol).
     ///
     /// Handles type modifiers like:
-    /// - `readonly T[]` - Creates ReadonlyType wrapper
+    /// - `readonly T[]` - Creates `ReadonlyType` wrapper
     /// - `unique symbol` - Special marker for unique symbols
     pub(crate) fn get_type_from_type_operator(&mut self, idx: NodeIndex) -> TypeId {
         let factory = self.ctx.types.factory();
@@ -1015,7 +1013,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the class declaration node from a TypeId.
+    /// Get the class declaration node from a `TypeId`.
     ///
     /// This function attempts to find the class declaration for a given type
     /// by looking for "private brand" properties that TypeScript adds to class
@@ -1104,7 +1102,7 @@ impl<'a> CheckerState<'a> {
             .copied()
     }
 
-    /// Get the class name from a TypeId if it represents a class instance.
+    /// Get the class name from a `TypeId` if it represents a class instance.
     ///
     /// Returns the class name as a string if the type represents a class,
     /// or None if the type doesn't represent a class or the class has no name.
@@ -1606,8 +1604,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     call_idx,
                     &format!(
-                        "No overload expects {} arguments, but overloads do exist that expect either {} or {} arguments.",
-                        actual, expected_low, expected_high
+                        "No overload expects {actual} arguments, but overloads do exist that expect either {expected_low} or {expected_high} arguments."
                     ),
                     diagnostic_codes::NO_OVERLOAD_EXPECTS_ARGUMENTS_BUT_OVERLOADS_DO_EXIST_THAT_EXPECT_EITHER_OR_ARGUM,
                 );
@@ -2179,7 +2176,7 @@ impl<'a> CheckerState<'a> {
                     value_type = ?value_type,
                     "get_type_of_identifier: value_type before *Constructor lookup"
                 );
-                let constructor_name = format!("{}Constructor", name);
+                let constructor_name = format!("{name}Constructor");
                 trace!(
                     name = name,
                     constructor_name = %constructor_name,
@@ -2420,7 +2417,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolve a known global value name (e.g. `console`, `Math`, `Array`).
-    /// Tries binder file_locals and lib binders, then falls back to error reporting.
+    /// Tries binder `file_locals` and lib binders, then falls back to error reporting.
     fn resolve_known_global(&mut self, idx: NodeIndex, name: &str) -> TypeId {
         if self.is_nodejs_runtime_global(name) {
             // In CommonJS module mode, these globals are implicitly available

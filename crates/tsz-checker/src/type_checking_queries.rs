@@ -1,7 +1,7 @@
 //! Type Checking Queries Module
 //!
-//! This module contains modifier, member access, and query methods for CheckerState.
-//! Split from type_checking.rs for maintainability.
+//! This module contains modifier, member access, and query methods for `CheckerState`.
+//! Split from `type_checking.rs` for maintainability.
 
 use crate::query_boundaries::type_checking::{
     first_construct_signature_return_type, is_direct_class_lazy_reference,
@@ -72,7 +72,7 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Check if the current file is a JavaScript file (.js, .jsx, .mjs, .cjs).
-    /// Used for TS8xxx JS grammar checks.
+    /// Used for `TS8xxx` JS grammar checks.
     pub(crate) fn is_js_file(&self) -> bool {
         self.ctx.file_name.ends_with(".js")
             || self.ctx.file_name.ends_with(".jsx")
@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Find the `declare` modifier NodeIndex in a modifier list, if present.
+    /// Find the `declare` modifier `NodeIndex` in a modifier list, if present.
     /// Used to point error messages at the specific modifier.
     pub(crate) fn get_declare_modifier(
         &self,
@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Find the `async` modifier NodeIndex in a modifier list, if present.
+    /// Find the `async` modifier `NodeIndex` in a modifier list, if present.
     pub(crate) fn find_async_modifier(
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a member with the given name is an abstract property by looking up its symbol flags.
-    /// Only checks properties (not methods) because accessing this.abstractMethod() in constructor is allowed.
+    /// Only checks properties (not methods) because accessing `this.abstractMethod()` in constructor is allowed.
     pub(crate) fn is_abstract_member(&self, member_nodes: &[NodeIndex], name: &str) -> bool {
         for &member_idx in member_nodes {
             // Get symbol for this member
@@ -759,7 +759,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a derived class is derived from a base class.
-    /// Traverses the inheritance chain to check if base_idx is an ancestor of derived_idx.
+    /// Traverses the inheritance chain to check if `base_idx` is an ancestor of `derived_idx`.
     pub(crate) fn is_class_derived_from(
         &self,
         derived_idx: NodeIndex,
@@ -917,7 +917,7 @@ impl<'a> CheckerState<'a> {
     /// Recursively checks all type components for error types.
     ///
     /// Uses the solver's visitor pattern which provides:
-    /// - Cycle detection via FxHashSet
+    /// - Cycle detection via `FxHashSet`
     /// - Max depth protection (20 levels)
     /// - Comprehensive type traversal including function parameters
     pub(crate) fn type_contains_error(&self, type_id: TypeId) -> bool {
@@ -929,7 +929,7 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Split a type into its non-nullable part and its nullable cause.
-    /// Returns (non_null_type, nullable_cause) where nullable_cause is the type that makes it nullable.
+    /// Returns (`non_null_type`, `nullable_cause`) where `nullable_cause` is the type that makes it nullable.
     pub(crate) fn split_nullish_type(
         &mut self,
         type_id: TypeId,
@@ -982,7 +982,7 @@ impl<'a> CheckerState<'a> {
             };
             self.error_at_node(
                 idx,
-                &format!("The value '{}' cannot be used here.", value_name),
+                &format!("The value '{value_name}' cannot be used here."),
                 diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
             );
             return;
@@ -1009,17 +1009,17 @@ impl<'a> CheckerState<'a> {
             if cause == TypeId::NULL {
                 (
                     diagnostic_codes::IS_POSSIBLY_NULL,
-                    format!("'{}' is possibly 'null'.", name),
+                    format!("'{name}' is possibly 'null'."),
                 )
             } else if cause == TypeId::UNDEFINED {
                 (
                     diagnostic_codes::IS_POSSIBLY_UNDEFINED,
-                    format!("'{}' is possibly 'undefined'.", name),
+                    format!("'{name}' is possibly 'undefined'."),
                 )
             } else {
                 (
                     diagnostic_codes::IS_POSSIBLY_NULL_OR_UNDEFINED,
-                    format!("'{}' is possibly 'null' or 'undefined'.", name),
+                    format!("'{name}' is possibly 'null' or 'undefined'."),
                 )
             }
         } else {
@@ -1371,7 +1371,7 @@ impl<'a> CheckerState<'a> {
                     file: file_name.clone(),
                     start,
                     length,
-                    message_text: format!("'{}' is declared but its value is never read.", name),
+                    message_text: format!("'{name}' is declared but its value is never read."),
                     category: crate::diagnostics::DiagnosticCategory::Error,
                     code: 6133,
                     related_information: Vec::new(),
@@ -1632,7 +1632,7 @@ impl<'a> CheckerState<'a> {
     /// arrow functions, class expressions) since those introduce new scopes where
     /// the identifier would not be a self-reference of the outer parameter.
     ///
-    /// Returns a list of NodeIndex values, one for each self-referencing identifier.
+    /// Returns a list of `NodeIndex` values, one for each self-referencing identifier.
     /// TSC emits a separate TS2372 error for each occurrence.
     pub(crate) fn collect_self_references(
         &self,
@@ -1659,7 +1659,7 @@ impl<'a> CheckerState<'a> {
         refs
     }
 
-    /// Recursive helper for collect_self_references.
+    /// Recursive helper for `collect_self_references`.
     fn collect_self_references_recursive(
         &self,
         node_idx: NodeIndex,
@@ -1700,7 +1700,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Recursive helper for collect_property_name_references.
+    /// Recursive helper for `collect_property_name_references`.
     fn collect_property_name_references_recursive(
         &self,
         node_idx: NodeIndex,
@@ -1866,7 +1866,7 @@ impl<'a> CheckerState<'a> {
                                 .unwrap_or(impl_idx);
                             self.error_at_node(
                                 impl_error_node,
-                                &format!("Function implementation name must be '{}'.", name),
+                                &format!("Function implementation name must be '{name}'."),
                                 diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
                             );
                         } else {
@@ -1966,7 +1966,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type annotation node is a simple type reference to a given class.
-    /// Returns true if the type annotation is a TypeReference to the class by name.
+    /// Returns true if the type annotation is a `TypeReference` to the class by name.
     fn type_annotation_refers_to_current_class(
         &self,
         type_annotation_idx: NodeIndex,
@@ -2024,7 +2024,7 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get the type annotation of an explicit `this` parameter if present.
-    /// Returns Some(type_annotation_idx) if the first parameter is named "this" with a type annotation.
+    /// Returns `Some(type_annotation_idx)` if the first parameter is named "this" with a type annotation.
     /// Returns None otherwise.
     fn get_explicit_this_type_annotation(&self, params: &[NodeIndex]) -> Option<NodeIndex> {
         let first_param_idx = params.first().copied()?;
@@ -2537,7 +2537,7 @@ impl<'a> CheckerState<'a> {
                                 let file_sym_id =
                                     self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
                                 let def_id = self.ctx.get_or_create_def_id(file_sym_id);
-                                self.ctx.insert_def_type_params(def_id, params.clone());
+                                self.ctx.insert_def_type_params(def_id, params);
                             }
                             lib_types.push(ty);
                         }
@@ -3093,9 +3093,9 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Alias Resolution:
     /// - Follows re-export chains recursively
-    /// - Uses binder's resolve_import_symbol for ES6 imports
-    /// - Falls back to module_exports lookup
-    /// - Handles circular references with visited_aliases tracking
+    /// - Uses binder's `resolve_import_symbol` for ES6 imports
+    /// - Falls back to `module_exports` lookup
+    /// - Handles circular references with `visited_aliases` tracking
     ///
     /// ## Re-export Chains:
     /// ```typescript
@@ -3585,8 +3585,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let normalized = module_name.trim_matches('"').trim_matches('\'');
-        let quoted = format!("\"{}\"", normalized);
-        let single_quoted = format!("'{}'", normalized);
+        let quoted = format!("\"{normalized}\"");
+        let single_quoted = format!("'{normalized}'");
 
         let export_equals_sym = self
             .ctx
@@ -3987,8 +3987,7 @@ impl<'a> CheckerState<'a> {
                 (symbol.flags & (symbol_flags::MODULE | symbol_flags::ENUM)) != 0
             }
             NamespaceMemberKind::Enum(_) => true,
-            NamespaceMemberKind::Callable(_) => false,
-            NamespaceMemberKind::Other => false,
+            NamespaceMemberKind::Callable(_) | NamespaceMemberKind::Other => false,
         }
     }
 
@@ -4033,7 +4032,7 @@ impl<'a> CheckerState<'a> {
     /// preventing their use in value positions.
     ///
     /// ## Import Type Statement:
-    /// - `import type { Foo } from 'module'` - Foo.is_type_only = true
+    /// - `import type { Foo } from 'module'` - `Foo.is_type_only` = true
     /// - Type-only imports can only be used in type annotations
     /// - Cannot be used as values (variables, function arguments, etc.)
     ///
@@ -4174,7 +4173,7 @@ impl<'a> CheckerState<'a> {
     /// }
     /// // constructor_access_name(None) → "public"
     /// ```
-    pub(crate) fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
+    pub(crate) const fn constructor_access_name(level: Option<MemberAccessLevel>) -> &'static str {
         match level {
             Some(MemberAccessLevel::Private) => "private",
             Some(MemberAccessLevel::Protected) => "protected",
@@ -4204,7 +4203,7 @@ impl<'a> CheckerState<'a> {
     /// constructor_access_rank(Some(Protected)) // → 1
     /// constructor_access_rank(None)            // → 0 (Public)
     /// ```
-    pub(crate) fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
+    pub(crate) const fn constructor_access_rank(level: Option<MemberAccessLevel>) -> u8 {
         match level {
             Some(MemberAccessLevel::Private) => 2,
             Some(MemberAccessLevel::Protected) => 1,
@@ -4237,7 +4236,7 @@ impl<'a> CheckerState<'a> {
     /// let x = 1;
     /// let x = 2; // ERROR: Duplicate variable declaration
     /// ```
-    fn excluded_symbol_flags(flags: u32) -> u32 {
+    const fn excluded_symbol_flags(flags: u32) -> u32 {
         if (flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0 {
             return symbol_flags::FUNCTION_SCOPED_VARIABLE_EXCLUDES;
         }
@@ -4310,7 +4309,7 @@ impl<'a> CheckerState<'a> {
     ///   bar(): void;  // No conflict - different members
     /// }
     /// ```
-    pub(crate) fn declarations_conflict(flags_a: u32, flags_b: u32) -> bool {
+    pub(crate) const fn declarations_conflict(flags_a: u32, flags_b: u32) -> bool {
         // Static and instance members with the same name don't conflict
         let a_is_static = (flags_a & symbol_flags::STATIC) != 0;
         let b_is_static = (flags_b & symbol_flags::STATIC) != 0;

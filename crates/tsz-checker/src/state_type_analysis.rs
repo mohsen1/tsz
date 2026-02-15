@@ -3129,7 +3129,8 @@ impl<'a> CheckerState<'a> {
             // Type parameters always allow literal types. In TypeScript, when the
             // expected type is a type parameter (e.g., K extends keyof T), the literal
             // is preserved and the constraint is checked later during generic inference.
-            ContextualLiteralAllowKind::TypeParameter { .. } => true,
+            ContextualLiteralAllowKind::TypeParameter { .. }
+            | ContextualLiteralAllowKind::TemplateLiteral => true,
             ContextualLiteralAllowKind::Application => {
                 let expanded = self.evaluate_application_type(ctx_type);
                 if expanded != ctx_type {
@@ -3152,10 +3153,6 @@ impl<'a> CheckerState<'a> {
                 }
                 false
             }
-            // Template literal types always allow string literals — the actual pattern
-            // matching ("*hello*" matches `*${string}*`) is done during assignability.
-            // We preserve the literal here to avoid premature widening to `string`.
-            ContextualLiteralAllowKind::TemplateLiteral => true,
             ContextualLiteralAllowKind::NotAllowed => false,
         }
     }

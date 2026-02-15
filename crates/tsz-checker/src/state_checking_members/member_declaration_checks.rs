@@ -107,13 +107,12 @@ impl<'a> CheckerState<'a> {
                         // different visibility. Use the most permissive level (tsc
                         // allows reads when getter is public even if setter is private).
                         match access_level {
-                            None => return MemberLookup::Public,
+                            Some(MemberAccessLevel::Private) | None => return MemberLookup::Public,
                             Some(level) => {
                                 accessor_access = Some(match accessor_access {
                                     // First accessor found
-                                    None => level,
-                                    // Second accessor: use the more permissive level
-                                    Some(MemberAccessLevel::Private) => level,
+                                    None | Some(MemberAccessLevel::Private) => level,
+                                    // If either accessor is non-private, use the most permissive level
                                     Some(prev) => prev,
                                 });
                             }
@@ -304,8 +303,8 @@ impl<'a> CheckerState<'a> {
     /// Recursively check a type node for parameter properties in function types.
     /// Function types (like `(x: T) => R` or `new (x: T) => R`) cannot have parameter properties.
     /// Walk a type node and emit TS2304 for unresolved type names inside complex types.
-    /// Check type for missing names, but skip top-level TYPE_REFERENCE nodes.
-    /// This is used when the caller will separately check TYPE_REFERENCE nodes
+    /// Check type for missing names, but skip top-level `TYPE_REFERENCE` nodes.
+    /// This is used when the caller will separately check `TYPE_REFERENCE` nodes
     /// to avoid duplicate error emissions.
     pub(crate) fn check_type_for_missing_names_skip_top_level_ref(&mut self, type_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(type_idx) else {
@@ -727,18 +726,7 @@ impl<'a> CheckerState<'a> {
 
             match node.kind {
                 // TS1042: 'async' modifier cannot be used on getters/setters
-                syntax_kind_ext::GET_ACCESSOR => {
-                    if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                        && self.has_async_modifier(&accessor.modifiers)
-                    {
-                        self.error_at_node(
-                            member_idx,
-                            "'async' modifier cannot be used here.",
-                            diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
-                        );
-                    }
-                }
-                syntax_kind_ext::SET_ACCESSOR => {
+                syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
                     if let Some(accessor) = self.ctx.arena.get_accessor(node)
                         && self.has_async_modifier(&accessor.modifiers)
                     {
@@ -815,8 +803,7 @@ impl<'a> CheckerState<'a> {
                                         self.error_at_node(
                                             impl_error_node,
                                             &format!(
-                                                "Function implementation name must be '{}'.",
-                                                expected_display
+                                                "Function implementation name must be '{expected_display}'."
                                             ),
                                             diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
                                         );
