@@ -396,6 +396,15 @@ impl<K: Hash + Eq + Copy> RecursionGuard<K> {
         self.visiting.contains(key)
     }
 
+    /// Check if any currently-visiting key satisfies the predicate.
+    ///
+    /// Used for symbol-level cycle detection: the same interface may appear
+    /// with different `DefIds` in different checker contexts, so we need to
+    /// check all visiting entries for symbol-level matches.
+    pub fn is_visiting_any(&self, predicate: impl Fn(&K) -> bool) -> bool {
+        self.visiting.iter().any(predicate)
+    }
+
     /// Current recursion depth (number of active entries on the stack).
     #[inline]
     pub const fn depth(&self) -> u32 {

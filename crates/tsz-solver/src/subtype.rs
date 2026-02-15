@@ -2319,6 +2319,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None
         };
 
+        // =======================================================================
+        // Symbol-level cycle detection for cross-context DefId aliasing.
+        //
+        // The same interface (e.g., Promise) may get different DefIds in different
+        // checker contexts (lib vs user file). When comparing recursive generic
+        // interfaces, the DefId-level cycle detection can miss cycles because
+        // the inner comparison uses different DefIds than the outer one.
+        //
+        // Fix: resolve DefIds to their underlying SymbolIds (stored in
+        // DefinitionInfo). If a (SymbolId, SymbolId) pair is already being
+        // visited via a different DefId pair, treat it as a cycle.
+        // =======================================================================
+        if let (Some(s_def), Some(t_def)) = (s_def_id, t_def_id) {
+            let s_sym = self.resolver.def_to_symbol_id(s_def);
+            let t_sym = self.resolver.def_to_symbol_id(t_def);
+            if let (Some(s_sid), Some(t_sid)) = (s_sym, t_sym) {
+                // Check if any visiting DefId pair maps to the same SymbolId pair
+                if self.def_guard.is_visiting_any(|&(visiting_s, visiting_t)| {
+                    visiting_s != s_def
+                        && visiting_t != t_def
+                        && self.resolver.def_to_symbol_id(visiting_s) == Some(s_sid)
+                        && self.resolver.def_to_symbol_id(visiting_t) == Some(t_sid)
+                }) {
+                    self.guard.leave(pair);
+                    return SubtypeResult::CycleDetected;
+                }
+            }
+        }
+
         let def_entered = if let Some((s_def, t_def)) = def_pair {
             // Check reversed pair for bivariant cross-recursion
             if self.def_guard.is_visiting(&(t_def, s_def)) {
