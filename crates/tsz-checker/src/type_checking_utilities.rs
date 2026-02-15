@@ -2593,8 +2593,6 @@ impl<'a> CheckerState<'a> {
             Some(EnumKind::Mixed)
         } else if saw_string {
             Some(EnumKind::String)
-        } else if saw_numeric {
-            Some(EnumKind::Numeric)
         } else {
             Some(EnumKind::Numeric)
         }

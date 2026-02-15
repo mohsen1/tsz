@@ -749,9 +749,7 @@ fn symbol_flags_to_kind(flags: u32) -> SymbolKind {
         SymbolKind::Enum
     } else if flags & symbol_flags::ENUM_MEMBER != 0 {
         SymbolKind::EnumMember
-    } else if flags & symbol_flags::TYPE_ALIAS != 0 {
-        SymbolKind::TypeParameter
-    } else if flags & symbol_flags::TYPE_PARAMETER != 0 {
+    } else if flags & symbol_flags::TYPE_ALIAS != 0 || flags & symbol_flags::TYPE_PARAMETER != 0 {
         SymbolKind::TypeParameter
     } else if flags & symbol_flags::MODULE != 0 {
         SymbolKind::Module
@@ -768,8 +766,6 @@ fn symbol_flags_to_kind(flags: u32) -> SymbolKind {
         // The binder uses BLOCK_SCOPED_VARIABLE for both let and const.
         // We report as Variable here; callers that need to distinguish
         // const should check node_flags::CONST on the declaration.
-        SymbolKind::Variable
-    } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
         SymbolKind::Variable
     } else {
         SymbolKind::Variable
