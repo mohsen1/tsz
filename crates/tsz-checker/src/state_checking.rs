@@ -4508,7 +4508,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Only check property initialization when strictPropertyInitialization is enabled
-        if !self.ctx.strict_property_initialization() {
+        // tsc also requires strictNullChecks to be enabled for TS2564
+        if !self.ctx.strict_property_initialization() || !self.ctx.strict_null_checks() {
             return;
         }
 
