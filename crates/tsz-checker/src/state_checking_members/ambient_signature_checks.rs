@@ -181,7 +181,20 @@ impl<'a> CheckerState<'a> {
         let prop_type = if !prop.type_annotation.is_none() {
             self.get_type_from_type_node(prop.type_annotation)
         } else if !prop.initializer.is_none() {
-            self.get_type_of_node(prop.initializer)
+            let init_type = self.get_type_of_node(prop.initializer);
+            // Widen literal types for mutable class properties (tsc behavior).
+            // `class Foo { name = "" }` infers `name: string`, not `name: ""`.
+            // Readonly properties preserve literal types:
+            // `class Foo { readonly tag = "x" }` infers `tag: "x"`.
+            let is_readonly = self.ctx.has_modifier(
+                &prop.modifiers,
+                tsz_scanner::SyntaxKind::ReadonlyKeyword as u16,
+            );
+            if is_readonly {
+                init_type
+            } else {
+                self.widen_literal_type(init_type)
+            }
         } else {
             TypeId::ANY
         };

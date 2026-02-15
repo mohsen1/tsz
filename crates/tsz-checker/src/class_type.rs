@@ -196,10 +196,20 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
+                    let is_readonly = self.has_readonly_modifier(&prop.modifiers);
                     let type_id = if !prop.type_annotation.is_none() {
                         self.get_type_from_type_node(prop.type_annotation)
                     } else if !prop.initializer.is_none() {
-                        self.get_type_of_node(prop.initializer)
+                        let init_type = self.get_type_of_node(prop.initializer);
+                        // Widen literal types for mutable class properties.
+                        // `class Foo { name = "" }` → `name: string`.
+                        // Readonly properties keep literal types:
+                        // `class Foo { readonly tag = "x" }` → `tag: "x"`.
+                        if is_readonly {
+                            init_type
+                        } else {
+                            self.widen_literal_type(init_type)
+                        }
                     } else {
                         // Class properties without type annotation or initializer
                         // get implicit 'any' type (TS7008 when noImplicitAny is on)
@@ -215,7 +225,7 @@ impl<'a> CheckerState<'a> {
                             type_id,
                             write_type: type_id,
                             optional: prop.question_token,
-                            readonly: self.has_readonly_modifier(&prop.modifiers),
+                            readonly: is_readonly,
                             is_method: false,
                             visibility,
                             parent_id: current_sym,
@@ -326,10 +336,17 @@ impl<'a> CheckerState<'a> {
                         if properties.contains_key(&name_atom) {
                             continue;
                         }
+                        let is_readonly = self.has_readonly_modifier(&param.modifiers);
                         let type_id = if !param.type_annotation.is_none() {
                             self.get_type_from_type_node(param.type_annotation)
                         } else if !param.initializer.is_none() {
-                            self.get_type_of_node(param.initializer)
+                            let init_type = self.get_type_of_node(param.initializer);
+                            // Widen for mutable constructor parameter properties
+                            if is_readonly {
+                                init_type
+                            } else {
+                                self.widen_literal_type(init_type)
+                            }
                         } else {
                             TypeId::ANY
                         };
@@ -342,7 +359,7 @@ impl<'a> CheckerState<'a> {
                                 type_id,
                                 write_type: type_id,
                                 optional: param.question_token,
-                                readonly: self.has_readonly_modifier(&param.modifiers),
+                                readonly: is_readonly,
                                 is_method: false,
                                 visibility,
                                 parent_id: current_sym,

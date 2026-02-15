@@ -502,6 +502,12 @@ pub struct CheckerContext<'a> {
     /// This prevents widening of literal types in object/array literals.
     pub in_const_assertion: bool,
 
+    /// When true, preserve literal types instead of widening.
+    /// Set during evaluation of compound expression branches (conditional `?:`,
+    /// logical `||`/`&&`/`??`) so that `const x = cond ? "a" : "b"` infers
+    /// `"a" | "b"` instead of `string`.
+    pub preserve_literal_types: bool,
+
     // --- Control Flow Validation ---
     /// Depth of nested iteration statements (for/while/do-while).
     /// Used to validate break/continue statements.
@@ -676,6 +682,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            preserve_literal_types: false,
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
@@ -794,6 +801,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            preserve_literal_types: false,
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
@@ -903,6 +911,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            preserve_literal_types: false,
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
@@ -1014,6 +1023,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            preserve_literal_types: false,
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
@@ -1124,6 +1134,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            preserve_literal_types: false,
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
@@ -1260,6 +1271,7 @@ impl<'a> CheckerContext<'a> {
             async_depth: 0,
             inside_closure_depth: 0,
             in_const_assertion: false,
+            preserve_literal_types: false,
             iteration_depth: 0,
             switch_depth: 0,
             function_depth: 0,
