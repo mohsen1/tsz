@@ -3,7 +3,7 @@
 //! Exports TypeScript-compatible enum values via wasm-bindgen.
 //! These match TypeScript's enum definitions exactly.
 
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 /// SyntaxKind enum values
 /// Matches TypeScript's SyntaxKind exactly

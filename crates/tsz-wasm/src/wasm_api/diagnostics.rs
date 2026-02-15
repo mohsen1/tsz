@@ -3,7 +3,7 @@
 //! Provides diagnostic types and formatting utilities.
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use super::enums::DiagnosticCategory;
 

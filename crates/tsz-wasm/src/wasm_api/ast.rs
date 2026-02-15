@@ -2,7 +2,7 @@
 //!
 //! Provides TypeScript-compatible AST traversal and node type guards.
 
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::parser::syntax_kind_ext;
 use tsz::parser::{NodeArena, NodeIndex};

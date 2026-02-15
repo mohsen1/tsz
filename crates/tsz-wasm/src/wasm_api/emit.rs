@@ -3,7 +3,7 @@
 //! Provides TypeScript-compatible emit functionality for generating JavaScript output.
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::declaration_emitter::DeclarationEmitter;
 use tsz::emit_context::EmitContext;

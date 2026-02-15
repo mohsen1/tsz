@@ -3,7 +3,7 @@
 //! Provides commonly used TypeScript utility functions.
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::lsp::position::LineMap;
 

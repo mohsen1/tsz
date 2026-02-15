@@ -3,7 +3,7 @@
 //! Provides TypeScript-compatible language service functionality for IDE features.
 
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::binder::BinderState;
 use tsz::lsp::completions::{CompletionItemKind, Completions};
