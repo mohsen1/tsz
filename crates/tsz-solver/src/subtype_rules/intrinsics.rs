@@ -212,9 +212,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         if let Some(sym) = ref_symbol(self.interner, source)
-            && let Some(resolved) = self.resolver.resolve_symbol_ref(sym, self.interner) {
-                return self.is_global_object_interface_type(resolved);
-            }
+            && let Some(resolved) = self.resolver.resolve_symbol_ref(sym, self.interner)
+        {
+            return self.is_global_object_interface_type(resolved);
+        }
 
         self.is_object_keyword_type(source)
     }
