@@ -2179,6 +2179,24 @@ impl ParserState {
             && !self.is_token(SyntaxKind::InKeyword)
             && !self.is_token(SyntaxKind::OfKeyword)
         {
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                // for () — empty parens. Emit TS1109 and skip to after )
+                self.error_expression_expected();
+                self.next_token(); // consume )
+                let body = self.parse_statement();
+                let end_pos = self.token_end();
+                return self.arena.add_loop(
+                    syntax_kind_ext::FOR_STATEMENT,
+                    start_pos,
+                    end_pos,
+                    LoopData {
+                        initializer: NodeIndex::NONE,
+                        condition: NodeIndex::NONE,
+                        incrementor: NodeIndex::NONE,
+                        statement: body,
+                    },
+                );
+            }
             self.resync_after_error();
         }
 
