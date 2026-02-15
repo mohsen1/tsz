@@ -132,6 +132,8 @@ pub struct CompilerOptions {
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_resolve: Option<bool>,
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_emit_on_error: Option<bool>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub isolated_modules: Option<bool>,
@@ -256,6 +258,8 @@ pub struct ResolvedCompilerOptions {
     pub incremental: bool,
     pub no_emit: bool,
     pub no_emit_on_error: bool,
+    /// Skip module graph expansion from imports/references when checking.
+    pub no_resolve: bool,
     pub import_helpers: bool,
     /// Disable full type checking (only parse and emit errors reported).
     pub no_check: bool,
@@ -617,6 +621,10 @@ pub fn resolve_compiler_options(
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
     }
+    if let Some(no_resolve) = options.no_resolve {
+        resolved.no_resolve = no_resolve;
+        resolved.checker.no_resolve = no_resolve;
+    }
 
     if let Some(no_emit_on_error) = options.no_emit_on_error {
         resolved.no_emit_on_error = no_emit_on_error;
@@ -828,6 +836,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
+            no_resolve,
         }
     )
 }

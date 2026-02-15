@@ -78,6 +78,8 @@ pub struct CheckerOptions {
     /// This corresponds to the --checkJs compiler flag.
     /// With checkJs enabled, noImplicitAny and other type errors apply to .js files.
     pub check_js: bool,
+    /// When true, disable dependency expansion from imports and triple-slash references.
+    pub no_resolve: bool,
 }
 
 impl CheckerOptions {
