@@ -231,9 +231,15 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         // Return type is COVARIANT: preserve polarity
         self.visit_with_polarity(shape.return_type, current_polarity);
 
-        // This type is CONTRAVARIANT: flip polarity (for method bivariance, this will be handled separately)
+        // `this` parameter behaves like a parameter for plain functions.
+        // For methods, keep bivariance behavior and avoid forcing contravariant variance.
         if let Some(this_ty) = shape.this_type {
-            self.visit_with_polarity(this_ty, !current_polarity);
+            let polarity = if shape.is_method {
+                current_polarity
+            } else {
+                !current_polarity
+            };
+            self.visit_with_polarity(this_ty, polarity);
         }
     }
 
@@ -253,7 +259,12 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
             // Return type is covariant
             self.visit_with_polarity(sig.return_type, current_polarity);
             if let Some(this_ty) = sig.this_type {
-                self.visit_with_polarity(this_ty, !current_polarity);
+                let polarity = if sig.is_method {
+                    current_polarity
+                } else {
+                    !current_polarity
+                };
+                self.visit_with_polarity(this_ty, polarity);
             }
         }
 
