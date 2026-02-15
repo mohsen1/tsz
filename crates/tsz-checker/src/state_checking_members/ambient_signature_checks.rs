@@ -951,10 +951,11 @@ impl<'a> CheckerState<'a> {
                 Some(func.body)
             } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
                 Some(method.body)
-            } else if let Some(accessor) = self.ctx.arena.get_accessor(node) {
-                Some(accessor.body)
             } else {
-                None
+                self.ctx
+                    .arena
+                    .get_accessor(node)
+                    .map(|accessor| accessor.body)
             };
             if let Some(body_idx) = body
                 && !body_idx.is_none()
