@@ -255,8 +255,8 @@ impl ParserState {
                 );
             } else {
                 self.parse_error_at_current_token(
-                    "Modifiers cannot appear here.",
-                    diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    &format!("'{modifier_text}' modifier cannot appear on a type member."),
+                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_TYPE_MEMBER,
                 );
             }
 
