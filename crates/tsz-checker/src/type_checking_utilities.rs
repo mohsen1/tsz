@@ -1638,7 +1638,7 @@ impl<'a> CheckerState<'a> {
         let type_expr = type_expr.trim();
 
         self.jsdoc_type_from_expression(type_expr).or_else(|| {
-            self.resolve_jsdoc_typedef_type(type_expr, node.pos, comments, source_text)
+            self.resolve_jsdoc_typedef_type(type_expr, idx, node.pos, comments, source_text)
                 .or_else(|| {
                     if let Some((module_specifier, member_name)) =
                         Self::parse_jsdoc_import_type(type_expr)
@@ -1775,12 +1775,14 @@ impl<'a> CheckerState<'a> {
     fn resolve_jsdoc_typedef_type(
         &mut self,
         type_expr: &str,
+        anchor_idx: NodeIndex,
         anchor_pos: u32,
         comments: &[tsz_common::comments::CommentRange],
         source_text: &str,
     ) -> Option<TypeId> {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
+        let anchor_scopes = self.function_scope_ancestors(anchor_idx);
         let mut best_def: Option<(u32, JsdocTypedefInfo)> = None;
 
         for comment in comments {
@@ -1790,6 +1792,10 @@ impl<'a> CheckerState<'a> {
             if !is_jsdoc_comment(comment, source_text) {
                 continue;
             }
+            if let Some(comment_scope) = self.function_scope_for_position(comment.pos)
+                && !anchor_scopes.contains(&comment_scope) {
+                    continue;
+                }
 
             let content = get_jsdoc_content(comment, source_text);
             for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
@@ -1802,6 +1808,45 @@ impl<'a> CheckerState<'a> {
 
         let (_, typedef_info) = best_def?;
         self.type_from_jsdoc_typedef(typedef_info)
+    }
+
+    fn function_scope_for_position(&self, pos: u32) -> Option<NodeIndex> {
+        let mut best: Option<(u32, NodeIndex)> = None;
+        for (idx, node) in self.ctx.arena.nodes.iter().enumerate() {
+            if !node.is_function_like() {
+                continue;
+            }
+            if node.pos <= pos && pos <= node.end
+                && best
+                    .as_ref()
+                    .is_none_or(|(best_pos, _)| *best_pos < node.pos)
+                {
+                    best = Some((node.pos, NodeIndex(idx as u32)));
+                }
+        }
+
+        best.map(|(_, idx)| idx)
+    }
+
+    fn function_scope_ancestors(&self, anchor_idx: NodeIndex) -> Vec<NodeIndex> {
+        let mut scopes = Vec::new();
+        let mut current = anchor_idx;
+        while !current.is_none() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+
+            if node.is_function_like() {
+                scopes.push(current);
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            current = ext.parent;
+        }
+
+        scopes
     }
 
     fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
