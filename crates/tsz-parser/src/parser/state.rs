@@ -1375,7 +1375,7 @@ impl ParserState {
                 true
             }
             "type" => {
-                self.parse_error_at_current_token("'=' expected", diagnostic_codes::EXPECTED);
+                self.parse_error_at_current_token("'=' expected.", diagnostic_codes::EXPECTED);
                 true
             }
             _ => false,
