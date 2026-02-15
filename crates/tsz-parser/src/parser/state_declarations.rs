@@ -1859,6 +1859,9 @@ impl ParserState {
     pub(crate) fn parse_export_assignment(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::EqualsToken);
         let expression = self.parse_assignment_expression();
+        if expression == NodeIndex::NONE {
+            self.error_expression_expected();
+        }
         self.parse_semicolon();
 
         let end_pos = self.token_end();
