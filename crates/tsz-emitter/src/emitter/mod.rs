@@ -209,18 +209,6 @@ enum EmitDirective {
 /// Maximum recursion depth for emit to prevent infinite loops
 const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
 
-type TempScopeStackEntry = (
-    u32,
-    FxHashSet<String>,
-    bool,
-    VecDeque<String>,
-    VecDeque<String>,
-    Vec<String>,
-    Vec<String>,
-);
-
-type TempScopeStack = Vec<TempScopeStackEntry>;
-
 /// Printer that works with NodeArena.
 ///
 /// Uses SourceWriter for output generation (enables source map support).
@@ -273,7 +261,16 @@ pub struct Printer<'a> {
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
     /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted, preallocated names, preallocated logical value names, value temps, reference temps).
-    pub(super) temp_scope_stack: TempScopeStack,
+    #[allow(clippy::type_complexity)]
+    pub(super) temp_scope_stack: Vec<(
+        u32,
+        FxHashSet<String>,
+        bool,
+        VecDeque<String>,
+        VecDeque<String>,
+        Vec<String>,
+        Vec<String>,
+    )>,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
@@ -321,9 +318,6 @@ pub struct Printer<'a> {
 
     /// Current nesting depth for iterator for-of emission.
     pub(super) iterator_for_of_depth: usize,
-
-    /// Active nesting depth for downlevel destructuring read initialization.
-    pub(super) destructuring_read_depth: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -383,7 +377,6 @@ impl<'a> Printer<'a> {
             hoisted_for_of_temps: Vec::new(),
             reserved_iterator_return_temps: FxHashMap::default(),
             iterator_for_of_depth: 0,
-            destructuring_read_depth: 0,
         }
     }
 
