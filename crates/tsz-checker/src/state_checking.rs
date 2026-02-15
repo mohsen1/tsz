@@ -510,191 +510,151 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check a class member for JS grammar errors.
-    fn check_js_grammar_class_member(&mut self, member_idx: NodeIndex) {
+    /// Helper: Report TS8009 error for a TypeScript-only modifier (abstract, override, etc.).
+    fn error_if_ts_only_modifier(
+        &mut self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        kind: SyntaxKind,
+        name: &str,
+    ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
+        if self.has_modifier_kind(modifiers, kind) {
+            let message = format_message(
+                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                &[name],
+            );
+            if let Some(mod_idx) = self.get_modifier_index(modifiers, kind as u16) {
+                self.error_at_node(
+                    mod_idx,
+                    &message,
+                    diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                );
+            }
+        }
+    }
+
+    /// Helper: Report TS8010 error for a TypeScript-only type annotation.
+    fn error_if_ts_only_type_annotation(&mut self, type_annotation: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if !type_annotation.is_none() {
+            self.error_at_node(
+                type_annotation,
+                diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
+        }
+    }
+
+    /// Helper: Report TS8004 error for TypeScript-only type parameters.
+    fn error_if_ts_only_type_params(
+        &mut self,
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if let Some(type_params) = type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.error_at_node(
+                type_params.nodes[0],
+                diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
+        }
+    }
+
+    /// Helper: Report TS8017 error for a signature declaration without a body.
+    fn error_if_ts_only_signature_without_body(&mut self, has_no_body: bool, node_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if has_no_body {
+            self.error_at_node(
+                node_idx,
+                diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
+        }
+    }
+
+    /// Helper: Report TS8009 error for optional token (?) in JavaScript.
+    fn error_if_ts_only_optional(&mut self, has_question_token: bool, node_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if has_question_token {
+            let message = format_message(
+                diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                &["?"],
+            );
+            self.error_at_node(
+                node_idx,
+                &message,
+                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            );
+        }
+    }
+
+    /// Check a class member for JS grammar errors.
+    fn check_js_grammar_class_member(&mut self, member_idx: NodeIndex) {
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
         };
 
         match node.kind {
-            // Methods
             syntax_kind_ext::METHOD_DECLARATION => {
                 if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    // TS8009: accessibility modifiers (public/private/protected)
                     self.check_js_grammar_accessibility_modifier(&method.modifiers, member_idx);
-
-                    // TS8009: abstract modifier
-                    if self.has_abstract_modifier(&method.modifiers) {
-                        let message = format_message(
-                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            &["abstract"],
-                        );
-                        if let Some(mod_idx) = self.get_modifier_index(
-                            &method.modifiers,
-                            SyntaxKind::AbstractKeyword as u16,
-                        ) {
-                            self.error_at_node(
-                                mod_idx,
-                                &message,
-                                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            );
-                        }
-                    }
-
-                    // TS8009: 'override' modifier
-                    if self.has_modifier_kind(&method.modifiers, SyntaxKind::OverrideKeyword) {
-                        let message = format_message(
-                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            &["override"],
-                        );
-                        if let Some(mod_idx) = self.get_modifier_index(
-                            &method.modifiers,
-                            SyntaxKind::OverrideKeyword as u16,
-                        ) {
-                            self.error_at_node(
-                                mod_idx,
-                                &message,
-                                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            );
-                        }
-                    }
-
-                    // TS8004: Type parameters on methods
-                    if let Some(ref type_params) = method.type_parameters
-                        && !type_params.nodes.is_empty()
-                    {
-                        self.error_at_node(
-                                type_params.nodes[0],
-                                diagnostic_messages::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                                diagnostic_codes::TYPE_PARAMETER_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            );
-                    }
-
-                    // TS8010: Return type annotation
-                    if !method.type_annotation.is_none() {
-                        self.error_at_node(
-                            method.type_annotation,
-                            diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
-
-                    // TS8017: Method overload (no body)
-                    if method.body.is_none() {
-                        self.error_at_node(
-                            member_idx,
-                            diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
-
-                    // TS8009: Optional method (question token)
-                    if method.question_token {
-                        let message = format_message(
-                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            &["?"],
-                        );
-                        self.error_at_node(
-                            member_idx,
-                            &message,
-                            diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
-
-                    // Check parameters for type annotations and modifiers
+                    self.error_if_ts_only_modifier(
+                        &method.modifiers,
+                        SyntaxKind::AbstractKeyword,
+                        "abstract",
+                    );
+                    self.error_if_ts_only_modifier(
+                        &method.modifiers,
+                        SyntaxKind::OverrideKeyword,
+                        "override",
+                    );
+                    self.error_if_ts_only_type_params(&method.type_parameters);
+                    self.error_if_ts_only_type_annotation(method.type_annotation);
+                    self.error_if_ts_only_signature_without_body(method.body.is_none(), member_idx);
+                    self.error_if_ts_only_optional(method.question_token, member_idx);
                     self.check_js_grammar_parameters(&method.parameters.nodes);
                 }
             }
 
-            // Constructors
             syntax_kind_ext::CONSTRUCTOR => {
                 if let Some(ctor) = self.ctx.arena.get_constructor(node) {
-                    // TS8009: accessibility modifiers (public/private/protected)
                     self.check_js_grammar_accessibility_modifier(&ctor.modifiers, member_idx);
-
-                    // TS8017: Constructor overload (no body)
-                    if ctor.body.is_none() {
-                        self.error_at_node(
-                            member_idx,
-                            diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
-
-                    // Check parameters for type annotations and modifiers
+                    self.error_if_ts_only_signature_without_body(ctor.body.is_none(), member_idx);
                     self.check_js_grammar_parameters(&ctor.parameters.nodes);
                 }
             }
 
-            // Properties are already checked in check_property_declaration
-            // but we need to check for optional properties here
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 if let Some(prop) = self.ctx.arena.get_property_decl(node) {
-                    // TS8009: Optional property (question token)
-                    if prop.question_token {
-                        let message = format_message(
-                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            &["?"],
-                        );
-                        self.error_at_node(
-                            member_idx,
-                            &message,
-                            diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
-
-                    // TS8009: abstract modifier on property
-                    if self.has_abstract_modifier(&prop.modifiers) {
-                        let message = format_message(
-                            diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            &["abstract"],
-                        );
-                        if let Some(mod_idx) = self
-                            .get_modifier_index(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
-                        {
-                            self.error_at_node(
-                                mod_idx,
-                                &message,
-                                diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            );
-                        }
-                    }
-
-                    // TS8009: accessibility modifiers on property
+                    self.error_if_ts_only_optional(prop.question_token, member_idx);
+                    self.error_if_ts_only_modifier(
+                        &prop.modifiers,
+                        SyntaxKind::AbstractKeyword,
+                        "abstract",
+                    );
                     self.check_js_grammar_accessibility_modifier(&prop.modifiers, member_idx);
                 }
             }
 
-            // Get/Set accessors
             syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
                 if let Some(accessor) = self.ctx.arena.get_accessor(node) {
                     self.check_js_grammar_accessibility_modifier(&accessor.modifiers, member_idx);
-
-                    // TS8010: Return type on getter
-                    if !accessor.type_annotation.is_none() {
-                        self.error_at_node(
-                            accessor.type_annotation,
-                            diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            diagnostic_codes::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
-
-                    // Check parameter types on setter
+                    self.error_if_ts_only_type_annotation(accessor.type_annotation);
                     self.check_js_grammar_parameters(&accessor.parameters.nodes);
                 }
             }
 
-            // Index signatures, call signatures, construct signatures
             syntax_kind_ext::INDEX_SIGNATURE
             | syntax_kind_ext::CALL_SIGNATURE
             | syntax_kind_ext::CONSTRUCT_SIGNATURE => {
-                self.error_at_node(
-                    member_idx,
-                    diagnostic_messages::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    diagnostic_codes::SIGNATURE_DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
+                self.error_if_ts_only_signature_without_body(true, member_idx);
             }
 
             _ => {}
