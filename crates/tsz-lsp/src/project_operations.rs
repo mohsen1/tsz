@@ -911,7 +911,7 @@ impl Project {
                     match target.kind {
                         ImportKind::Named(name) => cross_targets.push((resolved, name)),
                         ImportKind::Default => {
-                            cross_targets.push((resolved, "default".to_string()))
+                            cross_targets.push((resolved, "default".to_string()));
                         }
                         ImportKind::Namespace => {}
                     }
