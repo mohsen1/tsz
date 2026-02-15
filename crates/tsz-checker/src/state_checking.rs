@@ -213,7 +213,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check a single statement for TypeScript-only syntax in JS files.
     fn check_js_grammar_statement(&mut self, stmt_idx: NodeIndex) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -231,62 +231,16 @@ impl<'a> CheckerState<'a> {
 
             // TS8006: 'interface'/'enum'/'module'/'namespace' declarations
             syntax_kind_ext::INTERFACE_DECLARATION => {
-                let message = format_message(
-                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    &["interface"],
-                );
-                self.error_at_node(
-                    stmt_idx,
-                    &message,
-                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
+                self.error_ts_only_declaration("interface", stmt_idx);
             }
 
             syntax_kind_ext::ENUM_DECLARATION => {
-                let message = format_message(
-                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    &["enum"],
-                );
-                self.error_at_node(
-                    stmt_idx,
-                    &message,
-                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
+                self.error_ts_only_declaration("enum", stmt_idx);
             }
 
             syntax_kind_ext::MODULE_DECLARATION => {
-                // Determine if it's 'module' or 'namespace'
-                let keyword = if let Some(module) = self.ctx.arena.get_module(node) {
-                    if let Some(name_node) = self.ctx.arena.get(module.name) {
-                        // If name is a string literal, it's `module "foo"`, otherwise `namespace Foo`
-                        if name_node.kind == SyntaxKind::StringLiteral as u16 {
-                            "module"
-                        } else {
-                            // Check source text for module vs namespace keyword
-                            let node_text = self.node_text(stmt_idx).unwrap_or_default();
-                            if node_text.starts_with("namespace")
-                                || node_text.contains("namespace ")
-                            {
-                                "namespace"
-                            } else {
-                                "module"
-                            }
-                        }
-                    } else {
-                        "module"
-                    }
-                } else {
-                    "module"
-                };
-                let message = format_message(
-                    diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                    &[keyword],
-                );
-                self.error_at_node(
-                    stmt_idx,
-                    &message,
-                    diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                );
+                let keyword = self.get_module_keyword(stmt_idx, node);
+                self.error_ts_only_declaration(keyword, stmt_idx);
             }
 
             // TS8002: 'import ... =' can only be used in TypeScript files
@@ -592,6 +546,49 @@ impl<'a> CheckerState<'a> {
                 &message,
                 diagnostic_codes::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
             );
+        }
+    }
+
+    /// Helper: Report TS8006 error for TypeScript-only declarations (interface, enum, module, namespace).
+    fn error_ts_only_declaration(&mut self, keyword: &str, node_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        let message = format_message(
+            diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+            &[keyword],
+        );
+        self.error_at_node(
+            node_idx,
+            &message,
+            diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+        );
+    }
+
+    /// Helper: Determine if a module declaration uses 'module' or 'namespace' keyword.
+    fn get_module_keyword(
+        &self,
+        node_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> &'static str {
+        let Some(module) = self.ctx.arena.get_module(node) else {
+            return "module";
+        };
+
+        let Some(name_node) = self.ctx.arena.get(module.name) else {
+            return "module";
+        };
+
+        // If name is a string literal, it's `module "foo"`, otherwise `namespace Foo`
+        if name_node.kind == SyntaxKind::StringLiteral as u16 {
+            return "module";
+        }
+
+        // Check source text for module vs namespace keyword
+        let node_text = self.node_text(node_idx).unwrap_or_default();
+        if node_text.starts_with("namespace") || node_text.contains("namespace ") {
+            "namespace"
+        } else {
+            "module"
         }
     }
 
