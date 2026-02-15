@@ -915,7 +915,7 @@ impl<'a> SignatureHelpProvider<'a> {
             } else {
                 0
             };
-            let rest_penalty = if sig.has_rest { 1 } else { 0 };
+            let rest_penalty = usize::from(sig.has_rest);
 
             if score < best_score
                 || (score == best_score && rest_penalty < best_rest_penalty)

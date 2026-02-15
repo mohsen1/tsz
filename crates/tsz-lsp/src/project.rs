@@ -1788,7 +1788,7 @@ impl Project {
                     let has_decl_reference = references
                         .iter()
                         .any(|r| r.range.start == position && r.range.end == position);
-                    references.len() - if has_decl_reference { 1 } else { 0 }
+                    references.len() - usize::from(has_decl_reference)
                 };
 
                 let title = if ref_count == 1 {
