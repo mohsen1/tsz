@@ -13,7 +13,7 @@ use crate::types::{
 };
 use crate::visitor::{
     application_id, array_element_type, callable_shape_id, function_shape_id, intersection_list_id,
-    intrinsic_kind, is_this_type, literal_value, mapped_type_id, object_shape_id,
+    intrinsic_kind, is_this_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, union_list_id,
 };
@@ -146,6 +146,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             });
         }
 
+        if let Some(def_id) = lazy_def_id(self.interner, source) {
+            let resolved = self.resolver.resolve_lazy(def_id, self.interner);
+            if let Some(resolved) = resolved {
+                return self.check_subtype(resolved, TypeId::OBJECT).is_true();
+            }
+        }
+
         if let Some(sym) = ref_symbol(self.interner, source) {
             let resolved = self.resolver.resolve_symbol_ref(sym, self.interner);
             if let Some(resolved) = resolved {
@@ -156,35 +163,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         false
     }
 
-    /// Check whether a type is assignable to the global `Object` interface type.
+    /// Check compatibility with the global `Object` interface type.
     ///
-    /// Global `Object` in TypeScript is intentionally permissive:
-    /// it accepts all non-nullish values, including primitive values through
-    /// boxing. This helper mirrors that behavior while still excluding
-    /// `null`, `undefined`, and `void`.
+    /// TypeScript's uppercase `Object` accepts all non-nullish values, including
+    /// primitives (unlike lowercase `object` which rejects primitives).
     pub(crate) fn is_global_object_interface_type(&mut self, source: TypeId) -> bool {
-        if source == TypeId::ANY || source == TypeId::ERROR || source == TypeId::NEVER {
-            return true;
-        }
-
-        if matches!(
-            source,
-            TypeId::UNKNOWN | TypeId::VOID | TypeId::NULL | TypeId::UNDEFINED
-        ) {
-            return false;
-        }
-
-        if function_shape_id(self.interner, source).is_some()
-            || callable_shape_id(self.interner, source).is_some()
-        {
-            return false;
-        }
-
-        if let Some(kind) = intrinsic_kind(self.interner, source) {
-            return !matches!(
-                kind,
-                IntrinsicKind::Null | IntrinsicKind::Undefined | IntrinsicKind::Void
-            );
+        match source {
+            TypeId::ANY | TypeId::NEVER | TypeId::ERROR => return true,
+            TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID | TypeId::UNKNOWN => return false,
+            _ => {}
         }
 
         if let Some(members) = union_list_id(self.interner, source) {
@@ -194,11 +181,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .all(|&member| self.is_global_object_interface_type(member));
         }
 
-        if let Some(members) = intersection_list_id(self.interner, source) {
-            let members = self.interner.type_list(members);
-            return members
-                .iter()
-                .any(|&member| self.is_global_object_interface_type(member));
+        if let Some(inner) = readonly_inner_type(self.interner, source) {
+            return self.is_global_object_interface_type(inner);
         }
 
         if let Some(info) = type_param_info(self.interner, source) {
@@ -207,17 +191,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .is_some_and(|constraint| self.is_global_object_interface_type(constraint));
         }
 
-        if let Some(inner) = readonly_inner_type(self.interner, source) {
-            return self.is_global_object_interface_type(inner);
-        }
-
         if let Some(sym) = ref_symbol(self.interner, source)
             && let Some(resolved) = self.resolver.resolve_symbol_ref(sym, self.interner)
         {
             return self.is_global_object_interface_type(resolved);
         }
 
-        self.is_object_keyword_type(source)
+        true
     }
 
     /// Check if a type is callable (can be invoked as a function).
