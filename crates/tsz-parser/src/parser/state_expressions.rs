@@ -124,8 +124,7 @@ impl ParserState {
                 if self.in_async_context() && self.is_token(SyntaxKind::AwaitKeyword) {
                     return false;
                 }
-                self.is_identifier_or_keyword()
-                    && self.look_ahead_is_simple_arrow_function()
+                self.is_identifier_or_keyword() && self.look_ahead_is_simple_arrow_function()
             }
         }
     }
@@ -655,11 +654,7 @@ impl ParserState {
             return self.parse_conditional_expression(left, start_pos);
         }
 
-        let right = self.parse_binary_expression_rhs(
-            left,
-            op,
-            precedence,
-        );
+        let right = self.parse_binary_expression_rhs(left, op, precedence);
         let end_pos = self.token_end();
         let final_right = if right.is_none() { left } else { right };
 
@@ -708,7 +703,12 @@ impl ParserState {
         )
     }
 
-    fn parse_binary_expression_rhs(&mut self, left: NodeIndex, op: SyntaxKind, precedence: u8) -> NodeIndex {
+    fn parse_binary_expression_rhs(
+        &mut self,
+        left: NodeIndex,
+        op: SyntaxKind,
+        precedence: u8,
+    ) -> NodeIndex {
         let is_assignment = matches!(
             op,
             SyntaxKind::EqualsToken
@@ -729,10 +729,10 @@ impl ParserState {
                 | SyntaxKind::QuestionQuestionEqualsToken
         );
         let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
-                precedence
-            } else {
-                precedence + 1
-            };
+            precedence
+        } else {
+            precedence + 1
+        };
         let right = if is_assignment {
             self.parse_assignment_expression()
         } else {

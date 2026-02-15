@@ -54,6 +54,12 @@ pub struct BlockScopeState {
     /// Marks function/script scope boundaries for `var` scoping.
     /// `var` declarations only collide within the same function scope.
     function_scope_marks: Vec<bool>,
+    /// Tracks `var` registrations within the current function scope.
+    /// Maps original name -> emitted name so repeated `var` declarations
+    /// (which are legal and refer to the same hoisted variable) reuse the
+    /// same emitted name, while collisions with block-scoped `let`/`const`
+    /// still trigger renaming.
+    var_registrations: FxHashMap<String, String>,
 }
 
 impl BlockScopeState {
@@ -71,6 +77,7 @@ impl BlockScopeState {
     pub fn enter_function_scope(&mut self) {
         self.scope_stack.push(FxHashMap::default());
         self.function_scope_marks.push(true);
+        self.var_registrations.clear();
     }
 
     /// Exit the current block scope
@@ -133,6 +140,15 @@ impl BlockScopeState {
             return existing.clone();
         }
 
+        // If this var was already registered in the current function scope, reuse
+        // its emitted name (var declarations are hoisted and refer to the same variable).
+        if let Some(existing) = self.var_registrations.get(original_name) {
+            if let Some(current) = self.scope_stack.last_mut() {
+                current.insert(original_name.to_string(), existing.clone());
+            }
+            return existing.clone();
+        }
+
         // Walk only scopes that belong to the current function/script scope.
         let current_scope = self.scope_stack.len();
         if current_scope == 0 {
@@ -150,12 +166,6 @@ impl BlockScopeState {
                 },
             )
             .unwrap_or(0);
-
-        for idx in (function_scope_start..current_scope).rev() {
-            if let Some(existing) = self.scope_stack[idx].get(original_name) {
-                return existing.clone();
-            }
-        }
 
         let mut emitted_name = original_name.to_string();
         if self.scope_stack[function_scope_start..current_scope]
@@ -182,10 +192,12 @@ impl BlockScopeState {
             };
         }
 
-        // Register in current scope
+        // Register in current scope and track as a var registration
         if let Some(current_scope) = self.scope_stack.last_mut() {
             current_scope.insert(original_name.to_string(), emitted_name.clone());
         }
+        self.var_registrations
+            .insert(original_name.to_string(), emitted_name.clone());
 
         emitted_name
     }

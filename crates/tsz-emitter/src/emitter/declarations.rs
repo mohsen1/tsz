@@ -1366,7 +1366,6 @@ impl<'a> Printer<'a> {
                     .get(binary.right)
                     .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
                 let left = self.arena.get(binary.left);
-
                 if binary.operator_token == SyntaxKind::CommaToken as u16 {
                     self.estimate_destructuring_assignment_temps(binary.left)
                         + self.estimate_destructuring_assignment_temps(binary.right)

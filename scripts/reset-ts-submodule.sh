@@ -8,6 +8,10 @@
 
 set -e
 
+# Unset git environment variables that hooks inherit — they interfere
+# with submodule operations by overriding gitlink resolution.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/scripts/typescript-versions.json"
 

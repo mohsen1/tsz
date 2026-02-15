@@ -295,7 +295,7 @@ class C21 {
 #[test]
 fn repro_async_generator_class_methods_ast_shape() {
     let source = include_str!(
-        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts"
+        "../../../TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts"
     );
 
     let mut parser = ParserState::new(
@@ -532,7 +532,7 @@ fn repro_async_generator_class_methods_cross_file() {
 #[test]
 fn repro_async_generator_class_methods_ast_shape_parse_errors() {
     let source = include_str!(
-        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts"
+        "../../../TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts"
     );
 
     let mut parser = ParserState::new(
@@ -592,7 +592,7 @@ fn repro_async_generator_class_methods_ast_shape_parse_errors() {
 #[test]
 fn repro_async_generator_class_methods_forced_parse_errors() {
     let source = include_str!(
-        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts"
+        "../../../TypeScript/tests/cases/conformance/parser/ecmascript2018/asyncGenerators/parser.asyncGenerators.classMethods.es2018.ts"
     );
     let mut parser = ParserState::new(
         "parser.asyncGenerators.classMethods.es2018.ts".to_string(),
