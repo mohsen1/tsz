@@ -221,25 +221,6 @@ impl ParserState {
                 self.is_token(SyntaxKind::EqualsGreaterThanToken)
                     || self.is_token(SyntaxKind::OpenBraceToken)
             } else if self.is_token(SyntaxKind::ColonToken) {
-                let in_conditional_true =
-                    (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
-                if in_conditional_true {
-                    // In `a ? (): T => x : y`, the `:` is often the enclosing conditional
-                    // separator. When the next token is an identifier, prefer conditional
-                    // parsing and let later contexts recover the arrow shape if needed.
-                    let after_colon_snapshot = self.scanner.save_state();
-                    let after_colon_token = {
-                        self.next_token();
-                        self.token()
-                    };
-                    self.scanner.restore_state(after_colon_snapshot);
-                    self.current_token = SyntaxKind::ColonToken;
-                    if after_colon_token == SyntaxKind::Identifier {
-                        self.scanner.restore_state(snapshot);
-                        self.current_token = current;
-                        return false;
-                    }
-                }
                 // (): is definitely an arrow function with a return type annotation.
                 // Empty parens () are never a valid expression, so ():
                 // can only appear as arrow function parameters + return type.
@@ -279,18 +260,11 @@ impl ParserState {
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
         } else if self.is_token(SyntaxKind::ColonToken) {
-            let in_conditional_true = (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
-            if in_conditional_true {
-                // When inside the true branch of a conditional expression (a ? ... : ...),
-                // the `:` after `)` is almost always the conditional's else separator,
-                // not a return type annotation for an arrow function.
-                // Speculatively parsing a return type here can incorrectly consume the
-                // false branch (e.g., `(a, function() {})`) and conclude this is an arrow
-                // function when it isn't. Return false to let the conditional parser handle `:`.
-                self.scanner.restore_state(snapshot);
-                self.current_token = current;
-                return false;
-            }
+            // When we see `:` after `)`, it could be either:
+            // 1. A return type annotation for an arrow function: (x): T => body
+            // 2. The else separator of a conditional: a ? (x) : y
+            // We must look ahead past the type to check for `=>` to distinguish these cases.
+            // Even in a conditional's true branch, arrow functions are valid: a ? (x): T => x : y
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
 
