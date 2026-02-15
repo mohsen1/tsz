@@ -515,19 +515,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
             None => {
-                // Target requires number indexing. Plain objects can satisfy this
-                // only if they expose at least one compatible numeric-like property.
-                let mut saw_numeric_property = false;
+                // Check any numeric-keyed source properties against the target's
+                // number index type. If a numeric property has an incompatible type,
+                // the assignment fails. If there are no numeric properties at all,
+                // the assignment is vacuously compatible — TypeScript allows
+                // `{} = { [n: number]: string }` for this reason.
                 for prop in &source.properties {
-                    if !self.is_numeric_name_for_index_compat(prop.name) {
-                        continue;
-                    }
-
-                    saw_numeric_property = true;
-
-                    // Only validate subtype compatibility for canonical numeric names.
-                    // Non-canonical numeric-like names are only used to satisfy the
-                    // "at least one numeric-like property" gate for assignability.
                     if !utils::is_numeric_property_name(self.interner, prop.name) {
                         continue;
                     }
@@ -549,36 +542,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
-                if saw_numeric_property {
-                    SubtypeResult::True
-                } else {
-                    // No numeric-like properties and no index signatures:
-                    // cannot guarantee number-key reads are safe.
-                    SubtypeResult::False
-                }
+                SubtypeResult::True
             }
         }
-    }
-
-    fn is_numeric_name_for_index_compat(&self, name: Atom) -> bool {
-        // First, use canonical numeric literal check used for index-signature inference.
-        if utils::is_numeric_property_name(self.interner, name) {
-            return true;
-        }
-
-        // Allow leading-zero numeric-like names such as "01" and "00".
-        // These are intentionally not canonical for inference but should not break
-        // assignment compatibility checks for object literals with plain number keys.
-        let name = self.interner.resolve_atom_ref(name);
-        if name.is_empty() {
-            return false;
-        }
-
-        if name.as_ref() == "-0" {
-            return true;
-        }
-
-        name.chars().all(|ch| ch.is_ascii_digit())
     }
 
     /// Check object with index signature subtyping.
