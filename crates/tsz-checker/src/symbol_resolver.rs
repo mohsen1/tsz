@@ -334,6 +334,24 @@ impl<'a> CheckerState<'a> {
             },
         );
 
+        let result = {
+            let expected_name = self
+                .ctx
+                .arena
+                .get_identifier_at(idx)
+                .map(|ident| ident.escaped_text.as_str());
+            result.filter(|&sym_id| {
+                let Some(expected_name) = expected_name else {
+                    return false;
+                };
+
+                self.ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .is_some_and(|symbol| symbol.escaped_name.as_str() == expected_name)
+            })
+        };
+
         trace!(
             ident_name = ?ident_name,
             binder_result = ?result,
@@ -379,6 +397,34 @@ impl<'a> CheckerState<'a> {
                         return Some(file_sym_id);
                     }
                 }
+            }
+        }
+
+        trace!(
+            ident_name = ?ident_name,
+            final_result = ?result,
+            "Symbol resolution final result"
+        );
+
+        if let Some(ident) = self.ctx.arena.get_identifier_at(idx)
+            && result.is_none()
+        {
+            let name = ident.escaped_text.as_str();
+            if let Some(sym_id) =
+                self.resolve_identifier_symbol_from_all_binders(name, |sym_id, symbol| {
+                    if should_skip_lib_symbol(sym_id) {
+                        return false;
+                    }
+
+                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                    if is_class_member {
+                        return is_from_lib(sym_id)
+                            && (symbol.flags & symbol_flags::EXPORT_VALUE) != 0;
+                    }
+                    true
+                })
+            {
+                return Some(sym_id);
             }
         }
 
@@ -570,6 +616,29 @@ impl<'a> CheckerState<'a> {
                 accept_type_symbol(sym_id)
             },
         );
+
+        if resolved.is_none()
+            && let Some(sym_id) =
+                self.resolve_identifier_symbol_from_all_binders(name, |sym_id, symbol| {
+                    if should_skip_lib_symbol(sym_id) {
+                        return false;
+                    }
+
+                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                    if is_class_member {
+                        return false;
+                    }
+                    accept_type_symbol(sym_id)
+                })
+        {
+            let is_value_only = (self.alias_resolves_to_value_only(sym_id, None)
+                || self.symbol_is_value_only(sym_id, None))
+                && !self.symbol_is_type_only(sym_id, None);
+            if is_value_only {
+                return TypeSymbolResolution::ValueOnly(sym_id);
+            }
+            return TypeSymbolResolution::Type(sym_id);
+        }
 
         // Guard against SymbolId renumbering from lib merging: if the resolved
         // symbol's name doesn't match the requested name, the scope table has a
@@ -882,6 +951,43 @@ impl<'a> CheckerState<'a> {
         }
 
         TypeSymbolResolution::NotFound
+    }
+
+    fn resolve_identifier_symbol_from_all_binders(
+        &self,
+        name: &str,
+        mut accept: impl FnMut(SymbolId, &tsz_binder::Symbol) -> bool,
+    ) -> Option<SymbolId> {
+        let all_binders = self.ctx.all_binders.as_ref()?;
+
+        for (file_idx, binder) in all_binders.iter().enumerate() {
+            if let Some(sym_id) = binder.file_locals.get(name) {
+                let Some(sym_symbol) = binder.get_symbol(sym_id) else {
+                    continue;
+                };
+                if !accept(sym_id, sym_symbol) {
+                    continue;
+                }
+                if let Some(local_symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    if local_symbol.escaped_name != name {
+                        self.ctx
+                            .cross_file_symbol_targets
+                            .borrow_mut()
+                            .entry(sym_id)
+                            .or_insert(file_idx);
+                    }
+                } else {
+                    self.ctx
+                        .cross_file_symbol_targets
+                        .borrow_mut()
+                        .entry(sym_id)
+                        .or_insert(file_idx);
+                }
+                return Some(sym_id);
+            }
+        }
+
+        None
     }
 
     /// Inner implementation of qualified symbol resolution with cycle detection.

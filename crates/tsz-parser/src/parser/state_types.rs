@@ -1968,6 +1968,43 @@ impl ParserState {
 
     /// Parse a keyword as an identifier (for type keywords like string, number, etc.)
     pub(crate) fn parse_keyword_as_identifier(&mut self) -> NodeIndex {
+        // `yield` is reserved in generator contexts and class bodies.
+        if self.is_token(SyntaxKind::YieldKeyword) {
+            let start_pos = self.token_pos();
+            if self.in_generator_context() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                let is_class_context = self.in_class_body() || self.in_class_member_name();
+                if is_class_context {
+                    self.parse_error_at_current_token(
+                        "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        "Identifier expected. 'yield' is a reserved word in strict mode.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    );
+                }
+            }
+
+            // Advance manually because we are returning early in this branch.
+            let atom = self.scanner.get_token_atom();
+            let text = self.scanner.get_token_value_ref().to_string();
+            self.next_token();
+            let end_pos = self.token_end();
+            return self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                start_pos,
+                end_pos,
+                node::IdentifierData {
+                    atom,
+                    escaped_text: text,
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
+        }
+
         let start_pos = self.token_pos();
         // OPTIMIZATION: Capture atom for O(1) comparison
         let atom = self.scanner.get_token_atom();

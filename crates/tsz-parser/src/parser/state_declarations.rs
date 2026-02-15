@@ -34,12 +34,26 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::InterfaceKeyword);
 
-        // Parse interface name — all keywords (including reserved words like
-        // 'void', 'null') are accepted by the parser. The checker validates
-        // whether the name is allowed (e.g., emitting TS2427 for built-in type
-        // names or TS2304 for reserved words used as types).
-        let name = if self.is_identifier_or_keyword() {
+        // Parse interface name - keywords like 'string', 'abstract' can be used as interface names
+        // BUT reserved words like 'void', 'null' cannot be used
+        let name = if self.is_token(SyntaxKind::YieldKeyword) {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Identifier expected. 'yield' is a reserved word in strict mode.",
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+            );
             self.parse_identifier_name()
+        } else if self.is_identifier_or_keyword() {
+            // TS1005: Reserved words cannot be used as interface names
+            if self.is_reserved_word() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+                // Consume the invalid token to avoid cascading errors
+                self.next_token();
+                NodeIndex::NONE
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             self.parse_identifier()
         };
@@ -580,17 +594,10 @@ impl ParserState {
             );
         }
 
-        // Parse colon and parameter type.
-        // After a rest parameter (`[...a]`), the `:type` may be missing —
-        // skip it to avoid cascading TS1005/TS1110.
-        let (param_type, param_type_token) =
-            if dot_dot_dot_token && self.is_token(SyntaxKind::CloseBracketToken) {
-                (NodeIndex::NONE, SyntaxKind::Unknown)
-            } else {
-                self.parse_expected(SyntaxKind::ColonToken);
-                let tok = self.token();
-                (self.parse_type(), tok)
-            };
+        // Parse colon and parameter type
+        self.parse_expected(SyntaxKind::ColonToken);
+        let param_type_token = self.token();
+        let param_type = self.parse_type();
 
         // TS1020: initializer in index signature
         let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
@@ -978,7 +985,7 @@ impl ParserState {
                     || self.is_token(SyntaxKind::PrivateIdentifier)
                     || self.is_token(SyntaxKind::OpenBracketToken)
                 {
-                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    self.parse_error_at_current_token("',' expected", diagnostic_codes::EXPECTED);
                     // Continue to next iteration to parse the next member
                     continue;
                 }
@@ -2123,8 +2130,8 @@ impl ParserState {
         if !self.is_token(SyntaxKind::StringLiteral) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
-                "String literal expected.",
-                diagnostic_codes::STRING_LITERAL_EXPECTED,
+                "String literal expected",
+                diagnostic_codes::EXPECTED,
             );
             return NodeIndex::NONE;
         }

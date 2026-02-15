@@ -1,8 +1,8 @@
 //! Parser state - statement and declaration parsing methods
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME,
-    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
-    CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CLASS,
+    CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -1306,6 +1306,7 @@ impl ParserState {
         // reserved keywords (await/yield) are properly detected in function declarations
         // For async function * await() {}, the function name 'await' should error
         // For async function * (await) {}, the parameter name 'await' should error
+        let is_async_generator_declaration = is_async && asterisk_token;
         let saved_flags = self.context_flags;
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
@@ -1324,6 +1325,33 @@ impl ParserState {
                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
             );
+        }
+
+        // Async and generator function declarations are valid with `await`/`yield` in their
+        // own names, but nested function declarations in those contexts are not.
+        if !is_async_generator_declaration && self.in_generator_context()
+            || (self.in_async_context() && self.is_token(SyntaxKind::AwaitKeyword)) && !is_async
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            if self.is_token(SyntaxKind::AwaitKeyword) {
+                self.parse_error_at_current_token(
+                    "Identifier expected. 'await' is a reserved word that cannot be used here.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                );
+            } else if self.is_token(SyntaxKind::YieldKeyword) {
+                let is_class_context = self.in_class_body() || self.in_class_member_name();
+                if is_class_context {
+                    self.parse_error_at_current_token(
+                        "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        "Identifier expected. 'yield' is a reserved word in strict mode.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    );
+                }
+            }
         }
 
         let name = if self.is_identifier_or_keyword() {
@@ -1523,17 +1551,25 @@ impl ParserState {
         {
             use tsz_common::diagnostics::diagnostic_codes;
             if self.is_token(SyntaxKind::AwaitKeyword)
-                && (is_async || self.in_static_block_context())
+                && (self.in_static_block_context() || is_async || self.in_async_context())
             {
                 self.parse_error_at_current_token(
                     "Identifier expected. 'await' is a reserved word that cannot be used here.",
                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
                 );
-            } else if self.is_token(SyntaxKind::YieldKeyword) && asterisk_token {
-                self.parse_error_at_current_token(
-                    "Identifier expected. 'yield' is a reserved word that cannot be used here.",
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
-                );
+            } else if self.is_token(SyntaxKind::YieldKeyword) && self.in_generator_context() {
+                let is_class_context = self.in_class_body() || self.in_class_member_name();
+                if is_class_context {
+                    self.parse_error_at_current_token(
+                        "Identifier expected. 'yield' is a reserved word in strict mode. Class definitions are automatically in strict mode.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    );
+                } else {
+                    self.parse_error_at_current_token(
+                        "Identifier expected. 'yield' is a reserved word in strict mode.",
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    );
+                }
             }
         }
 
@@ -1626,7 +1662,10 @@ impl ParserState {
 
         // Parse body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let class_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
+        self.context_flags = class_saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -1990,7 +2029,10 @@ impl ParserState {
 
         // Parse class body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let class_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
+        self.context_flags = class_saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -2047,7 +2089,10 @@ impl ParserState {
 
         // Parse class body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let class_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
+        self.context_flags = class_saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -2099,7 +2144,10 @@ impl ParserState {
 
         // Parse class body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let class_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
+        self.context_flags = class_saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -2141,7 +2189,7 @@ impl ParserState {
 
         // Set ambient context for class members
         let saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_AMBIENT;
+        self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
 
         let members = self.parse_class_members();
 
@@ -2199,7 +2247,7 @@ impl ParserState {
 
         // Set ambient context for class members
         let saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_AMBIENT;
+        self.context_flags |= CONTEXT_FLAG_AMBIENT | CONTEXT_FLAG_IN_CLASS;
 
         let members = self.parse_class_members();
 
@@ -2417,7 +2465,10 @@ impl ParserState {
 
         // Parse class body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let class_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
+        self.context_flags = class_saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -2474,7 +2525,10 @@ impl ParserState {
 
         // Parse class body
         self.parse_expected(SyntaxKind::OpenBraceToken);
+        let class_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_CLASS;
         let members = self.parse_class_members();
+        self.context_flags = class_saved_flags;
         self.parse_expected(SyntaxKind::CloseBraceToken);
 
         let end_pos = self.token_end();
@@ -3856,22 +3910,50 @@ impl ParserState {
         } else {
             self.parse_optional(SyntaxKind::ExclamationToken)
         };
+        let method_saved_flags = self.context_flags;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+        }
 
-        // Check if it's a method or property
-        // Method: foo() or foo<T>()
-        // But not if var/let is in modifiers - that's an invalid pattern
-        if (self.is_token(SyntaxKind::OpenParenToken) || self.is_token(SyntaxKind::LessThanToken))
-            && !has_var_let_modifier
-        {
+        // Check if it's a method or property.
+        // Method: foo() or foo<T>().
+        // `async *` members always require a member body/parameter list form, so treat
+        // asterisk forms as methods even when '(' is missing (for recovery).
+        let is_method_like = !has_var_let_modifier
+            && (asterisk_token
+                || self.is_token(SyntaxKind::OpenParenToken)
+                || self.is_token(SyntaxKind::LessThanToken));
+
+        if is_method_like {
             // Parse optional type parameters: foo<T, U>()
             let type_parameters = self
                 .is_token(SyntaxKind::LessThanToken)
                 .then(|| self.parse_type_parameters());
 
             // Method
-            self.parse_expected(SyntaxKind::OpenParenToken);
-            let parameters = self.parse_parameter_list();
-            self.parse_expected(SyntaxKind::CloseParenToken);
+            let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+            let parameters = if has_open_paren {
+                let parameters = self.parse_parameter_list();
+                self.parse_expected(SyntaxKind::CloseParenToken);
+                parameters
+            } else if asterisk_token {
+                // `async *` members must be methods. Missing `(` here should emit one
+                // TS1005 and recover without producing a declaration node, so we avoid
+                // downstream errors like TS2391 on malformed members.
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+                self.recover_from_missing_method_open_paren();
+                self.context_flags = method_saved_flags;
+                return NodeIndex::NONE;
+            } else {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+                self.recover_from_missing_method_open_paren();
+                self.make_node_list(vec![])
+            };
 
             // Optional return type (supports type predicates: param is T)
             let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
@@ -3879,25 +3961,6 @@ impl ParserState {
             } else {
                 NodeIndex::NONE
             };
-
-            // Check if method has async modifier
-            let is_async = modifiers.as_ref().is_some_and(|mods| {
-                mods.nodes.iter().any(|&idx| {
-                    self.arena
-                        .nodes
-                        .get(idx.0 as usize)
-                        .is_some_and(|node| node.kind == SyntaxKind::AsyncKeyword as u16)
-                })
-            });
-
-            // Set context flags for async/generator method signature and body.
-            let saved_flags = self.context_flags;
-            if is_async {
-                self.context_flags |= CONTEXT_FLAG_ASYNC;
-            }
-            if asterisk_token {
-                self.context_flags |= CONTEXT_FLAG_GENERATOR;
-            }
 
             // Parse body
             self.push_label_scope();
@@ -3908,8 +3971,7 @@ impl ParserState {
             };
             self.pop_label_scope();
 
-            // Restore context flags
-            self.context_flags = saved_flags;
+            self.context_flags = method_saved_flags;
 
             let end_pos = self.token_end();
             self.arena.add_method_decl(
@@ -3963,12 +4025,14 @@ impl ParserState {
 
             // Parse a statement to balance braces
             // This consumes '{ }' so the class members loop doesn't see them
+            self.context_flags = method_saved_flags;
             let _ = self.parse_statement();
 
             // Return NONE to indicate this is not a valid member
             NodeIndex::NONE
         } else {
             // Property - parse optional type and initializer
+            self.context_flags = method_saved_flags;
             let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
                 self.parse_type()
             } else {

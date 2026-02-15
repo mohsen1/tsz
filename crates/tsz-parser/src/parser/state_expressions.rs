@@ -1012,6 +1012,10 @@ impl ParserState {
                 )
             }
             SyntaxKind::YieldKeyword => {
+                if self.in_class_member_name() {
+                    return self.parse_identifier_name();
+                }
+
                 // Check if 'yield' is followed by an expression
                 let snapshot = self.scanner.save_state();
                 let current_token = self.current_token;
@@ -3319,17 +3323,6 @@ impl ParserState {
             .is_token(SyntaxKind::LessThanToken)
             .then(|| self.parse_type_parameters());
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
-        let parameters = self.parse_parameter_list();
-        self.parse_expected(SyntaxKind::CloseParenToken);
-
-        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
-            self.parse_type()
-        } else {
-            NodeIndex::NONE
-        };
-
-        // Set context flags for async/generator to properly parse await/yield in method bodies.
         let saved_flags = self.context_flags;
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
@@ -3337,6 +3330,24 @@ impl ParserState {
         if asterisk {
             self.context_flags |= CONTEXT_FLAG_GENERATOR;
         }
+
+        let has_open_paren = self.parse_optional(SyntaxKind::OpenParenToken);
+        let parameters = if has_open_paren {
+            let parameters = self.parse_parameter_list();
+            self.parse_expected(SyntaxKind::CloseParenToken);
+            parameters
+        } else {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            self.recover_from_missing_method_open_paren();
+            self.make_node_list(vec![])
+        };
+
+        let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
+            self.parse_type()
+        } else {
+            NodeIndex::NONE
+        };
 
         // Push a new label scope for the method body
         self.push_label_scope();
