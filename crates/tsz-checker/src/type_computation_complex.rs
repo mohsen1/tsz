@@ -426,7 +426,7 @@ impl<'a> CheckerState<'a> {
             call_checker::resolve_new_with_context(
                 self.ctx.types,
                 &self.ctx,
-                &*env,
+                &env,
                 constructor_type,
                 &arg_types,
                 false,
@@ -1371,7 +1371,7 @@ impl<'a> CheckerState<'a> {
                         call_checker::compute_contextual_types_with_context(
                             self.ctx.types,
                             &self.ctx,
-                            &*env,
+                            &env,
                             &shape,
                             &round1_arg_types,
                             self.ctx.contextual_type,
@@ -1493,7 +1493,7 @@ impl<'a> CheckerState<'a> {
                 call_checker::resolve_new_with_context(
                     self.ctx.types,
                     &self.ctx,
-                    &*env,
+                    &env,
                     callee_type_for_call,
                     &arg_types,
                     force_bivariant_callbacks,
@@ -1502,7 +1502,7 @@ impl<'a> CheckerState<'a> {
                 call_checker::resolve_call_with_context(
                     self.ctx.types,
                     &self.ctx,
-                    &*env,
+                    &env,
                     callee_type_for_call,
                     &arg_types,
                     force_bivariant_callbacks,
