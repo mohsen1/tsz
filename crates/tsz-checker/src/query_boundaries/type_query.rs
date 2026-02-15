@@ -1,9 +1,9 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use tsz_solver::type_queries::LiteralTypeKind;
+pub(crate) use tsz_solver::type_queries_extended::LiteralTypeKind;
 
 pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralTypeKind {
-    tsz_solver::type_queries::classify_literal_type(db, type_id)
+    tsz_solver::type_queries_extended::classify_literal_type(db, type_id)
 }
 
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

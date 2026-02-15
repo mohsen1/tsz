@@ -15,6 +15,7 @@ use tsz_parser::parser::{NodeArena, NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::def::DefId;
+use tsz_solver::is_compiler_managed_type;
 
 impl<'a> CheckerState<'a> {
     /// Get type from a type reference node (e.g., "number", "string", "MyType").
@@ -1170,7 +1171,8 @@ impl<'a> CheckerState<'a> {
                 let binder = &self.ctx.binder;
                 let lib_binders = self.get_lib_binders();
                 let multi_arena_resolve = |node_idx: NodeIndex| -> Option<SymbolId> {
-                    use tsz_solver::is_compiler_managed_type;
+                    // Use checker-accessible compiler-managed type detection helper.
+
                     // Try each declaration arena to find the identifier text
                     let ident_name = decls_with_arenas
                         .iter()
@@ -1321,7 +1323,7 @@ impl<'a> CheckerState<'a> {
 
                         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
                             let ident_name = lib_arena.get_identifier_text(node_idx)?;
-                            if tsz_solver::is_compiler_managed_type(ident_name) {
+                            if is_compiler_managed_type(ident_name) {
                                 return None;
                             }
                             let sym_id = binder.file_locals.get(ident_name)?;
@@ -1334,7 +1336,7 @@ impl<'a> CheckerState<'a> {
                         let def_id_resolver =
                             |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
                                 let ident_name = lib_arena.get_identifier_text(node_idx)?;
-                                if tsz_solver::is_compiler_managed_type(ident_name) {
+                                if is_compiler_managed_type(ident_name) {
                                     return None;
                                 }
                                 let sym_id = binder.file_locals.get(ident_name)?;

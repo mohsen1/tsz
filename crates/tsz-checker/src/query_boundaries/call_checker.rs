@@ -1,6 +1,7 @@
+use tsz_solver::operations::CallResult;
 use tsz_solver::{
-    AssignabilityChecker, CallResult, CompatChecker, FunctionShape, QueryDatabase, TupleElement,
-    TypeDatabase, TypeId, TypeSubstitution,
+    AssignabilityChecker, CompatChecker, FunctionShape, QueryDatabase, TupleElement, TypeDatabase,
+    TypeId, TypeSubstitution,
 };
 
 pub(crate) fn array_element_type_for_type(

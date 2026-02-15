@@ -97,7 +97,7 @@ use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{QueryDatabase, TypeId};
+use tsz_solver::{QueryDatabase, TypeId, substitute_this_type};
 
 thread_local! {
     /// Shared depth counter for all cross-arena delegation points.
@@ -389,11 +389,7 @@ impl<'a> CheckerState<'a> {
         if let Some(access) = self.ctx.arena.get_access_expr(node) {
             let receiver_type = self.get_type_of_node(access.expression);
             if receiver_type != TypeId::ERROR && receiver_type != TypeId::ANY {
-                return tsz_solver::substitute_this_type(
-                    self.ctx.types,
-                    return_type,
-                    receiver_type,
-                );
+                return substitute_this_type(self.ctx.types, return_type, receiver_type);
             }
         }
 

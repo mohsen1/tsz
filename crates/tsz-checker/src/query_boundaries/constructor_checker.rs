@@ -1,6 +1,6 @@
 use tsz_solver::{CallSignature, TypeDatabase, TypeId};
 
-pub(crate) use tsz_solver::type_queries::{
+pub(crate) use tsz_solver::type_queries_extended::{
     AbstractConstructorKind, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
 };
 
