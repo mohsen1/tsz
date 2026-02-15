@@ -3452,9 +3452,10 @@ impl ParserState {
     /// comma expression (e.g., `[0, 1]`).
     fn computed_name_is_comma_expression(&self, expression: NodeIndex) -> bool {
         if let Some(node) = self.arena.get(expression)
-            && let Some(binary_expr) = self.arena.get_binary_expr(node) {
-                return binary_expr.operator_token == SyntaxKind::CommaToken as u16;
-            }
+            && let Some(binary_expr) = self.arena.get_binary_expr(node)
+        {
+            return binary_expr.operator_token == SyntaxKind::CommaToken as u16;
+        }
         false
     }
 

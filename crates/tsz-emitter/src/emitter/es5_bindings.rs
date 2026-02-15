@@ -93,10 +93,6 @@ impl<'a> Printer<'a> {
         (count, has_rest)
     }
 
-    fn emit_commonjs_binding_target(&mut self, name: NodeIndex) {
-        self.emit(name);
-    }
-
     /// For single-binding array patterns with complex expressions,
     /// find the single effective binding's index and emit inline.
     fn emit_single_array_binding_inline(
@@ -1037,7 +1033,7 @@ impl<'a> Printer<'a> {
         _first: &mut bool,
     ) {
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-            eprintln!("emit_es5_destructuring_with_read_node entered");
+            tracing::debug!("emit_es5_destructuring_with_read_node entered");
         }
 
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
@@ -1118,11 +1114,14 @@ impl<'a> Printer<'a> {
             let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                 let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
-                eprintln!(
+                tracing::debug!(
                     "downlevel-bp-element index={} elem_name={:?} unwrapped={:?} kind={}",
-                    index, elem.name, unwrapped_name, elem_kind
+                    index,
+                    elem.name,
+                    unwrapped_name,
+                    elem_kind
                 );
-                eprintln!(
+                tracing::debug!(
                     "downlevel-bp-kind-bytes: elem={} unwrapped={}",
                     self.arena.get(unwrapped_name).map(|n| n.kind).unwrap_or(0),
                     SyntaxKind::Identifier as u16
@@ -1158,9 +1157,11 @@ impl<'a> Printer<'a> {
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
-                            eprintln!(
+                            tracing::debug!(
                                 "downlevel-nested-array index={} unwrapped={} source={}",
-                                index, unwrapped_name.0, elem_source
+                                index,
+                                unwrapped_name.0,
+                                elem_source
                             );
                         }
                         self.write(", ");
