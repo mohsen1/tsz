@@ -511,7 +511,46 @@ impl<'a> Printer<'a> {
             }
             !text[start..end].contains('\n')
         });
-        let should_emit_single_line = obj.elements.nodes.len() == 1 || source_single_line;
+        let has_multiline_object_member = obj.elements.nodes.iter().any(|&prop| {
+            let Some(prop_node) = self.arena.get(prop) else {
+                return false;
+            };
+
+            match prop_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(prop_node) else {
+                        return false;
+                    };
+                    if method.body.is_none() {
+                        return false;
+                    }
+                    self.node_text_contains_node(method.body)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(prop_node) else {
+                        return false;
+                    };
+                    if accessor.body.is_none() {
+                        return false;
+                    }
+                    self.node_text_contains_node(accessor.body)
+                }
+                k if k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(prop_node) else {
+                        return false;
+                    };
+                    if accessor.body.is_none() {
+                        return false;
+                    }
+                    self.node_text_contains_node(accessor.body)
+                }
+                _ => false,
+            }
+        });
+
+        let has_single_member = obj.elements.nodes.len() == 1;
+        let should_emit_single_line =
+            source_single_line || (has_single_member && !has_multiline_object_member);
         if should_emit_single_line {
             self.write("{ ");
             for (i, &prop) in obj.elements.nodes.iter().enumerate() {
@@ -623,5 +662,17 @@ impl<'a> Printer<'a> {
             self.write(" = ");
             // Object assignment pattern default value would go here
         }
+    }
+
+    fn node_text_contains_node(&self, node_idx: tsz_parser::parser::NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        self.node_text_contains_newline(node.pos as usize, node.end as usize)
+    }
+
+    fn node_text_contains_newline(&self, start: usize, end: usize) -> bool {
+        self.source_text
+            .is_some_and(|text| start < end && end <= text.len() && text[start..end].contains('\n'))
     }
 }
