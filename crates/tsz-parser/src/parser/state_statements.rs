@@ -1,4 +1,5 @@
 //! Parser state - statement and declaration parsing methods
+#![allow(clippy::too_many_lines)]
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC,
@@ -2838,7 +2839,6 @@ impl ParserState {
     }
 
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_class_member_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
 
@@ -3502,7 +3502,6 @@ impl ParserState {
     }
 
     /// Parse a single class member
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_class_member(&mut self) -> NodeIndex {
         use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();

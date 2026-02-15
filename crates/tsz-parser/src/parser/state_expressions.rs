@@ -1,4 +1,5 @@
 //! Parser state - expression parsing methods
+#![allow(clippy::too_many_lines)]
 
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN,
@@ -616,25 +617,27 @@ impl ParserState {
     }
 
     /// Parse binary expression with precedence climbing
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_binary_expression(&mut self, min_precedence: u8) -> NodeIndex {
-        // Check recursion limit for deeply nested expressions
         if !self.enter_recursion() {
             return NodeIndex::NONE;
         }
 
         let start_pos = self.token_pos();
+        let left = self.parse_binary_expression_chain(min_precedence, start_pos);
+        self.exit_recursion();
+        left
+    }
+
+    fn parse_binary_expression_chain(&mut self, min_precedence: u8, start_pos: u32) -> NodeIndex {
         let mut left = self.parse_unary_expression();
 
         loop {
-            // Try to rescan > as >>, >>>, >=, >>=, >>>= for binary operators
             let op = if self.is_token(SyntaxKind::GreaterThanToken) {
                 self.try_rescan_greater_token()
             } else {
                 self.token()
             };
             let precedence = self.get_operator_precedence(op);
-
             if precedence == 0 || precedence < min_precedence {
                 break;
             }
@@ -644,126 +647,123 @@ impl ParserState {
                 continue;
             }
 
-            let operator_token = op as u16;
-            self.next_token();
-
-            // Handle conditional expression
-            if op == SyntaxKind::QuestionToken {
-                // Set flag to indicate we're parsing the 'true' branch of a conditional
-                // This prevents arrow function lookahead from stealing the ':' that belongs to this conditional
-                let saved_flags = self.context_flags;
-                self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_CONDITIONAL_TRUE;
-
-                let mut when_true = self.parse_assignment_expression();
-
-                // Restore flags after parsing the true branch
-                self.context_flags = saved_flags;
-                if when_true.is_none() {
-                    // Emit TS1109 for incomplete conditional expression: condition ? [missing]
-                    self.error_expression_expected();
-                    // Create placeholder for missing true branch
-                    when_true = self.create_missing_expression();
-                }
-                self.parse_expected(SyntaxKind::ColonToken);
-                let mut when_false = self.parse_assignment_expression();
-                if when_false.is_none() {
-                    // Emit TS1109 for incomplete conditional expression: condition ? true : [missing]
-                    self.error_expression_expected();
-                    // Create placeholder for missing false branch
-                    when_false = self.create_missing_expression();
-                }
-                let end_pos = self.token_end();
-
-                left = self.arena.add_conditional_expr(
-                    syntax_kind_ext::CONDITIONAL_EXPRESSION,
-                    start_pos,
-                    end_pos,
-                    ConditionalExprData {
-                        condition: left,
-                        when_true,
-                        when_false,
-                    },
-                );
-            } else {
-                // Right associativity for assignment and exponentiation
-                // For assignment operators, use parse_assignment_expression to allow arrow functions on RHS
-                let is_assignment = matches!(
-                    op,
-                    SyntaxKind::EqualsToken
-                        | SyntaxKind::PlusEqualsToken
-                        | SyntaxKind::MinusEqualsToken
-                        | SyntaxKind::AsteriskEqualsToken
-                        | SyntaxKind::SlashEqualsToken
-                        | SyntaxKind::PercentEqualsToken
-                        | SyntaxKind::AsteriskAsteriskEqualsToken
-                        | SyntaxKind::LessThanLessThanEqualsToken
-                        | SyntaxKind::GreaterThanGreaterThanEqualsToken
-                        | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-                        | SyntaxKind::AmpersandEqualsToken
-                        | SyntaxKind::CaretEqualsToken
-                        | SyntaxKind::BarEqualsToken
-                        | SyntaxKind::BarBarEqualsToken
-                        | SyntaxKind::AmpersandAmpersandEqualsToken
-                        | SyntaxKind::QuestionQuestionEqualsToken
-                );
-
-                let right = if is_assignment {
-                    let result = self.parse_assignment_expression();
-                    if result.is_none() {
-                        // Emit TS1109 for incomplete assignment RHS: a = [missing]
-                        self.error_expression_expected();
-                        // Try to create a placeholder for missing RHS to maintain AST structure
-                        let recovered = self.try_recover_binary_rhs();
-                        if recovered.is_none() {
-                            self.resync_to_next_expression_boundary();
-                            // Break out of binary expression loop when parsing fails
-                            return left;
-                        }
-                        recovered
-                    } else {
-                        result
-                    }
-                } else {
-                    let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
-                        precedence // right associative
-                    } else {
-                        precedence + 1
-                    };
-                    let result = self.parse_binary_expression(next_min);
-                    if result.is_none() {
-                        // Emit TS1109 for incomplete binary expression: a + [missing]
-                        self.error_expression_expected();
-                        // Try to create a placeholder for missing RHS to maintain AST structure
-                        let recovered = self.try_recover_binary_rhs();
-                        if recovered.is_none() {
-                            self.resync_to_next_expression_boundary();
-                            // Break out of binary expression loop when parsing fails
-                            return left;
-                        }
-                        recovered
-                    } else {
-                        result
-                    }
-                };
-                let end_pos = self.token_end();
-
-                let final_right = if right.is_none() { left } else { right };
-
-                left = self.arena.add_binary_expr(
-                    syntax_kind_ext::BINARY_EXPRESSION,
-                    start_pos,
-                    end_pos,
-                    BinaryExprData {
-                        left,
-                        operator_token,
-                        right: final_right,
-                    },
-                );
-            }
+            left = self.parse_binary_expression_remainder(left, start_pos, op, precedence);
         }
 
-        self.exit_recursion();
         left
+    }
+
+    fn parse_binary_expression_remainder(
+        &mut self,
+        left: NodeIndex,
+        start_pos: u32,
+        op: SyntaxKind,
+        precedence: u8,
+    ) -> NodeIndex {
+        let operator_token = op as u16;
+        self.next_token();
+
+        if op == SyntaxKind::QuestionToken {
+            return self.parse_conditional_expression(left, start_pos);
+        }
+
+        let right = self.parse_binary_expression_rhs(left, op, precedence);
+        let end_pos = self.token_end();
+        let final_right = if right.is_none() { left } else { right };
+
+        self.arena.add_binary_expr(
+            syntax_kind_ext::BINARY_EXPRESSION,
+            start_pos,
+            end_pos,
+            BinaryExprData {
+                left,
+                operator_token,
+                right: final_right,
+            },
+        )
+    }
+
+    fn parse_conditional_expression(&mut self, condition: NodeIndex, start_pos: u32) -> NodeIndex {
+        // Set flag to indicate we're parsing the 'true' branch of a conditional
+        // This prevents arrow function lookahead from stealing the ':' that belongs to this conditional
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_CONDITIONAL_TRUE;
+
+        let mut when_true = self.parse_assignment_expression();
+        self.context_flags = saved_flags;
+        if when_true.is_none() {
+            self.error_expression_expected();
+            when_true = self.create_missing_expression();
+        }
+
+        self.parse_expected(SyntaxKind::ColonToken);
+        let mut when_false = self.parse_assignment_expression();
+        if when_false.is_none() {
+            self.error_expression_expected();
+            when_false = self.create_missing_expression();
+        }
+        let end_pos = self.token_end();
+
+        self.arena.add_conditional_expr(
+            syntax_kind_ext::CONDITIONAL_EXPRESSION,
+            start_pos,
+            end_pos,
+            ConditionalExprData {
+                condition,
+                when_true,
+                when_false,
+            },
+        )
+    }
+
+    fn parse_binary_expression_rhs(
+        &mut self,
+        left: NodeIndex,
+        op: SyntaxKind,
+        precedence: u8,
+    ) -> NodeIndex {
+        let is_assignment = matches!(
+            op,
+            SyntaxKind::EqualsToken
+                | SyntaxKind::PlusEqualsToken
+                | SyntaxKind::MinusEqualsToken
+                | SyntaxKind::AsteriskEqualsToken
+                | SyntaxKind::SlashEqualsToken
+                | SyntaxKind::PercentEqualsToken
+                | SyntaxKind::AsteriskAsteriskEqualsToken
+                | SyntaxKind::LessThanLessThanEqualsToken
+                | SyntaxKind::GreaterThanGreaterThanEqualsToken
+                | SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
+                | SyntaxKind::AmpersandEqualsToken
+                | SyntaxKind::CaretEqualsToken
+                | SyntaxKind::BarEqualsToken
+                | SyntaxKind::BarBarEqualsToken
+                | SyntaxKind::AmpersandAmpersandEqualsToken
+                | SyntaxKind::QuestionQuestionEqualsToken
+        );
+
+        let right = if is_assignment {
+            self.parse_assignment_expression()
+        } else {
+            let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
+                precedence
+            } else {
+                precedence + 1
+            };
+            self.parse_binary_expression(next_min)
+        };
+
+        if right.is_none() {
+            self.error_expression_expected();
+            let recovered = self.try_recover_binary_rhs();
+            if recovered.is_none() {
+                self.resync_to_next_expression_boundary();
+                return left;
+            }
+            return recovered;
+        }
+
+        right
     }
 
     /// Parse as/satisfies expression: expr as Type, expr satisfies Type
@@ -812,7 +812,6 @@ impl ParserState {
     }
 
     /// Parse unary expression
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_unary_expression(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::PlusToken
@@ -1154,7 +1153,6 @@ impl ParserState {
     }
 
     /// Parse left-hand side expression (member access, call, etc.)
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_left_hand_side_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut expr = self.parse_primary_expression();
@@ -1789,7 +1787,6 @@ impl ParserState {
     }
 
     /// Parse object binding pattern: { x, y: z, ...rest }
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_object_binding_pattern(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
@@ -2031,7 +2028,6 @@ impl ParserState {
 
     /// Parse numeric literal
     /// Uses zero-copy accessor for parsing, clones only when storing
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_numeric_literal(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
@@ -2462,7 +2458,6 @@ impl ParserState {
     }
 
     /// Parse template expression: `hello ${name}!`
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_template_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -2792,7 +2787,6 @@ impl ParserState {
     }
 
     /// Parse property assignment, method, getter, setter, or spread element
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_property_assignment(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
