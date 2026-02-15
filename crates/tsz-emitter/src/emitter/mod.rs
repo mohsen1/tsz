@@ -202,6 +202,16 @@ enum EmitDirective {
     Chain(Vec<Self>),
 }
 
+type TempScopeSnapshot = (
+    u32,
+    FxHashSet<String>,
+    bool,
+    VecDeque<String>,
+    VecDeque<String>,
+    Vec<String>,
+    Vec<String>,
+);
+
 // =============================================================================
 // Printer
 // =============================================================================
@@ -261,15 +271,7 @@ pub struct Printer<'a> {
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
     /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted, preallocated names, preallocated logical value names, value temps, reference temps).
-    pub(super) temp_scope_stack: Vec<(
-        u32,
-        FxHashSet<String>,
-        bool,
-        VecDeque<String>,
-        VecDeque<String>,
-        Vec<String>,
-        Vec<String>,
-    )>,
+    pub(super) temp_scope_stack: Vec<TempScopeSnapshot>,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
