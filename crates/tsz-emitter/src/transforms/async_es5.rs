@@ -109,11 +109,11 @@ impl<'a> AsyncES5Emitter<'a> {
     }
 
     pub fn set_lexical_this(&mut self, capture: bool) {
-        self.this_capture_depth = if capture { 1 } else { 0 };
+        self.this_capture_depth = u32::from(capture);
     }
 
     pub fn set_use_this_capture(&mut self, capture: bool) {
-        self.this_capture_depth = if capture { 1 } else { 0 };
+        self.this_capture_depth = u32::from(capture);
     }
 
     /// Set the class name for private field access transformations
