@@ -358,7 +358,6 @@ impl Default for WasmParallelChecker {
 /// Tests for the native (non-wasm) interface.
 /// The wasm-specific tests are skipped on non-wasm targets because wasm-bindgen
 /// functions cannot be called on non-wasm targets.
-
 #[cfg(test)]
 #[path = "wasm_tests.rs"]
 mod tests;

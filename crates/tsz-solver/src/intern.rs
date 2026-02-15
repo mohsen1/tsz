@@ -58,6 +58,8 @@ pub(crate) const MAX_INTERNED_TYPES: usize = 500_000;
 pub(crate) const MAX_INTERNED_TYPES: usize = 5_000_000;
 
 type TypeListBuffer = SmallVec<[TypeId; TYPE_LIST_INLINE]>;
+type ObjectPropertyMap =
+    OnceLock<DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum PrimitiveClass {
@@ -329,8 +331,7 @@ pub struct TypeInterner {
     template_lists: ConcurrentSliceInterner<TemplateSpan>,
     object_shapes: ConcurrentValueInterner<ObjectShape>,
     /// Object property maps: lazily initialized DashMap
-    object_property_maps:
-        OnceLock<DashMap<ObjectShapeId, Arc<FxHashMap<Atom, usize>>, FxBuildHasher>>,
+    object_property_maps: ObjectPropertyMap,
     function_shapes: ConcurrentValueInterner<FunctionShape>,
     callable_shapes: ConcurrentValueInterner<CallableShape>,
     conditional_types: ConcurrentValueInterner<ConditionalType>,

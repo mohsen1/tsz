@@ -34,7 +34,7 @@ pub static DEFAULT_CHECKER_OPTIONS: Lazy<CheckerOptions> = Lazy::new(CheckerOpti
 ///
 /// Loads lib.es5.d.ts which contains core global types (Array, Object, Function, etc.).
 pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> =
-    Lazy::new(|| load_lib_files_from_paths());
+    Lazy::new(load_lib_files_from_paths);
 
 /// Shared lib contexts for checker tests.
 ///

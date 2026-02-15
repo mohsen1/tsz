@@ -3740,12 +3740,9 @@ mod tests {
         let mut resolver = ModuleResolver::node_resolver();
         let result = resolver.resolve("./Button", &dir.join("app.ts"), Span::new(0, 10));
 
-        match result {
-            Ok(module) => {
-                assert_eq!(module.resolved_path, dir.join("Button.tsx"));
-                assert_eq!(module.extension, ModuleExtension::Tsx);
-            }
-            Err(_) => {} // OK in some environments
+        if let Ok(module) = result {
+            assert_eq!(module.resolved_path, dir.join("Button.tsx"));
+            assert_eq!(module.extension, ModuleExtension::Tsx);
         }
 
         let _ = fs::remove_dir_all(&dir);
@@ -3764,12 +3761,9 @@ mod tests {
         let mut resolver = ModuleResolver::node_resolver();
         let result = resolver.resolve("./utils", &dir.join("main.ts"), Span::new(0, 10));
 
-        match result {
-            Ok(module) => {
-                assert_eq!(module.resolved_path, dir.join("utils").join("index.ts"));
-                assert_eq!(module.extension, ModuleExtension::Ts);
-            }
-            Err(_) => {} // OK in some environments
+        if let Ok(module) = result {
+            assert_eq!(module.resolved_path, dir.join("utils").join("index.ts"));
+            assert_eq!(module.extension, ModuleExtension::Ts);
         }
 
         let _ = fs::remove_dir_all(&dir);
@@ -3820,12 +3814,9 @@ mod tests {
         let mut resolver = ModuleResolver::node_resolver();
         let result = resolver.resolve("./types", &dir.join("main.ts"), Span::new(0, 10));
 
-        match result {
-            Ok(module) => {
-                assert_eq!(module.resolved_path, dir.join("types.d.ts"));
-                assert_eq!(module.extension, ModuleExtension::Dts);
-            }
-            Err(_) => {} // OK in some environments
+        if let Ok(module) = result {
+            assert_eq!(module.resolved_path, dir.join("types.d.ts"));
+            assert_eq!(module.extension, ModuleExtension::Dts);
         }
 
         let _ = fs::remove_dir_all(&dir);
