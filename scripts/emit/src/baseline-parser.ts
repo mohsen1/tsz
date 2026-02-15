@@ -102,9 +102,14 @@ export function parseBaseline(content: string): BaselineContent {
   // First pass: collect source and js markers to infer output naming.
   for (const seg of segments) {
     const name = seg.name.trim();
+    const fileContent = content.slice(seg.start, seg.end).trim();
 
     if (isSourceLike(name)) {
-      sourceLikeFiles.push({ name, content: content.slice(seg.start, seg.end).trim() });
+      // Some baselines include zero-length or placeholder source segments.
+      // Ignore these to avoid injecting empty generated files into emitter input.
+      if (fileContent.length > 0) {
+        sourceLikeFiles.push({ name, content: fileContent });
+      }
       sourceFileNames.add(name);
     } else if (isJsLikeOutput(name)) {
       jsFileNames.add(name);
@@ -147,6 +152,9 @@ export function parseBaseline(content: string): BaselineContent {
       }
     }
     if (isSourceLike(name)) {
+      if (fileContent.length === 0) {
+        continue;
+      }
       result.sourceFiles.push({ name, content: fileContent });
       if (!result.source) {
         // Keep the first TypeScript source file as the default entry-point.
