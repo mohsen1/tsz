@@ -1,2 +1,19 @@
+# TSZ clippy policy
+# Aligned with docs/architecture/NORTH_STAR.md:
+#  - thin orchestration in checker/lsp, strict solver ownership of type logic
+#  - explicit, maintainable code paths for pipeline correctness
+#  - strong readability and architectural boundaries
+
+# Keep complex files and impls visible during review
+# (not an absolute ban; architectural intent can justify exceptions with context).
 too-many-lines-threshold = 520
+cognitive-complexity-threshold = 45
+
+# Keep APIs explicit and readable
 max-struct-bools = 32
+type-complexity-threshold = 260
+too-many-arguments-threshold = 8
+
+# Reduce obscure import and naming patterns in large code paths
+warn-on-all-wildcard-imports = true
+single-char-binding-names-threshold = 3
