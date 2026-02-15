@@ -75,7 +75,7 @@ impl SubtypeResult {
 /// Only safe for primitives where identity implies structural equality.
 fn is_disjoint_unit_type(types: &dyn TypeDatabase, ty: TypeId) -> bool {
     match types.lookup(ty) {
-        Some(TypeData::Literal(_)) | Some(TypeData::UniqueSymbol(_)) => true,
+        Some(TypeData::Literal(_) | TypeData::UniqueSymbol(_)) => true,
         // Note: Tuples removed to avoid labeled tuple bug
         // TypeScript treats [a: 1] and [b: 1] as compatible even though they have different TypeIds
         _ => false,
@@ -1743,14 +1743,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return self.are_literals_overlapping(a_resolved, b_resolved);
                 }
                 // Distinct primitives do not overlap
-                (IntrinsicKind::String, _)
-                | (IntrinsicKind::Number, _)
-                | (IntrinsicKind::Boolean, _)
-                | (IntrinsicKind::Bigint, _)
-                | (IntrinsicKind::Symbol, _)
-                | (IntrinsicKind::Null, _)
-                | (IntrinsicKind::Undefined, _)
-                | (IntrinsicKind::Void, _) => {
+                (
+                    IntrinsicKind::String
+                    | IntrinsicKind::Number
+                    | IntrinsicKind::Boolean
+                    | IntrinsicKind::Bigint
+                    | IntrinsicKind::Symbol
+                    | IntrinsicKind::Null
+                    | IntrinsicKind::Undefined
+                    | IntrinsicKind::Void,
+                    _,
+                ) => {
                     return false;
                 }
                 // Handle Object keyword vs Primitives (Disjoint)

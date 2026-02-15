@@ -2012,8 +2012,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         match self.interner().lookup(source) {
-            Some(TypeData::Object(source_shape_id))
-            | Some(TypeData::ObjectWithIndex(source_shape_id)) => {
+            Some(
+                TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
+            ) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {
@@ -2058,8 +2059,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut merged_type = None;
                     for &member in members.iter() {
                         let shape_id = match self.interner().lookup(member) {
-                            Some(TypeData::Object(shape_id))
-                            | Some(TypeData::ObjectWithIndex(shape_id)) => shape_id,
+                            Some(
+                                TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id),
+                            ) => shape_id,
                             _ => return false,
                         };
                         let shape = self.interner().object_shape(shape_id);
@@ -2150,8 +2152,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         match self.interner().lookup(source) {
-            Some(TypeData::Object(source_shape_id))
-            | Some(TypeData::ObjectWithIndex(source_shape_id)) => {
+            Some(
+                TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
+            ) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
                 for pattern_prop in &pattern_shape.properties {

@@ -1297,11 +1297,13 @@ pub fn is_object_like_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 fn is_object_like_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match types.lookup(type_id) {
-        Some(TypeData::Object(_))
-        | Some(TypeData::ObjectWithIndex(_))
-        | Some(TypeData::Array(_))
-        | Some(TypeData::Tuple(_))
-        | Some(TypeData::Mapped(_)) => true,
+        Some(
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Mapped(_),
+        ) => true,
         Some(TypeData::ReadonlyType(inner)) => is_object_like_type_impl(types, inner),
         Some(TypeData::Intersection(members)) => {
             let members = types.type_list(members);
@@ -1341,7 +1343,7 @@ pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
     matches!(
         types.lookup(type_id),
-        Some(TypeData::Intrinsic(_)) | Some(TypeData::Literal(_))
+        Some(TypeData::Intrinsic(_) | TypeData::Literal(_))
     )
 }
 
@@ -1369,7 +1371,7 @@ pub fn is_tuple_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 pub fn is_type_parameter(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         types.lookup(type_id),
-        Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
     )
 }
 
@@ -1980,7 +1982,7 @@ impl LiteralTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         match types.lookup(type_id) {
             Some(TypeData::Literal(_)) => true,
-            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => {
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
             }
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
@@ -2016,12 +2018,14 @@ struct ObjectTypeChecker;
 impl ObjectTypeChecker {
     fn check(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
         match types.lookup(type_id) {
-            Some(TypeData::Object(_))
-            | Some(TypeData::ObjectWithIndex(_))
-            | Some(TypeData::Array(_))
-            | Some(TypeData::Tuple(_))
-            | Some(TypeData::Mapped(_)) => true,
-            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => {
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Array(_)
+                | TypeData::Tuple(_)
+                | TypeData::Mapped(_),
+            ) => true,
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
                 Self::check(types, inner)
             }
             Some(TypeData::Intersection(members)) => {
@@ -2058,9 +2062,7 @@ impl<'a> EmptyObjectChecker<'a> {
                     && shape.string_index.is_none()
                     && shape.number_index.is_none()
             }
-            Some(TypeData::ReadonlyType(inner)) | Some(TypeData::NoInfer(inner)) => {
-                self.check(inner)
-            }
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => self.check(inner),
             Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => {
                 info.constraint.is_some_and(|c| self.check(c))
             }

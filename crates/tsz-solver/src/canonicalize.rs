@@ -483,7 +483,7 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
     fn is_callable_type(&self, type_id: TypeId) -> bool {
         matches!(
             self.interner.lookup(type_id),
-            Some(TypeData::Function(_)) | Some(TypeData::Callable(_))
+            Some(TypeData::Function(_) | TypeData::Callable(_))
         )
     }
 

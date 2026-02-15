@@ -242,7 +242,7 @@ pub fn is_error_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
-        Some(TypeData::Application(_)) | Some(TypeData::Lazy(_))
+        Some(TypeData::Application(_) | TypeData::Lazy(_))
     )
 }
 
@@ -263,7 +263,7 @@ pub fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     }
     matches!(
         db.lookup(type_id),
-        Some(TypeData::Intrinsic(_)) | Some(TypeData::Literal(_))
+        Some(TypeData::Intrinsic(_) | TypeData::Literal(_))
     )
 }
 
@@ -439,11 +439,13 @@ pub fn is_object_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 fn is_object_like_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match db.lookup(type_id) {
-        Some(TypeData::Object(_))
-        | Some(TypeData::ObjectWithIndex(_))
-        | Some(TypeData::Array(_))
-        | Some(TypeData::Tuple(_))
-        | Some(TypeData::Mapped(_)) => true,
+        Some(
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Mapped(_),
+        ) => true,
         Some(TypeData::ReadonlyType(inner)) => is_object_like_type_impl(db, inner),
         Some(TypeData::Intersection(members)) => {
             let members = db.type_list(members);
@@ -812,9 +814,7 @@ pub fn get_object_shape_id(
     type_id: TypeId,
 ) -> Option<crate::types::ObjectShapeId> {
     match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
-            Some(shape_id)
-        }
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => Some(shape_id),
         _ => None,
     }
 }
@@ -827,7 +827,7 @@ pub fn get_object_shape(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<crate::types::ObjectShape>> {
     match db.lookup(type_id) {
-        Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             Some(db.object_shape(shape_id))
         }
         _ => None,
@@ -881,7 +881,7 @@ pub fn get_type_parameter_info(
     type_id: TypeId,
 ) -> Option<crate::types::TypeParamInfo> {
     match db.lookup(type_id) {
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => Some(info.clone()),
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => Some(info.clone()),
         _ => None,
     }
 }
@@ -891,7 +891,7 @@ pub fn get_type_parameter_info(
 /// Returns None if not a type parameter or has no constraint.
 pub fn get_type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeData::TypeParameter(info)) | Some(TypeData::Infer(info)) => info.constraint,
+        Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info.constraint,
         _ => None,
     }
 }
@@ -2972,7 +2972,7 @@ fn types_have_common_properties(
     // Helper to get properties from an object/callable type
     fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId)> {
         match db.lookup(type_id) {
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = db.object_shape(shape_id);
                 shape
                     .properties

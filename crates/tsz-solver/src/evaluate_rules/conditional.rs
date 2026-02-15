@@ -102,7 +102,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if let Some(TypeData::Infer(info)) = self.interner().lookup(extends_type) {
                 if matches!(
                     self.interner().lookup(check_type),
-                    Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+                    Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
                 ) {
                     return self.interner().conditional(cond.clone());
                 }
@@ -453,7 +453,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
@@ -549,7 +549,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
@@ -724,7 +724,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }
@@ -835,7 +835,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> TypeId {
         if matches!(
             self.interner().lookup(check_unwrapped),
-            Some(TypeData::TypeParameter(_)) | Some(TypeData::Infer(_))
+            Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
         ) {
             return self.interner().conditional(cond.clone());
         }

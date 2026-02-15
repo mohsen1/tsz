@@ -823,7 +823,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 for s_param in source_params_unpacked
                     .iter()
                     .skip(target_fixed_count)
-                    .take(source_fixed_count - target_fixed_count)
+                    .take(source_fixed_count.saturating_sub(target_fixed_count))
                 {
                     if !self.are_parameters_compatible_impl(
                         s_param.type_id,

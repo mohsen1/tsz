@@ -238,7 +238,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     .resolver
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(type_id),
-                Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
+                Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
                     self.subtype.evaluate_type(type_id)
                 }
                 _ => type_id,
@@ -265,7 +265,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
     fn is_function_target_member(&self, member: TypeId) -> bool {
         let is_function_object_shape = match self.interner.lookup(member) {
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 let apply = self.interner.intern_string("apply");
                 let call = self.interner.intern_string("call");
@@ -564,7 +564,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 // Try to resolve the Lazy type
                 self.subtype.resolver.resolve_lazy(def_id, self.interner)?
             }
-            Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
                 // Evaluate mapped and application types
                 self.subtype.evaluate_type(target)
             }
@@ -616,7 +616,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Handle Mapped and Application types by evaluating them to concrete types
         // We resolve before matching so the existing logic handles the result.
         let type_id = match self.interner.lookup(type_id) {
-            Some(TypeData::Mapped(_)) | Some(TypeData::Application(_)) => {
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
                 self.subtype.evaluate_type(type_id)
             }
             _ => type_id,
@@ -648,7 +648,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 }
                 properties = all_props;
             }
-            Some(TypeData::Object(shape_id)) | Some(TypeData::ObjectWithIndex(shape_id)) => {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
                 for prop_info in &shape.properties {
                     properties.insert(prop_info.name);
