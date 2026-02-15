@@ -1430,6 +1430,26 @@ impl<'a> NarrowingContext<'a> {
                     if crate::subtype::is_subtype_of_with_db(self.db, target_type, member) {
                         return Some(target_type);
                     }
+                    // CRITICAL FIX: instanceof Array matching
+                    // When narrowing by `instanceof Array`, if the member is array-like and target
+                    // is a Lazy/Application type (which includes Array<T> interface references),
+                    // assume it's the global Array and match the member.
+                    // This handles: `x: Message | Message[]` with `instanceof Array` should keep `Message[]`.
+                    // At runtime, instanceof only checks prototype chain, not generic type arguments.
+                    if self.is_array_like(member) {
+                        use crate::type_queries;
+                        // Check if target is a type reference or generic application (Array<T>)
+                        let is_target_lazy_or_app = type_queries::is_type_reference(self.db, resolved_target)
+                            || type_queries::is_generic_type(self.db, resolved_target);
+
+                        trace!("Member is array-like: member={}, target={}, is_target_lazy_or_app={}",
+                            member.0, resolved_target.0, is_target_lazy_or_app);
+
+                        if is_target_lazy_or_app {
+                            trace!("Array member with lazy/app target (likely Array interface), keeping member");
+                            return Some(member);
+                        }
+                    }
                     None
                 })
                 .collect();
