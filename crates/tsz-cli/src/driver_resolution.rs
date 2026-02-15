@@ -458,7 +458,7 @@ fn extract_require_specifier(arena: &NodeArena, idx: NodeIndex) -> Option<String
     }
 
     // Get the literal text of the argument (without quotes)
-    arena.get_literal_text(*arg_idx).map(|s| strip_quotes(s))
+    arena.get_literal_text(*arg_idx).map(strip_quotes)
 }
 
 pub(crate) fn collect_import_bindings(
@@ -516,7 +516,7 @@ pub(crate) fn collect_export_binding_nodes(
         let import_decl = arena.get_import_decl(clause_node);
         let mut specifier = arena
             .get_literal_text(export_decl.module_specifier)
-            .map(|text| text.to_string());
+            .map(std::string::ToString::to_string);
         if specifier.is_none()
             && let Some(import_decl) = import_decl
             && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
@@ -1552,7 +1552,7 @@ fn select_types_versions_paths_for_version(
 
 fn match_types_versions_pattern(pattern: &str, subpath: &str) -> Option<String> {
     if !pattern.contains('*') {
-        return (pattern == subpath).then(|| String::new());
+        return (pattern == subpath).then(String::new);
     }
 
     let star = pattern.find('*')?;

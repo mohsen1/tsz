@@ -281,7 +281,7 @@ impl<'a> InlayHintsProvider<'a> {
                 let param = self.arena.get_parameter(param_node)?;
                 self.arena
                     .get_identifier_text(param.name)
-                    .map(|s| s.to_string())
+                    .map(std::string::ToString::to_string)
             })
             .collect()
     }

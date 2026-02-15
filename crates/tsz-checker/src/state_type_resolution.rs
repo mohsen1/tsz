@@ -1303,13 +1303,13 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .declaration_arenas
                         .get(&(sym_id, decl_idx))
-                        .map(|arc| arc.as_ref())
+                        .map(std::convert::AsRef::as_ref)
                         .or_else(|| {
                             self.ctx
                                 .binder
                                 .symbol_arenas
                                 .get(&sym_id)
-                                .map(|arc| arc.as_ref())
+                                .map(std::convert::AsRef::as_ref)
                         });
 
                     if let Some(lib_arena) = lib_arena
@@ -3050,7 +3050,9 @@ impl<'a> CheckerState<'a> {
                         _ => None,
                     };
 
-                    if common_props.as_ref().is_none_or(|props| props.is_empty())
+                    if common_props
+                        .as_ref()
+                        .is_none_or(std::collections::HashMap::is_empty)
                         && common_string_index.is_none()
                         && common_number_index.is_none()
                     {

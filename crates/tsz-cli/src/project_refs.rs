@@ -426,7 +426,7 @@ fn check_composite_from_source(source: &str) -> bool {
         value
             .get("compilerOptions")
             .and_then(|opts| opts.get("composite"))
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
     } else {
         false

@@ -3175,7 +3175,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut substitution = TypeSubstitution::new();
-        for (&placeholder, _) in var_map {
+        for &placeholder in var_map.keys() {
             if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(placeholder) {
                 // Use UNKNOWN instead of ANY for unresolved placeholders
                 // to expose hidden type errors instead of silently accepting all values

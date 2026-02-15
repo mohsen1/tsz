@@ -230,7 +230,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children,
                     };
 
@@ -274,7 +274,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children,
                     }]
                 } else {
@@ -311,7 +311,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children,
                     }]
                 } else {
@@ -345,7 +345,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -388,7 +388,8 @@ impl<'a> DocumentSymbolProvider<'a> {
                                             kind_modifiers: stmt_modifiers.clone(),
                                             range,
                                             selection_range,
-                                            container_name: container_name.map(|s| s.to_string()),
+                                            container_name: container_name
+                                                .map(std::string::ToString::to_string),
                                             children: vec![],
                                         });
                                     }
@@ -425,7 +426,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children,
                     }]
                 } else {
@@ -451,7 +452,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: String::new(),
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -476,7 +477,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -501,7 +502,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -526,7 +527,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -551,7 +552,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -576,7 +577,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     kind_modifiers: modifiers,
                     range: self.get_range(node_idx),
                     selection_range: self.get_range_keyword(node_idx, 11), // "constructor".len()
-                    container_name: container_name.map(|s| s.to_string()),
+                    container_name: container_name.map(std::string::ToString::to_string),
                     children,
                 }]
             }
@@ -600,7 +601,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -627,7 +628,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {
@@ -659,7 +660,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children,
                     }]
                 } else {
@@ -721,7 +722,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                             kind_modifiers: "export,default".to_string(),
                             range,
                             selection_range,
-                            container_name: container_name.map(|s| s.to_string()),
+                            container_name: container_name.map(std::string::ToString::to_string),
                             children: vec![],
                         }];
                     }
@@ -749,7 +750,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         kind_modifiers: modifiers,
                         range,
                         selection_range,
-                        container_name: container_name.map(|s| s.to_string()),
+                        container_name: container_name.map(std::string::ToString::to_string),
                         children: vec![],
                     }]
                 } else {

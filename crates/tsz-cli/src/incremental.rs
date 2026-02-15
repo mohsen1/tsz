@@ -216,7 +216,7 @@ impl BuildInfo {
 
     /// Get dependencies for a file
     pub fn get_dependencies(&self, path: &str) -> Option<&[String]> {
-        self.dependencies.get(path).map(|v| v.as_slice())
+        self.dependencies.get(path).map(std::vec::Vec::as_slice)
     }
 
     /// Set emit signature for a file
@@ -339,7 +339,11 @@ impl ChangeTracker {
         // Normalize absolute paths to relative paths for BuildInfo comparison
         let current_files_relative: Vec<PathBuf> = current_files
             .iter()
-            .filter_map(|path| path.strip_prefix(base_dir).ok().map(|p| p.to_path_buf()))
+            .filter_map(|path| {
+                path.strip_prefix(base_dir)
+                    .ok()
+                    .map(std::path::Path::to_path_buf)
+            })
             .collect();
 
         // Compute changes using relative paths, but store absolute paths in results

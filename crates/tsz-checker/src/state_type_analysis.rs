@@ -1479,7 +1479,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbol_arenas
             .get(&sym_id)
-            .map(|arena| arena.as_ref());
+            .map(std::convert::AsRef::as_ref);
 
         if delegate_arena.is_none_or(|arena| std::ptr::eq(arena, self.ctx.arena))
             && let Some(symbol) = self.get_symbol_globally(sym_id)
@@ -1695,7 +1695,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .symbol_arenas
             .get(&sym_id)
-            .map(|arena| arena.as_ref());
+            .map(std::convert::AsRef::as_ref);
 
         let symbol_arena = delegate_arena.filter(|arena| !std::ptr::eq(*arena, self.ctx.arena))?;
 

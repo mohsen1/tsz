@@ -1888,7 +1888,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .import_resolution_stack
                 .iter()
-                .map(|s| s.as_str())
+                .map(std::string::String::as_str)
                 .chain(std::iter::once(module_name.as_str()))
                 .collect();
             let cycle_str = cycle_path.join(" -> ");
@@ -2128,7 +2128,7 @@ impl<'a> CheckerState<'a> {
         if visited.contains(module_name) {
             let cycle_path: Vec<&str> = visited
                 .iter()
-                .map(|s| s.as_str())
+                .map(std::string::String::as_str)
                 .chain(std::iter::once(module_name))
                 .collect();
             let cycle_str = cycle_path.join(" -> ");

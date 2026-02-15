@@ -2563,7 +2563,7 @@ fn detect_missing_tslib_helper_diagnostic(
     let tslib_exports_empty = program
         .module_exports
         .get(&tslib_file.file_name)
-        .is_none_or(|exports| exports.is_empty());
+        .is_none_or(tsz_binder::SymbolTable::is_empty);
 
     if !tslib_exports_empty {
         return None;

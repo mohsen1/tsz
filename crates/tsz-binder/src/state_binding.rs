@@ -1104,7 +1104,7 @@ impl BinderState {
                                     if let Some(exported) = exported_name.or(original_name) {
                                         export_mappings.push((
                                             exported.to_string(),
-                                            original_name.map(|s| s.to_string()),
+                                            original_name.map(std::string::ToString::to_string),
                                             spec_idx,
                                         ));
                                     }

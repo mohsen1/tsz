@@ -69,7 +69,7 @@ pub fn inline_param_jsdocs(
         let param_name = if let Some(param_data) = arena.get_parameter(param_node) {
             arena
                 .get_identifier_text(param_data.name)
-                .map(|s| s.to_string())
+                .map(std::string::ToString::to_string)
         } else {
             None
         };
@@ -100,8 +100,7 @@ pub fn inline_param_jsdocs(
             let check = param_pos as usize;
             if end <= check {
                 let gap = &source_text[end..check];
-                if gap.chars().all(|c| c.is_whitespace()) && is_jsdoc_comment(comment, source_text)
-                {
+                if gap.chars().all(char::is_whitespace) && is_jsdoc_comment(comment, source_text) {
                     let content = get_jsdoc_content(comment, source_text);
                     if !content.is_empty() {
                         result.insert(param_name, content);
@@ -173,7 +172,7 @@ pub fn jsdoc_for_node(
         let end = comment.end as usize;
         let check = target_pos as usize;
         let gap_is_whitespace =
-            end <= check && source_text[end..check].chars().all(|c| c.is_whitespace());
+            end <= check && source_text[end..check].chars().all(char::is_whitespace);
 
         if gap_is_whitespace && is_jsdoc_comment(comment, source_text) {
             return get_jsdoc_content(comment, source_text);

@@ -3008,7 +3008,7 @@ fn test_lib_symbol_merge_avoids_id_collision() {
         .expect("Map should exist");
 
     // All IDs must be unique (the fix)
-    let ids = vec![object_id, array_id, promise_id, map_id];
+    let ids = [object_id, array_id, promise_id, map_id];
     let unique_ids: std::collections::HashSet<_> = ids.iter().collect();
     assert_eq!(
         unique_ids.len(),
