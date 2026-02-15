@@ -616,7 +616,8 @@ impl<'a> NarrowingContext<'a> {
         }
 
         // Return result based on matches
-        let result = if matching.is_empty() {
+
+        if matching.is_empty() {
             trace!("No members matched discriminant check, returning never");
             TypeId::NEVER
         } else if matching.len() == members.len() {
@@ -632,9 +633,7 @@ impl<'a> NarrowingContext<'a> {
                 members.len()
             );
             self.db.union(matching)
-        };
-
-        result
+        }
     }
 
     /// Narrow a union type by excluding variants with a specific discriminant value.
