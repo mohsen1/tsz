@@ -2893,7 +2893,8 @@ impl ParserState {
         // - Numeric literals (0, 1, etc.)
         let requires_colon = self.is_reserved_word()
             || self.is_token(SyntaxKind::StringLiteral)
-            || self.is_token(SyntaxKind::NumericLiteral);
+            || self.is_token(SyntaxKind::NumericLiteral)
+            || self.is_token(SyntaxKind::OpenBracketToken);
 
         let name = self.parse_property_name();
 
@@ -3367,6 +3368,12 @@ impl ParserState {
                 let start_pos = self.token_pos();
                 self.next_token();
 
+                // In class member computed property names, keywords such as `public`
+                // and `yield` should emit TS1213.
+                if self.in_class_member_name() {
+                    self.check_illegal_binding_identifier();
+                }
+
                 // Note: await in computed property name is NOT a parser error
                 // The type checker will emit TS2304 if 'await' is not in scope
                 // Example: { [await]: foo } should only emit TS2304, not TS1109
@@ -3375,6 +3382,21 @@ impl ParserState {
                 if expression.is_none() {
                     // Emit TS1109 for empty computed property: { [[missing]]: value }
                     self.error_expression_expected();
+                } else if self.computed_name_is_comma_expression(expression) {
+                    let Some(expr_node) = self.arena.get(expression) else {
+                        return self.arena.add_computed_property(
+                            syntax_kind_ext::COMPUTED_PROPERTY_NAME,
+                            start_pos,
+                            self.token_end(),
+                            crate::parser::node::ComputedPropertyData { expression },
+                        );
+                    };
+                    self.parse_error_at(
+                        expr_node.pos,
+                        expr_node.end.saturating_sub(expr_node.pos),
+                        diagnostic_messages::A_COMMA_EXPRESSION_IS_NOT_ALLOWED_IN_A_COMPUTED_PROPERTY_NAME,
+                        diagnostic_codes::A_COMMA_EXPRESSION_IS_NOT_ALLOWED_IN_A_COMPUTED_PROPERTY_NAME,
+                    );
                 }
                 self.parse_expected(SyntaxKind::CloseBracketToken);
                 let end_pos = self.token_end();
@@ -3424,6 +3446,16 @@ impl ParserState {
                 )
             }
         }
+    }
+
+    /// Check whether an expression node is a computed property name that uses a top-level
+    /// comma expression (e.g., `[0, 1]`).
+    fn computed_name_is_comma_expression(&self, expression: NodeIndex) -> bool {
+        if let Some(node) = self.arena.get(expression)
+            && let Some(binary_expr) = self.arena.get_binary_expr(node) {
+                return binary_expr.operator_token == SyntaxKind::CommaToken as u16;
+            }
+        false
     }
 
     /// Parse new expression

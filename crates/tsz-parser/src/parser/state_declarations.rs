@@ -925,10 +925,19 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::CloseBraceToken)
                 && !self.is_token(SyntaxKind::EndOfFileToken)
             {
+                let next_token_starts_member = self.is_token(SyntaxKind::OpenBracketToken)
+                    || self.is_token(SyntaxKind::StringLiteral)
+                    || self.is_token(SyntaxKind::PrivateIdentifier)
+                    || self.is_identifier_or_keyword();
+
                 self.parse_error_at_current_token(
                     "An enum member name must be followed by a ',', '=', or '}'.",
                     diagnostic_codes::AN_ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY_A_OR,
                 );
+                if next_token_starts_member {
+                    continue;
+                }
+
                 // Skip to next comma, closing brace, or EOF to recover
                 while !self.is_token(SyntaxKind::CommaToken)
                     && !self.is_token(SyntaxKind::CloseBraceToken)
@@ -936,6 +945,7 @@ impl ParserState {
                 {
                     self.next_token();
                 }
+
                 // Also skip the comma if we landed on one to avoid triggering TS1132
                 // on the next iteration
                 if self.is_token(SyntaxKind::CommaToken) {

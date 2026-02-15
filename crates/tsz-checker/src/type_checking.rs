@@ -203,6 +203,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            self.check_computed_property_name(member.name);
+
             // Get the member name
             let Some(name_node) = self.ctx.arena.get(member.name) else {
                 continue;
