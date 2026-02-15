@@ -166,7 +166,7 @@ fn levenshtein_with_max(s1: &str, s2: &str, max: usize) -> Option<usize> {
         let c1 = s1_chars[i - 1];
         let scaled_i = i * 10;
         let min_j = if scaled_i > max {
-            (scaled_i.saturating_sub(max) + 9) / 10
+            scaled_i.saturating_sub(max).div_ceil(10)
         } else {
             1
         };
