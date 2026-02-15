@@ -51,7 +51,7 @@ pub enum DiagnosticSeverity {
 
 impl DiagnosticSeverity {
     /// Get the severity name for display.
-    pub fn name(&self) -> &'static str {
+    pub const fn name(&self) -> &'static str {
         match self {
             Self::Error => "error",
             Self::Warning => "warning",
@@ -61,12 +61,12 @@ impl DiagnosticSeverity {
     }
 
     /// Check if this is an error.
-    pub fn is_error(&self) -> bool {
+    pub const fn is_error(&self) -> bool {
         matches!(self, Self::Error)
     }
 
     /// Check if this is a warning.
-    pub fn is_warning(&self) -> bool {
+    pub const fn is_warning(&self) -> bool {
         matches!(self, Self::Warning)
     }
 }
@@ -210,22 +210,22 @@ impl Diagnostic {
     }
 
     /// Check if this is an error.
-    pub fn is_error(&self) -> bool {
+    pub const fn is_error(&self) -> bool {
         self.severity.is_error()
     }
 
     /// Check if this is a warning.
-    pub fn is_warning(&self) -> bool {
+    pub const fn is_warning(&self) -> bool {
         self.severity.is_warning()
     }
 
     /// Get the start position (byte offset).
-    pub fn start(&self) -> u32 {
+    pub const fn start(&self) -> u32 {
         self.span.start
     }
 
     /// Get the length.
-    pub fn length(&self) -> u32 {
+    pub const fn length(&self) -> u32 {
         self.span.len()
     }
 
@@ -270,7 +270,7 @@ impl fmt::Display for Diagnostic {
 
 /// A collection of diagnostics for a compilation phase.
 ///
-/// DiagnosticBag provides a convenient interface for collecting diagnostics
+/// `DiagnosticBag` provides a convenient interface for collecting diagnostics
 /// during parsing, binding, or type checking. It tracks error counts and
 /// provides filtering capabilities.
 #[derive(Clone, Debug, Default)]
@@ -287,7 +287,7 @@ pub struct DiagnosticBag {
 
 impl DiagnosticBag {
     /// Create a new empty diagnostic bag.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             diagnostics: Vec::new(),
             default_file: String::new(),
@@ -369,37 +369,37 @@ impl DiagnosticBag {
     }
 
     /// Check if there are any diagnostics.
-    pub fn has_diagnostics(&self) -> bool {
+    pub const fn has_diagnostics(&self) -> bool {
         !self.diagnostics.is_empty()
     }
 
     /// Check if there are any errors.
-    pub fn has_errors(&self) -> bool {
+    pub const fn has_errors(&self) -> bool {
         self.error_count > 0
     }
 
     /// Check if there are any warnings.
-    pub fn has_warnings(&self) -> bool {
+    pub const fn has_warnings(&self) -> bool {
         self.warning_count > 0
     }
 
     /// Get the number of diagnostics.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.diagnostics.len()
     }
 
     /// Check if the bag is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.diagnostics.is_empty()
     }
 
     /// Get the error count.
-    pub fn error_count(&self) -> usize {
+    pub const fn error_count(&self) -> usize {
         self.error_count
     }
 
     /// Get the warning count.
-    pub fn warning_count(&self) -> usize {
+    pub const fn warning_count(&self) -> usize {
         self.warning_count
     }
 
@@ -462,7 +462,7 @@ impl DiagnosticBag {
         std::mem::take(&mut self.diagnostics)
     }
 
-    /// Merge another DiagnosticBag into this one.
+    /// Merge another `DiagnosticBag` into this one.
     pub fn merge(&mut self, other: Self) {
         for diag in other.diagnostics {
             self.add(diag);
@@ -529,7 +529,7 @@ impl Extend<Diagnostic> for DiagnosticBag {
 pub fn format_message(template: &str, args: &[&str]) -> String {
     let mut result = template.to_string();
     for (i, arg) in args.iter().enumerate() {
-        result = result.replace(&format!("{{{}}}", i), arg);
+        result = result.replace(&format!("{{{i}}}"), arg);
     }
     result
 }

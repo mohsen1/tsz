@@ -1,6 +1,6 @@
-//! SourceFile - Owns source text and provides references for parsing/scanning
+//! `SourceFile` owns source text and provides references for parsing/scanning
 //!
-//! The SourceFile struct owns the source text and provides safe access to it
+//! The `SourceFile` struct owns the source text and provides safe access to it
 //! for the scanner, parser, and other compilation phases. It maintains:
 //!
 //! - The source text content
@@ -26,10 +26,10 @@ use std::sync::Arc;
 
 /// A source file that owns its text content and provides safe access.
 ///
-/// SourceFile is designed to be the single owner of source text during
+/// `SourceFile` is designed to be the single owner of source text during
 /// compilation. It provides:
 /// - Immutable text access via `text()` and `as_str()`
-/// - Line/column conversion via the embedded LineMap
+/// - Line/column conversion via the embedded `LineMap`
 /// - Safe character access with bounds checking
 #[derive(Debug, Clone)]
 pub struct SourceFile {
@@ -44,7 +44,7 @@ pub struct SourceFile {
 }
 
 impl SourceFile {
-    /// Create a new SourceFile from a file name and source text.
+    /// Create a new `SourceFile` from a file name and source text.
     pub fn new(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
         let len = text.len() as u32;
@@ -57,7 +57,7 @@ impl SourceFile {
         }
     }
 
-    /// Create a SourceFile with pre-built line map.
+    /// Create a `SourceFile` with pre-built line map.
     pub fn with_line_map(file_name: impl Into<String>, text: impl Into<String>) -> Self {
         let text: String = text.into();
         let len = text.len() as u32;
@@ -91,13 +91,13 @@ impl SourceFile {
 
     /// Get the length of the source text in bytes.
     #[inline]
-    pub fn len(&self) -> u32 {
+    pub const fn len(&self) -> u32 {
         self.len
     }
 
     /// Check if the source text is empty.
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 
@@ -230,12 +230,12 @@ impl SourceFile {
     // Ownership Transfer
     // =========================================================================
 
-    /// Take ownership of the source text, consuming the SourceFile.
+    /// Take ownership of the source text, consuming the `SourceFile`.
     pub fn into_text(self) -> Arc<str> {
         self.text
     }
 
-    /// Take the file name, consuming the SourceFile.
+    /// Take the file name, consuming the `SourceFile`.
     pub fn into_parts(self) -> (String, Arc<str>) {
         (self.file_name, self.text)
     }
@@ -272,12 +272,12 @@ pub struct SourceFileRef<'a> {
 }
 
 impl<'a> SourceFileRef<'a> {
-    /// Create a new SourceFileRef.
-    pub fn new(file_name: &'a str, text: &'a str) -> Self {
+    /// Create a new `SourceFileRef`.
+    pub const fn new(file_name: &'a str, text: &'a str) -> Self {
         SourceFileRef { file_name, text }
     }
 
-    /// Create a SourceFileRef from a SourceFile.
+    /// Create a `SourceFileRef` from a `SourceFile`.
     pub fn from_source_file(source_file: &'a SourceFile) -> Self {
         SourceFileRef {
             file_name: &source_file.file_name,
@@ -286,12 +286,12 @@ impl<'a> SourceFileRef<'a> {
     }
 
     /// Get the length in bytes.
-    pub fn len(&self) -> u32 {
+    pub const fn len(&self) -> u32 {
         self.text.len() as u32
     }
 
     /// Check if empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.text.is_empty()
     }
 
@@ -322,7 +322,7 @@ impl SourceId {
     /// The invalid/unknown source ID.
     pub const UNKNOWN: Self = Self(u32::MAX);
 
-    /// Create a new SourceId.
+    /// Create a new `SourceId`.
     pub const fn new(id: u32) -> Self {
         Self(id)
     }
@@ -370,8 +370,8 @@ pub struct SourceLocation {
 }
 
 impl SourceLocation {
-    /// Create a new SourceLocation.
-    pub fn new(
+    /// Create a new `SourceLocation`.
+    pub const fn new(
         file_name: String,
         span: Span,
         start_line: u32,
@@ -389,7 +389,7 @@ impl SourceLocation {
         }
     }
 
-    /// Create a SourceLocation from a SourceFile and Span.
+    /// Create a `SourceLocation` from a `SourceFile` and `Span`.
     pub fn from_span(source_file: &mut SourceFile, span: Span) -> Self {
         let start_pos = source_file.offset_to_position(span.start);
         let end_pos = source_file.offset_to_position(span.end);
@@ -403,7 +403,7 @@ impl SourceLocation {
         }
     }
 
-    /// Format as "file:line:column".
+    /// Format as `<file:line:column>`.
     pub fn to_string_short(&self) -> String {
         format!(
             "{}:{}:{}",
@@ -413,7 +413,7 @@ impl SourceLocation {
         )
     }
 
-    /// Format as "file(line,column)".
+    /// Format as `file(line,column)`.
     pub fn to_string_visual_studio(&self) -> String {
         format!(
             "{}({},{})",
