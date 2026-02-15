@@ -1412,6 +1412,17 @@ impl ParserState {
         self.push_label_scope();
         let body = if self.is_token(SyntaxKind::OpenBraceToken) {
             self.parse_block()
+        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+            // TS1144: '{' or ';' expected — user wrote arrow syntax on a function declaration
+            self.parse_error_at_current_token(
+                "'{' or ';' expected.",
+                diagnostic_codes::OR_EXPECTED,
+            );
+            // Skip past => and the expression for error recovery
+            self.next_token();
+            let _expr = self.parse_expression();
+            self.parse_optional(SyntaxKind::SemicolonToken);
+            NodeIndex::NONE
         } else {
             // Consume the semicolon if present (overload signature)
             self.parse_optional(SyntaxKind::SemicolonToken);
