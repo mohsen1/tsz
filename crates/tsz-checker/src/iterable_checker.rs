@@ -1,6 +1,6 @@
 //! Iterable/Iterator Type Checking Module
 //!
-//! This module contains iterable and iterator type checking methods for CheckerState
+//! This module contains iterable and iterator type checking methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Computing element types for for-of loops
 //! - Emitting appropriate errors for non-iterable types
 //!
-//! This module extends CheckerState with methods for iterable/iterator protocol
+//! This module extends `CheckerState` with methods for iterable/iterator protocol
 //! checking, providing cleaner APIs for iteration-related type operations.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -68,9 +68,9 @@ impl<'a> CheckerState<'a> {
     fn is_iterable_type_classified(&mut self, type_id: TypeId) -> bool {
         let kind = classify_full_iterable_type(self.ctx.types, type_id);
         match kind {
-            FullIterableTypeKind::Array(_) => true,
-            FullIterableTypeKind::Tuple(_) => true,
-            FullIterableTypeKind::StringLiteral(_) => true,
+            FullIterableTypeKind::Array(_)
+            | FullIterableTypeKind::Tuple(_)
+            | FullIterableTypeKind::StringLiteral(_) => true,
             FullIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_iterable_type(m))
             }
@@ -122,7 +122,7 @@ impl<'a> CheckerState<'a> {
     /// Check if an object shape has a Symbol.iterator method.
     ///
     /// An object is iterable if it has a [Symbol.iterator]() method that returns an iterator.
-    /// An iterator (with just a next() method) is NOT automatically iterable.
+    /// An iterator (with just a `next()` method) is NOT automatically iterable.
     fn object_has_iterator_method(&self, shape_id: tsz_solver::ObjectShapeId) -> bool {
         let shape = self.ctx.types.object_shape(shape_id);
 
@@ -326,7 +326,7 @@ impl<'a> CheckerState<'a> {
 
     /// Resolve the element type of an iterable via the iterator protocol.
     ///
-    /// Follows the chain: type[Symbol.iterator] → call result → .next() → .value
+    /// Follows the chain: type[Symbol.iterator] → call result → .`next()` → .value
     /// Returns ANY as fallback if the protocol cannot be resolved.
     fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
         use tsz_solver::operations_property::PropertyAccessResult;
@@ -556,7 +556,7 @@ impl<'a> CheckerState<'a> {
     /// - `init_expr`: The initializer expression (used for error location)
     ///
     /// ## Validation:
-    /// - Checks if pattern_type is iterable
+    /// - Checks if `pattern_type` is iterable
     /// - Emits TS2488 if the type is not iterable
     /// - Skips check for ANY, UNKNOWN, ERROR types (defer to other checks)
     pub fn check_destructuring_iterability(

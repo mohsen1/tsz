@@ -1,7 +1,7 @@
 //! Declaration & Statement Checking Module
 //!
 //! Extracted from state.rs: Methods for checking source files, declarations,
-//! statements, and class/interface validation. Also includes StatementCheckCallbacks.
+//! statements, and class/interface validation. Also includes `StatementCheckCallbacks`.
 
 use crate::EnclosingClassInfo;
 use crate::error_handler::ErrorHandler;
@@ -50,7 +50,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Diagnostics:
     /// - Errors are added to `ctx.diagnostics`
-    /// - Includes error codes (TSxxxx) and messages
+    /// - Includes error codes (`TSxxxx`) and messages
     /// - Spans point to the problematic code
     ///
     /// ## Compilation Flow:
@@ -204,7 +204,7 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Check all statements in a JS file for TypeScript-only syntax.
-    /// Emits TS8xxx errors for constructs that are not valid in JavaScript files.
+    /// Emits `TS8xxx` errors for constructs that are not valid in JavaScript files.
     fn check_js_grammar_statements(&mut self, statements: &[NodeIndex]) {
         for &stmt_idx in statements {
             self.check_js_grammar_statement(stmt_idx);
@@ -1249,8 +1249,8 @@ impl<'a> CheckerState<'a> {
     /// Check for duplicate parameter names in a parameter list (TS2300).
     /// Check a statement and produce type errors.
     ///
-    /// This method delegates to StatementChecker for dispatching logic,
-    /// while providing actual implementations via the StatementCheckCallbacks trait.
+    /// This method delegates to `StatementChecker` for dispatching logic,
+    /// while providing actual implementations via the `StatementCheckCallbacks` trait.
     pub(crate) fn check_statement(&mut self, stmt_idx: NodeIndex) {
         StatementChecker::check(stmt_idx, self);
     }
@@ -1973,10 +1973,7 @@ impl<'a> CheckerState<'a> {
 
             self.error_at_node(
                 element_data.name,
-                &format!(
-                    "Tuple type '[]' of length '0' has no element at index '{}'.",
-                    index
-                ),
+                &format!("Tuple type '[]' of length '0' has no element at index '{index}'."),
                 crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
             );
         }
@@ -2438,9 +2435,9 @@ impl<'a> CheckerState<'a> {
     /// **Note**: This check is specific to object literals and is NOT part of general
     /// structural subtyping. Excess properties in object literals are errors, but
     /// when assigning from a variable with extra properties, it's allowed.
-    /// See https://github.com/microsoft/TypeScript/issues/13813,
-    /// https://github.com/microsoft/TypeScript/issues/18075,
-    /// https://github.com/microsoft/TypeScript/issues/28616.
+    /// See <https://github.com/microsoft/TypeScript/issues/13813>,
+    /// <https://github.com/microsoft/TypeScript/issues/18075>,
+    /// <https://github.com/microsoft/TypeScript/issues/28616>.
     ///
     /// Missing property errors are handled by the solver's `explain_failure` API
     /// via `error_type_not_assignable_with_reason_at`, so we only check excess
@@ -2698,7 +2695,7 @@ impl<'a> CheckerState<'a> {
     /// Skip parentheses to get the effective expression node.
     ///
     /// This unwraps parenthesized expressions to get the underlying expression.
-    /// Example: `({ a: 1 })` -> `{ a: 1 }` (OBJECT_LITERAL_EXPRESSION)
+    /// Example: `({ a: 1 })` -> `{ a: 1 }` (`OBJECT_LITERAL_EXPRESSION`)
     fn skip_parentheses(&self, mut node_idx: NodeIndex) -> NodeIndex {
         while let Some(node) = self.ctx.arena.get(node_idx) {
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
@@ -2780,9 +2777,9 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve property access using TypeEnvironment (includes lib.d.ts types).
+    /// Resolve property access using `TypeEnvironment` (includes lib.d.ts types).
     ///
-    /// This method creates a PropertyAccessEvaluator with the TypeEnvironment as the resolver,
+    /// This method creates a `PropertyAccessEvaluator` with the `TypeEnvironment` as the resolver,
     /// allowing primitive property access to use lib.d.ts definitions instead of just hardcoded lists.
     ///
     /// For example, "foo".length will look up the String interface from lib.d.ts.
@@ -3292,7 +3289,7 @@ impl<'a> CheckerState<'a> {
             }
 
             for key in number_keys {
-                let name = format!("{}", key);
+                let name = format!("{key}");
                 if self.is_property_readonly(object_type, &name) {
                     return Some(name);
                 }
@@ -3759,8 +3756,6 @@ impl<'a> CheckerState<'a> {
                                 k if k == SyntaxKind::Identifier as u16 => {
                                     if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
                                         match ident.escaped_text.as_str() {
-                                            // Don't error on null - TypeScript allows `extends null`
-                                            "null" => None,
                                             "undefined" => Some("undefined"),
                                             "void" => Some("void"),
                                             _ => None,
@@ -4184,8 +4179,7 @@ impl<'a> CheckerState<'a> {
                 self.error_at_node(
                     class.name,
                     &format!(
-                        "Class name cannot be 'Object' when targeting ES5 and above with module {}.",
-                        module_name
+                        "Class name cannot be 'Object' when targeting ES5 and above with module {module_name}."
                     ),
                     diagnostic_codes::CLASS_NAME_CANNOT_BE_OBJECT_WHEN_TARGETING_ES5_AND_ABOVE_WITH_MODULE,
                 );
@@ -4405,8 +4399,7 @@ impl<'a> CheckerState<'a> {
             self.error_at_node(
                 class.name,
                 &format!(
-                    "Class static side 'typeof {}' incorrectly extends base class static side 'null'.",
-                    class_name
+                    "Class static side 'typeof {class_name}' incorrectly extends base class static side 'null'."
                 ),
                 diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
             );
@@ -4593,10 +4586,10 @@ impl<'a> CheckerState<'a> {
             let name = self.get_property_name(prop.name).unwrap_or_else(|| {
                 // For complex computed properties (e.g., [getKey()]), use a descriptive fallback
                 match &key {
-                    PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{}]", s),
-                    PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{}\"]", s),
-                    PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{}]", n),
-                    PropertyKey::Private(s) => format!("#{}", s),
+                    PropertyKey::Computed(ComputedKey::Ident(s)) => format!("[{s}]"),
+                    PropertyKey::Computed(ComputedKey::String(s)) => format!("[\"{s}\"]"),
+                    PropertyKey::Computed(ComputedKey::Number(n)) => format!("[{n}]"),
+                    PropertyKey::Private(s) => format!("#{s}"),
                     PropertyKey::Ident(s) => s.clone(),
                 }
             });
@@ -4993,7 +4986,7 @@ impl<'a> CheckerState<'a> {
 
             if !reference_path.contains('.') {
                 for ext in [".ts", ".tsx", ".d.ts"] {
-                    let candidate = base.join(format!("{}{}", reference_path, ext));
+                    let candidate = base.join(format!("{reference_path}{ext}"));
                     if known_files.contains(candidate.to_string_lossy().as_ref()) {
                         return true;
                     }

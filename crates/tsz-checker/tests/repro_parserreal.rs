@@ -1,5 +1,6 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::{CheckerOptions, CheckerState};
+use std::io::Write;
 use std::path::PathBuf;
 use tsz_binder::BinderState;
 use tsz_parser::parser::{NodeIndex, ParserState, node::NodeAccess};
@@ -42,7 +43,10 @@ fn load_test_source(rel_path: &str) -> Option<String> {
         }
     }
 
-    eprintln!("Skipping repro_parserreal test; fixture not found: {rel_path}");
+    let _ = writeln!(
+        std::io::stderr(),
+        "Skipping repro_parserreal test; fixture not found: {rel_path}"
+    );
     None
 }
 
@@ -128,10 +132,7 @@ fn run_and_print_source_line(
     }
 
     if !found {
-        println!(
-            "Note: expected token '{}' not found directly under target cover",
-            expected_token
-        );
+        println!("Note: expected token '{expected_token}' not found directly under target cover");
     }
 
     let mut has_ts2322 = false;

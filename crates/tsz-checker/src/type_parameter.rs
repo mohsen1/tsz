@@ -1,6 +1,6 @@
 //! Type Parameter Utilities Module
 //!
-//! This module contains type parameter utility methods for CheckerState
+//! This module contains type parameter utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -10,7 +10,7 @@
 //! - Type argument compatibility checking
 //! - Generic instantiation helpers
 //!
-//! This module extends CheckerState with utilities for type parameter
+//! This module extends `CheckerState` with utilities for type parameter
 //! operations, providing cleaner APIs for generic type checking.
 
 use crate::state::CheckerState;
@@ -125,7 +125,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a generic type can be instantiated with the given type arguments.
     ///
     /// Returns true if the type arguments are compatible with constraints.
-    pub fn can_instantiate_generic(
+    pub const fn can_instantiate_generic(
         &mut self,
         _generic_type: TypeId,
         _type_args: &[TypeId],
@@ -193,7 +193,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get all type parameters referenced in a type.
     ///
-    /// Returns a vector of all type parameter TypeIds found in the type.
+    /// Returns a vector of all type parameter `TypeIds` found in the type.
     pub fn get_referenced_type_parameters(&self, type_id: TypeId) -> Vec<TypeId> {
         let mut params = Vec::new();
 
@@ -204,7 +204,10 @@ impl<'a> CheckerState<'a> {
 
         // Recursively check for type parameters in complex types using the classification helper
         match classify_type_parameter(self.ctx.types, type_id) {
-            TypeParameterKind::TypeParameter(_) | TypeParameterKind::Infer(_) => {
+            TypeParameterKind::TypeParameter(_)
+            | TypeParameterKind::Infer(_)
+            | TypeParameterKind::Callable(_)
+            | TypeParameterKind::NotTypeParameter => {
                 // Already added above if is_type_parameter
             }
             TypeParameterKind::Union(members) | TypeParameterKind::Intersection(members) => {
@@ -219,7 +222,6 @@ impl<'a> CheckerState<'a> {
                     params.extend(self.get_referenced_type_parameters(arg));
                 }
             }
-            TypeParameterKind::Callable(_) | TypeParameterKind::NotTypeParameter => {}
         }
 
         params
