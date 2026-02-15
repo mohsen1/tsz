@@ -127,38 +127,30 @@ impl<'a> Printer<'a> {
             std::mem::take(&mut self.preallocated_logical_assignment_value_temps);
         let saved_hoisted = std::mem::take(&mut self.hoisted_assignment_temps);
         let saved_value_temps = std::mem::take(&mut self.hoisted_assignment_value_temps);
-        self.temp_scope_stack.push((
-            saved_counter,
-            saved_names,
-            saved_for_of,
-            saved_preallocated,
-            saved_preallocated_logical_value_temps,
-            saved_value_temps,
-            saved_hoisted,
-        ));
+        self.temp_scope_stack.push(super::TempScopeState {
+            temp_var_counter: saved_counter,
+            generated_temp_names: saved_names,
+            first_for_of_emitted: saved_for_of,
+            preallocated_temp_names: saved_preallocated,
+            preallocated_logical_assignment_value_temps: saved_preallocated_logical_value_temps,
+            hoisted_assignment_value_temps: saved_value_temps,
+            hoisted_assignment_temps: saved_hoisted,
+        });
         self.ctx.destructuring_state.temp_var_counter = 0;
         self.first_for_of_emitted = false;
     }
 
     /// Restore the previous temp naming state when leaving a function scope.
     pub(super) fn pop_temp_scope(&mut self) {
-        if let Some((
-            counter,
-            names,
-            for_of,
-            preallocated,
-            preallocated_logical,
-            value_temps,
-            hoisted,
-        )) = self.temp_scope_stack.pop()
-        {
-            self.ctx.destructuring_state.temp_var_counter = counter;
-            self.generated_temp_names = names;
-            self.first_for_of_emitted = for_of;
-            self.preallocated_temp_names = preallocated;
-            self.preallocated_logical_assignment_value_temps = preallocated_logical;
-            self.hoisted_assignment_value_temps = value_temps;
-            self.hoisted_assignment_temps = hoisted;
+        if let Some(state) = self.temp_scope_stack.pop() {
+            self.ctx.destructuring_state.temp_var_counter = state.temp_var_counter;
+            self.generated_temp_names = state.generated_temp_names;
+            self.first_for_of_emitted = state.first_for_of_emitted;
+            self.preallocated_temp_names = state.preallocated_temp_names;
+            self.preallocated_logical_assignment_value_temps =
+                state.preallocated_logical_assignment_value_temps;
+            self.hoisted_assignment_value_temps = state.hoisted_assignment_value_temps;
+            self.hoisted_assignment_temps = state.hoisted_assignment_temps;
         }
     }
 

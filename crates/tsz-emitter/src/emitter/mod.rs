@@ -114,6 +114,17 @@ struct ParamTransformPlan {
     rest: Option<RestParamTransform>,
 }
 
+#[derive(Default)]
+struct TempScopeState {
+    temp_var_counter: u32,
+    generated_temp_names: FxHashSet<String>,
+    first_for_of_emitted: bool,
+    preallocated_temp_names: VecDeque<String>,
+    preallocated_logical_assignment_value_temps: VecDeque<String>,
+    hoisted_assignment_value_temps: Vec<String>,
+    hoisted_assignment_temps: Vec<String>,
+}
+
 impl ParamTransformPlan {
     fn has_transforms(&self) -> bool {
         !self.params.is_empty() || self.rest.is_some()
@@ -260,17 +271,7 @@ pub struct Printer<'a> {
     pub(super) generated_temp_names: FxHashSet<String>,
 
     /// Stack for saving/restoring temp naming state when entering function scopes.
-    /// Each entry is (temp_var_counter, generated_temp_names, first_for_of_emitted, preallocated names, preallocated logical value names, value temps, reference temps).
-    #[allow(clippy::type_complexity)]
-    pub(super) temp_scope_stack: Vec<(
-        u32,
-        FxHashSet<String>,
-        bool,
-        VecDeque<String>,
-        VecDeque<String>,
-        Vec<String>,
-        Vec<String>,
-    )>,
+    temp_scope_stack: Vec<TempScopeState>,
 
     /// Whether the first for-of loop has been emitted (uses special `_i` index name).
     pub(super) first_for_of_emitted: bool,
@@ -319,8 +320,8 @@ pub struct Printer<'a> {
     /// Current nesting depth for iterator for-of emission.
     pub(super) iterator_for_of_depth: usize,
 
-    /// Active nesting depth for downlevel destructuring read initialization.
-    pub(super) destructuring_read_depth: usize,
+    /// Current nesting depth for destructuring emission that should wrap spread inputs with `__read`.
+    pub(super) destructuring_read_depth: u32,
 }
 
 impl<'a> Printer<'a> {
