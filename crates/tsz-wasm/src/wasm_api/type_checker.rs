@@ -3,7 +3,7 @@
 //! Provides the `TsTypeChecker` struct which implements TypeScript's TypeChecker interface.
 
 use std::sync::Arc;
-use wasm_bindgen::prelude::*;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz::lib_loader::LibFile;
 use tsz::parallel::MergedProgram;
