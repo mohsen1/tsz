@@ -397,6 +397,12 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
                 return Some(prop.type_id);
             }
         }
+        // Fall back to index signatures for Object types too
+        // This handles cases where interfaces/types have index signatures
+        // but are stored as Object rather than ObjectWithIndex
+        if let Some(ref idx) = shape.string_index {
+            return Some(idx.value_type);
+        }
         None
     }
 

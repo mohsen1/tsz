@@ -3238,9 +3238,11 @@ fn test_infer_generic_optional_property_missing() {
     let arg = interner.object(Vec::new());
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[arg]);
-    // Missing optional property infers undefined for T
-    // (an optional property that doesn't exist has value undefined)
-    assert_eq!(result, TypeId::UNDEFINED);
+    // Missing optional property does NOT constrain T to undefined —
+    // the inference variable stays unconstrained and falls back to unknown.
+    // This matches TSC behavior where omitted optional properties do not
+    // contribute inference candidates.
+    assert_eq!(result, TypeId::UNKNOWN);
 }
 
 #[test]

@@ -1355,7 +1355,7 @@ impl<'a> CheckerState<'a> {
                     // This allows type parameters to be inferred from concrete arguments.
                     // CRITICAL: Skip checking sensitive arguments entirely to prevent TS7006
                     // from being emitted before inference completes.
-                    let round1_arg_types = self.collect_call_argument_types_with_context(
+                    let mut round1_arg_types = self.collect_call_argument_types_with_context(
                         args,
                         |i, arg_count| {
                             // Skip contextually sensitive arguments in Round 1.
@@ -1369,20 +1369,66 @@ impl<'a> CheckerState<'a> {
                         Some(&sensitive_args), // Skip sensitive args in Round 1
                     );
 
+                    // For sensitive object literal arguments, extract a partial type
+                    // from non-sensitive properties to improve inference.
+                    // This handles patterns like:
+                    //   app({ state: 100, actions: { foo: s => s } })
+                    // where `state: 100` can infer State=number, but `actions` is
+                    // context-sensitive and must wait for Round 2.
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if sensitive_args[i]
+                            && let Some(partial) = self.extract_non_sensitive_object_type(arg_idx)
+                        {
+                            trace!(
+                                arg_index = i,
+                                partial_type = partial.0,
+                                "Round 1: extracted non-sensitive partial type for object literal"
+                            );
+                            round1_arg_types[i] = partial;
+                        }
+                    }
+
                     // === Perform Round 1 Inference ===
-                    // Use the solver to infer type parameters from non-contextual arguments only.
+                    // Pre-evaluate function shape parameter types through the
+                    // TypeEnvironment so the solver can constrain against concrete
+                    // object types instead of unresolved Application types.
+                    // Example: Opts<State, Actions> → { state?: State, actions: Actions }
+                    let evaluated_shape = {
+                        let new_params: Vec<_> = shape
+                            .params
+                            .iter()
+                            .map(|p| tsz_solver::ParamInfo {
+                                name: p.name,
+                                type_id: self.evaluate_type_with_env(p.type_id),
+                                optional: p.optional,
+                                rest: p.rest,
+                            })
+                            .collect();
+                        tsz_solver::FunctionShape {
+                            params: new_params,
+                            return_type: shape.return_type,
+                            this_type: shape.this_type,
+                            type_params: shape.type_params.clone(),
+                            type_predicate: shape.type_predicate.clone(),
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        }
+                    };
                     let substitution = {
                         let env = self.ctx.type_env.borrow();
-                        // Run Round 1 inference and get substitution with fixed type variables.
                         call_checker::compute_contextual_types_with_context(
                             self.ctx.types,
                             &self.ctx,
                             &env,
-                            &shape,
+                            &evaluated_shape,
                             &round1_arg_types,
                             self.ctx.contextual_type,
                         )
                     };
+                    trace!(
+                        substitution_is_empty = substitution.is_empty(),
+                        "Round 1 inference: substitution computed"
+                    );
 
                     // === Pre-evaluate instantiated parameter types ===
                     // After instantiation with Round 1 substitution, parameter types may
@@ -1404,6 +1450,11 @@ impl<'a> CheckerState<'a> {
                         } else {
                             None
                         };
+                        trace!(
+                            arg_index = i,
+                            ctx_type_id = ?ctx_type.map(|t| t.0),
+                            "Round 2: contextual type for argument"
+                        );
                         round2_contextual_types.push(ctx_type);
                     }
 
@@ -2892,5 +2943,65 @@ impl<'a> CheckerState<'a> {
             .iter()
             .find(|prop| prop.name == new_atom)
             .map(|prop| prop.type_id)
+    }
+
+    /// Extract a partial object type from non-sensitive properties of an object literal.
+    ///
+    /// Used during Round 1 of two-pass generic inference to get type information
+    /// from concrete properties (like `state: 100`) while skipping context-sensitive
+    /// properties (like `actions: { foo: s => s }`).
+    ///
+    /// This lets inference learn e.g. `State = number` from `state: 100` even when
+    /// the overall object literal is context-sensitive.
+    fn extract_non_sensitive_object_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let node = self.ctx.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let obj = self.ctx.arena.get_literal_expr(node)?;
+
+        let mut properties = Vec::new();
+
+        for &elem_idx in &obj.elements.nodes {
+            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                continue;
+            };
+
+            // Property assignment: { x: value }
+            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                // Skip sensitive property initializers (lambdas, nested sensitive objects)
+                if is_contextually_sensitive(self, prop.initializer) {
+                    continue;
+                }
+                if let Some(name) = self.get_property_name(prop.name) {
+                    // Compute type without contextual type
+                    let prev_context = self.ctx.contextual_type;
+                    self.ctx.contextual_type = None;
+                    let value_type = self.get_type_of_node(prop.initializer);
+                    self.ctx.contextual_type = prev_context;
+
+                    let name_atom = self.ctx.types.intern_string(&name);
+                    properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+                }
+            }
+            // Shorthand property: { x }
+            else if elem_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                && let Some(shorthand) = self.ctx.arena.get_shorthand_property(elem_node)
+                && let Some(name_node) = self.ctx.arena.get(shorthand.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.clone();
+                let value_type = self.get_type_of_node(shorthand.name);
+                let name_atom = self.ctx.types.intern_string(&name);
+                properties.push(tsz_solver::PropertyInfo::new(name_atom, value_type));
+            }
+            // Methods and accessors are always context-sensitive — skip them
+        }
+
+        if properties.is_empty() {
+            return None;
+        }
+
+        Some(self.ctx.types.factory().object(properties))
     }
 }
