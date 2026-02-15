@@ -52,6 +52,14 @@ pub struct DeclarationEmitter<'a> {
     source_map_text: Option<&'a str>,
     source_map_state: Option<SourceMapState>,
     pending_source_pos: Option<SourcePosition>,
+    /// Whether we're currently emitting a declaration file.
+    source_is_declaration_file: bool,
+    /// If true, only emit declarations that are part of the public API surface.
+    emit_public_api_only: bool,
+    /// Track whether we're currently emitting inside a public-API namespace/module.
+    public_api_scope_depth: u32,
+    /// Raw source text for this source file, used for keyword fallback emission.
+    source_file_text: Option<Arc<str>>,
     /// Type cache for looking up inferred types
     type_cache: Option<TypeCacheView>,
     /// Type interner for printing types
@@ -85,8 +93,6 @@ pub struct DeclarationEmitter<'a> {
     import_name_map: FxHashMap<String, SymbolId>,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
-    /// Whether the current source file is an external module.
-    is_external_module: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
     in_constructor_params: bool,
     /// Track function names that have overload signatures (to skip implementation signatures)
@@ -111,6 +117,10 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_text: None,
             source_map_state: None,
             pending_source_pos: None,
+            source_is_declaration_file: false,
+            emit_public_api_only: false,
+            public_api_scope_depth: 0,
+            source_file_text: None,
             type_cache: None,
             type_interner: None,
             binder: None,
@@ -125,7 +135,6 @@ impl<'a> DeclarationEmitter<'a> {
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
-            is_external_module: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
@@ -146,6 +155,10 @@ impl<'a> DeclarationEmitter<'a> {
             source_map_text: None,
             source_map_state: None,
             pending_source_pos: None,
+            source_is_declaration_file: false,
+            emit_public_api_only: false,
+            public_api_scope_depth: 0,
+            source_file_text: None,
             type_cache: Some(type_cache),
             type_interner: Some(type_interner),
             binder: Some(binder),
@@ -160,7 +173,6 @@ impl<'a> DeclarationEmitter<'a> {
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
             inside_declare_namespace: false,
-            is_external_module: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
             class_has_constructor_overloads: false,
@@ -376,7 +388,6 @@ impl<'a> DeclarationEmitter<'a> {
         // Reset usage tracking for each file
         self.used_symbols = None;
         self.foreign_symbols = None;
-        self.is_external_module = false;
 
         self.reset_writer();
         self.indent_level = 0;
@@ -441,7 +452,9 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
-        self.is_external_module = self.is_external_module_source(source_file);
+        self.source_file_text = Some(source_file.text.clone());
+        self.source_is_declaration_file = source_file.is_declaration_file;
+        self.emit_public_api_only = self.has_public_api_exports(source_file);
 
         debug!(
             "[DEBUG] source_file has {} comments",
@@ -457,19 +470,8 @@ impl<'a> DeclarationEmitter<'a> {
         // Emit auto-generated imports for foreign symbols
         self.emit_auto_imports();
 
-        let mut has_value_export = false;
         for &stmt_idx in &source_file.statements.nodes {
-            if self.statement_emits_value_export(stmt_idx) {
-                has_value_export = true;
-            }
             self.emit_statement(stmt_idx);
-        }
-
-        if self.is_external_module && !has_value_export {
-            let emitted = self.writer.get_output();
-            if !emitted.contains("export {};") {
-                self.write("export {};");
-            }
         }
 
         self.writer.get_output().to_string()
@@ -505,153 +507,6 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write_line();
                 }
             }
-        }
-    }
-
-    fn is_external_module_source(
-        &self,
-        source_file: &tsz_parser::parser::node::SourceFileData,
-    ) -> bool {
-        for &stmt_idx in &source_file.statements.nodes {
-            let Some(stmt) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-
-            match stmt.kind {
-                k if k == syntax_kind_ext::IMPORT_DECLARATION
-                    || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
-                {
-                    return true;
-                }
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                    if let Some(func) = self.arena.get_function(stmt) {
-                        if self.has_export_modifier(&func.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                    if let Some(class) = self.arena.get_class(stmt) {
-                        if self.has_export_modifier(&class.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                    if let Some(interface) = self.arena.get_interface(stmt) {
-                        if self.has_export_modifier(&interface.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                    if let Some(alias) = self.arena.get_type_alias(stmt) {
-                        if self.has_export_modifier(&alias.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    if let Some(enum_data) = self.arena.get_enum(stmt) {
-                        if self.has_export_modifier(&enum_data.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if let Some(module) = self.arena.get_module(stmt) {
-                        if self.has_export_modifier(&module.modifiers) {
-                            return true;
-                        }
-                    }
-                }
-                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if let Some(var_stmt) = self.arena.get_variable(stmt)
-                        && self.has_export_modifier(&var_stmt.modifiers)
-                    {
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        false
-    }
-
-    fn statement_emits_value_export(&self, stmt_idx: NodeIndex) -> bool {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-
-        match stmt_node.kind {
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                .arena
-                .get_function(stmt_node)
-                .is_some_and(|func| self.has_export_modifier(&func.modifiers)),
-            k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                .arena
-                .get_class(stmt_node)
-                .is_some_and(|class| self.has_export_modifier(&class.modifiers)),
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => false,
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => false,
-            k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                .arena
-                .get_enum(stmt_node)
-                .is_some_and(|enum_data| self.has_export_modifier(&enum_data.modifiers)),
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => self
-                .arena
-                .get_variable(stmt_node)
-                .is_some_and(|var_stmt| self.has_export_modifier(&var_stmt.modifiers)),
-            k if k == syntax_kind_ext::MODULE_DECLARATION => false,
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
-                .arena
-                .get_import_decl(stmt_node)
-                .is_some_and(|import_eq| self.has_export_modifier(&import_eq.modifiers)),
-            k if k == syntax_kind_ext::IMPORT_DECLARATION => false,
-            k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => false,
-            k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => true,
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                self.arena.get_export_decl(stmt_node).is_some_and(|export| {
-                    if export.is_type_only {
-                        return false;
-                    }
-                    if export.export_clause.is_none() {
-                        return false;
-                    }
-
-                    let Some(clause_node) = self.arena.get(export.export_clause) else {
-                        return true;
-                    };
-                    if clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                        || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                        || clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                    {
-                        return false;
-                    }
-                    if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
-                        if let Some(named_exports) = self.arena.get_named_imports(clause_node) {
-                            if named_exports.elements.nodes.is_empty() {
-                                return false;
-                            }
-                            return named_exports.elements.nodes.iter().any(|&spec_idx| {
-                                if let Some(spec_node) = self.arena.get(spec_idx) {
-                                    if let Some(spec) = self.arena.get_specifier(spec_node) {
-                                        return !spec.is_type_only;
-                                    }
-                                }
-                                true
-                            });
-                        }
-                        return true;
-                    }
-
-                    true
-                })
-            }
-            _ => false,
         }
     }
 
@@ -702,7 +557,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.emit_import_declaration_if_needed(stmt_idx);
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                self.emit_module_declaration(stmt_idx, false);
+                self.emit_module_declaration(stmt_idx);
             }
             k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                 self.emit_import_equals_declaration(stmt_idx, false);
@@ -726,9 +581,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // Check for export modifier
         let is_exported = self.has_export_modifier(&func.modifiers);
 
-        if !self.should_emit_top_level_declaration(func_idx, &func.modifiers) {
+        // In declaration emit mode, only emit exported functions
+        if !is_exported {
             return;
         }
 
@@ -759,13 +616,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        if !self.inside_declare_namespace {
-            if is_exported {
-                self.write("export ");
-            }
-            self.write("declare ");
-        }
-        self.write("function ");
+        self.write("export declare function ");
 
         // Function name
         self.emit_node(func.name);
@@ -788,14 +639,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it
-            let func_type_id = cache
-                .node_types
-                .get(&func_idx.0)
-                .copied()
-                .or_else(|| self.get_node_type_or_names(&[func.name]));
-
-            if let Some(func_type_id) = func_type_id {
-                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+            if let Some(func_type_id) = cache.node_types.get(&func_idx.0) {
+                if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, *func_type_id)
                 {
                     self.write(": ");
                     self.write(&self.print_type_id(return_type_id));
@@ -815,11 +661,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        if !self.should_emit_top_level_declaration(class_idx, &class.modifiers) {
+        let is_exported = self.has_export_modifier(&class.modifiers);
+        if !self.should_emit_public_api_member(&class.modifiers) {
             return;
         }
-
-        let is_exported = self.has_export_modifier(&class.modifiers);
         let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
 
         self.write_indent();
@@ -1219,11 +1064,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        if !self.should_emit_top_level_declaration(iface_idx, &iface.modifiers) {
+        let is_exported = self.has_export_modifier(&iface.modifiers);
+        if !self.should_emit_public_api_member(&iface.modifiers) {
             return;
         }
-
-        let is_exported = self.has_export_modifier(&iface.modifiers);
 
         self.write_indent();
         if is_exported {
@@ -1532,11 +1376,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        if !self.should_emit_top_level_declaration(alias_idx, &alias.modifiers) {
+        let is_exported = self.has_export_modifier(&alias.modifiers);
+        if !self.should_emit_public_api_member(&alias.modifiers) {
             return;
         }
-
-        let is_exported = self.has_export_modifier(&alias.modifiers);
 
         self.write_indent();
         if is_exported {
@@ -1568,11 +1411,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        if !self.should_emit_top_level_declaration(enum_idx, &enum_data.modifiers) {
+        let is_exported = self.has_export_modifier(&enum_data.modifiers);
+        if !self.should_emit_public_api_member(&enum_data.modifiers) {
             return;
         }
-
-        let is_exported = self.has_export_modifier(&enum_data.modifiers);
         let is_const = self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword as u16);
 
         self.write_indent();
@@ -1676,11 +1518,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        if !self.should_emit_top_level_declaration(stmt_idx, &var_stmt.modifiers) {
+        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
+        if !self.should_emit_public_api_member(&var_stmt.modifiers) {
             return;
         }
-
-        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1930,11 +1771,16 @@ impl<'a> DeclarationEmitter<'a> {
                     return;
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    self.emit_module_declaration(export.export_clause, true);
+                    let prev_public_api_scope_depth = self.public_api_scope_depth;
+                    self.public_api_scope_depth += 1;
+                    self.emit_module_declaration(export.export_clause);
+                    self.public_api_scope_depth = prev_public_api_scope_depth;
                     return;
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
                     // Emit: export import x = require(...)
+                    self.write_indent();
+                    self.write("export ");
                     self.emit_import_equals_declaration(export.export_clause, true);
                     return;
                 }
@@ -2145,11 +1991,6 @@ impl<'a> DeclarationEmitter<'a> {
         if !exports.name.is_none() && exports.elements.nodes.is_empty() {
             self.write("* as ");
             self.emit_node(exports.name);
-            return;
-        }
-
-        if exports.elements.nodes.is_empty() {
-            self.write("{}");
             return;
         }
 
@@ -2711,7 +2552,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_node(spec.name);
     }
 
-    fn emit_module_declaration(&mut self, module_idx: NodeIndex, force_exported: bool) {
+    fn emit_module_declaration(&mut self, module_idx: NodeIndex) {
         let Some(module_node) = self.arena.get(module_idx) else {
             return;
         };
@@ -2719,7 +2560,10 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = force_exported || self.has_export_modifier(&module.modifiers);
+        let is_exported = self.has_export_modifier(&module.modifiers);
+        if !self.should_emit_public_api_module(is_exported) {
+            return;
+        }
 
         self.write_indent();
         // Don't emit 'export' or 'declare' inside a declare namespace
@@ -2751,6 +2595,10 @@ impl<'a> DeclarationEmitter<'a> {
             // Inside a declare namespace, don't emit 'declare' keyword for members
             let prev_inside_declare_namespace = self.inside_declare_namespace;
             self.inside_declare_namespace = true;
+            let prev_public_api_scope_depth = self.public_api_scope_depth;
+            if is_exported {
+                self.public_api_scope_depth += 1;
+            }
 
             if let Some(body_node) = self.arena.get(module.body) {
                 if let Some(module_block) = self.arena.get_module_block(body_node) {
@@ -2762,11 +2610,12 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     // Nested namespace: module A.B is represented as ModuleDeclaration with body = ModuleDeclaration of C
                     if let Some(_nested_module) = self.arena.get_module(body_node) {
-                        self.emit_module_declaration(module.body, false);
+                        self.emit_module_declaration(module.body);
                     }
                 }
             }
 
+            self.public_api_scope_depth = prev_public_api_scope_depth;
             self.inside_declare_namespace = prev_inside_declare_namespace;
             self.decrease_indent();
             self.write_indent();
@@ -2784,10 +2633,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = already_exported || self.has_export_modifier(&import_eq.modifiers);
+        let is_exported = self.has_export_modifier(&import_eq.modifiers);
+        let is_public_exported = is_exported && !already_exported;
 
         self.write_indent();
-        if is_exported {
+        if is_public_exported {
             self.write("export ");
         }
         self.write("import ");
@@ -3476,6 +3326,12 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
                 }
             }
+            // Fallback for contextual keywords and other unhandled node kinds used as names.
+            _ if self.source_file_text.is_some() => {
+                if let Some(text) = self.get_source_slice(node.pos, node.end) {
+                    self.write(&text);
+                }
+            }
             _ => {}
         }
 
@@ -3488,110 +3344,111 @@ impl<'a> DeclarationEmitter<'a> {
         self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
     }
 
-    fn should_emit_top_level_declaration(
+    fn has_public_api_exports(
         &self,
-        node_idx: NodeIndex,
-        modifiers: &Option<NodeList>,
+        source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> bool {
-        if !self.is_external_module || self.inside_declare_namespace {
-            return true;
+        if source_file.is_declaration_file {
+            return false;
         }
 
-        if self.has_export_modifier(modifiers) {
-            return true;
-        }
+        let mut has_import = false;
+        let mut has_export = false;
 
-        if self.used_symbols.is_none() {
-            return true;
-        }
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
 
-        self.is_needed_private_declaration(node_idx)
-    }
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
+                has_import = true;
+            }
 
-    /// Return true when a non-exported top-level declaration is referenced from
-    /// exported declarations in the public API surface.
-    fn is_needed_private_declaration(&self, node_idx: NodeIndex) -> bool {
-        let Some(used) = &self.used_symbols else {
-            return false;
-        };
-        let Some(binder) = &self.binder else {
-            return false;
-        };
-
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-
-        let name_node_idx = match node.kind {
-            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                .arena
-                .get_function(node)
-                .and_then(|func| self.arena.get(func.name).map(|_| func.name)),
-            k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                .arena
-                .get_class(node)
-                .and_then(|class| self.arena.get(class.name).map(|_| class.name)),
-            k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
-                .arena
-                .get_interface(node)
-                .and_then(|iface| self.arena.get(iface.name).map(|_| iface.name)),
-            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                .arena
-                .get_type_alias(node)
-                .and_then(|alias| self.arena.get(alias.name).map(|_| alias.name)),
-            k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                .arena
-                .get_enum(node)
-                .and_then(|enum_data| self.arena.get(enum_data.name).map(|_| enum_data.name)),
-            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                let Some(var_stmt) = self.arena.get_variable(node) else {
-                    return false;
-                };
-
-                for &decl_idx in &var_stmt.declarations.nodes {
-                    if self.is_declaration_identifier_used(decl_idx) {
-                        return true;
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && self.has_export_modifier(&func.modifiers)
+                    {
+                        has_export = true;
                     }
                 }
-                return false;
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && self.has_export_modifier(&class.modifiers)
+                    {
+                        has_export = true;
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(iface) = self.arena.get_interface(stmt_node)
+                        && self.has_export_modifier(&iface.modifiers)
+                    {
+                        has_export = true;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
+                        && self.has_export_modifier(&alias.modifiers)
+                    {
+                        has_export = true;
+                    }
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                        && self.has_export_modifier(&enum_data.modifiers)
+                    {
+                        has_export = true;
+                    }
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if let Some(var_stmt) = self.arena.get_variable(stmt_node)
+                        && self.has_export_modifier(&var_stmt.modifiers)
+                    {
+                        has_export = true;
+                    }
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if let Some(module) = self.arena.get_module(stmt_node)
+                        && self.has_export_modifier(&module.modifiers)
+                    {
+                        has_export = true;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
+                    has_export = true;
+                }
+                _ => {}
             }
-            _ => None,
-        };
+        }
 
-        let Some(name_node_idx) = name_node_idx else {
-            return false;
-        };
-        let Some(&sym_id) = binder.node_symbols.get(&name_node_idx.0) else {
-            return false;
-        };
-
-        used.contains_key(&sym_id)
+        has_import || has_export
     }
 
-    fn is_declaration_identifier_used(&self, decl_node_idx: NodeIndex) -> bool {
-        let Some(decl_node) = self.arena.get(decl_node_idx) else {
-            return false;
-        };
-        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
-            return false;
-        };
-        let Some(name_node) = self.arena.get(decl.name) else {
-            return false;
-        };
-        if name_node.kind != SyntaxKind::Identifier as u16 {
-            return false;
+    /// Return true when declarations are filtered to public API members.
+    fn public_api_filter_enabled(&self) -> bool {
+        self.emit_public_api_only && self.public_api_scope_depth == 0
+    }
+
+    /// Return true if a top-level declaration should be emitted when API filtering is enabled.
+    fn should_emit_public_api_member(&self, modifiers: &Option<NodeList>) -> bool {
+        if !self.public_api_filter_enabled() {
+            return true;
         }
 
-        let Some(binder) = &self.binder else {
-            return false;
-        };
-        if let Some(&sym_id) = binder.node_symbols.get(&decl.name.0) {
-            self.used_symbols
-                .as_ref()
-                .is_some_and(|used| used.contains_key(&sym_id))
-        } else {
-            false
+        self.has_export_modifier(modifiers)
+    }
+
+    /// Return true if a module declaration should be emitted when API filtering is enabled.
+    fn should_emit_public_api_module(&self, is_exported: bool) -> bool {
+        if !self.public_api_filter_enabled() {
+            return true;
         }
+
+        is_exported
     }
 
     /// Get the function/method name as a string for overload tracking
@@ -3899,6 +3756,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn reset_writer(&mut self) {
         self.writer = SourceWriter::with_capacity(4096);
         self.pending_source_pos = None;
+        self.public_api_scope_depth = 0;
         if let Some(state) = &self.source_map_state {
             self.writer.enable_source_map(state.output_name.clone());
             let content = self.source_map_text.map(std::string::ToString::to_string);
@@ -3922,6 +3780,18 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
+    }
+
+    fn get_source_slice(&self, start: u32, end: u32) -> Option<String> {
+        let text = self.source_file_text.as_ref()?;
+        let start = start as usize;
+        let end = end as usize;
+        if start > end || end > text.len() {
+            return None;
+        }
+
+        let slice = text[start..end].trim().to_string();
+        if slice.is_empty() { None } else { Some(slice) }
     }
 
     fn write_raw(&mut self, s: &str) {
@@ -3971,11 +3841,13 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(type_id);
             }
 
-            if let Some(node) = self.arena.get(node_id) {
-                for related_id in self.get_node_type_related_nodes(node) {
-                    if let Some(type_id) = self.get_node_type(related_id) {
-                        return Some(type_id);
-                    }
+            let Some(node) = self.arena.get(node_id) else {
+                continue;
+            };
+
+            for related_id in self.get_node_type_related_nodes(node) {
+                if let Some(type_id) = self.get_node_type(related_id) {
+                    return Some(type_id);
                 }
             }
         }
@@ -3986,7 +3858,7 @@ impl<'a> DeclarationEmitter<'a> {
         match node.kind {
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 if let Some(decl) = self.arena.get_variable_declaration(node) {
-                    let mut related = Vec::with_capacity(2);
+                    let mut related = Vec::with_capacity(1);
                     if !decl.initializer.is_none() {
                         related.push(decl.initializer);
                     }
