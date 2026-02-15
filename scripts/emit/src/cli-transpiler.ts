@@ -45,7 +45,7 @@ function dedupeUseStrictPreamble(text: string): string {
     const trimmed = line.trim();
     if (trimmed === '"use strict";' || trimmed === "'use strict';") {
       if (!seen) {
-        out.push('"use strict";');
+        out.push(line);
         seen = true;
       }
       continue;
