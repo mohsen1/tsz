@@ -1225,18 +1225,46 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: arg_types.len(),
             };
         }
-        // Final check: verify arguments against instantiated parameters
+        // Final check: verify arguments against instantiated parameters.
+        // When callbacks are contextually typed with the callee's inference placeholders
+        // (__infer_0, etc.), those placeholders leak into the arg types. Replace them
+        // with the inferred values before the assignability check. Using placeholder
+        // names avoids name collisions with same-named type parameters from outer scopes.
+        let placeholder_subst = {
+            let mut s = TypeSubstitution::new();
+            for (i, tp) in func.type_params.iter().enumerate() {
+                if let Some(inferred) = final_subst.get(tp.name) {
+                    use std::fmt::Write;
+                    placeholder_buf.clear();
+                    write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
+                    let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+                    s.insert(placeholder_atom, inferred);
+                }
+            }
+            s
+        };
+        let final_args: Vec<TypeId> = if placeholder_subst.is_empty() {
+            arg_types.to_vec()
+        } else {
+            arg_types
+                .iter()
+                .map(|&arg| instantiate_type(self.interner, arg, &placeholder_subst))
+                .collect()
+        };
         tracing::debug!(
             "Final argument check with {} instantiated params",
             instantiated_params.len()
         );
-        for (i, (param, &arg_type)) in instantiated_params.iter().zip(arg_types.iter()).enumerate()
+        for (i, (param, &arg_type)) in instantiated_params
+            .iter()
+            .zip(final_args.iter())
+            .enumerate()
         {
             tracing::debug!("  Param {}: {:?}", i, self.interner.lookup(param.type_id));
             tracing::debug!("  Arg   {}: {:?}", i, self.interner.lookup(arg_type));
         }
         if let Some(result) =
-            self.check_argument_types_with(&instantiated_params, arg_types, true, func.is_method)
+            self.check_argument_types_with(&instantiated_params, &final_args, true, func.is_method)
         {
             tracing::debug!("Final check failed: {:?}", result);
             return result;
@@ -1456,8 +1484,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Pass 2: For unresolved type params, try using the default or constraint
         // instantiated with already-resolved params as a contextual type.
-        // Priority: default > constraint (the default is what the type IS when no
-        // argument is provided; the constraint is just an upper bound).
+        // Priority: default > constraint > placeholder (the default is what the type IS
+        // when no argument is provided; the constraint is just an upper bound).
+        // As a last resort, use the inference placeholder (__infer_N) so that callbacks
+        // get unique placeholder types instead of the callee's raw type parameters,
+        // which avoids name collisions with outer scope type parameters of the same name.
         for i in unresolved_indices {
             let tp = &func.type_params[i];
             // Try default first — this determines the contextual type when no inference
@@ -1484,7 +1515,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     inst_constraint,
                 ) {
                     result_subst.insert(tp.name, inst_constraint);
+                    continue;
                 }
+            }
+            // Last resort: use the inference placeholder so callbacks get unique
+            // placeholder types instead of the callee's raw type parameter.
+            // This ensures that `foo((x) => 1, (x) => '')` produces arg types with
+            // `__infer_0` instead of `T`, avoiding name collisions with outer `T`.
+            {
+                use std::fmt::Write;
+                placeholder_buf.clear();
+                write!(placeholder_buf, "__infer_{}", type_param_vars[i].0).unwrap();
+                let placeholder_atom = self.interner.intern_string(&placeholder_buf);
+                let placeholder_key = TypeData::TypeParameter(TypeParamInfo {
+                    is_const: tp.is_const,
+                    name: placeholder_atom,
+                    constraint: tp.constraint,
+                    default: None,
+                });
+                let placeholder_id = self.interner.intern(placeholder_key);
+                result_subst.insert(tp.name, placeholder_id);
             }
         }
 
