@@ -1204,9 +1204,7 @@ impl<'a> CheckerState<'a> {
     /// This is used for overload compatibility checking: when the implementation omits a return type,
     /// the lowering would produce ERROR, but TypeScript treats it as `any` for compatibility purposes.
     fn get_impl_return_type_override(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(node_idx)?;
         let has_annotation = match node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                 .ctx
@@ -1236,9 +1234,7 @@ impl<'a> CheckerState<'a> {
     /// Returns `Some(TypeId::VOID)` if an overload node has no explicit return type annotation.
     /// Overloads without return type annotations default to void (matching tsc behavior).
     fn get_overload_return_type_override(&self, node_idx: NodeIndex) -> Option<tsz_solver::TypeId> {
-        let Some(node) = self.ctx.arena.get(node_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(node_idx)?;
         let has_annotation = match node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                 .ctx

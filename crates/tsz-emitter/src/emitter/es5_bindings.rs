@@ -655,9 +655,7 @@ impl<'a> Printer<'a> {
         } else {
             elem.name
         };
-        let Some(key_node) = self.arena.get(key_idx) else {
-            return None;
-        };
+        let key_node = self.arena.get(key_idx)?;
         match key_node.kind {
             k if k == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                 || k == SyntaxKind::Identifier as u16
@@ -758,9 +756,7 @@ impl<'a> Printer<'a> {
     /// If key_idx is a computed property, emit a temp variable assignment and return the temp name
     /// Returns None if not computed
     fn emit_computed_key_temp_if_needed(&mut self, key_idx: NodeIndex) -> Option<String> {
-        let Some(key_node) = self.arena.get(key_idx) else {
-            return None;
-        };
+        let key_node = self.arena.get(key_idx)?;
 
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(key_node) {
@@ -962,9 +958,7 @@ impl<'a> Printer<'a> {
         key_idx: NodeIndex,
         first: &mut bool,
     ) -> Option<String> {
-        let Some(key_node) = self.arena.get(key_idx) else {
-            return None;
-        };
+        let key_node = self.arena.get(key_idx)?;
 
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(key_node) {
@@ -1398,9 +1392,7 @@ impl<'a> Printer<'a> {
         key_idx: NodeIndex,
         started: &mut bool,
     ) -> Option<String> {
-        let Some(key_node) = self.arena.get(key_idx) else {
-            return None;
-        };
+        let key_node = self.arena.get(key_idx)?;
 
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
             if let Some(computed) = self.arena.get_computed_property(key_node) {

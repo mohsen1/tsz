@@ -1439,9 +1439,7 @@ impl<'a> ScopeWalker<'a> {
             return None;
         }
 
-        let Some(node) = self.arena.get(current) else {
-            return None;
-        };
+        let node = self.arena.get(current)?;
 
         // Optimization: Don't descend if target is not within current node's range
         if let Some(target_node) = self.arena.get(target)

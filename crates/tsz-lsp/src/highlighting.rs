@@ -159,9 +159,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         // starts with a keyword at our cursor position
         let keyword_kind = self.get_keyword_at_offset(offset);
 
-        if keyword_kind.is_none() {
-            return None;
-        }
+        keyword_kind?;
 
         let kw = keyword_kind.unwrap();
 

@@ -1654,9 +1654,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
-                        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-                            return None;
-                        };
+                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
                         if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
                             || (symbol.flags & symbol_flags::CLASS) != 0
                             || (symbol.flags & symbol_flags::INTERFACE) != 0
@@ -1675,9 +1673,7 @@ impl<'a> CheckerState<'a> {
 
     fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, String)> {
         let expr = type_expr.trim();
-        let Some(rest) = expr.strip_prefix("import(") else {
-            return None;
-        };
+        let rest = expr.strip_prefix("import(")?;
         let mut rest = rest.trim_start();
         let quote = rest.chars().next()?;
         if quote != '"' && quote != '\'' && quote != '`' {
@@ -1807,9 +1803,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let Some((_, typedef_info)) = best_def else {
-            return None;
-        };
+        let (_, typedef_info) = best_def?;
         self.type_from_jsdoc_typedef(typedef_info)
     }
 
@@ -2743,9 +2737,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the symbol ID if the expression refers to a class, None otherwise.
     pub(crate) fn class_symbol_from_expression(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(expr_idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
             let sym_id = self.resolve_identifier_symbol(expr_idx)?;
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
@@ -2763,9 +2755,7 @@ impl<'a> CheckerState<'a> {
         &self,
         type_idx: NodeIndex,
     ) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(type_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(type_idx)?;
         if node.kind != syntax_kind_ext::TYPE_QUERY {
             return None;
         }
@@ -2778,9 +2768,7 @@ impl<'a> CheckerState<'a> {
     /// Handles cases where the target is a variable with a class type annotation
     /// or initialized with a class expression.
     pub(crate) fn assignment_target_class_symbol(&self, left_idx: NodeIndex) -> Option<SymbolId> {
-        let Some(node) = self.ctx.arena.get(left_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(left_idx)?;
         if node.kind != SyntaxKind::Identifier as u16 {
             return None;
         }
@@ -3163,14 +3151,10 @@ impl<'a> CheckerState<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(expr_idx)?;
 
         // Must be an identifier
-        if self.ctx.arena.get_identifier(node).is_none() {
-            return None;
-        }
+        self.ctx.arena.get_identifier(node)?;
 
         // Resolve the variable's symbol
         let sym_id = self.resolve_identifier_symbol(expr_idx)?;

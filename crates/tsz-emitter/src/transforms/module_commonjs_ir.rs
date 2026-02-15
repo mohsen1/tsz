@@ -128,12 +128,8 @@ impl<'a> CommonJsTransformContext<'a> {
         });
 
         // Process import bindings
-        let Some(clause_node) = self.arena.get(import.import_clause) else {
-            return None;
-        };
-        let Some(clause) = self.arena.get_import_clause(clause_node) else {
-            return None;
-        };
+        let clause_node = self.arena.get(import.import_clause)?;
+        let clause = self.arena.get_import_clause(clause_node)?;
 
         if clause.is_type_only {
             return None;
@@ -214,9 +210,7 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Regular export - get inner declaration
-        let Some(_inner_node) = self.arena.get(export_data.export_clause) else {
-            return None;
-        };
+        let _inner_node = self.arena.get(export_data.export_clause)?;
 
         // Transform the inner declaration
         self.transform_statement(export_data.export_clause)
@@ -242,9 +236,7 @@ impl<'a> CommonJsTransformContext<'a> {
         });
 
         // Get exported names
-        let Some(clause_node) = self.arena.get(export_data.export_clause) else {
-            return None;
-        };
+        let clause_node = self.arena.get(export_data.export_clause)?;
 
         if let Some(named_exports) = self.arena.get_named_imports(clause_node) {
             for &spec_idx in &named_exports.elements.nodes {

@@ -884,9 +884,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract a PropertyKey from a property name node.
     pub(crate) fn property_key_from_name(&self, name_idx: NodeIndex) -> Option<PropertyKey> {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return None;
-        };
+        let name_node = self.ctx.arena.get(name_idx)?;
 
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
             if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
@@ -923,23 +921,15 @@ impl<'a> CheckerState<'a> {
 
     /// Extract a PropertyKey from a property access expression on `this`.
     pub(crate) fn property_key_from_access(&self, access_idx: NodeIndex) -> Option<PropertyKey> {
-        let Some(node) = self.ctx.arena.get(access_idx) else {
-            return None;
-        };
-        let Some(access) = self.ctx.arena.get_access_expr(node) else {
-            return None;
-        };
-        let Some(expr_node) = self.ctx.arena.get(access.expression) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(access_idx)?;
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let expr_node = self.ctx.arena.get(access.expression)?;
         if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
             return None;
         }
 
         if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
-                return None;
-            };
+            let name_node = self.ctx.arena.get(access.name_or_argument)?;
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
                     return Some(PropertyKey::Private(ident.escaped_text.clone()));
@@ -960,9 +950,7 @@ impl<'a> CheckerState<'a> {
 
     /// Extract a ComputedKey from an expression.
     fn computed_key_from_expression(&self, expr_idx: NodeIndex) -> Option<ComputedKey> {
-        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-            return None;
-        };
+        let expr_node = self.ctx.arena.get(expr_idx)?;
 
         if let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
             return Some(ComputedKey::Ident(ident.escaped_text.clone()));
@@ -993,12 +981,8 @@ impl<'a> CheckerState<'a> {
 
     /// Extract a qualified name from a property access expression.
     fn qualified_name_from_property_access(&self, access_idx: NodeIndex) -> Option<String> {
-        let Some(node) = self.ctx.arena.get(access_idx) else {
-            return None;
-        };
-        let Some(access) = self.ctx.arena.get_access_expr(node) else {
-            return None;
-        };
+        let node = self.ctx.arena.get(access_idx)?;
+        let access = self.ctx.arena.get_access_expr(node)?;
 
         let base_name = if let Some(base_node) = self.ctx.arena.get(access.expression) {
             if let Some(ident) = self.ctx.arena.get_identifier(base_node) {
@@ -1012,12 +996,8 @@ impl<'a> CheckerState<'a> {
             None
         }?;
 
-        let Some(name_node) = self.ctx.arena.get(access.name_or_argument) else {
-            return None;
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return None;
-        };
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        let ident = self.ctx.arena.get_identifier(name_node)?;
 
         Some(format!("{}.{}", base_name, ident.escaped_text))
     }
