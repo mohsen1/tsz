@@ -78,8 +78,6 @@ match_same_arms = "allow"
 field_reassign_with_default = "allow"
 collapsible_match = "allow"
 only_used_in_recursion = "allow"
-transmute_undefined_repr = "allow"
-mem_replace_with_default = "allow"
 needless_pass_by_value = "allow"
 
 [package]
