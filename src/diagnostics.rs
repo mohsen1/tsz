@@ -558,8 +558,7 @@ pub fn format_code_snippet(text: &str, span: Span, _context_lines: usize) -> Str
     // Find line end
     let line_end = text[line_start..]
         .find('\n')
-        .map(|i| line_start + i)
-        .unwrap_or(text.len());
+        .map_or(text.len(), |i| line_start + i);
 
     // Get the line text
     let line_text = &text[line_start..line_end];

@@ -380,8 +380,7 @@ impl<'a> CheckerState<'a> {
         if let Some(call_signatures) = call_signatures_for_type(self.ctx.types, fn_type) {
             return call_signatures
                 .first()
-                .map(|sig| sig.return_type)
-                .unwrap_or(TypeId::ANY);
+                .map_or(TypeId::ANY, |sig| sig.return_type);
         }
         TypeId::ANY
     }

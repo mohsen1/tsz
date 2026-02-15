@@ -66,9 +66,7 @@ impl<'a> FlowGraph<'a> {
 
     /// Check if a flow node has a specific flag.
     pub fn node_has_flag(&self, id: FlowNodeId, flag: u32) -> bool {
-        self.get(id)
-            .map(|node| node.has_any_flags(flag))
-            .unwrap_or(false)
+        self.get(id).is_some_and(|node| node.has_any_flags(flag))
     }
 
     /// Get the antecedents (predecessors) of a flow node.
@@ -80,9 +78,7 @@ impl<'a> FlowGraph<'a> {
 
     /// Get the AST node associated with a flow node.
     pub fn node(&self, id: FlowNodeId) -> NodeIndex {
-        self.get(id)
-            .map(|node| node.node)
-            .unwrap_or(NodeIndex::NONE)
+        self.get(id).map_or(NodeIndex::NONE, |node| node.node)
     }
 }
 
@@ -201,8 +197,7 @@ impl<'a> FlowAnalyzer<'a> {
         let affects = self.is_matching_reference(switch_expr, reference)
             || self
                 .discriminant_property_info(switch_expr, reference)
-                .map(|(_, _, base)| self.is_matching_reference(base, reference))
-                .unwrap_or(false);
+                .is_some_and(|(_, _, base)| self.is_matching_reference(base, reference));
 
         self.switch_reference_cache
             .borrow_mut()
@@ -2023,36 +2018,27 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            return self
-                .arena
-                .get_binary_expr(node)
-                .map(|bin| {
-                    self.is_assignment_operator(bin.operator_token)
-                        && self.assignment_affects_reference(bin.left, target)
-                })
-                .unwrap_or(false);
+            return self.arena.get_binary_expr(node).is_some_and(|bin| {
+                self.is_assignment_operator(bin.operator_token)
+                    && self.assignment_affects_reference(bin.left, target)
+            });
         }
 
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
         {
-            return self
-                .arena
-                .get_unary_expr(node)
-                .map(|unary| {
-                    (unary.operator == SyntaxKind::PlusPlusToken as u16
-                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
-                        && self.assignment_affects_reference(unary.operand, target)
-                })
-                .unwrap_or(false);
+            return self.arena.get_unary_expr(node).is_some_and(|unary| {
+                (unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                    && self.assignment_affects_reference(unary.operand, target)
+            });
         }
 
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             return self
                 .arena
                 .get_variable_declaration(node)
-                .map(|decl| self.assignment_affects_reference(decl.name, target))
-                .unwrap_or(false);
+                .is_some_and(|decl| self.assignment_affects_reference(decl.name, target));
         }
 
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
@@ -2095,37 +2081,28 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            return self
-                .arena
-                .get_binary_expr(node)
-                .map(|bin| {
-                    let is_op = self.is_assignment_operator(bin.operator_token);
-                    let targets = self.assignment_targets_reference_internal(bin.left, target);
-                    is_op && targets
-                })
-                .unwrap_or(false);
+            return self.arena.get_binary_expr(node).is_some_and(|bin| {
+                let is_op = self.is_assignment_operator(bin.operator_token);
+                let targets = self.assignment_targets_reference_internal(bin.left, target);
+                is_op && targets
+            });
         }
 
         if node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
             || node.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
         {
-            return self
-                .arena
-                .get_unary_expr(node)
-                .map(|unary| {
-                    (unary.operator == SyntaxKind::PlusPlusToken as u16
-                        || unary.operator == SyntaxKind::MinusMinusToken as u16)
-                        && self.assignment_targets_reference_internal(unary.operand, target)
-                })
-                .unwrap_or(false);
+            return self.arena.get_unary_expr(node).is_some_and(|unary| {
+                (unary.operator == SyntaxKind::PlusPlusToken as u16
+                    || unary.operator == SyntaxKind::MinusMinusToken as u16)
+                    && self.assignment_targets_reference_internal(unary.operand, target)
+            });
         }
 
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             return self
                 .arena
                 .get_variable_declaration(node)
-                .map(|decl| self.assignment_targets_reference_internal(decl.name, target))
-                .unwrap_or(false);
+                .is_some_and(|decl| self.assignment_targets_reference_internal(decl.name, target));
         }
 
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
@@ -2188,8 +2165,7 @@ impl<'a> FlowAnalyzer<'a> {
         if !target_is_switch_expr {
             let switch_targets_base = self
                 .discriminant_property_info(switch_expr, target)
-                .map(|(_, _, base)| self.is_matching_reference(base, target))
-                .unwrap_or(false);
+                .is_some_and(|(_, _, base)| self.is_matching_reference(base, target));
             if !switch_targets_base {
                 return type_id;
             }

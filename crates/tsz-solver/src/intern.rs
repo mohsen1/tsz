@@ -400,8 +400,7 @@ impl TypeInterner {
     pub fn get_array_base_type_params(&self) -> &[TypeParamInfo] {
         self.array_base_type_params
             .get()
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+            .map_or(&[], |v| v.as_slice())
     }
 
     /// Get the object property maps, initializing on first access

@@ -835,8 +835,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|id_data| id_data.escaped_text.clone())
-                .unwrap_or_else(|| "T".to_string());
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
 
             // Check for duplicate type parameter names (TS2300)
             if !seen_names.insert(name.clone()) {
@@ -876,8 +875,7 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(data.name)
                 .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                .map(|id_data| id_data.escaped_text.clone())
-                .unwrap_or_else(|| "T".to_string());
+                .map_or_else(|| "T".to_string(), |id_data| id_data.escaped_text.clone());
             let atom = self.ctx.types.intern_string(&name);
 
             let constraint = if data.constraint != NodeIndex::NONE {
@@ -1259,8 +1257,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .binder
                     .get_symbol(sym_id)
-                    .map(|s| s.escaped_name.as_str())
-                    .unwrap_or("<unknown>");
+                    .map_or("<unknown>", |s| s.escaped_name.as_str());
                 tracing::warn!(
                     sym_id = sym_id.0,
                     sym_name = sym_name,
@@ -1423,9 +1420,7 @@ impl<'a> CheckerState<'a> {
         // If the type alias declaration exists in the current arena, handle it locally.
         {
             let sym_found = self.get_symbol_globally(sym_id);
-            let has_type_alias = sym_found
-                .map(|s| s.flags & symbol_flags::TYPE_ALIAS != 0)
-                .unwrap_or(false);
+            let has_type_alias = sym_found.is_some_and(|s| s.flags & symbol_flags::TYPE_ALIAS != 0);
             if has_type_alias {
                 let symbol = sym_found.unwrap();
                 tracing::debug!(
@@ -3024,7 +3019,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
         let ctx_type = self.ctx.contextual_type?;
         self.contextual_type_allows_literal(ctx_type, literal_type)
-            .then(|| literal_type)
+            .then_some(literal_type)
     }
 
     pub(crate) fn contextual_type_allows_literal(
@@ -3440,14 +3435,13 @@ impl<'a> CheckerState<'a> {
         if !types_compatible {
             let shadowed = symbols.iter().skip(1).any(|sym_id| {
                 self.private_member_declaring_type(*sym_id)
-                    .map(|ty| {
+                    .is_some_and(|ty| {
                         if self.types_have_same_private_brand(object_type_for_check, ty) {
                             true
                         } else {
                             self.is_assignable_to(object_type_for_check, ty)
                         }
                     })
-                    .unwrap_or(false)
             });
             if shadowed {
                 self.report_private_identifier_shadowed(

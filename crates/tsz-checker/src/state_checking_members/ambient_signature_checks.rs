@@ -59,8 +59,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|c| c.in_static_property_initializer)
-            .unwrap_or(false);
+            .is_some_and(|c| c.in_static_property_initializer);
         if is_static
             && !prop.initializer.is_none()
             && let Some(ref mut class_info) = self.ctx.enclosing_class
@@ -90,8 +89,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .enclosing_class
                 .as_ref()
-                .map(|c| c.is_declared)
-                .unwrap_or(false);
+                .is_some_and(|c| c.is_declared);
             if is_es5_or_lower && !in_ambient {
                 self.error_at_node(
                     member_idx,
@@ -154,8 +152,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|c| c.is_declared)
-            .unwrap_or(false)
+            .is_some_and(|c| c.is_declared)
             && self.has_private_modifier(&prop.modifiers);
         if self.ctx.no_implicit_any()
             && prop.type_annotation.is_none()
@@ -316,8 +313,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|c| c.is_declared)
-            .unwrap_or(false)
+            .is_some_and(|c| c.is_declared)
             && self.has_private_modifier(&method.modifiers);
         // Get method-level JSDoc for @param type checking
         let method_jsdoc = self.get_jsdoc_for_function(member_idx);
@@ -375,8 +371,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .enclosing_class
                 .as_ref()
-                .map(|c| c.is_declared)
-                .unwrap_or(false);
+                .is_some_and(|c| c.is_declared);
             let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
 
             if (is_ambient_class || is_ambient_file) && !is_async && !skip_implicit_any {
@@ -551,8 +546,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|c| c.is_declared)
-            .unwrap_or(false)
+            .is_some_and(|c| c.is_declared)
             && self.has_private_modifier(&ctor.modifiers);
         // Get constructor-level JSDoc for @param type checking
         let ctor_jsdoc = self.get_jsdoc_for_function(member_idx);
@@ -656,14 +650,12 @@ impl<'a> CheckerState<'a> {
                 .as_ref()
                 .and_then(|info| self.ctx.arena.get(info.class_idx))
                 .and_then(|class_node| self.ctx.arena.get_class(class_node))
-                .map(|class| self.class_requires_super_call(class))
-                .unwrap_or(false);
+                .is_some_and(|class| self.class_requires_super_call(class));
             let has_super_call = self
                 .ctx
                 .enclosing_class
                 .as_ref()
-                .map(|info| info.has_super_call_in_current_constructor)
-                .unwrap_or(false);
+                .is_some_and(|info| info.has_super_call_in_current_constructor);
 
             if requires_super && !has_super_call {
                 self.error_at_node(
@@ -746,8 +738,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .enclosing_class
             .as_ref()
-            .map(|c| c.is_declared)
-            .unwrap_or(false)
+            .is_some_and(|c| c.is_declared)
             && self.has_private_modifier(&accessor.modifiers);
 
         // Check getter parameters for TS7006 here.
@@ -789,8 +780,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .enclosing_class
                     .as_ref()
-                    .map(|c| c.is_declared)
-                    .unwrap_or(false);
+                    .is_some_and(|c| c.is_declared);
                 let is_ambient_file = self.ctx.file_name.ends_with(".d.ts");
                 let is_async = self.has_async_modifier(&accessor.modifiers);
 
@@ -1107,20 +1097,17 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get_function(decl_node)
-                    .map(|f| f.body.is_none())
-                    .unwrap_or(false),
+                    .is_some_and(|f| f.body.is_none()),
                 k if k == syntax_kind_ext::METHOD_DECLARATION => self
                     .ctx
                     .arena
                     .get_method_decl(decl_node)
-                    .map(|m| m.body.is_none())
-                    .unwrap_or(false),
+                    .is_some_and(|m| m.body.is_none()),
                 k if k == syntax_kind_ext::CONSTRUCTOR => self
                     .ctx
                     .arena
                     .get_constructor(decl_node)
-                    .map(|c| c.body.is_none())
-                    .unwrap_or(false),
+                    .is_some_and(|c| c.body.is_none()),
                 _ => false, // Not a callable declaration we care about
             };
 
@@ -1211,14 +1198,12 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_function(node)
-                .map(|f| !f.type_annotation.is_none())
-                .unwrap_or(false),
+                .is_some_and(|f| !f.type_annotation.is_none()),
             k if k == syntax_kind_ext::METHOD_DECLARATION => self
                 .ctx
                 .arena
                 .get_method_decl(node)
-                .map(|m| !m.type_annotation.is_none())
-                .unwrap_or(false),
+                .is_some_and(|m| !m.type_annotation.is_none()),
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 // Constructors never have return type annotations
                 return None;
@@ -1241,14 +1226,12 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_function(node)
-                .map(|f| !f.type_annotation.is_none())
-                .unwrap_or(false),
+                .is_some_and(|f| !f.type_annotation.is_none()),
             k if k == syntax_kind_ext::METHOD_DECLARATION => self
                 .ctx
                 .arena
                 .get_method_decl(node)
-                .map(|m| !m.type_annotation.is_none())
-                .unwrap_or(false),
+                .is_some_and(|m| !m.type_annotation.is_none()),
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 return None;
             }

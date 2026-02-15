@@ -133,8 +133,7 @@ pub fn prepare_test_dir(
     let check_js = options
         .get("checkJs")
         .or_else(|| options.get("checkjs"))
-        .map(|v| v == "true")
-        .unwrap_or(false);
+        .is_some_and(|v| v == "true");
     let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
     // Include .cts/.mts (TypeScript CJS/ESM) alongside .ts/.tsx
     let include = if allow_js {
@@ -202,8 +201,7 @@ pub fn prepare_binary_test_dir(
         let check_js = options
             .get("checkJs")
             .or_else(|| options.get("checkjs"))
-            .map(|v| v == "true")
-            .unwrap_or(false);
+            .is_some_and(|v| v == "true");
         let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
 
         let include = if allow_js {

@@ -168,8 +168,9 @@ impl<'a> CheckerState<'a> {
                         .type_arguments
                         .as_ref()
                         .and_then(|args| args.nodes.first().copied())
-                        .map(|idx| self.get_type_from_type_node_in_type_literal(idx))
-                        .unwrap_or(TypeId::UNKNOWN);
+                        .map_or(TypeId::UNKNOWN, |idx| {
+                            self.get_type_from_type_node_in_type_literal(idx)
+                        });
                     let array_type = factory.array(elem_type);
                     if name == "ReadonlyArray" {
                         return factory.readonly_type(array_type);
@@ -251,8 +252,9 @@ impl<'a> CheckerState<'a> {
                     .type_arguments
                     .as_ref()
                     .and_then(|args| args.nodes.first().copied())
-                    .map(|idx| self.get_type_from_type_node_in_type_literal(idx))
-                    .unwrap_or(TypeId::UNKNOWN);
+                    .map_or(TypeId::UNKNOWN, |idx| {
+                        self.get_type_from_type_node_in_type_literal(idx)
+                    });
                 let array_type = factory.array(elem_type);
                 if name == "ReadonlyArray" {
                     return factory.readonly_type(array_type);

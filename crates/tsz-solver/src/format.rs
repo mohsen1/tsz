@@ -503,8 +503,7 @@ impl<'a> TypeFormatter<'a> {
         for p in params {
             let name = p
                 .name
-                .map(|atom| self.atom(atom).to_string())
-                .unwrap_or_else(|| "_".to_string());
+                .map_or_else(|| "_".to_string(), |atom| self.atom(atom).to_string());
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
             let type_str = self.format(p.type_id);

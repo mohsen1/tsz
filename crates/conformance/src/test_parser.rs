@@ -105,8 +105,7 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
     if directives
         .options
         .get("nocheck")
-        .map(|v| v == "true")
-        .unwrap_or(false)
+        .is_some_and(|v| v == "true")
     {
         return Some("@noCheck");
     }
@@ -173,9 +172,8 @@ pub fn filter_incompatible_module_resolution_variants(
             match module_resolution.as_deref() {
                 Some("node16") => module
                     .as_deref()
-                    .map(|m| matches!(m, "node16" | "node18" | "node20"))
-                    .unwrap_or(true),
-                Some("nodenext") => module.as_deref().map(|m| m == "nodenext").unwrap_or(true),
+                    .is_none_or(|m| matches!(m, "node16" | "node18" | "node20")),
+                Some("nodenext") => module.as_deref().is_none_or(|m| m == "nodenext"),
                 _ => true,
             }
         })

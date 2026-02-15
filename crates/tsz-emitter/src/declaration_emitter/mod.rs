@@ -2734,8 +2734,7 @@ impl<'a> DeclarationEmitter<'a> {
         let use_module_keyword = self
             .arena
             .get(module.name)
-            .map(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16)
-            .unwrap_or(false);
+            .is_some_and(|name_node| name_node.kind == SyntaxKind::StringLiteral as u16);
 
         self.write(if use_module_keyword {
             "module "

@@ -325,5 +325,5 @@ fn get_build_info_path(project: &ResolvedProject) -> Option<PathBuf> {
 /// Find a tsconfig.json file in the given directory
 fn find_tsconfig(dir: &Path) -> Option<PathBuf> {
     let config = dir.join("tsconfig.json");
-    config.exists().then(|| config)
+    config.exists().then_some(config)
 }

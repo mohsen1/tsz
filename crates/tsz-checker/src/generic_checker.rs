@@ -192,8 +192,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .binder
                     .get_symbol_with_libs(sym_id, &lib_binders)
-                    .map(|s| s.escaped_name.clone())
-                    .unwrap_or_else(|| "<unknown>".to_string());
+                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
                 self.error_at_node_msg(
                     arg_idx,
                     crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,

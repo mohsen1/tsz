@@ -48,9 +48,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns 0 if the type is not an object.
     pub fn object_property_count(&self, type_id: TypeId) -> usize {
-        object_shape_for_type(self.ctx.types, type_id)
-            .map(|shape| shape.properties.len())
-            .unwrap_or(0)
+        object_shape_for_type(self.ctx.types, type_id).map_or(0, |shape| shape.properties.len())
     }
 
     // =========================================================================
@@ -116,8 +114,7 @@ impl<'a> CheckerState<'a> {
                 .properties
                 .iter()
                 .find(|prop| prop.name == name_atom)
-                .map(|prop| prop.optional)
-                .unwrap_or(false)
+                .is_some_and(|prop| prop.optional)
         } else {
             false
         }
@@ -133,8 +130,7 @@ impl<'a> CheckerState<'a> {
                 .properties
                 .iter()
                 .find(|prop| prop.name == name_atom)
-                .map(|prop| prop.readonly)
-                .unwrap_or(false)
+                .is_some_and(|prop| prop.readonly)
         } else {
             false
         }
@@ -150,8 +146,7 @@ impl<'a> CheckerState<'a> {
                 .properties
                 .iter()
                 .find(|prop| prop.name == name_atom)
-                .map(|prop| prop.is_method)
-                .unwrap_or(false)
+                .is_some_and(|prop| prop.is_method)
         } else {
             false
         }
@@ -162,8 +157,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if any property on the object is optional.
     pub fn object_has_optional_properties(&self, type_id: TypeId) -> bool {
         object_shape_for_type(self.ctx.types, type_id)
-            .map(|shape| shape.properties.iter().any(|prop| prop.optional))
-            .unwrap_or(false)
+            .is_some_and(|shape| shape.properties.iter().any(|prop| prop.optional))
     }
 
     /// Check if an object has any readonly properties.
@@ -171,8 +165,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true if any property on the object is readonly.
     pub fn object_has_readonly_properties(&self, type_id: TypeId) -> bool {
         object_shape_for_type(self.ctx.types, type_id)
-            .map(|shape| shape.properties.iter().any(|prop| prop.readonly))
-            .unwrap_or(false)
+            .is_some_and(|shape| shape.properties.iter().any(|prop| prop.readonly))
     }
 
     // =========================================================================
@@ -184,8 +177,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true for objects like `{ [key: string]: T }`.
     pub fn object_has_string_index(&self, type_id: TypeId) -> bool {
         object_shape_for_type(self.ctx.types, type_id)
-            .map(|shape| shape.string_index.is_some())
-            .unwrap_or(false)
+            .is_some_and(|shape| shape.string_index.is_some())
     }
 
     /// Check if an object has a number index signature.
@@ -193,8 +185,7 @@ impl<'a> CheckerState<'a> {
     /// Returns true for objects like `{ [key: number]: T }`.
     pub fn object_has_number_index(&self, type_id: TypeId) -> bool {
         object_shape_for_type(self.ctx.types, type_id)
-            .map(|shape| shape.number_index.is_some())
-            .unwrap_or(false)
+            .is_some_and(|shape| shape.number_index.is_some())
     }
 
     /// Check if an object has any index signature.

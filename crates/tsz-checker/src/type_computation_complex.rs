@@ -394,12 +394,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect arguments
-        let args = new_expr
-            .arguments
-            .as_ref()
-            .map(|a| &a.nodes)
-            .map(|n| n.as_slice())
-            .unwrap_or(&[]);
+        let args = match new_expr.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
 
         // Prepare argument types with contextual typing
         // Note: We use a generic context helper here because we delegate the specific
@@ -1162,12 +1160,10 @@ impl<'a> CheckerState<'a> {
 
         // Get arguments list (may be None for calls without arguments)
         // IMPORTANT: We must check arguments even if callee is ANY/ERROR to catch definite assignment errors
-        let args = call
-            .arguments
-            .as_ref()
-            .map(|a| &a.nodes)
-            .map(|n| n.as_slice())
-            .unwrap_or(&[]);
+        let args = match call.arguments.as_ref() {
+            Some(a) => a.nodes.as_slice(),
+            None => &[],
+        };
 
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
@@ -1936,7 +1932,7 @@ impl<'a> CheckerState<'a> {
             // Check symbol flags to detect type-only usage.
             // First try the main binder (fast path for local symbols).
             let local_symbol = self.ctx.binder.get_symbol(sym_id);
-            let flags = local_symbol.map(|s| s.flags).unwrap_or(0);
+            let flags = local_symbol.map_or(0, |s| s.flags);
 
             // TS2662: Bare identifier resolving to a static class member.
             // Static members must be accessed via `ClassName.member`, not as
@@ -1961,9 +1957,7 @@ impl<'a> CheckerState<'a> {
                 is_interface = (flags & tsz_binder::symbol_flags::INTERFACE) != 0,
                 "get_type_of_identifier: symbol flags"
             );
-            let value_decl = local_symbol
-                .map(|s| s.value_declaration)
-                .unwrap_or(NodeIndex::NONE);
+            let value_decl = local_symbol.map_or(NodeIndex::NONE, |s| s.value_declaration);
             let symbol_declarations = local_symbol
                 .map(|s| s.declarations.clone())
                 .unwrap_or_default();
@@ -2063,8 +2057,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .binder
                         .get_symbol_with_libs(sym_id, &lib_binders)
-                        .map(|s| s.flags)
-                        .unwrap_or(0);
+                        .map_or(0, |s| s.flags);
                     let lib_has_type = (lib_flags & tsz_binder::symbol_flags::TYPE) != 0;
                     let lib_has_value = (lib_flags & tsz_binder::symbol_flags::VALUE) != 0;
                     if lib_has_type && !lib_has_value {

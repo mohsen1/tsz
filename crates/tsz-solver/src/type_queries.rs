@@ -453,8 +453,7 @@ fn is_object_like_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
         }
         Some(TypeData::TypeParameter(info) | TypeData::Infer(info)) => info
             .constraint
-            .map(|constraint| is_object_like_type_impl(db, constraint))
-            .unwrap_or(false),
+            .is_some_and(|constraint| is_object_like_type_impl(db, constraint)),
         Some(TypeData::Enum(_, _)) => false,
         _ => false,
     }
@@ -589,13 +588,11 @@ where
                     || shape
                         .string_index
                         .as_ref()
-                        .map(|i| self.check(i.value_type))
-                        .unwrap_or(false)
+                        .is_some_and(|i| self.check(i.value_type))
                     || shape
                         .number_index
                         .as_ref()
-                        .map(|i| self.check(i.value_type))
-                        .unwrap_or(false)
+                        .is_some_and(|i| self.check(i.value_type))
             }
             TypeData::Union(list_id) | TypeData::Intersection(list_id) => {
                 let members = self.db.type_list(*list_id);
@@ -610,7 +607,7 @@ where
                 let shape = self.db.function_shape(*shape_id);
                 shape.params.iter().any(|p| self.check(p.type_id))
                     || self.check(shape.return_type)
-                    || shape.this_type.map(|t| self.check(t)).unwrap_or(false)
+                    || shape.this_type.is_some_and(|t| self.check(t))
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.db.callable_shape(*shape_id);
@@ -621,8 +618,8 @@ where
                 }) || shape.properties.iter().any(|p| self.check(p.type_id))
             }
             TypeData::TypeParameter(info) | TypeData::Infer(info) => {
-                info.constraint.map(|c| self.check(c)).unwrap_or(false)
-                    || info.default.map(|d| self.check(d)).unwrap_or(false)
+                info.constraint.is_some_and(|c| self.check(c))
+                    || info.default.is_some_and(|d| self.check(d))
             }
             TypeData::Lazy(_)
             | TypeData::Recursive(_)
@@ -645,7 +642,7 @@ where
                 let mapped = self.db.mapped_type(*mapped_id);
                 self.check(mapped.constraint)
                     || self.check(mapped.template)
-                    || mapped.name_type.map(|n| self.check(n)).unwrap_or(false)
+                    || mapped.name_type.is_some_and(|n| self.check(n))
             }
             TypeData::IndexAccess(obj, idx) => self.check(*obj) || self.check(*idx),
             TypeData::TemplateLiteral(list_id) => {
@@ -929,9 +926,7 @@ pub fn get_callable_shape(
 ///
 /// Returns false if the type is not a callable shape.
 pub fn has_call_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    get_callable_shape(db, type_id)
-        .map(|shape| !shape.call_signatures.is_empty())
-        .unwrap_or(false)
+    get_callable_shape(db, type_id).is_some_and(|shape| !shape.call_signatures.is_empty())
 }
 
 /// Get call signatures from a callable type.
@@ -2793,12 +2788,11 @@ pub fn is_promise_like(db: &dyn crate::db::QueryDatabase, type_id: TypeId) -> bo
     evaluator
         .resolve_property_access(type_id, "then")
         .success_type()
-        .map(|then_type| {
+        .is_some_and(|then_type| {
             // 'then' must be invokable (have call signatures) to be "thenable"
             // A class with only construct signatures is not thenable
             is_invokable_type(db, then_type)
         })
-        .unwrap_or(false)
 }
 
 /// Check if a type is a valid target for for...in loops.

@@ -216,8 +216,8 @@ pub fn convert_diagnostic(
         if items.is_empty() { None } else { Some(items) }
     };
 
-    let reports_unnecessary = is_unnecessary_code(diag.code).then(|| true);
-    let reports_deprecated = is_deprecated_code(diag.code).then(|| true);
+    let reports_unnecessary = is_unnecessary_code(diag.code).then_some(true);
+    let reports_deprecated = is_deprecated_code(diag.code).then_some(true);
 
     LspDiagnostic {
         range: Range::new(start, end),
@@ -282,8 +282,8 @@ pub fn convert_to_ts_diagnostic(
         if items.is_empty() { None } else { Some(items) }
     };
 
-    let reports_unnecessary = is_unnecessary_code(diag.code).then(|| true);
-    let reports_deprecated = is_deprecated_code(diag.code).then(|| true);
+    let reports_unnecessary = is_unnecessary_code(diag.code).then_some(true);
+    let reports_deprecated = is_deprecated_code(diag.code).then_some(true);
 
     TsDiagnostic {
         start: lsp_to_ts_position(start),

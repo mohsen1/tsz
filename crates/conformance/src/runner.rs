@@ -24,8 +24,7 @@ use tracing::{debug, info, warn};
 /// Format a path relative to a base directory for display
 fn relative_display(path: &Path, base: &Path) -> String {
     path.strip_prefix(base)
-        .map(|p| p.display().to_string())
-        .unwrap_or_else(|_| path.display().to_string())
+        .map_or_else(|_| path.display().to_string(), |p| p.display().to_string())
 }
 
 fn sanitize_artifact_name(path: &str) -> String {
@@ -581,13 +580,11 @@ impl Runner {
                     let check_js = options
                         .get("checkJs")
                         .or_else(|| options.get("checkjs"))
-                        .map(|v| v == "true")
-                        .unwrap_or(false);
+                        .is_some_and(|v| v == "true");
                     let allow_js = options
                         .get("allowJs")
                         .or_else(|| options.get("allowjs"))
-                        .map(|v| v == "true")
-                        .unwrap_or(false);
+                        .is_some_and(|v| v == "true");
                     if is_js_file && !check_js && !allow_js {
                         all_codes.clear();
                         all_fingerprints.clear();

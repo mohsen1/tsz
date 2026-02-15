@@ -1129,8 +1129,7 @@ impl ModuleResolver {
         // Check if specifier has an explicit extension
         let specifier_has_extension = Path::new(specifier)
             .extension()
-            .map(|ext| !ext.is_empty())
-            .unwrap_or(false);
+            .is_some_and(|ext| !ext.is_empty());
 
         // TS2834/TS2835 Check: In Node16/NodeNext, ESM-style imports must have explicit extensions.
         // This applies when:

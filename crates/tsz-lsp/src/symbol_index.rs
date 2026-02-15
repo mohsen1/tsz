@@ -247,11 +247,9 @@ impl SymbolIndex {
             .definition_kinds
             .keys()
             .filter(|name| {
-                !self
-                    .definitions
+                self.definitions
                     .get(name.as_str())
-                    .map(|defs| !defs.is_empty())
-                    .unwrap_or(false)
+                    .is_none_or(|defs| defs.is_empty())
             })
             .cloned()
             .collect();

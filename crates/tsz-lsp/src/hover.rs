@@ -587,7 +587,7 @@ impl<'a> HoverProvider<'a> {
             let mut lines = Vec::new();
             lines.push("Parameters:".to_string());
             for name in names {
-                let desc = parsed.params.get(name).map(|s| s.as_str()).unwrap_or("");
+                let desc = parsed.params.get(name).map_or("", |s| s.as_str());
                 if desc.is_empty() {
                     lines.push(format!("- `{}`", name));
                 } else {

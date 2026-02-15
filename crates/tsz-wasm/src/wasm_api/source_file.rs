@@ -118,7 +118,7 @@ impl TsSourceFile {
     #[wasm_bindgen(js_name = getRootHandle)]
     pub fn get_root_handle(&mut self) -> u32 {
         self.ensure_parsed();
-        self.root_idx.map(|idx| idx.0).unwrap_or(u32::MAX)
+        self.root_idx.map_or(u32::MAX, |idx| idx.0)
     }
 
     /// Get statement handles (children of source file)
@@ -147,7 +147,7 @@ impl TsSourceFile {
         let Some(arena) = &self.arena else {
             return 0;
         };
-        arena.get(NodeIndex(handle)).map(|n| n.kind).unwrap_or(0)
+        arena.get(NodeIndex(handle)).map_or(0, |n| n.kind)
     }
 
     /// Get node start position
@@ -156,7 +156,7 @@ impl TsSourceFile {
         let Some(arena) = &self.arena else {
             return 0;
         };
-        arena.get(NodeIndex(handle)).map(|n| n.pos).unwrap_or(0)
+        arena.get(NodeIndex(handle)).map_or(0, |n| n.pos)
     }
 
     /// Get node end position
@@ -165,7 +165,7 @@ impl TsSourceFile {
         let Some(arena) = &self.arena else {
             return 0;
         };
-        arena.get(NodeIndex(handle)).map(|n| n.end).unwrap_or(0)
+        arena.get(NodeIndex(handle)).map_or(0, |n| n.end)
     }
 
     /// Get node flags
@@ -174,7 +174,7 @@ impl TsSourceFile {
         let Some(arena) = &self.arena else {
             return 0;
         };
-        arena.get(NodeIndex(handle)).map(|n| n.flags).unwrap_or(0)
+        arena.get(NodeIndex(handle)).map_or(0, |n| n.flags)
     }
 
     /// Get node text (substring from source)
@@ -205,8 +205,7 @@ impl TsSourceFile {
         };
         arena
             .get_extended(NodeIndex(handle))
-            .map(|ext| ext.parent.0)
-            .unwrap_or(u32::MAX)
+            .map_or(u32::MAX, |ext| ext.parent.0)
     }
 
     /// Get children of a node
