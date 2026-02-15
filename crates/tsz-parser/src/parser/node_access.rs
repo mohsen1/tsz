@@ -2,8 +2,6 @@
 //!
 //! This module contains all node access/query methods, the `NodeView` ergonomic wrapper,
 //! `Node` kind utility methods, and the `NodeAccess` trait.
-#![allow(clippy::too_many_lines)]
-
 use super::base::{NodeIndex, NodeList};
 use super::node::{
     AccessExprData, AccessorData, ArrayTypeData, BinaryExprData, BindingElementData,
