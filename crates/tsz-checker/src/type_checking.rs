@@ -237,7 +237,7 @@ impl<'a> CheckerState<'a> {
     /// - The object type must be assignable to the declaring class type
     /// - Emits appropriate errors for invalid private identifier usage
     ///
-    /// ## Parameters:
+    // ## Parameters:
     /// - `name_idx`: The private identifier node index
     /// - `rhs_type`: The type of the object on which the private identifier is accessed
     ///
@@ -312,7 +312,7 @@ impl<'a> CheckerState<'a> {
     /// Validates that type references within a parameter's type annotation
     /// can be resolved. This helps catch typos and undefined types.
     ///
-    /// ## Parameters:
+    // ## Parameters:
     /// - `param_idx`: The parameter node index to check
     pub(crate) fn check_parameter_type_for_missing_names(&mut self, param_idx: NodeIndex) {
         let Some(param_node) = self.ctx.arena.get(param_idx) else {
@@ -1191,12 +1191,11 @@ impl<'a> CheckerState<'a> {
     // Super Expression Validation
     // =========================================================================
 
-    /// Check if a super expression is inside a nested function within a constructor.
-    ///
-    /// Walks up the AST from the given node to determine if it's inside
-    /// a nested function (function expression, arrow function) within a constructor.
-    ///
-    /// ## Parameters:
+    // Check if a super expression is inside a nested function within a constructor.
+    // Walks up the AST from the given node to determine if it's inside
+    // a nested function (function expression, arrow function) within a constructor.
+    //
+    // ## Parameters:
     // 17. Property Initialization Checking (5 functions)
 
     /// Check for TS2729: Property is used before its initialization.
