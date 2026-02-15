@@ -360,6 +360,9 @@ pub struct CheckerContext<'a> {
 
     /// Stack of expected return types for functions.
     pub return_type_stack: Vec<TypeId>,
+    /// Stack of contextual yield types for generator functions.
+    /// Used to contextually type yield expressions (prevents false TS7006).
+    pub yield_type_stack: Vec<Option<TypeId>>,
     /// Stack of current `this` types for class member bodies.
     pub this_type_stack: Vec<TypeId>,
 
@@ -638,6 +641,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
             return_type_stack: Vec::new(),
+            yield_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
@@ -755,6 +759,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
             return_type_stack: Vec::new(),
+            yield_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
@@ -863,6 +868,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
             return_type_stack: Vec::new(),
+            yield_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
@@ -973,6 +979,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
             return_type_stack: Vec::new(),
+            yield_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
@@ -1082,6 +1089,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
             return_type_stack: Vec::new(),
+            yield_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
@@ -1213,6 +1221,7 @@ impl<'a> CheckerContext<'a> {
                 tsz_solver::recursion::RecursionProfile::CallResolution,
             )),
             return_type_stack: Vec::new(),
+            yield_type_stack: Vec::new(),
             this_type_stack: Vec::new(),
             enclosing_class: None,
             type_env: RefCell::new(TypeEnvironment::new()),
@@ -2221,6 +2230,21 @@ impl<'a> CheckerContext<'a> {
     /// Get the current expected return type.
     pub fn current_return_type(&self) -> Option<TypeId> {
         self.return_type_stack.last().copied()
+    }
+
+    /// Push a contextual yield type for a generator function.
+    pub fn push_yield_type(&mut self, yield_type: Option<TypeId>) {
+        self.yield_type_stack.push(yield_type);
+    }
+
+    /// Pop the contextual yield type from the stack.
+    pub fn pop_yield_type(&mut self) {
+        self.yield_type_stack.pop();
+    }
+
+    /// Get the current contextual yield type for the enclosing generator.
+    pub fn current_yield_type(&self) -> Option<TypeId> {
+        self.yield_type_stack.last().copied().flatten()
     }
 
     /// Enter an async context (increment async depth).

@@ -298,6 +298,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             };
 
             self.push_return_type(body_return_type);
+
+            // For generator functions, push the contextual yield type so that
+            // yield expressions can contextually type their operand.
+            let contextual_yield_type = if is_generator && has_type_annotation {
+                self.get_generator_yield_type_argument(return_type)
+            } else {
+                None
+            };
+            self.ctx.push_yield_type(contextual_yield_type);
+
             // Save and reset control flow context (function body creates new context)
             let saved_cf_context = (
                 self.ctx.iteration_depth,
@@ -367,6 +377,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
 
             self.pop_return_type();
+            self.ctx.pop_yield_type();
 
             // Exit async context
             if func.is_async {

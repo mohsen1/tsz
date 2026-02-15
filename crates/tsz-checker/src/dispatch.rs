@@ -193,7 +193,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         let yielded_type = if yield_expr.expression.is_none() {
             TypeId::UNDEFINED
         } else {
+            // Set contextual type for yield expression from the generator's yield type.
+            // This allows `yield (num) => ...` to contextually type arrow params.
+            let prev_contextual = self.checker.ctx.contextual_type;
+            if let Some(yield_ctx) = self.checker.ctx.current_yield_type() {
+                self.checker.ctx.contextual_type = Some(yield_ctx);
+            }
             let expression_type = self.checker.get_type_of_node(yield_expr.expression);
+            self.checker.ctx.contextual_type = prev_contextual;
             if yield_expr.asterisk_token {
                 let is_async_generator = self
                     .checker
