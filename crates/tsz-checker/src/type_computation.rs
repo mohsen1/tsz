@@ -2433,18 +2433,61 @@ impl<'a> CheckerState<'a> {
 
                     let value_type = if self.resolve_identifier_symbol(shorthand_name_idx).is_none()
                     {
-                        // TS18004: Missing value binding for shorthand property name
-                        // Example: `({ arguments })` inside arrow function where `arguments`
-                        // is not in scope as a value.
-                        let message = format_message(
-                            diagnostic_messages::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
-                            &[&name],
+                        // Don't emit TS18004 for strict reserved words that require `:` syntax.
+                        // Example: `{ class }` — parser already emits TS1005 "':' expected".
+                        // Checker should not also emit TS18004 (cascading error).
+                        //
+                        // Only suppress for ECMAScript reserved words that ALWAYS require `:`
+                        // in object literals. Be conservative — when in doubt, emit TS18004.
+                        let is_strict_reserved = matches!(
+                            name.as_str(),
+                            "break"
+                                | "case"
+                                | "catch"
+                                | "class"
+                                | "const"
+                                | "continue"
+                                | "debugger"
+                                | "default"
+                                | "delete"
+                                | "do"
+                                | "else"
+                                | "enum"
+                                | "export"
+                                | "extends"
+                                | "finally"
+                                | "for"
+                                | "function"
+                                | "if"
+                                | "import"
+                                | "in"
+                                | "instanceof"
+                                | "new"
+                                | "return"
+                                | "super"
+                                | "switch"
+                                | "throw"
+                                | "try"
+                                | "var"
+                                | "void"
+                                | "while"
+                                | "with"
                         );
-                        self.error_at_node(
-                            elem_idx,
-                            &message,
-                            diagnostic_codes::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
-                        );
+
+                        if !is_strict_reserved {
+                            // TS18004: Missing value binding for shorthand property name
+                            // Example: `({ arguments })` inside arrow function where `arguments`
+                            // is not in scope as a value.
+                            let message = format_message(
+                                diagnostic_messages::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
+                                &[&name],
+                            );
+                            self.error_at_node(
+                                elem_idx,
+                                &message,
+                                diagnostic_codes::NO_VALUE_EXISTS_IN_SCOPE_FOR_THE_SHORTHAND_PROPERTY_EITHER_DECLARE_ONE_OR_PROVID,
+                            );
+                        }
 
                         // In destructuring assignment targets, unresolved shorthand names
                         // are already invalid (TS18004). Don't synthesize a required
