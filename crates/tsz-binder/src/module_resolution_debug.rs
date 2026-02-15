@@ -7,6 +7,7 @@
 
 use crate::{SymbolId, symbol_flags};
 use rustc_hash::FxHashMap;
+use std::fmt::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::debug;
 
@@ -82,7 +83,7 @@ pub struct ModuleResolutionDebugger {
     pub lookup_events: Vec<SymbolLookupEvent>,
     /// All symbol merge events
     pub merge_events: Vec<SymbolMergeEvent>,
-    /// Symbol origins: maps SymbolId to the file name where it was first declared
+    /// Symbol origins: maps `SymbolId` to the file name where it was first declared
     pub symbol_origins: FxHashMap<SymbolId, String>,
     /// Current file being processed
     pub current_file: String,
@@ -90,6 +91,7 @@ pub struct ModuleResolutionDebugger {
 
 impl ModuleResolutionDebugger {
     /// Create a new debugger instance.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -178,16 +180,20 @@ impl ModuleResolutionDebugger {
     }
 
     /// Record a symbol lookup.
-    pub fn record_lookup(&mut self, name: &str, scope_path: Vec<String>, result: Option<SymbolId>) {
+    pub fn record_lookup(&mut self, name: &str, scope_path: &[String], result: Option<SymbolId>) {
         if !is_debug_enabled() {
             return;
         }
 
+        let lookup_message = match result {
+            Some(id) => format!("FOUND (id={})", id.0),
+            None => "NOT FOUND".to_string(),
+        };
         let found_in_file = result.and_then(|id| self.symbol_origins.get(&id).cloned());
 
         let event = SymbolLookupEvent {
             name: name.to_string(),
-            scope_path: scope_path.clone(),
+            scope_path: scope_path.to_owned(),
             found: result.is_some(),
             symbol_id: result,
             found_in_file: found_in_file.clone(),
@@ -197,14 +203,7 @@ impl ModuleResolutionDebugger {
             "[MODULE_DEBUG] LOOKUP '{}': scopes=[{}] -> {} (file: {})",
             event.name,
             scope_path.join(" -> "),
-            if event.found {
-                format!(
-                    "FOUND (id={})",
-                    result.expect("result is Some when event.found is true").0
-                )
-            } else {
-                "NOT FOUND".to_string()
-            },
+            lookup_message,
             found_in_file.unwrap_or_else(|| "unknown".to_string())
         );
 
@@ -212,16 +211,18 @@ impl ModuleResolutionDebugger {
     }
 
     /// Get a summary of all recorded events.
+    #[must_use]
     pub fn get_summary(&self) -> String {
         let mut summary = String::new();
         summary.push_str("=== Module Resolution Debug Summary ===\n\n");
 
-        summary.push_str(&format!(
-            "Total declarations: {}\n",
+        let _ = writeln!(
+            summary,
+            "Total declarations: {}",
             self.declaration_events.len()
-        ));
-        summary.push_str(&format!("Total merges: {}\n", self.merge_events.len()));
-        summary.push_str(&format!("Total lookups: {}\n\n", self.lookup_events.len()));
+        );
+        let _ = writeln!(summary, "Total merges: {}", self.merge_events.len());
+        let _ = writeln!(summary, "Total lookups: {}\n", self.lookup_events.len());
 
         // Symbol origins by file
         summary.push_str("Symbol Origins by File:\n");
@@ -230,21 +231,23 @@ impl ModuleResolutionDebugger {
             by_file.entry(file.clone()).or_default().push(*sym_id);
         }
         for (file, symbols) in &by_file {
-            summary.push_str(&format!("  {}: {} symbols\n", file, symbols.len()));
+            let _ = writeln!(summary, "  {}: {} symbols", file, symbols.len());
         }
 
         // Merge operations
         if !self.merge_events.is_empty() {
             summary.push_str("\nMerge Operations:\n");
             for event in &self.merge_events {
-                summary.push_str(&format!(
-                    "  {} (id={}): [{}] + [{}] from {}\n",
+                let _ = writeln!(
+                    summary,
+                    "  {} (id={}): [{}] + [{}] = [{}] from {}",
                     event.name,
                     event.symbol_id.0,
                     event.existing_flags,
                     event.new_flags,
+                    event.combined_flags,
                     event.contributing_file
-                ));
+                );
             }
         }
 
@@ -253,11 +256,12 @@ impl ModuleResolutionDebugger {
         if !failed_lookups.is_empty() {
             summary.push_str("\nFailed Lookups:\n");
             for event in failed_lookups {
-                summary.push_str(&format!(
-                    "  '{}': searched [{}]\n",
+                let _ = writeln!(
+                    summary,
+                    "  '{}': searched [{}]",
                     event.name,
                     event.scope_path.join(" -> ")
-                ));
+                );
             }
         }
 
@@ -274,6 +278,7 @@ impl ModuleResolutionDebugger {
 }
 
 /// Convert symbol flags to a human-readable string.
+#[must_use]
 pub fn flags_to_string(flags: u32) -> String {
     let mut parts = Vec::new();
 
