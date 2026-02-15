@@ -370,7 +370,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Object(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     if !self.bind_infer_defaults_inner(
                         prop.type_id,
                         inferred,
@@ -385,7 +385,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     if !self.bind_infer_defaults_inner(
                         prop.type_id,
                         inferred,
@@ -434,7 +434,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Function(shape_id) => {
                 let shape = self.interner().function_shape(shape_id);
-                for param in shape.params.iter() {
+                for param in &shape.params {
                     if !self.bind_infer_defaults_inner(
                         param.type_id,
                         inferred,
@@ -461,8 +461,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
-                for sig in shape.call_signatures.iter() {
-                    for param in sig.params.iter() {
+                for sig in &shape.call_signatures {
+                    for param in &sig.params {
                         if !self.bind_infer_defaults_inner(
                             param.type_id,
                             inferred,
@@ -490,8 +490,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return false;
                     }
                 }
-                for sig in shape.construct_signatures.iter() {
-                    for param in sig.params.iter() {
+                for sig in &shape.construct_signatures {
+                    for param in &sig.params {
                         if !self.bind_infer_defaults_inner(
                             param.type_id,
                             inferred,
@@ -519,7 +519,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return false;
                     }
                 }
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     if !self.bind_infer_defaults_inner(
                         prop.type_id,
                         inferred,
@@ -552,7 +552,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !self.bind_infer_defaults_inner(app.base, inferred, bindings, checker, visited) {
                     return false;
                 }
-                for &arg in app.args.iter() {
+                for &arg in &app.args {
                     if !self.bind_infer_defaults_inner(arg, inferred, bindings, checker, visited) {
                         return false;
                     }
@@ -2715,7 +2715,7 @@ impl<'a> InferSubstitutor<'a> {
                 let shape = self.interner.object_shape(shape_id);
                 let mut changed = false;
                 let mut properties = Vec::with_capacity(shape.properties.len());
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     let type_id = self.substitute(prop.type_id);
                     let write_type = self.substitute(prop.write_type);
                     if type_id != prop.type_id || write_type != prop.write_type {
@@ -2742,7 +2742,7 @@ impl<'a> InferSubstitutor<'a> {
                 let shape = self.interner.object_shape(shape_id);
                 let mut changed = false;
                 let mut properties = Vec::with_capacity(shape.properties.len());
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     let type_id = self.substitute(prop.type_id);
                     let write_type = self.substitute(prop.write_type);
                     if type_id != prop.type_id || write_type != prop.write_type {
@@ -2895,7 +2895,7 @@ impl<'a> InferSubstitutor<'a> {
                 let shape = self.interner.function_shape(shape_id);
                 let mut changed = false;
                 let mut new_params = Vec::with_capacity(shape.params.len());
-                for param in shape.params.iter() {
+                for param in &shape.params {
                     let param_type = self.substitute(param.type_id);
                     if param_type != param.type_id {
                         changed = true;
@@ -2941,7 +2941,7 @@ impl<'a> InferSubstitutor<'a> {
                     .iter()
                     .map(|sig| {
                         let mut new_params = Vec::with_capacity(sig.params.len());
-                        for param in sig.params.iter() {
+                        for param in &sig.params {
                             let param_type = self.substitute(param.type_id);
                             if param_type != param.type_id {
                                 changed = true;
@@ -2980,7 +2980,7 @@ impl<'a> InferSubstitutor<'a> {
                     .iter()
                     .map(|sig| {
                         let mut new_params = Vec::with_capacity(sig.params.len());
-                        for param in sig.params.iter() {
+                        for param in &sig.params {
                             let param_type = self.substitute(param.type_id);
                             if param_type != param.type_id {
                                 changed = true;

@@ -151,7 +151,7 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::intersection_members(self.ctx.types, intersection_type) {
             let mut simplified = Vec::new();
 
-            for &member in members.iter() {
+            for &member in &members {
                 // Check if this member is a subtype of any other member
                 let is_redundant = members
                     .iter()

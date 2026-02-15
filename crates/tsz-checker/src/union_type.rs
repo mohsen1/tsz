@@ -193,7 +193,7 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::union_members(self.ctx.types, union_type) {
             let mut simplified = Vec::new();
 
-            for &member in members.iter() {
+            for &member in &members {
                 // Check if this member is assignable to any other member
                 let is_redundant = members
                     .iter()

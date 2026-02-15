@@ -388,7 +388,7 @@ impl<'a> CheckerState<'a> {
         // Check heritage clauses for extends Promise/PromiseLike
         let heritage_clauses = class.heritage_clauses.as_ref()?;
 
-        for &clause_idx in heritage_clauses.nodes.iter() {
+        for &clause_idx in &heritage_clauses.nodes {
             let heritage = self.ctx.arena.get_heritage_clause_at(clause_idx)?;
 
             // Only check extends clauses (token = ExtendsKeyword = 96)
@@ -468,7 +468,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for union types that include void/undefined using the solver helper
         if let Some(members) = query::union_members(self.ctx.types, return_type) {
-            for member in members.iter() {
+            for member in &members {
                 if *member == TypeId::VOID || *member == TypeId::UNDEFINED {
                     return false;
                 }

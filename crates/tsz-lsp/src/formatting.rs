@@ -301,7 +301,7 @@ impl DocumentFormattingProvider {
         let mut indent_level: i32 = 0;
         let indent_str = Self::make_indent_string(options, 1);
 
-        for line in lines.iter() {
+        for line in &lines {
             let trimmed = line.trim();
 
             // Skip empty lines - preserve them as-is (just trim whitespace)

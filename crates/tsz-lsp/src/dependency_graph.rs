@@ -76,7 +76,7 @@ impl DependencyGraph {
     pub fn update_file(&mut self, file: &str, imports: &[String]) {
         // 1. Remove old edges from 'dependents'
         if let Some(old_imports) = self.dependencies.get(file) {
-            for imported in old_imports.iter() {
+            for imported in old_imports {
                 if let Some(rev) = self.dependents.get_mut(imported) {
                     rev.remove(file);
                     // Clean up empty sets to avoid memory leaks

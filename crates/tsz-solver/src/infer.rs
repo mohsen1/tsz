@@ -153,13 +153,13 @@ impl ConstraintSet {
         let mut seen_lower = FxHashSet::default();
         let mut seen_upper = FxHashSet::default();
 
-        for candidate in info.candidates.iter() {
+        for candidate in &info.candidates {
             if seen_lower.insert(candidate.type_id) {
                 lower_bounds.push(candidate.type_id);
             }
         }
 
-        for &upper in info.upper_bounds.iter() {
+        for &upper in &info.upper_bounds {
             if seen_upper.insert(upper) {
                 upper_bounds.push(upper);
             }
@@ -579,13 +579,13 @@ impl<'a> InferenceContext<'a> {
             }
             TypeData::Object(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.collect_type_params(prop.type_id, params, visited);
                 }
             }
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.collect_type_params(prop.type_id, params, visited);
                 }
                 if let Some(index) = shape.string_index.as_ref() {
@@ -600,13 +600,13 @@ impl<'a> InferenceContext<'a> {
             TypeData::Application(app_id) => {
                 let app = self.interner.type_application(app_id);
                 self.collect_type_params(app.base, params, visited);
-                for &arg in app.args.iter() {
+                for &arg in &app.args {
                     self.collect_type_params(arg, params, visited);
                 }
             }
             TypeData::Function(shape_id) => {
                 let shape = self.interner.function_shape(shape_id);
-                for param in shape.params.iter() {
+                for param in &shape.params {
                     self.collect_type_params(param.type_id, params, visited);
                 }
                 if let Some(this_type) = shape.this_type {
@@ -616,8 +616,8 @@ impl<'a> InferenceContext<'a> {
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner.callable_shape(shape_id);
-                for sig in shape.call_signatures.iter() {
-                    for param in sig.params.iter() {
+                for sig in &shape.call_signatures {
+                    for param in &sig.params {
                         self.collect_type_params(param.type_id, params, visited);
                     }
                     if let Some(this_type) = sig.this_type {
@@ -625,8 +625,8 @@ impl<'a> InferenceContext<'a> {
                     }
                     self.collect_type_params(sig.return_type, params, visited);
                 }
-                for sig in shape.construct_signatures.iter() {
-                    for param in sig.params.iter() {
+                for sig in &shape.construct_signatures {
+                    for param in &sig.params {
                         self.collect_type_params(param.type_id, params, visited);
                     }
                     if let Some(this_type) = sig.this_type {
@@ -634,7 +634,7 @@ impl<'a> InferenceContext<'a> {
                     }
                     self.collect_type_params(sig.return_type, params, visited);
                 }
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.collect_type_params(prop.type_id, params, visited);
                 }
             }
@@ -1137,7 +1137,7 @@ impl<'a> InferenceContext<'a> {
         let target_shape = self.interner.object_shape(target_shape);
 
         // For each property in the target, try to find a matching property in the source
-        for target_prop in target_shape.properties.iter() {
+        for target_prop in &target_shape.properties {
             if let Some(source_prop) = source_shape
                 .properties
                 .iter()
@@ -3142,13 +3142,13 @@ impl<'a> InferenceContext<'a> {
             }
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.infer_from_type(var, prop.type_id);
                 }
             }
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.infer_from_type(var, prop.type_id);
                 }
                 if let Some(index) = shape.string_index.as_ref() {
@@ -3163,13 +3163,13 @@ impl<'a> InferenceContext<'a> {
             Some(TypeData::Application(app_id)) => {
                 let app = self.interner.type_application(app_id);
                 self.infer_from_type(var, app.base);
-                for &arg in app.args.iter() {
+                for &arg in &app.args {
                     self.infer_from_type(var, arg);
                 }
             }
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
-                for param in shape.params.iter() {
+                for param in &shape.params {
                     self.infer_from_type(var, param.type_id);
                 }
                 if let Some(this_type) = shape.this_type {
@@ -3402,7 +3402,7 @@ impl<'a> InferenceContext<'a> {
             }
             Some(TypeData::Object(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     // Properties are covariant in their type (read position)
                     self.compute_variance_helper(
                         prop.type_id,
@@ -3429,7 +3429,7 @@ impl<'a> InferenceContext<'a> {
             }
             Some(TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner.object_shape(shape_id);
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     self.compute_variance_helper(
                         prop.type_id,
                         target_param,
@@ -3478,7 +3478,7 @@ impl<'a> InferenceContext<'a> {
                 let app = self.interner.type_application(app_id);
                 // Variance depends on the generic type definition
                 // For now, assume covariant for all type arguments
-                for &arg in app.args.iter() {
+                for &arg in &app.args {
                     self.compute_variance_helper(
                         arg,
                         target_param,
@@ -3493,7 +3493,7 @@ impl<'a> InferenceContext<'a> {
             Some(TypeData::Function(shape_id)) => {
                 let shape = self.interner.function_shape(shape_id);
                 // Parameters are contravariant
-                for param in shape.params.iter() {
+                for param in &shape.params {
                     self.compute_variance_helper(
                         param.type_id,
                         target_param,
@@ -3634,14 +3634,14 @@ impl<'a> InferenceContext<'a> {
         let mut graph: FxHashMap<InferenceVar, FxHashSet<InferenceVar>> = FxHashMap::default();
         let mut var_for_param: FxHashMap<Atom, InferenceVar> = FxHashMap::default();
 
-        for (name, var, _) in type_params.iter() {
+        for (name, var, _) in &type_params {
             let root = self.table.find(*var);
             var_for_param.insert(*name, root);
             graph.entry(root).or_default();
         }
 
         // Populate edges based on upper_bounds
-        for (_name, var, _) in type_params.iter() {
+        for (_name, var, _) in &type_params {
             let root = self.table.find(*var);
             let info = self.table.probe_value(root);
 
@@ -3767,7 +3767,7 @@ impl<'a> InferenceContext<'a> {
             changed = false;
             iterations += 1;
 
-            for (name, var, _) in type_params.iter() {
+            for (name, var, _) in &type_params {
                 let root = self.table.find(*var);
 
                 // We need to clone info to avoid borrow checker issues while mutating
@@ -3776,7 +3776,7 @@ impl<'a> InferenceContext<'a> {
 
                 // Propagate candidates UP the extends chain
                 // If T extends U (T <: U), then candidates of T are also candidates of U
-                for &upper in info.upper_bounds.iter() {
+                for &upper in &info.upper_bounds {
                     if self.propagate_candidates_to_upper(root, upper, *name)? {
                         changed = true;
                     }
@@ -3848,7 +3848,7 @@ impl<'a> InferenceContext<'a> {
     /// Validate that resolved types respect variance constraints.
     pub fn validate_variance(&mut self) -> Result<(), InferenceError> {
         let type_params: Vec<_> = self.type_params.clone();
-        for (_name, var, _) in type_params.iter() {
+        for (_name, var, _) in &type_params {
             let resolved = match self.probe(*var) {
                 Some(ty) => ty,
                 None => continue,
@@ -3888,7 +3888,7 @@ impl<'a> InferenceContext<'a> {
     pub fn fix_current_variables(&mut self) -> Result<(), InferenceError> {
         let type_params: Vec<_> = self.type_params.clone();
 
-        for (_name, var, _is_const) in type_params.iter() {
+        for (_name, var, _is_const) in &type_params {
             let root = self.table.find(*var);
             let info = self.table.probe_value(root);
 
@@ -3939,7 +3939,7 @@ impl<'a> InferenceContext<'a> {
         let mut subst = TypeSubstitution::new();
         let type_params: Vec<_> = self.type_params.clone();
 
-        for (name, var, _) in type_params.iter() {
+        for (name, var, _) in &type_params {
             let ty = match self.probe(*var) {
                 Some(resolved) => {
                     tracing::trace!(

@@ -468,7 +468,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .map(|prop| (prop.name, prop.clone()))
                     .collect();
-                for (name, prop) in base_props.iter() {
+                for (name, prop) in base_props {
                     prop_map.entry(*name).or_insert_with(|| prop.clone());
                 }
                 let mut new_shape = (*shape).clone();

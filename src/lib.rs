@@ -1200,7 +1200,7 @@ impl Parser {
             "\n=== Node -> Scope Mappings ({}) ===",
             binder.node_scope_ids.len()
         ));
-        for (&node_idx, &scope_id) in binder.node_scope_ids.iter() {
+        for (&node_idx, &scope_id) in &binder.node_scope_ids {
             result.push(format!(
                 "  NodeIndex({}) -> ScopeId({})",
                 node_idx, scope_id.0

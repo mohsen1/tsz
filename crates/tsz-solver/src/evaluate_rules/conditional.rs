@@ -650,7 +650,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut infer_prop = None;
         let mut infer_nested = None;
 
-        for prop in extends_shape.properties.iter() {
+        for prop in &extends_shape.properties {
             if let Some(TypeData::Infer(info)) = self.interner().lookup(prop.type_id) {
                 if infer_prop.is_some() || infer_nested.is_some() {
                     return None;
@@ -671,7 +671,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } {
                 let nested_shape = self.interner().object_shape(nested_shape_id);
                 let mut nested_infer = None;
-                for nested_prop in nested_shape.properties.iter() {
+                for nested_prop in &nested_shape.properties {
                     if let Some(TypeData::Infer(info)) = self.interner().lookup(nested_prop.type_id)
                     {
                         if nested_infer.is_some() {
