@@ -1219,7 +1219,7 @@ impl<'a> CheckerContext<'a> {
             // Share DefinitionStore with parent so DefIds are globally unique
             // across parent/child checkers. This prevents DefId collisions where
             // the child's DefId(1) means a different thing than the parent's DefId(1).
-            definition_store: parent.definition_store.clone(),
+            definition_store: std::sync::Arc::clone(&parent.definition_store),
             // SymbolId is binder-local; keep DefId mappings local.
             symbol_to_def: RefCell::new(FxHashMap::default()),
             def_type_params: RefCell::new(FxHashMap::default()),
@@ -2412,14 +2412,37 @@ impl<'a> CheckerContext<'a> {
 
         // Pre-ES2015 global types that are commonly used
         // These are always available in lib.d.ts but should emit TS2318 when @noLib is enabled
-        match name {
-            "Object" | "Function" | "Array" | "String" | "Number" | "Boolean" | "Date"
-            | "RegExp" | "Error" | "Math" | "JSON" | "console" | "window" | "document"
-            | "ArrayBuffer" | "DataView" | "Int8Array" | "Uint8Array" | "Uint8ClampedArray"
-            | "Int16Array" | "Uint16Array" | "Int32Array" | "Uint32Array" | "Float32Array"
-            | "Float64Array" | "this" | "globalThis" | "IArguments" => true,
-            _ => false,
-        }
+        matches!(
+            name,
+            "Object"
+                | "Function"
+                | "Array"
+                | "String"
+                | "Number"
+                | "Boolean"
+                | "Date"
+                | "RegExp"
+                | "Error"
+                | "Math"
+                | "JSON"
+                | "console"
+                | "window"
+                | "document"
+                | "ArrayBuffer"
+                | "DataView"
+                | "Int8Array"
+                | "Uint8Array"
+                | "Uint8ClampedArray"
+                | "Int16Array"
+                | "Uint16Array"
+                | "Int32Array"
+                | "Uint32Array"
+                | "Float32Array"
+                | "Float64Array"
+                | "this"
+                | "globalThis"
+                | "IArguments"
+        )
     }
 
     /// Check if a global type is missing due to insufficient ES version support.

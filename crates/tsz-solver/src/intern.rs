@@ -197,7 +197,7 @@ where
             let items = DashMap::with_hasher(FxBuildHasher);
             let map = DashMap::with_hasher(FxBuildHasher);
             let empty: Arc<[T]> = Arc::from(Vec::new());
-            items.insert(0, empty.clone());
+            items.insert(0, std::sync::Arc::clone(&empty));
             map.insert(empty, 0);
             SliceInternerInner { items, map }
         })
@@ -220,7 +220,7 @@ where
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         // Double-check: another thread might have inserted while we allocated
-        match inner.map.entry(temp_arc.clone()) {
+        match inner.map.entry(std::sync::Arc::clone(&temp_arc)) {
             dashmap::mapref::entry::Entry::Vacant(e) => {
                 e.insert(id);
                 inner.items.insert(id, temp_arc);
@@ -235,7 +235,11 @@ where
         if id == 0 {
             return Some(Arc::from(Vec::new()));
         }
-        self.inner.get()?.items.get(&id).map(|e| e.value().clone())
+        self.inner
+            .get()?
+            .items
+            .get(&id)
+            .map(|e| std::sync::Arc::clone(e.value()))
     }
 
     fn empty(&self) -> Arc<[T]> {
@@ -288,7 +292,7 @@ where
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
 
         // Double-check: another thread might have inserted while we allocated
-        match inner.map.entry(value_arc.clone()) {
+        match inner.map.entry(std::sync::Arc::clone(&value_arc)) {
             Entry::Vacant(e) => {
                 e.insert(id);
                 inner.items.insert(id, value_arc);
@@ -299,7 +303,11 @@ where
     }
 
     fn get(&self, id: u32) -> Option<Arc<T>> {
-        self.inner.get()?.items.get(&id).map(|e| e.value().clone())
+        self.inner
+            .get()?
+            .items
+            .get(&id)
+            .map(|e| std::sync::Arc::clone(e.value()))
     }
 }
 
@@ -499,7 +507,7 @@ impl TypeInterner {
 
         // Try to get existing map (lock-free read)
         if let Some(map) = maps.get(&shape_id) {
-            return Some(map.clone());
+            return Some(std::sync::Arc::clone(&map));
         }
 
         // Build the property map
@@ -512,10 +520,10 @@ impl TypeInterner {
         // Try to insert - if another thread inserted first, use theirs
         match maps.entry(shape_id) {
             Entry::Vacant(e) => {
-                e.insert(map.clone());
+                e.insert(std::sync::Arc::clone(&map));
                 Some(map)
             }
-            Entry::Occupied(e) => Some(e.get().clone()),
+            Entry::Occupied(e) => Some(std::sync::Arc::clone(e.get())),
         }
     }
 
@@ -2239,13 +2247,13 @@ impl TypeInterner {
         domain: LiteralDomain,
         class: PrimitiveClass,
     ) -> bool {
-        match (domain, class) {
-            (LiteralDomain::String, PrimitiveClass::String) => true,
-            (LiteralDomain::Number, PrimitiveClass::Number) => true,
-            (LiteralDomain::Boolean, PrimitiveClass::Boolean) => true,
-            (LiteralDomain::Bigint, PrimitiveClass::Bigint) => true,
-            _ => false,
-        }
+        matches!(
+            (domain, class),
+            (LiteralDomain::String, PrimitiveClass::String)
+                | (LiteralDomain::Number, PrimitiveClass::Number)
+                | (LiteralDomain::Boolean, PrimitiveClass::Boolean)
+                | (LiteralDomain::Bigint, PrimitiveClass::Bigint)
+        )
     }
 
     /// Absorb literal types into their corresponding primitive types.

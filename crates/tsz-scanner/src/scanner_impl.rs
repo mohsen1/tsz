@@ -2687,7 +2687,7 @@ impl ScannerState {
     #[inline]
     #[must_use]
     pub fn source_text_arc(&self) -> Arc<str> {
-        self.source.clone()
+        std::sync::Arc::clone(&self.source)
     }
 }
 

@@ -416,7 +416,7 @@ impl<'a> DeclarationEmitter<'a> {
                     binder,
                     cache,
                     interner,
-                    current_arena.clone(),
+                    std::sync::Arc::clone(current_arena),
                     &self.import_name_map,
                 );
                 let used = analyzer.analyze(root_idx).clone();

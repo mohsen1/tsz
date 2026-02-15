@@ -751,11 +751,10 @@ impl<'a> FlowAnalyzer<'a> {
         presence: PropertyPresence,
         is_true_branch: bool,
     ) -> bool {
-        match (presence, is_true_branch) {
-            (PropertyPresence::Required, false) => false,
-            (PropertyPresence::Absent, true) => false,
-            _ => true,
-        }
+        !matches!(
+            (presence, is_true_branch),
+            (PropertyPresence::Required, false) | (PropertyPresence::Absent, true)
+        )
     }
 
     pub(crate) fn property_presence(

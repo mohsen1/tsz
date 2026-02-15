@@ -560,7 +560,7 @@ impl<'a> Printer<'a> {
                 is_default,
                 inner,
             } => EmitDirective::CommonJSExport {
-                names: names.clone(),
+                names: std::sync::Arc::clone(names),
                 is_default: *is_default,
                 inner: Box::new(Self::emit_directive_from_transform(inner.as_ref())),
             },
@@ -616,7 +616,7 @@ impl<'a> Printer<'a> {
             }
             TransformDirective::ES5TemplateLiteral { .. } => EmitDirective::ES5TemplateLiteral,
             TransformDirective::SubstituteThis { capture_name } => EmitDirective::SubstituteThis {
-                capture_name: capture_name.clone(),
+                capture_name: std::sync::Arc::clone(capture_name),
             },
             TransformDirective::SubstituteArguments => EmitDirective::SubstituteArguments,
             TransformDirective::ES5SuperCall => EmitDirective::ES5SuperCall,
@@ -625,7 +625,7 @@ impl<'a> Printer<'a> {
                 dependencies,
             } => EmitDirective::ModuleWrapper {
                 format: *format,
-                dependencies: dependencies.clone(),
+                dependencies: std::sync::Arc::clone(dependencies),
             },
             TransformDirective::Chain(directives) => {
                 let mut flattened = Vec::new();
@@ -1594,7 +1594,7 @@ impl<'a> Printer<'a> {
                         match directive {
                             TransformDirective::SubstituteArguments => self.write("_arguments"),
                             TransformDirective::SubstituteThis { capture_name } => {
-                                let name = capture_name.clone();
+                                let name = std::sync::Arc::clone(capture_name);
                                 self.write(&name);
                             }
                             _ => self.emit_identifier(node),
@@ -2091,7 +2091,7 @@ impl<'a> Printer<'a> {
                 if let Some(TransformDirective::SubstituteThis { capture_name }) =
                     self.transforms.get(idx)
                 {
-                    let name = capture_name.clone();
+                    let name = std::sync::Arc::clone(capture_name);
                     self.write(&name);
                 } else {
                     self.write("this");

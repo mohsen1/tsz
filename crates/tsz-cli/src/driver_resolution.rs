@@ -2028,7 +2028,10 @@ pub(crate) fn emit_outputs(
                         &binder,
                     );
                     // Set current arena and file path for foreign symbol tracking
-                    emitter.set_current_arena(file.arena.clone(), file.file_name.clone());
+                    emitter.set_current_arena(
+                        std::sync::Arc::clone(&file.arena),
+                        file.file_name.clone(),
+                    );
                     // Set arena to path mapping for module resolution
                     emitter.set_arena_to_path(arena_to_path.clone());
                     emitter
@@ -2075,7 +2078,7 @@ pub(crate) fn emit_outputs(
                         &binder,
                         &cache_view,
                         &program.type_interner,
-                        file.arena.clone(),
+                        std::sync::Arc::clone(&file.arena),
                         &import_name_map,
                     );
 
