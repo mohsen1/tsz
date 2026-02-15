@@ -1303,6 +1303,11 @@ impl<'a> CheckerState<'a> {
                 type_stack.push(TypeId::BOOLEAN);
                 continue;
             }
+            // instanceof always produces boolean
+            if op_kind == SyntaxKind::InstanceOfKeyword as u16 {
+                type_stack.push(TypeId::BOOLEAN);
+                continue;
+            }
 
             // Logical AND: `a && b`
             // In TypeScript, the result type is the falsy parts of `a` unioned with `b`.
