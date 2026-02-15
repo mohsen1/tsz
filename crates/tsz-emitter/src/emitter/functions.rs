@@ -25,7 +25,10 @@ impl<'a> Printer<'a> {
             {
                 self.write(";");
                 self.write_line();
+                let prev_emitting_function_body_block = self.emitting_function_body_block;
+                self.emitting_function_body_block = true;
                 self.emit(func.body);
+                self.emitting_function_body_block = prev_emitting_function_body_block;
                 self.write_line();
             }
             return;
@@ -121,7 +124,10 @@ impl<'a> Printer<'a> {
             self.emit(func.body);
             self.write(")");
         } else {
+            let prev_emitting_function_body_block = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
             self.emit(func.body);
+            self.emitting_function_body_block = prev_emitting_function_body_block;
         }
     }
 
@@ -360,14 +366,18 @@ impl<'a> Printer<'a> {
         // when the source was originally single-line.
 
         // Push temp scope and block scope for function body - each function gets fresh variables.
+        let prev_emitting_function_body_block = self.emitting_function_body_block;
+        self.emitting_function_body_block = true;
         self.ctx.block_scope_state.enter_scope();
         self.push_temp_scope();
+        self.prepare_logical_assignment_value_temps(func.body);
         let prev_in_generator = self.ctx.flags.in_generator;
         self.ctx.flags.in_generator = func.asterisk_token;
         self.emit(func.body);
         self.ctx.flags.in_generator = prev_in_generator;
         self.pop_temp_scope();
         self.ctx.block_scope_state.exit_scope();
+        self.emitting_function_body_block = prev_emitting_function_body_block;
     }
 
     /// Check if a statement is a simple return statement (for single-line emission).

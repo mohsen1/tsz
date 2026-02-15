@@ -14,6 +14,7 @@ impl<'a> Printer<'a> {
         let Some(block) = self.arena.get_block(node) else {
             return;
         };
+        let is_function_body_block = self.emitting_function_body_block;
 
         // Check if this block needs `var _this = this;` injection
         let this_capture_name: Option<String> = self
@@ -59,8 +60,10 @@ impl<'a> Printer<'a> {
         // It never collapses multi-line blocks to single lines.
         // (But not when we need to inject `var _this = this;` — that forces multi-line.)
         let is_single_statement = block.statements.nodes.len() == 1;
-        let should_emit_single_line =
-            is_single_statement && self.is_single_line(node) && !needs_this_capture;
+        let should_emit_single_line = is_single_statement
+            && self.is_single_line(node)
+            && !needs_this_capture
+            && !is_function_body_block;
 
         if should_emit_single_line {
             self.ctx.block_scope_state.enter_scope();
@@ -84,6 +87,11 @@ impl<'a> Printer<'a> {
             self.write(" = this;");
             self.write_line();
         }
+        let hoisted_var_byte_offset = if is_function_body_block {
+            Some((self.writer.len(), self.writer.current_line()))
+        } else {
+            None
+        };
 
         for &stmt_idx in &block.statements.nodes {
             // Emit leading comments before this statement
@@ -133,11 +141,52 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
+            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let mut ref_vars = Vec::new();
+            ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+            ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+            if !ref_vars.is_empty() {
+                let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
+                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            }
+
+            if !self.hoisted_assignment_value_temps.is_empty() {
+                let var_decl = format!(
+                    "{}var {};",
+                    indent,
+                    self.hoisted_assignment_value_temps.join(", ")
+                );
+                self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            }
+        }
+
         self.decrease_indent();
         self.write("}");
         self.ctx.block_scope_state.exit_scope();
         // Trailing comments after the block's closing brace are handled by
         // the calling context (class member loop, statement loop, etc.)
+    }
+
+    pub(super) fn emit_function_body_hoisted_temps(&mut self) {
+        if !self.hoisted_assignment_value_temps.is_empty() {
+            self.write("var ");
+            self.write(&self.hoisted_assignment_value_temps.join(", "));
+            self.write(";");
+            self.write_line();
+        }
+
+        let mut ref_vars = Vec::new();
+        ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
+        ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !ref_vars.is_empty() {
+            self.write("var ");
+            self.write(&ref_vars.join(", "));
+            self.write(";");
+            self.write_line();
+        }
     }
 
     pub(super) fn emit_variable_statement(&mut self, node: &Node) {
