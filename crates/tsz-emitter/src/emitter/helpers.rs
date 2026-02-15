@@ -490,7 +490,7 @@ impl<'a> Printer<'a> {
     pub(super) fn has_trailing_comma_in_source(
         &self,
         container: &tsz_parser::parser::node::Node,
-        _elements: &[NodeIndex],
+        elements: &[NodeIndex],
     ) -> bool {
         let Some(text) = self.source_text else {
             return false;
@@ -540,7 +540,10 @@ impl<'a> Printer<'a> {
             }
 
             // Skip line comments by rewinding to the start of the line.
-            if bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos + 1] == b'/' {
+            // When scanning backwards we usually land on the second `/`.
+            if (bytes[pos] == b'/' && pos > 0 && bytes[pos - 1] == b'/')
+                || (bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos + 1] == b'/')
+            {
                 while pos > 0 && bytes[pos - 1] != b'\n' {
                     pos -= 1;
                 }
@@ -549,6 +552,19 @@ impl<'a> Printer<'a> {
 
             return bytes[pos] == b',';
         }
+
+        // Fallback for recovery/edge cases: if source between the last element
+        // and the container close contains a comma, treat it as trailing comma.
+        if let Some(&last_idx) = elements.last()
+            && let Some(last_node) = self.arena.get(last_idx)
+        {
+            let start = std::cmp::min(last_node.end as usize, text.len());
+            let end = std::cmp::min(container.end as usize, text.len());
+            if start < end && text[start..end].contains(',') {
+                return true;
+            }
+        }
+
         false
     }
 }
