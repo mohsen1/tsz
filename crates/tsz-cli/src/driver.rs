@@ -47,6 +47,8 @@ use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
 use tsz_solver::{QueryCache, TypeFormatter, TypeId};
+#[cfg(test)]
+use std::cell::RefCell;
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +104,56 @@ pub struct CompilationResult {
     pub files_read: Vec<PathBuf>,
     /// Files with their inclusion reasons (for --explainFiles)
     pub file_infos: Vec<FileInfo>,
+}
+
+const TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY: &str = "TSZ_TYPES_VERSIONS_COMPILER_VERSION";
+
+#[cfg(test)]
+thread_local! {
+    static TEST_TYPES_VERSIONS_COMPILER_VERSION_OVERRIDE: RefCell<Option<Option<String>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct TestTypesVersionsEnvGuard {
+    previous: Option<Option<String>>,
+}
+
+#[cfg(test)]
+impl Drop for TestTypesVersionsEnvGuard {
+    fn drop(&mut self) {
+        TEST_TYPES_VERSIONS_COMPILER_VERSION_OVERRIDE.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            *slot = self.previous.clone();
+        });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn with_types_versions_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+    let value = value.map(str::to_string);
+    let previous = TEST_TYPES_VERSIONS_COMPILER_VERSION_OVERRIDE.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let previous = slot.clone();
+        *slot = Some(value);
+        previous
+    });
+    let _guard = TestTypesVersionsEnvGuard { previous };
+    f()
+}
+
+#[cfg(test)]
+fn test_types_versions_compiler_version_override() -> Option<Option<String>> {
+    TEST_TYPES_VERSIONS_COMPILER_VERSION_OVERRIDE
+        .with(|slot| slot.borrow().clone())
+}
+
+fn types_versions_compiler_version_env() -> Option<String> {
+    #[cfg(test)]
+    if let Some(override_value) = test_types_versions_compiler_version_override() {
+        return override_value;
+    }
+    std::env::var(TYPES_VERSIONS_COMPILER_VERSION_ENV_KEY).ok()
 }
 
 #[derive(Default)]
@@ -3523,7 +3575,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());
-    } else if let Ok(version) = std::env::var("TSZ_TYPES_VERSIONS_COMPILER_VERSION") {
+    } else if let Some(version) = types_versions_compiler_version_env() {
         let version = version.trim();
         if !version.is_empty() {
             options.types_versions_compiler_version = Some(version.to_string());

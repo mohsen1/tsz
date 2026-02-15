@@ -5,7 +5,6 @@ use super::driver::{
 use clap::Parser;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tsz_common::diagnostics::diagnostic_codes;
@@ -41,57 +40,8 @@ impl Drop for TempDir {
     }
 }
 
-static TYPES_VERSIONS_ENV_LOCK: Mutex<()> = Mutex::new(());
-
-struct EnvVarGuard {
-    key: &'static str,
-    previous: Option<String>,
-}
-
-impl EnvVarGuard {
-    fn set(key: &'static str, value: Option<&str>) -> Self {
-        let previous = std::env::var(key).ok();
-        match value {
-            Some(value) => {
-                // tests serialize env mutation with a global lock.
-                unsafe { std::env::set_var(key, value) };
-            }
-            None => {
-                // tests serialize env mutation with a global lock.
-                unsafe { std::env::remove_var(key) };
-            }
-        }
-        Self { key, previous }
-    }
-}
-
-impl Drop for EnvVarGuard {
-    fn drop(&mut self) {
-        match self.previous.as_deref() {
-            Some(value) => {
-                // tests serialize env mutation with a global lock.
-                unsafe { std::env::set_var(self.key, value) };
-            }
-            None => {
-                // tests serialize env mutation with a global lock.
-                unsafe { std::env::remove_var(self.key) };
-            }
-        }
-    }
-}
-
 fn with_types_versions_env<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
-    // Use lock() instead of try_lock() and handle poisoning gracefully
-    let _lock = match TYPES_VERSIONS_ENV_LOCK.lock() {
-        Ok(guard) => guard,
-        Err(poisoned) => {
-            // Recover from poisoned mutex by clearing the poisoning
-            // This can happen if a previous test panicked while holding the lock
-            poisoned.into_inner()
-        }
-    };
-    let _guard = EnvVarGuard::set("TSZ_TYPES_VERSIONS_COMPILER_VERSION", value);
-    f()
+    super::driver::with_types_versions_env(value, f)
 }
 
 fn write_file(path: &Path, contents: &str) {
