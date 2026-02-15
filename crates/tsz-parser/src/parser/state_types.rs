@@ -772,9 +772,11 @@ impl ParserState {
         }
 
         // Parse optional type arguments for instantiation expressions: typeof Err<U>
-        let type_arguments = self
-            .is_less_than_or_compound()
-            .then(|| self.parse_type_arguments());
+        // but only when `<` appears on the same line; a line break before `<`
+        // indicates a subsequent declaration/signature, not type arguments.
+        let type_arguments = (self.is_less_than_or_compound()
+            && !self.scanner.has_preceding_line_break())
+        .then(|| self.parse_type_arguments());
 
         let end_pos = self.token_end();
 
@@ -819,10 +821,11 @@ impl ParserState {
             );
         }
 
-        // Parse optional type arguments: import("./a").Type<T>
-        let type_arguments = self
-            .is_less_than_or_compound()
-            .then(|| self.parse_type_arguments());
+        // Parse optional type arguments: import("./a").Type<T>, but only when `<`
+        // appears on the same line.
+        let type_arguments = (self.is_less_than_or_compound()
+            && !self.scanner.has_preceding_line_break())
+        .then(|| self.parse_type_arguments());
 
         let end_pos = self.token_end();
 
@@ -2111,7 +2114,31 @@ impl ParserState {
 
         // In .ts files (non-JSX), always try to parse as type assertion first.
         // This will produce appropriate errors (e.g., TS1005 " '>' expected") for invalid JSX-like syntax.
+        if self.is_ambiguous_generic_type_assertion() {
+            self.error_expression_expected();
+        }
         self.parse_type_assertion()
+    }
+
+    fn is_ambiguous_generic_type_assertion(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+
+        let first_end = self.token_end();
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        // `<<T>(x) => T` is ambiguous in parser grammar.
+        // Treat this as the shift-like form when there is no whitespace between `<<`.
+        self.next_token();
+        let is_ambiguous = self.is_token(SyntaxKind::LessThanToken)
+            && self.token_pos() == first_end
+            && self.look_ahead_is_generic_arrow_function();
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_ambiguous
     }
 
     /// Parse a type assertion: <Type>expression

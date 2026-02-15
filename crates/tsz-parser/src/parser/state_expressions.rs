@@ -64,7 +64,12 @@ impl ParserState {
     /// Parse assignment expression
     pub(crate) fn parse_assignment_expression(&mut self) -> NodeIndex {
         // Check for arrow function first (including async arrow)
-        if self.is_start_of_arrow_function() {
+        let lookahead_token = self.current_token;
+        let lookahead_state = self.scanner.save_state();
+        let is_arrow_start = self.is_start_of_arrow_function();
+        self.scanner.restore_state(lookahead_state);
+        self.current_token = lookahead_token;
+        if is_arrow_start {
             // Check if it's an async arrow function
             // Note: `async => x` is a NON-async arrow where 'async' is the parameter name
             // `async x => x` or `async (x) => x` are async arrow functions
@@ -264,10 +269,9 @@ impl ParserState {
             // 1. A return type annotation for an arrow function: (x): T => body
             // 2. The else separator of a conditional: a ? (x) : y
             // Disambiguate by checking for `=>` after a return type.
+            self.next_token();
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
-
-            self.next_token();
             let _ = self.parse_return_type();
             let mut result = !self.scanner.has_preceding_line_break()
                 && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
@@ -276,24 +280,25 @@ impl ParserState {
             // In the true branch of a conditional expression, only accept
             // `(x): T => ...` as an arrow function when the simulated body
             // leaves a `:` token. This matches TypeScript's disambiguation.
-            if result
-                && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0
-                && self.is_token(SyntaxKind::EqualsGreaterThanToken)
-            {
-                let body_snapshot = self.scanner.save_state();
-                let body_token = self.current_token;
-                let body_arena_len = self.arena.nodes.len();
-                let body_diagnostics_len = self.parse_diagnostics.len();
+            if (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0 {
+                if result && self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+                    let body_snapshot = self.scanner.save_state();
+                    let body_token = self.current_token;
+                    let body_arena_len = self.arena.nodes.len();
+                    let body_diagnostics_len = self.parse_diagnostics.len();
 
-                self.next_token();
-                let _ = self.parse_assignment_expression();
-                result = self.is_token(SyntaxKind::ColonToken)
-                    && !self.scanner.has_preceding_line_break();
+                    self.next_token();
+                    let _ = self.parse_assignment_expression();
+                    result = self.is_token(SyntaxKind::ColonToken)
+                        && !self.scanner.has_preceding_line_break();
 
-                self.arena.nodes.truncate(body_arena_len);
-                self.parse_diagnostics.truncate(body_diagnostics_len);
-                self.scanner.restore_state(body_snapshot);
-                self.current_token = body_token;
+                    self.arena.nodes.truncate(body_arena_len);
+                    self.parse_diagnostics.truncate(body_diagnostics_len);
+                    self.scanner.restore_state(body_snapshot);
+                    self.current_token = body_token;
+                } else {
+                    result = false;
+                }
             }
 
             self.arena.nodes.truncate(saved_arena_len);
@@ -1016,7 +1021,10 @@ impl ParserState {
                 )
             }
             SyntaxKind::YieldKeyword => {
-                if self.in_class_member_name() {
+                if self.in_class_member_name()
+                    && !self.in_generator_context()
+                    && !self.is_computed_class_member_yield_expression()
+                {
                     return self.parse_identifier_name();
                 }
 
@@ -1622,6 +1630,14 @@ impl ParserState {
                     self.parse_identifier_name()
                 }
             }
+            // `<<` at expression start is invalid as a primary expression.
+            // It is usually an ambiguous generic assertion case that should fall
+            // through as a malformed left side and then recover with
+            // TS1109: Expression expected.
+            SyntaxKind::LessThanLessThanToken => {
+                self.error_expression_expected();
+                NodeIndex::NONE
+            }
             SyntaxKind::LessThanToken => self.parse_jsx_element_or_type_assertion(),
             SyntaxKind::NoSubstitutionTemplateLiteral => {
                 self.parse_no_substitution_template_literal()
@@ -1857,6 +1873,8 @@ impl ParserState {
             } else {
                 // Regular binding element: name or propertyName: name
                 let first_token = self.token();
+                let first_token_is_identifier_or_keyword =
+                    first_token == SyntaxKind::Identifier || self.is_identifier_or_keyword();
                 let first_name_start = self.token_pos();
                 let first_name_end = self.token_end();
                 let first_name = self.parse_property_name();
@@ -1882,7 +1900,7 @@ impl ParserState {
                     (first_name, name)
                 } else {
                     // Just name (shorthand)
-                    if first_token != SyntaxKind::Identifier {
+                    if !first_token_is_identifier_or_keyword {
                         self.parse_error_at(
                             first_name_start,
                             first_name_end.saturating_sub(first_name_start),
@@ -3557,7 +3575,10 @@ impl ParserState {
 
                 // In class member computed property names, keywords such as `public`
                 // and `yield` should emit TS1213.
-                if self.in_class_member_name() {
+                if self.in_class_member_name()
+                    && !self.in_generator_context()
+                    && !self.is_computed_class_member_yield_expression()
+                {
                     self.check_illegal_binding_identifier();
                 }
 
@@ -3633,6 +3654,36 @@ impl ParserState {
                 )
             }
         }
+    }
+
+    fn is_computed_class_member_yield_expression(&mut self) -> bool {
+        if !self.in_class_member_name() || !self.is_token(SyntaxKind::YieldKeyword) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current_token = self.current_token;
+        self.next_token();
+        let next_token = self.token();
+        let has_line_break = self.scanner.has_preceding_line_break();
+        self.scanner.restore_state(snapshot);
+        self.current_token = current_token;
+
+        if has_line_break {
+            return false;
+        }
+
+        !matches!(
+            next_token,
+            SyntaxKind::CloseBracketToken
+                | SyntaxKind::CloseParenToken
+                | SyntaxKind::CloseBraceToken
+                | SyntaxKind::ColonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::EqualsGreaterThanToken
+                | SyntaxKind::SemicolonToken
+                | SyntaxKind::EndOfFileToken
+        )
     }
 
     /// Check whether an expression node is a computed property name that uses a top-level

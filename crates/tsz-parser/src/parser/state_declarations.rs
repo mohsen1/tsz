@@ -1632,6 +1632,32 @@ impl ParserState {
         )
     }
 
+    fn parse_specifier_identifier_name(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let end_pos = self.token_end();
+
+        if self.is_identifier_or_keyword() {
+            return self.parse_identifier_name();
+        }
+
+        self.error_identifier_expected();
+        if !self.is_token(SyntaxKind::EndOfFileToken) {
+            self.next_token();
+        }
+
+        self.arena.add_identifier(
+            SyntaxKind::Identifier as u16,
+            start_pos,
+            end_pos,
+            IdentifierData {
+                atom: Atom::NONE,
+                escaped_text: String::new(),
+                original_text: None,
+                type_arguments: None,
+            },
+        )
+    }
+
     /// Parse import specifier: x or x as y
     pub(crate) fn parse_import_specifier(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
@@ -1650,11 +1676,11 @@ impl ParserState {
             }
         }
 
-        let first_name = self.parse_identifier_name();
+        let first_name = self.parse_specifier_identifier_name();
 
         // Check for "as" alias
         let (property_name, name) = if self.parse_optional(SyntaxKind::AsKeyword) {
-            let alias = self.parse_identifier_name();
+            let alias = self.parse_specifier_identifier_name();
             (first_name, alias)
         } else {
             (NodeIndex::NONE, first_name)
@@ -2007,11 +2033,11 @@ impl ParserState {
             }
         }
 
-        let first_name = self.parse_identifier_name();
+        let first_name = self.parse_specifier_identifier_name();
 
         // Check for "as" alias
         let (property_name, name) = if self.parse_optional(SyntaxKind::AsKeyword) {
-            let alias = self.parse_identifier_name();
+            let alias = self.parse_specifier_identifier_name();
             (first_name, alias)
         } else {
             (NodeIndex::NONE, first_name)
