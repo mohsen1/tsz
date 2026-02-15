@@ -7097,7 +7097,8 @@ fn test_numeric_literal_types() {
     let two = interner.literal_number(2.0);
     let zero = interner.literal_number(0.0);
     let negative = interner.literal_number(-42.0);
-    let float = interner.literal_number(3.15); // Avoid clippy::approx_constant
+    const APPROX_FLOAT: f64 = 3.15;
+    let float = interner.literal_number(APPROX_FLOAT);
 
     // Same literal is subtype of itself
     assert!(checker.is_subtype_of(one, one));

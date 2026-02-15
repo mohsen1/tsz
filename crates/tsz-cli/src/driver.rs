@@ -40,6 +40,8 @@ pub(crate) use crate::driver_resolution::{
 use crate::fs::{FileDiscoveryOptions, discover_ts_files, is_js_file};
 use crate::incremental::{BuildInfo, default_build_info_path};
 use rustc_hash::FxHasher;
+#[cfg(test)]
+use std::cell::RefCell;
 use tsz::parallel::{self, BindResult, BoundFile, MergedProgram};
 use tsz::parser::NodeIndex;
 use tsz::parser::ParseDiagnostic;
@@ -47,8 +49,6 @@ use tsz::parser::node::{NodeAccess, NodeArena};
 use tsz::parser::syntax_kind_ext;
 use tsz::scanner::SyntaxKind;
 use tsz_solver::{QueryCache, TypeFormatter, TypeId};
-#[cfg(test)]
-use std::cell::RefCell;
 
 /// Reason why a file was included in compilation
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,8 +144,7 @@ pub(crate) fn with_types_versions_env<T>(value: Option<&str>, f: impl FnOnce() -
 
 #[cfg(test)]
 fn test_types_versions_compiler_version_override() -> Option<Option<String>> {
-    TEST_TYPES_VERSIONS_COMPILER_VERSION_OVERRIDE
-        .with(|slot| slot.borrow().clone())
+    TEST_TYPES_VERSIONS_COMPILER_VERSION_OVERRIDE.with(|slot| slot.borrow().clone())
 }
 
 fn types_versions_compiler_version_env() -> Option<String> {
