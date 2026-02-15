@@ -11,6 +11,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
 use tsz_solver::type_queries_extended::{
@@ -616,10 +617,166 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|args| !args.nodes.is_empty());
         let factory = self.ctx.types.factory();
+        let narrow_from_enclosing_typeof_guard =
+            |state: &Self, query_idx: NodeIndex, expr_idx: NodeIndex, base_type: TypeId| {
+                let expr_name = state
+                    .ctx
+                    .arena
+                    .get(expr_idx)
+                    .and_then(|n| state.ctx.arena.get_identifier(n))
+                    .map(|i| i.escaped_text.clone());
+                let Some(expr_name) = expr_name else {
+                    return base_type;
+                };
+
+                let mut current = query_idx;
+                let mut depth = 0usize;
+                let mut in_index_signature = false;
+                while depth < 256 {
+                    depth += 1;
+                    let Some(ext) = state.ctx.arena.get_extended(current) else {
+                        break;
+                    };
+                    if ext.parent.is_none() {
+                        break;
+                    }
+                    current = ext.parent;
+                    let Some(parent_node) = state.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if parent_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                        in_index_signature = true;
+                    }
+                    if parent_node.kind != syntax_kind_ext::IF_STATEMENT {
+                        continue;
+                    }
+                    if !in_index_signature {
+                        continue;
+                    }
+                    let Some(if_stmt) = state.ctx.arena.get_if_statement(parent_node) else {
+                        continue;
+                    };
+                    if !state.is_node_within(query_idx, if_stmt.then_statement) {
+                        continue;
+                    }
+
+                    let Some(cond_node) = state.ctx.arena.get(if_stmt.expression) else {
+                        continue;
+                    };
+                    if cond_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+                        continue;
+                    }
+                    let Some(bin) = state.ctx.arena.get_binary_expr(cond_node) else {
+                        continue;
+                    };
+                    let is_eq = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16
+                        || bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16;
+                    if !is_eq {
+                        continue;
+                    }
+
+                    let mut narrowed = None;
+                    for (typeof_side, lit_side) in [(bin.left, bin.right), (bin.right, bin.left)] {
+                        let Some(typeof_node) = state.ctx.arena.get(typeof_side) else {
+                            continue;
+                        };
+                        if typeof_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+                            continue;
+                        }
+                        let Some(unary) = state.ctx.arena.get_unary_expr(typeof_node) else {
+                            continue;
+                        };
+                        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+                            continue;
+                        }
+                        let Some(op_node) = state.ctx.arena.get(unary.operand) else {
+                            continue;
+                        };
+                        let Some(op_ident) = state.ctx.arena.get_identifier(op_node) else {
+                            continue;
+                        };
+                        if op_ident.escaped_text != expr_name {
+                            continue;
+                        }
+                        let Some(lit_node) = state.ctx.arena.get(lit_side) else {
+                            continue;
+                        };
+                        if lit_node.kind != SyntaxKind::StringLiteral as u16
+                            && lit_node.kind != SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        {
+                            continue;
+                        }
+                        let Some(lit) = state.ctx.arena.get_literal(lit_node) else {
+                            continue;
+                        };
+                        narrowed = Some(
+                            NarrowingContext::new(state.ctx.types)
+                                .narrow_by_typeof(base_type, lit.text.as_str()),
+                        );
+                        break;
+                    }
+                    if let Some(narrowed) = narrowed {
+                        return narrowed;
+                    }
+                }
+
+                base_type
+            };
         let flow_type_for_query_expr = |state: &mut Self| {
             let prev_skip = state.ctx.skip_flow_narrowing;
             state.ctx.skip_flow_narrowing = false;
-            let ty = state.get_type_of_node(type_query.expr_name);
+            let mut ty = state.get_type_of_node(type_query.expr_name);
+            if (ty == TypeId::ANY || ty == TypeId::ERROR)
+                && let Some(expr_node) = state.ctx.arena.get(type_query.expr_name)
+                && expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = state.ctx.arena.get_access_expr(expr_node)
+                && let Some(name_node) = state.ctx.arena.get(access.name_or_argument)
+                && let Some(name_ident) = state.ctx.arena.get_identifier(name_node)
+            {
+                let object_type = state.get_type_of_node(access.expression);
+                let access_ty = state.get_type_of_property_access_by_name(
+                    type_query.expr_name,
+                    access,
+                    object_type,
+                    &name_ident.escaped_text,
+                );
+                if access_ty != TypeId::ANY && access_ty != TypeId::ERROR {
+                    ty = access_ty;
+                }
+            }
+            if (ty == TypeId::ANY || ty == TypeId::ERROR)
+                && let Some(expr_node) = state.ctx.arena.get(type_query.expr_name)
+                && expr_node.kind == syntax_kind_ext::QUALIFIED_NAME
+                && let Some(qn) = state.ctx.arena.get_qualified_name(expr_node)
+                && let Some(name_node) = state.ctx.arena.get(qn.right)
+                && let Some(name_ident) = state.ctx.arena.get_identifier(name_node)
+            {
+                let object_type = state.get_type_of_node(qn.left);
+                let access = tsz_parser::parser::node::AccessExprData {
+                    expression: qn.left,
+                    name_or_argument: qn.right,
+                    question_dot_token: false,
+                };
+                let access_ty = state.get_type_of_property_access_by_name(
+                    type_query.expr_name,
+                    &access,
+                    object_type,
+                    &name_ident.escaped_text,
+                );
+                if access_ty != TypeId::ANY && access_ty != TypeId::ERROR {
+                    ty = access_ty;
+                }
+            }
+            if (ty == TypeId::ANY || ty == TypeId::ERROR)
+                && let Some(sym_id) = state.resolve_value_symbol_for_lowering(type_query.expr_name)
+            {
+                let declared = state.get_type_of_symbol(tsz_binder::SymbolId(sym_id));
+                let narrowed = state.apply_flow_narrowing(type_query.expr_name, declared);
+                if narrowed != TypeId::ERROR {
+                    ty = narrowed;
+                }
+            }
+            ty = narrow_from_enclosing_typeof_guard(state, idx, type_query.expr_name, ty);
             state.ctx.skip_flow_narrowing = prev_skip;
             ty
         };
