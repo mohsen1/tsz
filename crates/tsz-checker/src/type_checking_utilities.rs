@@ -1147,16 +1147,17 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // The inference pass evaluates return expressions WITHOUT narrowing
         // context, which can produce false errors (e.g. TS2339 for discriminated
-        // union property accesses) and cache wrong types.  Snapshot diagnostic
-        // and node-type state, then restore after inference so that the
-        // subsequent check_statement pass recomputes everything with proper
-        // narrowing context.
+        // union property accesses) and cache wrong types.  Snapshot diagnostic,
+        // node-type, and flow-analysis-cache state, then restore after inference
+        // so that the subsequent check_statement pass recomputes everything with
+        // proper narrowing context.
         let diag_count = self.ctx.diagnostics.len();
         let emitted_before = self.ctx.emitted_diagnostics.clone();
         let emitted_ts2454_before = self.ctx.emitted_ts2454_errors.clone();
         let modules_ts2307_before = self.ctx.modules_with_ts2307_emitted.clone();
         let cached_before: std::collections::HashSet<u32> =
             self.ctx.node_types.keys().copied().collect();
+        let flow_cache_before = self.ctx.flow_analysis_cache.borrow().clone();
 
         let result = self.infer_return_type_from_body_inner(body_idx, return_context);
 
@@ -1165,6 +1166,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.emitted_ts2454_errors = emitted_ts2454_before;
         self.ctx.modules_with_ts2307_emitted = modules_ts2307_before;
         self.ctx.node_types.retain(|k, _| cached_before.contains(k));
+        *self.ctx.flow_analysis_cache.borrow_mut() = flow_cache_before;
 
         result
     }
