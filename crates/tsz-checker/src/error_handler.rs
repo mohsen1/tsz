@@ -274,12 +274,9 @@ impl<'a> ErrorHandler for CheckerState<'a> {
     // =========================================================================
 
     fn emit_error(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
-        match self.get_node_span(node_idx) {
-            Some((start, end)) => {
-                let length = end.saturating_sub(start);
-                self.emit_error_at(start, length, message, code);
-            }
-            None => {}
+        if let Some((start, end)) = self.get_node_span(node_idx) {
+            let length = end.saturating_sub(start);
+            self.emit_error_at(start, length, message, code);
         }
     }
 
@@ -491,22 +488,18 @@ impl<'a> ErrorHandler for CheckerState<'a> {
     fn emit_get_accessor_must_return(&mut self, idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        match self.get_node_span(idx) {
-            Some((start, end)) => {
-                let length = end.saturating_sub(start);
-                let file = &self.ctx.file_name;
-                self.ctx.diagnostics.push(Diagnostic {
-                    file: file.clone(),
-                    start,
-                    length,
-                    message_text: diagnostic_messages::A_GET_ACCESSOR_MUST_RETURN_A_VALUE
-                        .to_string(),
-                    category: crate::diagnostics::DiagnosticCategory::Error,
-                    code: diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
-                    related_information: Vec::new(),
-                });
-            }
-            None => {}
+        if let Some((start, end)) = self.get_node_span(idx) {
+            let length = end.saturating_sub(start);
+            let file = &self.ctx.file_name;
+            self.ctx.diagnostics.push(Diagnostic {
+                file: file.clone(),
+                start,
+                length,
+                message_text: diagnostic_messages::A_GET_ACCESSOR_MUST_RETURN_A_VALUE.to_string(),
+                category: crate::diagnostics::DiagnosticCategory::Error,
+                code: diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
+                related_information: Vec::new(),
+            });
         }
     }
 
