@@ -1750,6 +1750,29 @@ impl ParserState {
                     return NodeIndex::NONE;
                 }
 
+                // Statement-only keywords cannot start expressions.
+                // Return NONE so callers emit TS1109 (Expression expected).
+                if matches!(
+                    self.token(),
+                    SyntaxKind::ReturnKeyword
+                        | SyntaxKind::BreakKeyword
+                        | SyntaxKind::ContinueKeyword
+                        | SyntaxKind::ThrowKeyword
+                        | SyntaxKind::TryKeyword
+                        | SyntaxKind::CatchKeyword
+                        | SyntaxKind::FinallyKeyword
+                        | SyntaxKind::DoKeyword
+                        | SyntaxKind::WhileKeyword
+                        | SyntaxKind::ForKeyword
+                        | SyntaxKind::SwitchKeyword
+                        | SyntaxKind::WithKeyword
+                        | SyntaxKind::DebuggerKeyword
+                        | SyntaxKind::IfKeyword
+                        | SyntaxKind::ElseKeyword
+                ) {
+                    return NodeIndex::NONE;
+                }
+
                 if self.is_identifier_or_keyword() {
                     self.parse_identifier_name()
                 } else {
