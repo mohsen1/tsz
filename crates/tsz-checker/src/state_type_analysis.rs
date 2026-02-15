@@ -13,6 +13,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
+use tsz_solver::type_queries_extended::{
+    ContextualLiteralAllowKind, classify_for_contextual_literal,
+};
 
 impl<'a> CheckerState<'a> {
     /// Resolve a qualified name (A.B.C) to its type.
@@ -3037,10 +3040,6 @@ impl<'a> CheckerState<'a> {
         literal_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
-        use tsz_solver::type_queries::{
-            ContextualLiteralAllowKind, classify_for_contextual_literal,
-        };
-
         if ctx_type == literal_type {
             return true;
         }

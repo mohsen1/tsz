@@ -1,6 +1,6 @@
 use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) use tsz_solver::type_queries::PromiseTypeKind;
+pub(crate) use tsz_solver::type_queries_extended::PromiseTypeKind;
 
 pub(crate) fn classify_promise_type(db: &dyn TypeDatabase, type_id: TypeId) -> PromiseTypeKind {
     tsz_solver::type_queries::classify_promise_type(db, type_id)

@@ -17,6 +17,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex, node_flags};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeParamInfo;
+use tsz_solver::is_compiler_managed_type;
 use tsz_solver::{TypeId, TypePredicateTarget};
 
 /// Result of tsc's `getSyntacticTruthySemantics` — purely syntactic truthiness.
@@ -2375,7 +2376,6 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::is_compiler_managed_type;
 
         tracing::trace!(name, "resolve_lib_type_by_name: called");
         let mut lib_type_id: Option<TypeId> = None;
@@ -2752,7 +2752,8 @@ impl<'a> CheckerState<'a> {
         name: &str,
     ) -> (Option<TypeId>, Vec<TypeParamInfo>) {
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_solver::{TypeInstantiator, TypeSubstitution, types::is_compiler_managed_type};
+        use tsz_solver::TypeInstantiator;
+        use tsz_solver::TypeSubstitution;
 
         let factory = self.ctx.types.factory();
         let lib_contexts = self.ctx.lib_contexts.clone();
@@ -3281,7 +3282,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use tsz_solver::type_queries_extended::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, object_type) {
             // Handle Lazy types (direct namespace/module references)
@@ -3723,7 +3724,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> bool {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use tsz_solver::type_queries_extended::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, object_type) {
             // Handle Lazy types (direct namespace/module references)
@@ -3956,7 +3957,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn is_namespace_value_type(&self, object_type: TypeId) -> bool {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use tsz_solver::type_queries_extended::{NamespaceMemberKind, classify_namespace_member};
 
         match classify_namespace_member(self.ctx.types, object_type) {
             NamespaceMemberKind::Lazy(def_id) => {
@@ -3985,7 +3986,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         expression: NodeIndex,
     ) -> bool {
-        use tsz_solver::type_queries::{NamespaceMemberKind, classify_namespace_member};
+        use tsz_solver::type_queries_extended::{NamespaceMemberKind, classify_namespace_member};
 
         // Only applies to enum types
         if !matches!(

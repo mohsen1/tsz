@@ -31,7 +31,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns Some(brand_name) if the type has a private brand.
     pub(crate) fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        use tsz_solver::type_queries::{PrivateBrandKind, classify_for_private_brand};
+        use tsz_solver::type_queries_extended::{PrivateBrandKind, classify_for_private_brand};
 
         match classify_for_private_brand(self.ctx.types, type_id) {
             PrivateBrandKind::Object(shape_id) => {
@@ -86,7 +86,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns Some(private_field_name) if found, None otherwise.
     pub(crate) fn get_private_field_name_from_brand(&self, type_id: TypeId) -> Option<String> {
-        use tsz_solver::type_queries::{PrivateBrandKind, classify_for_private_brand};
+        use tsz_solver::type_queries_extended::{PrivateBrandKind, classify_for_private_brand};
 
         let properties = match classify_for_private_brand(self.ctx.types, type_id) {
             PrivateBrandKind::Object(shape_id) => {

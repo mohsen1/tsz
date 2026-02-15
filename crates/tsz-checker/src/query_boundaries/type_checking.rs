@@ -2,7 +2,7 @@ use crate::state::CheckerState;
 use tsz_parser::NodeIndex;
 use tsz_solver::TypeId;
 
-pub(crate) use tsz_solver::type_queries::ConstructorCheckKind;
+pub(crate) use tsz_solver::type_queries_extended::ConstructorCheckKind;
 
 pub(crate) fn is_direct_class_lazy_reference(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
     let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(checker.ctx.types, type_id) else {
@@ -40,7 +40,7 @@ pub(crate) fn classify_for_constructor_check(
     db: &dyn tsz_solver::TypeDatabase,
     type_id: TypeId,
 ) -> ConstructorCheckKind {
-    tsz_solver::type_queries::classify_for_constructor_check(db, type_id)
+    tsz_solver::type_queries_extended::classify_for_constructor_check(db, type_id)
 }
 
 pub(crate) fn callable_shape_for_type(

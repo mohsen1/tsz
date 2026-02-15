@@ -1,6 +1,6 @@
 use tsz_solver::{ObjectShape, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
-pub(crate) use tsz_solver::type_queries::{AssignabilityEvalKind, ExcessPropertiesKind};
+pub(crate) use tsz_solver::type_queries_extended::{AssignabilityEvalKind, ExcessPropertiesKind};
 
 pub(crate) fn classify_for_assignability_eval(
     db: &dyn TypeDatabase,

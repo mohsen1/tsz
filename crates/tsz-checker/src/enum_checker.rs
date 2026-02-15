@@ -68,10 +68,10 @@ impl<'a> CheckerState<'a> {
     /// - Numeric literals (for numeric enums)
     /// - Computed values (for heterogeneous enums)
     pub fn is_enum_member_type(&self, type_id: TypeId) -> bool {
-        use tsz_solver::type_queries::LiteralTypeKind;
+        use tsz_solver::type_queries_extended::LiteralTypeKind;
 
         // Check for string or number literals
-        match tsz_solver::type_queries::classify_literal_type(self.ctx.types, type_id) {
+        match tsz_solver::type_queries_extended::classify_literal_type(self.ctx.types, type_id) {
             LiteralTypeKind::String(_) | LiteralTypeKind::Number(_) => return true,
             _ => {}
         }
