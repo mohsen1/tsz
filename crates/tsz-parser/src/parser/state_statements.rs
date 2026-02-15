@@ -2407,6 +2407,40 @@ impl ParserState {
                 // Export with decorators: @decorator export class Foo {}
                 self.parse_export_declaration()
             }
+            SyntaxKind::DefaultKeyword => {
+                // TS1029: `export` must precede `default`.
+                use tsz_common::diagnostics::diagnostic_codes;
+                let default_start = self.token_pos();
+                let default_end = self.token_end();
+                self.parse_error_at(
+                    default_start,
+                    default_end - default_start,
+                    "'export' modifier must precede 'default' modifier.",
+                    diagnostic_codes::MODIFIER_MUST_PRECEDE_MODIFIER,
+                );
+
+                // Consume `default` so declaration parsing can continue.
+                self.next_token();
+                let default_modifier = self.arena.add_token(
+                    SyntaxKind::DefaultKeyword as u16,
+                    default_start,
+                    default_end,
+                );
+                let mut nodes = decorators.map(|list| list.nodes).unwrap_or_default();
+                nodes.push(default_modifier);
+                let modifiers = Some(self.make_node_list(nodes));
+
+                match self.token() {
+                    SyntaxKind::ClassKeyword => {
+                        self.parse_class_declaration_with_modifiers(start_pos, modifiers)
+                    }
+                    SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
+                    SyntaxKind::InterfaceKeyword => {
+                        self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
+                    }
+                    _ => self.parse_expression_statement(),
+                }
+            }
             _ => {
                 // TS1206: Decorators are not valid on expression statements
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -3903,12 +3937,12 @@ impl ParserState {
         // Note: Many reserved keywords can be used as property names (const, class, etc.)
         let name_saved_flags = self.context_flags;
         self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
-        if is_async {
-            self.context_flags |= CONTEXT_FLAG_ASYNC;
-        }
-        if asterisk_token {
-            self.context_flags |= CONTEXT_FLAG_GENERATOR;
-        }
+        // Note: Do NOT set CONTEXT_FLAG_GENERATOR or CONTEXT_FLAG_ASYNC here.
+        // The yield/await context must only be active during the method body
+        // (parameters + block), not during property name parsing.  Otherwise
+        // `yield` inside a computed property name like `async * [yield]()`
+        // would be parsed as a YieldExpression instead of an Identifier.
+        // The generator/async flags are correctly set later (lines ~3970-3974).
         let has_modifiers = modifiers.is_some();
         let name = if self.is_property_name() {
             self.parse_property_name()

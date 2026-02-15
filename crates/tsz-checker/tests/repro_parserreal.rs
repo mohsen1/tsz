@@ -310,7 +310,6 @@ fn run_and_print_source_line(
 
 #[cfg(test)]
 #[test]
-#[ignore = "Broken by parser recovery changes (e005af74c)"]
 fn repro_async_generator_computed_yield_method() {
     let source = r"
 interface yield {}
@@ -405,7 +404,6 @@ class C21 {
 
 #[cfg(test)]
 #[test]
-#[ignore = "Broken by parser recovery changes (e005af74c)"]
 fn repro_async_generator_computed_yield_method_with_parse_errors() {
     let source = r"
 interface yield {}
@@ -584,7 +582,6 @@ fn repro_async_generator_class_methods_ast_shape() {
 
 #[cfg(test)]
 #[test]
-#[ignore = "Broken by parser recovery changes (e005af74c)"]
 fn repro_async_generator_class_methods_cross_file() {
     let interface_source = "interface yield {}\n";
     let class_source = "class C21 {\n    async * [yield]() {\n    }\n}\n";
@@ -688,7 +685,6 @@ fn repro_async_generator_class_methods_cross_file() {
 
 #[cfg(test)]
 #[test]
-#[ignore = "Broken by parser recovery changes (e005af74c)"]
 fn repro_async_generator_class_methods_ast_shape_parse_errors() {
     let source = ASYNC_GENERATOR_CLASS_METHODS_SOURCE;
 
@@ -747,7 +743,6 @@ fn repro_async_generator_class_methods_ast_shape_parse_errors() {
 
 #[cfg(test)]
 #[test]
-#[ignore = "Broken by parser recovery changes (e005af74c)"]
 fn repro_async_generator_class_methods_forced_parse_errors() {
     let source = ASYNC_GENERATOR_CLASS_METHODS_SOURCE;
     let mut parser = ParserState::new(
