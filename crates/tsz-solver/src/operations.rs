@@ -1193,7 +1193,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             if let Some(constraint) = tp.constraint {
                 let constraint_ty = instantiate_type(self.interner, constraint, &final_subst);
-                if !self.checker.is_assignable_to(ty, constraint_ty) {
+                // Strip freshness before constraint check: inferred types should not
+                // trigger excess property checking against type parameter constraints.
+                let ty_for_check = crate::freshness::widen_freshness(self.interner, ty);
+                if !self.checker.is_assignable_to(ty_for_check, constraint_ty) {
                     // Inferred type doesn't satisfy constraint.
                     // Use TypeParameterConstraintViolation for callback return type inferences
                     // (TS2322) vs ArgumentTypeMismatch for direct arg inferences (TS2345).
