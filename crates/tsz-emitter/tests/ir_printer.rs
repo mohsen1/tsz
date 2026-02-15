@@ -1,4 +1,5 @@
 use super::*;
+use crate::transforms::ir::IRGeneratorCase;
 
 #[test]
 fn test_emit_literals() {
