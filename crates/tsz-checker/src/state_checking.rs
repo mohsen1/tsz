@@ -1386,6 +1386,17 @@ impl<'a> CheckerState<'a> {
     ) {
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
         let var_type = self.get_type_of_node(initializer);
+        let target_type = if is_for_of
+            && let Some(init_node) = self.ctx.arena.get(initializer)
+            && init_node.kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.ctx.binder.resolve_identifier(self.ctx.arena, initializer)
+        {
+            // For `for (x of y)` with pre-declared identifier `x`, compare against
+            // the declared type of `x` (not the current flow-narrowed type).
+            self.get_type_of_symbol(sym_id)
+        } else {
+            var_type
+        };
 
         // TS2588: Cannot assign to const variable
         if is_for_of {
@@ -1394,12 +1405,12 @@ impl<'a> CheckerState<'a> {
 
         // TS2322: Check element type is assignable to the variable's declared type
         if is_for_of
-            && var_type != TypeId::ANY
+            && target_type != TypeId::ANY
             && element_type != TypeId::ANY
             && element_type != TypeId::ERROR
-            && !self.type_contains_error(var_type)
+            && !self.type_contains_error(target_type)
         {
-            let _ = self.check_assignable_or_report(element_type, var_type, initializer);
+            let _ = self.check_assignable_or_report(element_type, target_type, initializer);
         }
     }
 

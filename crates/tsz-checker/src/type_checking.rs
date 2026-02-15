@@ -646,7 +646,14 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none() && element_type != TypeId::ANY {
+        if !element_data.initializer.is_none()
+            && element_type != TypeId::ANY
+            // For object binding patterns, a default initializer is only reachable when
+            // the property can be missing/undefined. Skip assignability checks for required
+            // properties to match TypeScript's control-flow behavior.
+            && (pattern_kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || self.type_includes_undefined(element_type))
+        {
             // Set contextual type when the initializer is a function expression or arrow
             // so that parameter types can be inferred from the expected element type.
             // Only do this for function-like initializers to avoid changing how non-function

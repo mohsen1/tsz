@@ -34,7 +34,7 @@ use crate::query_boundaries::flow_analysis::{
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use rustc_hash::FxHashSet;
 use std::rc::Rc;
-use tsz_binder::SymbolId;
+use tsz_binder::{SymbolId, flow_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1339,18 +1339,11 @@ impl<'a> CheckerState<'a> {
         // Correlated narrowing for destructured bindings.
         // When `const { data, isSuccess } = useQuery()` and we check `isSuccess`,
         // narrowing of `isSuccess` should also narrow `data`.
-        if narrowed == declared_type
-            && let Some(sym_id) = self.get_symbol_for_identifier(idx)
+        if let Some(sym_id) = self.get_symbol_for_identifier(idx)
             && let Some(info) = self.ctx.destructured_bindings.get(&sym_id).cloned()
             && info.is_const
         {
-            return self.apply_correlated_narrowing(
-                &analyzer,
-                sym_id,
-                &info,
-                declared_type,
-                flow_node,
-            );
+            return self.apply_correlated_narrowing(&analyzer, sym_id, &info, narrowed, flow_node);
         }
 
         narrowed
@@ -1389,38 +1382,8 @@ impl<'a> CheckerState<'a> {
         // Start with the full source type members
         let source_member_count = source_members.len();
         let mut remaining_members = source_members;
-
-        // For each sibling, check if it's been narrowed
-        for (sib_sym, sib_info) in &siblings {
-            // Get the sibling's initial type (from the union source)
-            let sib_initial = if let Some(&cached) = self.ctx.symbol_types.get(sib_sym) {
-                cached
-            } else {
-                continue;
-            };
-
-            // Get the sibling's reference node (value_declaration)
-            let Some(sib_sym_data) = self.ctx.binder.symbols.get(*sib_sym) else {
-                continue;
-            };
-            let sib_ref = sib_sym_data.value_declaration;
-            if sib_ref.is_none() {
-                continue;
-            }
-
-            // Get the sibling's narrowed type at this flow node
-            let sib_narrowed = analyzer.get_flow_type(sib_ref, sib_initial, flow_node);
-
-            // If the sibling wasn't narrowed, skip
-            if sib_narrowed == sib_initial {
-                continue;
-            }
-
-            // Filter source members: keep only those where the sibling's property type
-            // is assignable to the narrowed sibling type.
-            let member_binding_type = |member: TypeId,
-                                       binding: &crate::context::DestructuredBindingInfo|
-             -> Option<TypeId> {
+        let member_binding_type =
+            |member: TypeId, binding: &crate::context::DestructuredBindingInfo| -> Option<TypeId> {
                 if !binding.property_name.is_empty() {
                     let mut current = member;
                     for segment in binding.property_name.split('.') {
@@ -1437,6 +1400,210 @@ impl<'a> CheckerState<'a> {
                     None
                 }
             };
+        let symbol_identifier_ref = |sym: SymbolId| -> Option<NodeIndex> {
+            let mut declaration_ident: Option<NodeIndex> = None;
+            for (&node_id, &node_sym) in &self.ctx.binder.node_symbols {
+                if node_sym != sym {
+                    continue;
+                }
+                let idx = NodeIndex(node_id);
+                let Some(node) = self.ctx.arena.get(idx) else {
+                    continue;
+                };
+                if node.kind != SyntaxKind::Identifier as u16 {
+                    continue;
+                }
+
+                // Prefer a usage site over declaration identifier nodes in binding/variable/parameter
+                // declarations, because usage nodes carry richer flow facts (e.g. switch discriminants).
+                let is_declaration_ident = self
+                    .ctx
+                    .arena
+                    .get_extended(idx)
+                    .and_then(|ext| self.ctx.arena.get(ext.parent))
+                    .is_some_and(|parent| {
+                        parent.kind == syntax_kind_ext::BINDING_ELEMENT
+                            || parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                            || parent.kind == syntax_kind_ext::PARAMETER
+                    });
+
+                if !is_declaration_ident {
+                    return Some(idx);
+                }
+                declaration_ident = Some(idx);
+            }
+            declaration_ident
+        };
+        let switch_flow_node = {
+            let mut candidate = flow_node;
+            let mut found = None;
+            // Walk a short antecedent chain to recover switch-clause context for
+            // nodes immediately after a clause (e.g. statements in default block).
+            for _ in 0..4 {
+                let Some(flow) = self.ctx.binder.flow_nodes.get(candidate) else {
+                    break;
+                };
+                if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
+                    found = Some(candidate);
+                    break;
+                }
+                let Some(&ant) = flow.antecedent.first() else {
+                    break;
+                };
+                if ant.is_none() {
+                    break;
+                }
+                candidate = ant;
+            }
+            found
+        };
+        let switch_clause_context = switch_flow_node
+            .and_then(|switch_flow_id| self.ctx.binder.flow_nodes.get(switch_flow_id))
+            .filter(|flow| flow.has_any_flags(flow_flags::SWITCH_CLAUSE))
+            .and_then(|flow| {
+                let clause_idx = flow.node;
+                let is_implicit_default = self
+                    .ctx
+                    .arena
+                    .get(clause_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+                let switch_idx = if is_implicit_default {
+                    self.ctx
+                        .arena
+                        .get_extended(clause_idx)
+                        .and_then(|ext| (!ext.parent.is_none()).then_some(ext.parent))
+                } else {
+                    self.ctx.binder.get_switch_for_clause(clause_idx)
+                }?;
+                let switch_node = self.ctx.arena.get(switch_idx)?;
+                let switch_data = self.ctx.arena.get_switch(switch_node)?;
+                let switch_sym = self
+                    .ctx
+                    .binder
+                    .resolve_identifier(self.ctx.arena, switch_data.expression)?;
+
+                let collect_case_types = |case_block: NodeIndex| -> Vec<TypeId> {
+                    let Some(case_block_node) = self.ctx.arena.get(case_block) else {
+                        return Vec::new();
+                    };
+                    let Some(block) = self.ctx.arena.get_block(case_block_node) else {
+                        return Vec::new();
+                    };
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .filter_map(|&case_clause_idx| {
+                            let clause_node = self.ctx.arena.get(case_clause_idx)?;
+                            let clause = self.ctx.arena.get_case_clause(clause_node)?;
+                            if clause.expression.is_none() {
+                                return None;
+                            }
+                            self.ctx.node_types.get(&clause.expression.0).copied()
+                        })
+                        .collect()
+                };
+
+                if is_implicit_default {
+                    Some((switch_sym, None, collect_case_types(switch_data.case_block)))
+                } else {
+                    let clause_node = self.ctx.arena.get(clause_idx)?;
+                    let clause = self.ctx.arena.get_case_clause(clause_node)?;
+                    if clause.expression.is_none() {
+                        Some((switch_sym, None, collect_case_types(switch_data.case_block)))
+                    } else {
+                        Some((
+                            switch_sym,
+                            self.ctx.node_types.get(&clause.expression.0).copied(),
+                            Vec::new(),
+                        ))
+                    }
+                }
+            });
+
+        // For each sibling, check if it's been narrowed
+        for (sib_sym, sib_info) in &siblings {
+            if let Some((switch_sym, case_type, default_case_types)) = &switch_clause_context
+                && *switch_sym == *sib_sym
+            {
+                if let Some(case_ty) = *case_type {
+                    remaining_members.retain(|&member| {
+                        if let Some(prop_type) = member_binding_type(member, sib_info) {
+                            prop_type == case_ty || {
+                                let env = self.ctx.type_env.borrow();
+                                are_types_mutually_subtype_with_env(
+                                    self.ctx.types,
+                                    &env,
+                                    case_ty,
+                                    prop_type,
+                                    self.ctx.strict_null_checks(),
+                                )
+                            }
+                        } else {
+                            true
+                        }
+                    });
+                } else if !default_case_types.is_empty() {
+                    remaining_members.retain(|&member| {
+                        let Some(prop_type) = member_binding_type(member, sib_info) else {
+                            return true;
+                        };
+                        !default_case_types.iter().any(|&case_ty| {
+                            prop_type == case_ty || {
+                                let env = self.ctx.type_env.borrow();
+                                are_types_mutually_subtype_with_env(
+                                    self.ctx.types,
+                                    &env,
+                                    case_ty,
+                                    prop_type,
+                                    self.ctx.strict_null_checks(),
+                                )
+                            }
+                        })
+                    });
+                }
+                continue;
+            }
+
+            // Get the sibling's initial type (from the union source)
+            let sib_initial = if let Some(&cached) = self.ctx.symbol_types.get(sib_sym) {
+                cached
+            } else {
+                continue;
+            };
+
+            // Get the sibling's reference node (value_declaration)
+            let Some(sib_sym_data) = self.ctx.binder.symbols.get(*sib_sym) else {
+                continue;
+            };
+            let mut sib_ref = sib_sym_data.value_declaration;
+            if sib_ref.is_none() {
+                continue;
+            }
+            // Flow analysis expects an expression/identifier reference node. For destructured
+            // symbols the declaration is often a BindingElement; use its identifier name node.
+            if let Some(decl_node) = self.ctx.arena.get(sib_ref)
+                && decl_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                && let Some(binding) = self.ctx.arena.get_binding_element(decl_node)
+                && let Some(name_node) = self.ctx.arena.get(binding.name)
+                && name_node.kind == SyntaxKind::Identifier as u16
+            {
+                sib_ref = binding.name;
+            }
+
+            // Get the sibling's narrowed type at this flow node
+            let mut sib_narrowed = analyzer.get_flow_type(sib_ref, sib_initial, flow_node);
+            if sib_narrowed == sib_initial
+                && let Some(identifier_ref) = symbol_identifier_ref(*sib_sym)
+                && identifier_ref != sib_ref
+            {
+                sib_narrowed = analyzer.get_flow_type(identifier_ref, sib_initial, flow_node);
+            }
+
+            // If the sibling wasn't narrowed, skip
+            if sib_narrowed == sib_initial {
+                continue;
+            }
 
             remaining_members.retain(|&member| {
                 let member_prop_type = member_binding_type(member, sib_info);
