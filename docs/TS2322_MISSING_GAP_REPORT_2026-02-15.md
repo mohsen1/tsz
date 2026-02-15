@@ -174,3 +174,24 @@ Focused run artifacts captured on current `main`:
 Implication:
 - The assignment compatibility block confirms a deterministic, high-confidence miss cluster where assignability is not rejecting invalid assignment in expected spots (not reporting enough errors).
 - This is stronger evidence that the next fix should stay in the solver/checker assignability boundary and not in parser/infrastructure layers.
+
+## Concrete diagnosis from `assignmentCompatability11.ts`
+
+- Command: `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability11 --verbose`
+- TS2322 expected: `[TS2322]`, actual: `[]`
+- Source snippet under test:
+  - `interfaceWithPublicAndOptional<T,U> { one: T; two?: U; }`
+  - assign `interfaceWithPublicAndOptional<number,string>` to `{ two: number }`
+- This should fail because target property `two` is required, while source `two` is optional.
+- Current behavior indicates the assignment logic is treating optional-source object members as satisfying required-target members in this path.
+- Interpretation:
+  - likely object member relation bug around requiredness propagation.
+  - high confidence this is in `assignability` / property relation handling rather than parser/infrastructure.
+
+### Suggested micro-step for next implementation cycle
+1. Open the property relation path used for `is_assignable` on interfaces/object types.
+2. Verify requiredness checks are not bypassed by union normalization or member fallback.
+3. Ensure object-with-optional property is not considered assignable to object-with-required of same name unless `--exactOptionalPropertyTypes` semantics are engaged.
+4. Validate by re-running:
+   - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability11 --verbose`
+   - `./scripts/conformance.sh run --error-code 2322 --filter assignmentCompatability --verbose`
