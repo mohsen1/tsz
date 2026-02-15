@@ -56,6 +56,9 @@ pub const CONTEXT_FLAG_ARROW_PARAMETERS: u32 = 512;
 /// Context flag: disallow conditional types (used inside `infer T extends X` constraint parsing).
 /// When set, `T extends U ? X : Y` is not parsed as a conditional type.
 pub const CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES: u32 = 1024;
+/// Context flag: inside a block statement (function body, bare block, if/while/for body).
+/// When set, modifiers like `export` and `declare` are not allowed and emit TS1184.
+pub const CONTEXT_FLAG_IN_BLOCK: u32 = 8192;
 
 // =============================================================================
 // Parse Diagnostic
@@ -414,6 +417,13 @@ impl ParserState {
     #[inline]
     pub(crate) const fn in_disallow_in_context(&self) -> bool {
         (self.context_flags & CONTEXT_FLAG_DISALLOW_IN) != 0
+    }
+
+    /// Check if we're inside a block statement (function body, bare block, etc.)
+    /// where modifiers like `export`/`declare` are not allowed.
+    #[inline]
+    pub(crate) const fn in_block_context(&self) -> bool {
+        (self.context_flags & CONTEXT_FLAG_IN_BLOCK) != 0
     }
 
     /// Check if the current token is an illegal binding identifier in the current context

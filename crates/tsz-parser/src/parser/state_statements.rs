@@ -1,8 +1,9 @@
 //! Parser state - statement and declaration parsing methods
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME,
-    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CLASS,
-    CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_BLOCK,
+    CONTEXT_FLAG_IN_CLASS, CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK,
+    IncrementalParseResult, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -340,7 +341,15 @@ impl ParserState {
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
             SyntaxKind::TypeKeyword => self.parse_statement_type_keyword(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
-            SyntaxKind::DeclareKeyword => self.parse_statement_declare_or_expression(),
+            SyntaxKind::DeclareKeyword => {
+                if self.in_block_context() && self.look_ahead_is_declare_before_declaration() {
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                self.parse_statement_declare_or_expression()
+            }
             SyntaxKind::NamespaceKeyword
             | SyntaxKind::ModuleKeyword
             | SyntaxKind::GlobalKeyword => self.parse_statement_namespace_or_expression(),
@@ -349,7 +358,15 @@ impl ParserState {
             SyntaxKind::WhileKeyword => self.parse_while_statement(),
             SyntaxKind::ForKeyword => self.parse_for_statement(),
             SyntaxKind::SemicolonToken => self.parse_empty_statement(),
-            SyntaxKind::ExportKeyword => self.parse_export_declaration(),
+            SyntaxKind::ExportKeyword => {
+                if self.in_block_context() {
+                    self.parse_error_at_current_token(
+                        "Modifiers cannot appear here.",
+                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+                    );
+                }
+                self.parse_export_declaration()
+            }
             SyntaxKind::ImportKeyword => self.parse_statement_import_keyword(),
             SyntaxKind::BreakKeyword => self.parse_break_statement(),
             SyntaxKind::ContinueKeyword => self.parse_continue_statement(),
@@ -916,7 +933,13 @@ impl ParserState {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
 
+        // Set IN_BLOCK flag so that modifiers like export/declare emit TS1184
+        let saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_IN_BLOCK;
+
         let statements = self.parse_statements();
+
+        self.context_flags = saved_flags;
 
         self.parse_expected(SyntaxKind::CloseBraceToken);
         let end_pos = self.token_end();
