@@ -526,7 +526,14 @@ impl DefinitionStore {
     pub fn find_def_by_shape(&self, shape: &ObjectShape) -> Option<DefId> {
         self.definitions
             .iter()
-            .find(|entry| entry.value().instance_shape.as_ref().map(|s| s.as_ref()) == Some(shape))
+            .find(|entry| {
+                entry
+                    .value()
+                    .instance_shape
+                    .as_ref()
+                    .map(std::convert::AsRef::as_ref)
+                    == Some(shape)
+            })
             .map(|entry| *entry.key())
     }
 }

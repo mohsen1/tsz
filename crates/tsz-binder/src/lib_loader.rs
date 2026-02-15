@@ -44,7 +44,7 @@ impl LibLoader {
 
         // Check cache first
         if self.cache.contains_key(&normalized) {
-            return self.cache.get(&normalized).map(|s| s.as_str());
+            return self.cache.get(&normalized).map(std::string::String::as_str);
         }
 
         // Try to load from disk
@@ -58,7 +58,7 @@ impl LibLoader {
                 && let Ok(content) = std::fs::read_to_string(candidate)
             {
                 self.cache.insert(normalized.clone(), content);
-                return self.cache.get(&normalized).map(|s| s.as_str());
+                return self.cache.get(&normalized).map(std::string::String::as_str);
             }
         }
 

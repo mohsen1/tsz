@@ -730,7 +730,7 @@ fn handle_list_files_only(args: &CliArgs, cwd: &std::path::Path) -> Result<()> {
     } else if let Some(ref cfg) = config {
         cfg.files
             .as_ref()
-            .map(|f| f.iter().map(|s| std::path::PathBuf::from(s)).collect())
+            .map(|f| f.iter().map(std::path::PathBuf::from).collect())
             .unwrap_or_default()
     } else {
         Vec::new()

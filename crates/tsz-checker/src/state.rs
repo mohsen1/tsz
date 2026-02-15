@@ -325,7 +325,7 @@ impl<'a> CheckerState<'a> {
     /// get_type_params_for_symbol, type_of_value_declaration) MUST call this
     /// before creating a child CheckerState. Returns true if delegation is allowed.
     pub(crate) fn enter_cross_arena_delegation() -> bool {
-        let d = CROSS_ARENA_DEPTH.with(|c| c.get());
+        let d = CROSS_ARENA_DEPTH.with(std::cell::Cell::get);
         if d >= 5 {
             return false;
         }

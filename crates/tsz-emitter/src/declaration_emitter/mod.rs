@@ -3581,7 +3581,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.pending_source_pos = None;
         if let Some(state) = &self.source_map_state {
             self.writer.enable_source_map(state.output_name.clone());
-            let content = self.source_map_text.map(|text| text.to_string());
+            let content = self.source_map_text.map(std::string::ToString::to_string);
             self.writer.add_source(state.source_name.clone(), content);
         }
     }

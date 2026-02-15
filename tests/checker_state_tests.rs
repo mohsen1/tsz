@@ -27451,7 +27451,10 @@ declare global {
 
     // Check the declarations count
     assert_eq!(
-        binder.global_augmentations.get("Window").map(|v| v.len()),
+        binder
+            .global_augmentations
+            .get("Window")
+            .map(std::vec::Vec::len),
         Some(1),
         "Expected 1 Window augmentation declaration"
     );
@@ -27459,7 +27462,7 @@ declare global {
         binder
             .global_augmentations
             .get("CustomGlobal")
-            .map(|v| v.len()),
+            .map(std::vec::Vec::len),
         Some(1),
         "Expected 1 CustomGlobal augmentation declaration"
     );

@@ -1486,7 +1486,7 @@ impl<'a> LoweringPass<'a> {
                     arrow_node: idx,
                     captures_this,
                     captures_arguments,
-                    class_alias: class_alias.map(|s| s.into()),
+                    class_alias: class_alias.map(std::convert::Into::into),
                 },
             );
 

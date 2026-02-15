@@ -126,9 +126,9 @@ pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<
         };
         let values: Vec<String> = value
             .split(',')
-            .map(|v| v.trim())
+            .map(str::trim)
             .filter(|v| !v.is_empty())
-            .map(|v| v.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
         if values.len() <= 1 {
             if let Some(v) = values.first() {

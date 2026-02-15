@@ -61,7 +61,7 @@ pub enum TypeofKind {
 impl TypeofKind {
     /// Parse a typeof result string into a TypeofKind.
     /// Returns None for non-standard typeof strings (which don't narrow).
-    pub fn from_str(s: &str) -> Option<TypeofKind> {
+    pub fn parse(s: &str) -> Option<TypeofKind> {
         match s {
             "string" => Some(TypeofKind::String),
             "number" => Some(TypeofKind::Number),

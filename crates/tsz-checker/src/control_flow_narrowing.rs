@@ -2050,7 +2050,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check for typeof comparison: typeof x === "string"
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target)
-            && let Some(typeof_kind) = TypeofKind::from_str(type_name)
+            && let Some(typeof_kind) = TypeofKind::parse(type_name)
         {
             return Some((TypeGuard::Typeof(typeof_kind), target, false));
         }

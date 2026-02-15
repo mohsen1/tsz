@@ -19,7 +19,7 @@ impl<'a> Printer<'a> {
         let this_capture_name: Option<String> = self
             .transforms
             .this_capture_name(idx)
-            .map(|s| s.to_string());
+            .map(std::string::ToString::to_string);
         let needs_this_capture = this_capture_name.is_some();
 
         // Empty blocks: check for comments inside and preserve original format

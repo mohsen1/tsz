@@ -3112,7 +3112,7 @@ impl TypeInterner {
         match self.lookup(type_id) {
             Some(TypeData::TemplateLiteral(spans_id)) => {
                 let spans = self.template_list(spans_id);
-                spans.iter().all(|span| span.is_text())
+                spans.iter().all(super::types::TemplateSpan::is_text)
             }
             // String literals are the result of text-only template expansion
             Some(TypeData::Literal(LiteralValue::String(_))) => true,
