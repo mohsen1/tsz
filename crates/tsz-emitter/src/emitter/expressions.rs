@@ -171,10 +171,8 @@ impl<'a> Printer<'a> {
         let start = start_pos as usize;
         let end = std::cmp::min(arg_pos as usize, bytes.len());
 
-        for i in start..end {
-            if bytes[i] == b'(' {
-                return i as u32;
-            }
+        if let Some(offset) = (start..end).position(|i| bytes[i] == b'(') {
+            return (start + offset) as u32;
         }
         start_pos
     }

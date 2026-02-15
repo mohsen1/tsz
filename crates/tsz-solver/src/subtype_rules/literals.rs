@@ -279,8 +279,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         spans: &[TemplateSpan],
         start_idx: usize,
     ) -> Option<usize> {
-        for i in start_idx..spans.len() {
-            if matches!(spans[i], TemplateSpan::Text(_)) {
+        for (i, span) in spans.iter().enumerate().skip(start_idx) {
+            if matches!(span, TemplateSpan::Text(_)) {
                 return Some(i);
             }
         }
@@ -861,8 +861,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if remaining target spans can match empty input.
     fn tt_remaining_target_accepts_empty(&self, target: &[ResolvedSpan], ti: usize) -> bool {
-        for i in ti..target.len() {
-            match &target[i] {
+        for span in target.iter().skip(ti) {
+            match span {
                 ResolvedSpan::Text(text) => {
                     if !text.is_empty() {
                         return false;

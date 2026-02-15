@@ -556,13 +556,13 @@ impl Server {
         let chars: Vec<char> = decl.chars().collect();
         let mut depth = 0;
         let mut end = paren_start;
-        for i in paren_start..chars.len() {
-            match chars[i] {
+        for (offset, ch) in chars.iter().skip(paren_start).enumerate() {
+            match *ch {
                 '(' => depth += 1,
                 ')' => {
                     depth -= 1;
                     if depth == 0 {
-                        end = i;
+                        end = paren_start + offset;
                         break;
                     }
                 }
@@ -1098,8 +1098,7 @@ impl Server {
             let mut in_block_comment = false;
             let _in_single_line_string = false;
 
-            for line_idx in 0..scan_end {
-                let line_text = lines[line_idx];
+            for line_text in lines.iter().take(scan_end) {
                 let bytes = line_text.as_bytes();
                 let mut j = 0;
                 while j < bytes.len() {
