@@ -33,13 +33,13 @@ fn test_lib_file_detection_is_explicit() {
 /// Test that parsing works consistently regardless of file name
 #[test]
 fn test_parsing_is_independent_of_filename() {
-    let source = r#"
+    let source = r"
 class MyClass {
     async method() {
         return Promise.resolve(42);
     }
 }
-"#;
+";
 
     // Test with various file names that previously might have triggered
     // special behavior in other compilers
@@ -82,7 +82,7 @@ class MyClass {
 /// Test that keywords in filenames don't affect parsing
 #[test]
 fn test_filename_keywords_dont_affect_ast() {
-    let source = r#"
+    let source = r"
 // Standalone function (not in a class)
 function standaloneFunction() {
     return 42;
@@ -94,7 +94,7 @@ class Example {
         return 123;
     }
 }
-"#;
+";
 
     // These filenames contain keywords that were previously checked
     let filenames_with_keywords = [

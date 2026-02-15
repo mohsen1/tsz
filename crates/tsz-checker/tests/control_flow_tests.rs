@@ -248,14 +248,14 @@ switch (x) {
 
 #[test]
 fn test_instanceof_narrows_to_object_union_members() {
-    let source = r#"
+    let source = r"
 let x: string | { a: number };
 if (x instanceof Foo) {
   x;
 } else {
   x;
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -958,12 +958,12 @@ while (true) {
 
 #[test]
 fn test_assignment_narrows_to_null_without_cache() {
-    let source = r#"
+    let source = r"
 let x: string | null;
 x;
 x = null;
 x;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2477,7 +2477,7 @@ result;
 /// Test that try-catch-finally paths are captured.
 #[test]
 fn test_flow_graph_captures_try_catch_finally() {
-    let source = r#"
+    let source = r"
 let x: number;
 try {
     x = 1;
@@ -2487,7 +2487,7 @@ try {
     x = 3;
 }
 x;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2511,7 +2511,7 @@ x;
 /// Test that loop control flow with break/continue is captured.
 #[test]
 fn test_flow_graph_captures_loop_break_continue() {
-    let source = r#"
+    let source = r"
 let x: number;
 for (let i = 0; i < 10; i++) {
     if (i === 5) break;
@@ -2519,7 +2519,7 @@ for (let i = 0; i < 10; i++) {
     x = i;
 }
 x;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2540,7 +2540,7 @@ x;
 /// Test that nested control structures have correct flow.
 #[test]
 fn test_flow_graph_captures_nested_structures() {
-    let source = r#"
+    let source = r"
 let x: number;
 if (Math.random() > 0.5) {
     while (Math.random() > 0.1) {
@@ -2563,7 +2563,7 @@ if (Math.random() > 0.5) {
     }
 }
 x;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2591,7 +2591,7 @@ x;
 /// Test that class constructor flow is tracked.
 #[test]
 fn test_flow_graph_captures_class_constructor() {
-    let source = r#"
+    let source = r"
 class Foo {
     value: number;
 
@@ -2603,7 +2603,7 @@ class Foo {
         }
     }
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2633,12 +2633,12 @@ fn test_ts2454_variable_used_before_assigned() {
 
     use tsz_parser::parser::ParserState;
 
-    let source = r#"
+    let source = r"
 function test() {
     let x: string;
     return x;  // Error: x is used before being assigned
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2864,14 +2864,14 @@ if (typeof x === "string" || x) {
 fn test_assignment_tracking_in_conditions() {
     use tsz_parser::parser::ParserState;
 
-    let source = r#"
+    let source = r"
 let x: string | number;
 
 // Assignment in condition should be tracked
 if ((x = getValue()) !== null) {
     console.log(x.toString()); // x is definitely assigned here
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2893,13 +2893,13 @@ if ((x = getValue()) !== null) {
 fn test_assignment_tracking_in_while_conditions() {
     use tsz_parser::parser::ParserState;
 
-    let source = r#"
+    let source = r"
 let x: string | number | undefined;
 
 while ((x = getNextValue()) !== null) {
     console.log(x.toString());
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2945,13 +2945,13 @@ do {
 fn test_assignment_tracking_in_for_loop_conditions() {
     use tsz_parser::parser::ParserState;
 
-    let source = r#"
+    let source = r"
 let x: string | number | undefined;
 
 for (let i = 0; (x = getValue()); i++) {
     console.log(x.toString());
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -3088,13 +3088,13 @@ fn test_for_await_of_requires_async_context() {
     use tsz_parser::parser::ParserState;
 
     // Test that for-await-of can be parsed (error checking happens at typecheck)
-    let source = r#"
+    let source = r"
 async function test() {
     for await (const x of iterable) {
         console.log(x);
     }
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();

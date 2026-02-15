@@ -50,10 +50,10 @@ const arr = [...t];  // Should be (string | number)[]
 
 #[test]
 fn test_array_spread_with_array() {
-    let source = r#"
+    let source = r"
 const nums = [1, 2, 3];
 const arr = [...nums];  // Should be number[]
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -70,10 +70,10 @@ const arr = [...nums];  // Should be number[]
 
 #[test]
 fn test_array_spread_with_non_iterable_emits_ts2488() {
-    let source = r#"
+    let source = r"
 const num = 42;
 const arr = [...num];  // Should emit TS2488
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -99,11 +99,11 @@ const t: Tuple = ["hello", ...[1, 2], true];  // Error: can't spread number[] in
 
 #[test]
 fn test_object_spread() {
-    let source = r#"
+    let source = r"
 const obj1 = { a: 1, b: 2 };
 const obj2 = { c: 3 };
 const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: number }
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -117,12 +117,12 @@ const merged = { ...obj1, ...obj2 };  // Should be { a: number, b: number, c: nu
 
 #[test]
 fn test_rest_parameter() {
-    let source = r#"
+    let source = r"
 function sum(...nums: number[]) {
     return nums.reduce((a, b) => a + b, 0);
 }
 sum(1, 2, 3);
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -155,11 +155,11 @@ sum(1, "two", 3);  // Should emit TS2345
 
 #[test]
 fn test_array_destructuring_with_rest() {
-    let source = r#"
+    let source = r"
 const arr = [1, 2, 3, 4, 5];
 const [first, second, ...rest] = arr;
 // first: number, second: number, rest: number[]
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -192,7 +192,7 @@ const [s, n, ...rest] = t;
 
 #[test]
 fn test_discriminated_tuple_rest_destructuring_no_false_ts2345() {
-    let source = r#"
+    let source = r"
 type Expression = BooleanLogicExpression | 'true' | 'false';
 type BooleanLogicExpression = ['and', ...Expression[]] | ['not', Expression];
 
@@ -214,7 +214,7 @@ function evaluate(expression: Expression): boolean {
     return expression === 'true';
   }
 }
-"#;
+";
 
     let diagnostics = check_source(source);
     let ts2345_count = diagnostics.iter().filter(|d| d.code == 2345).count();
@@ -263,13 +263,13 @@ let numberB: number;
 
 #[test]
 fn test_spread_in_function_call() {
-    let source = r#"
+    let source = r"
 function add(a: number, b: number, c: number) {
     return a + b + c;
 }
 const args = [1, 2, 3];
 add(...args);  // Should work
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -368,11 +368,11 @@ const person: Person = { ...partial, age: 30 };
 
 #[test]
 fn test_nested_array_spread() {
-    let source = r#"
+    let source = r"
 const arr1 = [1, 2];
 const arr2 = [3, 4];
 const combined = [...arr1, ...arr2];  // Should be number[]
-"#;
+";
 
     let diagnostics = check_source(source);
 
@@ -419,7 +419,7 @@ const t: Tuple = [1, "test", ...createTuple()];
 
 #[test]
 fn test_this_in_class_getter_no_false_ts2683() {
-    let source = r#"
+    let source = r"
 // @strict: true
 class Foo {
     x = 5;
@@ -433,7 +433,7 @@ class Foo {
         return this.x;
     }
 }
-"#;
+";
     let diagnostics = check_source(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(
@@ -444,7 +444,7 @@ class Foo {
 
 #[test]
 fn test_this_in_object_literal_getter_no_false_ts2683() {
-    let source = r#"
+    let source = r"
 // @strict: true
 var obj = {
     get foo() {
@@ -455,7 +455,7 @@ var obj = {
         return this;
     }
 };
-"#;
+";
     let diagnostics = check_source(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(
@@ -466,7 +466,7 @@ var obj = {
 
 #[test]
 fn test_this_in_object_literal_func_expr_no_false_ts2683() {
-    let source = r#"
+    let source = r"
 // @noImplicitThis: true
 var obj = {
     x: 5,
@@ -474,7 +474,7 @@ var obj = {
         return this.x;
     }
 };
-"#;
+";
     let diagnostics = check_source(source);
     let ts2683_count = diagnostics.iter().filter(|d| d.code == 2683).count();
     assert_eq!(

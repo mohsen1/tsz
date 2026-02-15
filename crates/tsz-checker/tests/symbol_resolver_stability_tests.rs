@@ -4,10 +4,10 @@ use crate::CheckerState;
 
 #[test]
 fn test_parse_test_option_bool_comma_separated() {
-    let text = r#"
+    let text = r"
         // @strict: true, false
         // @noimplicitany: false, true
-    "#;
+    ";
 
     // Should handle comma-separated values correctly
     let result = CheckerState::parse_test_option_bool(text, "@strict");
@@ -23,9 +23,9 @@ fn test_parse_test_option_bool_comma_separated() {
 
 #[test]
 fn test_parse_test_option_bool_with_semicolon() {
-    let text = r#"
+    let text = r"
         /* @strict: true; */
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true), "Should parse 'true' from 'true;'");
@@ -33,9 +33,9 @@ fn test_parse_test_option_bool_with_semicolon() {
 
 #[test]
 fn test_parse_test_option_bool_with_comma_and_space() {
-    let text = r#"
+    let text = r"
         // @noimplicitany: true , false
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(
@@ -47,10 +47,10 @@ fn test_parse_test_option_bool_with_comma_and_space() {
 
 #[test]
 fn test_parse_test_option_bool_simple() {
-    let text = r#"
+    let text = r"
         // @strict: true
         // @noimplicitany: false
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true));
@@ -61,9 +61,9 @@ fn test_parse_test_option_bool_simple() {
 
 #[test]
 fn test_parse_test_option_bool_not_found() {
-    let text = r#"
+    let text = r"
         // @strict: true
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@noimplicitany");
     assert_eq!(result, None, "Should return None when key not found");
@@ -71,9 +71,9 @@ fn test_parse_test_option_bool_not_found() {
 
 #[test]
 fn test_parse_test_option_bool_invalid_value() {
-    let text = r#"
+    let text = r"
         // @strict: maybe
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, None, "Should return None for invalid boolean value");
@@ -81,9 +81,9 @@ fn test_parse_test_option_bool_invalid_value() {
 
 #[test]
 fn test_parse_test_option_bool_empty_value() {
-    let text = r#"
+    let text = r"
         // @strict:
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, None, "Should return None for empty value");
@@ -91,9 +91,9 @@ fn test_parse_test_option_bool_empty_value() {
 
 #[test]
 fn test_parse_test_option_bool_trailing_comma() {
-    let text = r#"
+    let text = r"
         // @strict: true,
-    "#;
+    ";
 
     let result = CheckerState::parse_test_option_bool(text, "@strict");
     assert_eq!(result, Some(true), "Should parse 'true' from 'true,'");

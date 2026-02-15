@@ -52,11 +52,11 @@ fn test_private_members_are_nominal() {
     // TS2322: Type 'B' is not assignable to type 'A'.
     //   Types have separate declarations of a private property 'x'.
     test_private_brands(
-        r#"
+        r"
         class A { private x: number = 1; }
         class B { private x: number = 1; }
         let a: A = new B();
-        "#,
+        ",
         1,
     );
 }
@@ -69,10 +69,10 @@ fn test_private_members_are_nominal() {
 fn test_private_member_prevents_structural_assignment() {
     // Accept both TS2322 and TS2741 - both indicate the assignment is rejected
     test_private_brands_with_codes(
-        r#"
+        r"
         class A { private x: number = 1; }
         let a: A = { x: 1 };
-        "#,
+        ",
         1,
         &[2322, 2741],
     );
@@ -85,11 +85,11 @@ fn test_protected_members_are_nominal() {
     // TS2322: Type 'B' is not assignable to type 'A'.
     //   Types have separate declarations of a protected property 'x'.
     test_private_brands(
-        r#"
+        r"
         class A { protected x: number = 1; }
         class B { protected x: number = 1; }
         let a: A = new B();
-        "#,
+        ",
         1,
     );
 }
@@ -100,11 +100,11 @@ fn test_protected_members_are_nominal() {
 fn test_subclass_compatibility() {
     // Should pass (subclass shares the private brand)
     test_private_brands(
-        r#"
+        r"
         class A { private x: number = 1; }
         class B extends A {}
         let a: A = new B();
-        "#,
+        ",
         0,
     );
 }
@@ -115,11 +115,11 @@ fn test_subclass_compatibility() {
 fn test_public_members_are_structural() {
     // Should pass (public members are structural)
     test_private_brands(
-        r#"
+        r"
         class A { public x: number = 1; }
         class B { public x: number = 1; }
         let a: A = new B();
-        "#,
+        ",
         0,
     );
 }
@@ -130,11 +130,11 @@ fn test_public_members_are_structural() {
 fn test_multiple_private_members() {
     // TS2322: Types have separate declarations of private properties 'x' and 'y'.
     test_private_brands(
-        r#"
+        r"
         class A { private x: number = 1; private y: number = 2; }
         class B { private x: number = 1; private y: number = 2; }
         let a: A = new B();
-        "#,
+        ",
         1,
     );
 }
@@ -144,11 +144,11 @@ fn test_multiple_private_members() {
 fn test_different_private_members() {
     // TS2322: Types with different private members are incompatible
     test_private_brands(
-        r#"
+        r"
         class A { private x: number = 1; }
         class B { private y: number = 1; }
         let a: A = new B();
-        "#,
+        ",
         1,
     );
 }
@@ -158,11 +158,11 @@ fn test_different_private_members() {
 fn test_private_methods_create_brands() {
     // TS2322: Types have separate declarations of a private method 'foo'
     test_private_brands(
-        r#"
+        r"
         class A { private foo() {} }
         class B { private foo() {} }
         let a: A = new B();
-        "#,
+        ",
         1,
     );
 }
@@ -174,10 +174,10 @@ fn test_private_methods_create_brands() {
 fn test_object_literal_extra_property_to_class_with_private() {
     // TS2322: Object literal can't match private member
     test_private_brands(
-        r#"
+        r"
         class A { private x: number = 1; }
         let a: A = { x: 1, y: 2 };
-        "#,
+        ",
         1,
     );
 }
@@ -187,11 +187,11 @@ fn test_object_literal_extra_property_to_class_with_private() {
 fn test_same_class_compatibility() {
     // Should pass
     test_private_brands(
-        r#"
+        r"
         class A { private x: number = 1; }
         let a1: A = new A();
         let a2: A = a1;
-        "#,
+        ",
         0,
     );
 }

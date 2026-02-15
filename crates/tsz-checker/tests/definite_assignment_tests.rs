@@ -35,7 +35,7 @@ fn count_code(diags: &[(u32, String)], code: u32) -> usize {
 
 #[test]
 fn test_definite_assignment_ts2564_constructor_branching_both_paths_assign() {
-    let source = r#"
+    let source = r"
         class C {
             x: number;
             constructor(flag: boolean) {
@@ -46,7 +46,7 @@ fn test_definite_assignment_ts2564_constructor_branching_both_paths_assign() {
                 }
             }
         }
-    "#;
+    ";
 
     let diags = diagnostics_with_options(
         source,
@@ -69,7 +69,7 @@ fn test_definite_assignment_ts2564_constructor_branching_both_paths_assign() {
 
 #[test]
 fn test_definite_assignment_ts2564_derived_super_ordering_not_counted_before_super() {
-    let source = r#"
+    let source = r"
         class Base {}
         class Derived extends Base {
             value: number;
@@ -78,7 +78,7 @@ fn test_definite_assignment_ts2564_derived_super_ordering_not_counted_before_sup
                 super();
             }
         }
-    "#;
+    ";
 
     let diags = diagnostics_with_options(
         source,
@@ -100,7 +100,7 @@ fn test_definite_assignment_ts2564_derived_super_ordering_not_counted_before_sup
 
 #[test]
 fn test_definite_assignment_ts2564_loop_and_try_conservative_paths() {
-    let source = r#"
+    let source = r"
         class C1 {
             x: number;
             constructor(flag: boolean) {
@@ -122,7 +122,7 @@ fn test_definite_assignment_ts2564_loop_and_try_conservative_paths() {
                 }
             }
         }
-    "#;
+    ";
 
     let diags = diagnostics_with_options(
         source,
@@ -144,7 +144,7 @@ fn test_definite_assignment_ts2564_loop_and_try_conservative_paths() {
 
 #[test]
 fn test_definite_assignment_ts2564_parameter_property_vs_plain_property() {
-    let source = r#"
+    let source = r"
         class WithParamProp {
             constructor(public x: number) {}
         }
@@ -153,7 +153,7 @@ fn test_definite_assignment_ts2564_parameter_property_vs_plain_property() {
             x: number;
             constructor(x: number) {}
         }
-    "#;
+    ";
 
     let diags = diagnostics_with_options(
         source,
@@ -175,7 +175,7 @@ fn test_definite_assignment_ts2564_parameter_property_vs_plain_property() {
 
 #[test]
 fn test_definite_assignment_ts2454_control_flow_join() {
-    let source = r#"
+    let source = r"
         function f1(flag: boolean) {
             let x: number;
             if (flag) {
@@ -193,7 +193,7 @@ fn test_definite_assignment_ts2454_control_flow_join() {
             }
             return y;
         }
-    "#;
+    ";
 
     let diags = diagnostics_with_options(
         source,

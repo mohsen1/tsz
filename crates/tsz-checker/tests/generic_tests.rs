@@ -48,7 +48,7 @@ const result2 = identity("string"); // TS2322: "string" doesn't satisfy "extends
 
 #[test]
 fn test_readonly_generic_parameter_no_ts2339() {
-    let source = r#"
+    let source = r"
 interface Props {
     onFoo?(value: string): boolean;
 }
@@ -58,7 +58,7 @@ type Readonly<T> = { readonly [K in keyof T]: T[K] };
 function test<P extends Props>(props: Readonly<P>) {
     props.onFoo;
 }
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -187,7 +187,7 @@ const c4 = new Container<number>({}); // TS2322: {} doesn't extend number
 
 #[test]
 fn test_generic_contravariance() {
-    let source = r#"
+    let source = r"
 interface Producer<T> {
     produce(): T;
 }
@@ -220,7 +220,7 @@ const consDerived: Consumer<Derived> = { consume: (value: Derived) => {} };
 
 useConsumer(consBase);     // OK
 useConsumer(consDerived); // TS2322 if invariance (should error)
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 

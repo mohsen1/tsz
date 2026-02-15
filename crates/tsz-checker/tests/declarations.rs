@@ -135,11 +135,11 @@ y: string = "hello";  // Should NOT report (has initializer)
 #[test]
 fn test_ts2564_with_definite_assignment_assertion() {
     // Test that TS2564 is NOT reported for properties with definite assignment assertion (!)
-    let source = r#"
+    let source = r"
 class Foo {
 x!: number;  // Should NOT report (has definite assignment assertion)
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -182,11 +182,11 @@ x!: number;  // Should NOT report (has definite assignment assertion)
 #[test]
 fn test_ts2564_skips_static_properties() {
     // Test that TS2564 is NOT reported for static properties
-    let source = r#"
+    let source = r"
 class Foo {
 static x: number;  // Should NOT report (static property)
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -229,11 +229,11 @@ static x: number;  // Should NOT report (static property)
 #[test]
 fn test_ts2564_disabled_when_strict_false() {
     // Test that TS2564 is NOT reported when strict mode is disabled
-    let source = r#"
+    let source = r"
 class Foo {
 x: number;  // Should NOT report (strict mode disabled)
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -274,14 +274,14 @@ x: number;  // Should NOT report (strict mode disabled)
 #[test]
 fn test_ts2564_phase2_simple_constructor_initialization() {
     // Test that TS2564 is NOT reported for properties initialized in simple constructor
-    let source = r#"
+    let source = r"
 class Foo {
 x: number;  // Should NOT report (initialized in constructor)
 constructor() {
     this.x = 1;
 }
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -323,7 +323,7 @@ constructor() {
 #[test]
 fn test_ts2564_phase2_conditional_all_paths_assigned() {
     // Test that TS2564 is NOT reported when property is initialized on all code paths
-    let source = r#"
+    let source = r"
 class Foo {
 x: number;  // Should NOT report (initialized on all paths)
 constructor(flag: boolean) {
@@ -334,7 +334,7 @@ constructor(flag: boolean) {
     }
 }
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -376,7 +376,7 @@ constructor(flag: boolean) {
 #[test]
 fn test_ts2564_phase2_conditional_not_all_paths_assigned() {
     // Test that TS2564 IS reported when property is not initialized on all code paths
-    let source = r#"
+    let source = r"
 class Foo {
 x: number;  // Should report TS2564 (not initialized on all paths)
 constructor(flag: boolean) {
@@ -386,7 +386,7 @@ constructor(flag: boolean) {
     // else branch doesn't assign this.x
 }
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -428,7 +428,7 @@ constructor(flag: boolean) {
 #[test]
 fn test_ts2564_phase2_return_statement_exits() {
     // Test that TS2564 IS reported when property is not initialized before early return
-    let source = r#"
+    let source = r"
 class Foo {
 x: number;  // Should report TS2564 (not initialized before early return)
 constructor(flag: boolean) {
@@ -438,7 +438,7 @@ constructor(flag: boolean) {
     this.x = 1;
 }
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -480,7 +480,7 @@ constructor(flag: boolean) {
 #[test]
 fn test_ts2564_phase2_multiple_properties() {
     // Test mixed scenario: some properties initialized, some not
-    let source = r#"
+    let source = r"
 class Foo {
 x: number;  // Should NOT report (initialized in constructor)
 y: string;  // Should report TS2564 (not initialized)
@@ -489,7 +489,7 @@ constructor() {
     this.x = 1;
 }
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 

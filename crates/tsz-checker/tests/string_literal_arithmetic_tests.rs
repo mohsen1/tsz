@@ -46,10 +46,10 @@ let y = x + 1;  // Should not emit TS2362 - this is string concatenation
 
 #[test]
 fn test_number_string_union_minus_emits_ts2362() {
-    let source = r#"
+    let source = r"
 declare let x: number | string;
 let y = x - 1;  // Should emit TS2362 - this is arithmetic, not string concatenation
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -118,10 +118,10 @@ let y = x + 1;  // Should not emit TS2362
 
 #[test]
 fn test_number_literal_union_plus_number_no_error() {
-    let source = r#"
+    let source = r"
 let x: 1 | 2 | 3;
 let y = x + 1;  // Should not emit TS2362 - number literal union is valid for arithmetic
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
