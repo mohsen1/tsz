@@ -483,7 +483,8 @@ fn resolve_single_reference(
     };
 
     // Canonicalize if possible
-    let canonical_path = std::fs::canonicalize(&config_path).unwrap_or(config_path.clone());
+    let canonical_path =
+        std::fs::canonicalize(&config_path).unwrap_or_else(|_| config_path.clone());
 
     // Validate the reference exists
     let (is_valid, error) = if canonical_path.exists() {

@@ -659,7 +659,7 @@ impl ModuleResolver {
     ) -> Result<ResolvedModule, ResolutionFailure> {
         let containing_dir = containing_file
             .parent()
-            .unwrap_or(Path::new("."))
+            .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
 
@@ -1654,7 +1654,11 @@ impl ModuleResolver {
         }
 
         // Try types/typings field
-        if let Some(types) = package_json.types.clone().or(package_json.typings.clone()) {
+        if let Some(types) = package_json
+            .types
+            .clone()
+            .or_else(|| package_json.typings.clone())
+        {
             let types_path = package_dir.join(&types);
             if let Some(resolved) = resolve_explicit_unknown_extension(&types_path) {
                 return Ok(ResolvedModule {
@@ -2131,7 +2135,7 @@ impl ModuleResolver {
         }
         let containing_dir = containing_file
             .parent()
-            .unwrap_or(Path::new("."))
+            .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
         let importing_module_kind = self.get_importing_module_kind(containing_file);

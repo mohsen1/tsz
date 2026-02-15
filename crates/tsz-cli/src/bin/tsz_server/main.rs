@@ -1226,7 +1226,7 @@ impl Server {
 
             let kind_modifiers = info.kind_modifiers.clone();
 
-            let range = info.range.unwrap_or(Range::new(position, position));
+            let range = info.range.unwrap_or_else(|| Range::new(position, position));
             // Build tags array from JSDoc tags when available
             let tags: Vec<serde_json::Value> = info
                 .tags
@@ -3299,7 +3299,7 @@ impl Server {
                         .unwrap_or(1) as u32;
                     Self::tsserver_to_lsp_position(line, offset)
                 })
-                .unwrap_or(Position::new(0, 0));
+                .unwrap_or_else(|| Position::new(0, 0));
             let end = request
                 .arguments
                 .get("end")
@@ -3317,7 +3317,7 @@ impl Server {
                         .unwrap_or(u32::MAX as u64) as u32;
                     Self::tsserver_to_lsp_position(line, offset)
                 })
-                .unwrap_or(Position::new(u32::MAX, u32::MAX));
+                .unwrap_or_else(|| Position::new(u32::MAX, u32::MAX));
             let range = Range::new(start, end);
 
             let hints = provider.provide_inlay_hints(root, range);

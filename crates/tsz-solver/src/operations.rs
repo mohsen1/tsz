@@ -376,7 +376,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             let has_rest = sig.params.iter().any(|p| p.rest);
                             count >= min_args && (has_rest || count <= sig.params.len())
                         })
-                        .or(shape.call_signatures.first())
+                        .or_else(|| shape.call_signatures.first())
                 } else {
                     shape.call_signatures.first()
                 };

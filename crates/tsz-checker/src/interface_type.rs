@@ -586,11 +586,11 @@ impl<'a> CheckerState<'a> {
                     string_index: derived_shape
                         .string_index
                         .clone()
-                        .or(base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index.clone()),
                     number_index: derived_shape
                         .number_index
                         .clone()
-                        .or(base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index.clone()),
                     symbol: None,
                 })
             }
@@ -626,11 +626,11 @@ impl<'a> CheckerState<'a> {
                     string_index: derived_shape
                         .string_index
                         .clone()
-                        .or(base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index.clone()),
                     number_index: derived_shape
                         .number_index
                         .clone()
-                        .or(base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index.clone()),
                     symbol: None,
                 })
             }
@@ -666,11 +666,11 @@ impl<'a> CheckerState<'a> {
                     string_index: derived_shape
                         .string_index
                         .clone()
-                        .or(base_shape.string_index.clone()),
+                        .or_else(|| base_shape.string_index.clone()),
                     number_index: derived_shape
                         .number_index
                         .clone()
-                        .or(base_shape.number_index.clone()),
+                        .or_else(|| base_shape.number_index.clone()),
                     symbol: None,
                 })
             }

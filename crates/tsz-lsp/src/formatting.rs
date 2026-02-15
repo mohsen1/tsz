@@ -139,7 +139,7 @@ impl DocumentFormattingProvider {
         cmd.arg("--stdin");
 
         let output = cmd
-            .current_dir(path.parent().unwrap_or(Path::new(".")))
+            .current_dir(path.parent().unwrap_or_else(|| Path::new(".")))
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
