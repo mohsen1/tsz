@@ -2840,7 +2840,27 @@ impl<'a> CheckerState<'a> {
                         access.name_or_argument,
                         index_type,
                     ) {
-                        self.error_readonly_property_at(&name, target_idx);
+                        // TS2542: use specific diagnostic for readonly index signatures.
+                        // Check if the property resolved through an index signature
+                        // (either the explicit "index signature" sentinel or via
+                        // from_index_signature on a named property).
+                        use tsz_solver::operations_property::PropertyAccessResult;
+                        let from_idx_sig = if name == "index signature" {
+                            true
+                        } else {
+                            matches!(
+                                self.resolve_property_access_with_env(object_type, &name),
+                                PropertyAccessResult::Success {
+                                    from_index_signature: true,
+                                    ..
+                                }
+                            )
+                        };
+                        if from_idx_sig {
+                            self.error_readonly_index_signature_at(object_type, target_idx);
+                        } else {
+                            self.error_readonly_property_at(&name, target_idx);
+                        }
                         return true;
                     }
                     // Check AST-level interface readonly for element access (obj["x"])
@@ -2940,7 +2960,13 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::operations_property::PropertyAccessResult;
         let property_result =
             self.resolve_property_access_with_env(readonly_check_type, &prop_name);
-        let property_exists = matches!(property_result, PropertyAccessResult::Success { .. });
+        let (property_exists, prop_from_index_sig) = match &property_result {
+            PropertyAccessResult::Success {
+                from_index_signature,
+                ..
+            } => (true, *from_index_signature),
+            _ => (false, false),
+        };
 
         if !property_exists {
             // Property doesn't exist on this type - skip readonly check
@@ -2963,7 +2989,12 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            self.error_readonly_property_at(&prop_name, target_idx);
+            // TS2542: use specific diagnostic for readonly index signatures
+            if prop_from_index_sig {
+                self.error_readonly_index_signature_at(readonly_check_type, target_idx);
+            } else {
+                self.error_readonly_property_at(&prop_name, target_idx);
+            }
             return true;
         }
 
