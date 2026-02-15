@@ -1,10 +1,9 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::{CheckerOptions, CheckerState};
 use tsz_binder::BinderState;
-use tsz_binder::SymbolId;
 use tsz_parser::parser::{NodeIndex, ParserState, node::NodeAccess};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{TypeId, TypeInterner};
+use tsz_solver::TypeInterner;
 
 #[cfg(test)]
 #[test]
@@ -74,7 +73,6 @@ fn run_and_print_source_line(
     println!("=== {file_name} pos={line}:{column} ({target_pos}) ===");
 
     let mut found = false;
-    let mut seen = std::collections::BTreeSet::<u32>::new();
 
     for (idx, node) in parser.get_arena().nodes.iter().enumerate() {
         if !(node.pos <= target_pos && target_pos < node.end) {
@@ -88,27 +86,12 @@ fn run_and_print_source_line(
             .get_identifier_text(node_idx)
             .unwrap_or("");
         let kind = node.kind;
-        seen.insert(node_type.0);
 
         if kind == SyntaxKind::Identifier as u16 {
             println!(
                 "cover id node={} kind={} pos={}..{} text={} -> {}",
                 idx, kind, node.pos, node.end, text, node_type.0
             );
-
-            if let Some(symbol) = checker.resolve_identifier_symbol(NodeIndex(idx as u32)) {
-                println!("  symbol resolved for identifier: {}", symbol.0);
-            }
-            if let crate::symbol_resolver::TypeSymbolResolution::Type(sym) =
-                checker.resolve_identifier_symbol_in_type_position(NodeIndex(idx as u32))
-            {
-                println!("  type-position symbol resolved: {}", sym.0);
-            }
-            if let crate::symbol_resolver::TypeSymbolResolution::ValueOnly(sym) =
-                checker.resolve_identifier_symbol_in_type_position(NodeIndex(idx as u32))
-            {
-                println!("  type-position value-only symbol: {}", sym.0);
-            }
         } else {
             println!(
                 "cover node={} kind={} pos={}..{} -> {}",
@@ -121,97 +104,10 @@ fn run_and_print_source_line(
         }
     }
 
-    if !seen.is_empty() {
-        println!("type id summary:");
-        for id in seen {
-            if let Some(data) = checker.ctx.types.lookup(TypeId(id)) {
-                println!("  {} => {:?}", id, data);
-            }
-        }
-    }
-
     if !found {
         println!(
             "Note: expected token '{}' not found directly under target cover",
             expected_token
-        );
-    }
-
-    for &idx in &[2453, 2547, 2548, 1531] {
-        let Some(node) = parser.get_arena().get(NodeIndex(idx)) else {
-            continue;
-        };
-        println!(
-            "inspect node {} => kind={} pos={}..{}",
-            idx, node.kind, node.pos, node.end
-        );
-        if let Some(class) = parser.get_arena().get_class(node) {
-            if let Some(name_text) = parser.get_arena().get_identifier_text(class.name) {
-                println!("  class name: {}", name_text);
-            }
-            println!("  class members start: {}", class.members.nodes.len());
-        }
-        if let Some(ext) = parser.get_arena().get_extended(NodeIndex(idx)) {
-            println!("  parent node: {}", ext.parent.0);
-        }
-    }
-
-    if let Some(ast_path_class_sym) =
-        find_symbol_id_by_text(&checker, parser.get_arena(), "AstPath")
-        && let Some(ast_path_instance) = checker.class_instance_type_from_symbol(ast_path_class_sym)
-    {
-        println!(
-            "class_instance_type_from_symbol(AstPath) => {}",
-            ast_path_instance.0
-        );
-        println!(
-            "AstPath instance type: {:?}",
-            checker.ctx.types.lookup(ast_path_instance)
-        );
-    }
-
-    if let Some(dataset_sym) = find_symbol_id_by_text(&checker, parser.get_arena(), "Dataset")
-        && let Some(dataset_instance) = checker.class_instance_type_from_symbol(dataset_sym)
-    {
-        println!(
-            "class_instance_type_from_symbol(Dataset) => {}",
-            dataset_instance.0
-        );
-        println!(
-            "Dataset instance type: {:?}",
-            checker.ctx.types.lookup(dataset_instance)
-        );
-    }
-
-    println!(
-        "node 2532 (|| expression) type => {:?}",
-        checker
-            .ctx
-            .types
-            .lookup(checker.get_type_of_node(NodeIndex(2532)))
-    );
-
-    println!("symbol_instance_types cached:");
-    for (sym, ty) in checker.ctx.symbol_instance_types.iter() {
-        let symbol_name = checker
-            .ctx
-            .binder
-            .get_symbol(*sym)
-            .map(|s| s.escaped_name.clone())
-            .unwrap_or_else(|| "<unknown>".to_string());
-        println!("  {:?} ({}) => {}", sym.0, symbol_name, ty.0);
-    }
-
-    println!(
-        "class_instance_type_cache size={}",
-        checker.ctx.class_instance_type_cache.len()
-    );
-    for (class_idx, ty) in checker.ctx.class_instance_type_cache.iter() {
-        println!(
-            "  node {} => {} ({:?})",
-            class_idx.0,
-            ty.0,
-            checker.ctx.types.lookup(*ty)
         );
     }
 
@@ -229,26 +125,4 @@ fn run_and_print_source_line(
         !has_ts2322,
         "Unexpected TS2322 in parser recovery/type-id repro for {file_name}"
     );
-}
-
-fn find_symbol_id_by_text(
-    checker: &CheckerState<'_>,
-    arena: &tsz_parser::NodeArena,
-    name: &str,
-) -> Option<SymbolId> {
-    for node_idx in 0..arena.nodes.len() {
-        let idx = NodeIndex(node_idx as u32);
-        let Some(text) = arena.get_identifier_text(idx) else {
-            continue;
-        };
-        if text != name {
-            continue;
-        }
-
-        if let Some(symbol) = checker.resolve_identifier_symbol(idx) {
-            return Some(symbol);
-        }
-    }
-
-    None
 }
