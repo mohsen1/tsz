@@ -915,13 +915,17 @@ impl<'a> CheckerState<'a> {
         // This must be checked first before TS2300/TS2309
         // Declaration files (.d.ts, .d.mts, .d.cts) are exempt: they describe
         // the shape of CJS modules and `export = X` is valid in declarations.
+        // Ambient module declarations (`declare module "M" { export = X; }`) are
+        // also exempt — they describe external module shapes.
         if self.ctx.compiler_options.module.is_es_module() && !is_declaration_file {
             for &export_idx in &export_assignment_indices {
-                self.error_at_node(
-                    export_idx,
-                    "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
-                    diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
-                );
+                if !self.is_ambient_declaration(export_idx) {
+                    self.error_at_node(
+                        export_idx,
+                        "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
+                        diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
+                    );
+                }
             }
         }
 
