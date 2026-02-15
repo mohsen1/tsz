@@ -1688,6 +1688,13 @@ impl ParserState {
         } else {
             // Decorators not followed by class - emit error and create error token
             self.error_expression_expected();
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                self.token_pos(),
+                1,
+                "';' expected.",
+                diagnostic_codes::EXPECTED,
+            );
             let end_pos = self.token_end();
             self.arena
                 .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
