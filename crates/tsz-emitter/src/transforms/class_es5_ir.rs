@@ -120,6 +120,40 @@ impl<'a> ES5ClassTransformer<'a> {
         self.source_text = Some(source_text);
     }
 
+    fn emit_leading_statement_comments(
+        &self,
+        body: &mut Vec<IRNode>,
+        prev_end: u32,
+        stmt_pos: u32,
+    ) {
+        let Some(source_text) = self.source_text else {
+            return;
+        };
+        let start = std::cmp::min(prev_end as usize, source_text.len());
+        let end = std::cmp::min(stmt_pos as usize, source_text.len());
+        if start >= end {
+            return;
+        }
+        let segment = &source_text[start..end];
+        for line in segment.lines() {
+            let trimmed = line.trim_start();
+            let is_comment =
+                trimmed.starts_with("//") || (trimmed.starts_with("/*") && trimmed.ends_with("*/"));
+            if is_comment {
+                body.push(IRNode::Raw(trimmed.to_string()));
+            }
+        }
+    }
+
+    fn source_has_semicolon_between(&self, start: u32, end: u32) -> bool {
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let start = std::cmp::min(start as usize, source_text.len());
+        let end = std::cmp::min(end as usize, source_text.len());
+        start < end && source_text[start..end].contains(';')
+    }
+
     /// Extract leading JSDoc comment from a node (if any).
     /// Returns the comment text including the /** ... */ delimiters.
     fn extract_leading_comment(&self, node: &tsz_parser::parser::node::Node) -> Option<String> {
@@ -578,9 +612,14 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         // Emit statements before super() unchanged
+        let mut prev_stmt_end = body_node.pos;
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if i >= super_stmt_position && super_stmt_idx.is_some() {
                 break;
+            }
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                prev_stmt_end = stmt_node.end;
             }
             body.push(self.convert_statement(stmt_idx));
         }
@@ -611,6 +650,10 @@ impl<'a> ES5ClassTransformer<'a> {
             for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
                 if i <= super_stmt_position {
                     continue;
+                }
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                    prev_stmt_end = stmt_node.end;
                 }
                 body.push(self.convert_statement_this_captured(stmt_idx));
             }
@@ -658,7 +701,12 @@ impl<'a> ES5ClassTransformer<'a> {
         if let Some(block_node) = self.arena.get(body_idx)
             && let Some(block) = self.arena.get_block(block_node)
         {
+            let mut prev_stmt_end = block_node.pos;
             for &stmt_idx in &block.statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                    prev_stmt_end = stmt_node.end;
+                }
                 body.push(self.convert_statement(stmt_idx));
             }
         }
@@ -1153,7 +1201,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut emitted_accessors: FxHashSet<String> = FxHashSet::default();
 
         // Second pass: emit methods and accessors in source order
-        for &member_idx in &class_data.members.nodes {
+        for (member_i, &member_idx) in class_data.members.nodes.iter().enumerate() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
@@ -1275,6 +1323,38 @@ impl<'a> ES5ClassTransformer<'a> {
                                 configurable: true,
                             },
                         });
+
+                        let has_explicit_semicolon_member = class_data
+                            .members
+                            .nodes
+                            .get(member_i + 1)
+                            .and_then(|&idx| self.arena.get(idx))
+                            .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
+                        if !has_explicit_semicolon_member {
+                            let accessor_end = [getter_idx, setter_idx]
+                                .into_iter()
+                                .flatten()
+                                .filter_map(|idx| self.arena.get(idx))
+                                .map(|n| n.end)
+                                .max()
+                                .unwrap_or(member_node.end);
+                            let next_pos = class_data
+                                .members
+                                .nodes
+                                .get(member_i + 1)
+                                .and_then(|&idx| self.arena.get(idx))
+                                .map_or(member_node.end, |n| n.pos);
+                            if self.source_has_semicolon_between(accessor_end, next_pos) {
+                                body.push(IRNode::EmptyStatement);
+                            }
+                        }
+                        if self.source_text.is_some_and(|text| {
+                            let start = std::cmp::min(member_node.pos as usize, text.len());
+                            let end = std::cmp::min(member_node.end as usize, text.len());
+                            start < end && text[start..end].trim_end().ends_with(';')
+                        }) {
+                            body.push(IRNode::EmptyStatement);
+                        }
 
                         emitted_accessors.insert(accessor_name);
                     }
@@ -1879,6 +1959,9 @@ impl<'a> AstToIr<'a> {
     fn convert_expression_statement(&self, idx: NodeIndex) -> IRNode {
         let node = self.arena.get(idx).unwrap();
         if let Some(expr_stmt) = self.arena.get_expression_statement(node) {
+            if self.is_destructuring_assignment_expr(expr_stmt.expression) {
+                return IRNode::ASTRef(idx);
+            }
             IRNode::ExpressionStatement(Box::new(self.convert_expression(expr_stmt.expression)))
         } else {
             IRNode::ASTRef(idx)
@@ -2825,6 +2908,36 @@ impl<'a> AstToIr<'a> {
         } else {
             IRNode::ASTRef(idx)
         }
+    }
+
+    fn is_destructuring_assignment_expr(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        let target_expr = if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            self.arena
+                .get_parenthesized(expr_node)
+                .map(|p| p.expression)
+                .unwrap_or(expr_idx)
+        } else {
+            expr_idx
+        };
+        let Some(bin_node) = self.arena.get(target_expr) else {
+            return false;
+        };
+        if bin_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(bin) = self.arena.get_binary_expr(bin_node) else {
+            return false;
+        };
+        if bin.operator_token != SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        self.arena.get(bin.left).is_some_and(|left| {
+            left.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || left.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        })
     }
 }
 

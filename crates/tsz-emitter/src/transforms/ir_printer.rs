@@ -20,6 +20,7 @@
 
 use std::fmt::Write;
 
+use crate::emitter::{Printer as AstPrinter, PrinterOptions};
 use crate::transform_context::TransformContext;
 use crate::transforms::ir::*;
 use tsz_parser::parser::base::NodeIndex;
@@ -1067,6 +1068,84 @@ impl<'a> IRPrinter<'a> {
                 if let Some(arena) = self.arena
                     && let Some(node) = arena.get(*idx)
                 {
+                    // For variable statements, directives are often attached to the nested
+                    // declaration-list node. Delegate full statement emission to Printer so
+                    // ES5 variable-list transforms still apply while preserving comments.
+                    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        && let Some(ref transforms) = self.transforms
+                        && let Some(var_stmt) = arena.get_variable(node)
+                    {
+                        let has_es5_var_list_directive =
+                            var_stmt.declarations.nodes.iter().any(|decl_idx| {
+                                matches!(
+                                    transforms.get(*decl_idx),
+                                    Some(
+                                        crate::transform_context::TransformDirective::ES5VariableDeclarationList { .. }
+                                    )
+                                )
+                            });
+                        if has_es5_var_list_directive {
+                            let mut printer = AstPrinter::with_transforms_and_options(
+                                arena,
+                                transforms.clone(),
+                                PrinterOptions::default(),
+                            );
+                            if let Some(source_text) = self.source_text {
+                                printer.set_source_text(source_text);
+                            }
+                            printer.emit(*idx);
+                            self.write(printer.get_output());
+                            return;
+                        }
+                    }
+
+                    if node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                        && let Some(ref transforms) = self.transforms
+                        && let Some(stmt) = arena.get_expression_statement(node)
+                        && let Some(expr_node) = arena.get(stmt.expression)
+                    {
+                        let target_expr =
+                            if expr_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                arena
+                                    .get_parenthesized(expr_node)
+                                    .map(|p| p.expression)
+                                    .unwrap_or(stmt.expression)
+                            } else {
+                                stmt.expression
+                            };
+                        let is_destructuring_assignment = arena
+                            .get(target_expr)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::BINARY_EXPRESSION)
+                            && arena
+                                .get(target_expr)
+                                .and_then(|n| arena.get_binary_expr(n))
+                                .is_some_and(|bin| {
+                                    bin.operator_token
+                                        == tsz_scanner::SyntaxKind::EqualsToken as u16
+                                        && arena.get(bin.left).is_some_and(|left| {
+                                            left.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                                || left.kind
+                                                    == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                        })
+                                });
+                        if is_destructuring_assignment {
+                            let mut printer = AstPrinter::with_transforms_and_options(
+                                arena,
+                                transforms.clone(),
+                                PrinterOptions {
+                                    target: crate::emitter::ScriptTarget::ES5,
+                                    ..PrinterOptions::default()
+                                },
+                            );
+                            if let Some(source_text) = self.source_text {
+                                printer.set_source_text(source_text);
+                            }
+                            printer.emit(*idx);
+                            self.write(printer.get_output());
+                            return;
+                        }
+                    }
+
                     // Get the directive for this node (clone to avoid borrow issues)
                     let directive = self.transforms.as_ref().and_then(|t| t.get(*idx).cloned());
 
@@ -1569,7 +1648,7 @@ impl<'a> IRPrinter<'a> {
 
         // Empty body with no defaults: emit as single-line { } if source was single-line
         if !has_defaults && body.is_empty() {
-            if is_body_source_single_line && !self.force_multiline_empty_function_body {
+            if !self.force_multiline_empty_function_body {
                 self.write("{ }");
             } else {
                 self.write("{");
