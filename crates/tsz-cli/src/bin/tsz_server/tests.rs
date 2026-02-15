@@ -39,6 +39,12 @@ fn test_line_offset_to_byte_second_line() {
 }
 
 #[test]
+fn test_content_appears_binary_with_control_bytes() {
+    assert!(content_appears_binary("G@\u{0004}\u{0004}\u{0004}\u{0004}"));
+    assert!(!content_appears_binary("const x = 1;\n"));
+}
+
+#[test]
 fn test_apply_change_insert() {
     assert_eq!(
         Server::apply_change("hello world", 1, 7, 1, 7, "beautiful "),

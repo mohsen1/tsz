@@ -1437,8 +1437,9 @@ pub enum FileReadResult {
 /// Read a source file, detecting binary files that should emit TS1490.
 ///
 /// TypeScript detects binary files by checking for:
-/// - UTF-16 BOM (FE FF for BE, FF FE for LE)  
+/// - UTF-16 BOM (FE FF for BE, FF FE for LE)
 /// - Non-valid UTF-8 sequences
+/// - Many control bytes (not expected in source files)
 /// - Files with many null bytes
 pub fn read_source_file(path: &Path) -> FileReadResult {
     // Read as bytes first
@@ -1464,6 +1465,7 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 /// Matches TypeScript's binary detection:
 /// - UTF-16 BOM at start
 /// - Many consecutive null bytes (embedded binaries, corrupted files)
+/// - Repeated control bytes in first 1024 bytes
 fn is_binary_file(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return false;
@@ -1497,6 +1499,18 @@ fn is_binary_file(bytes: &[u8]) -> bool {
         } else {
             consecutive_nulls = 0;
         }
+    }
+
+    // Check for non-whitespace control bytes (e.g. U+0000/Control-Range from garbled UTF-16 read as UTF-8)
+    let control_count = bytes
+        .iter()
+        .take(1024)
+        .filter(|&&b| {
+            b < 0x20 && b != b'\t' && b != b'\n' && b != b'\r' && b != b'\x0C' && b != b'\x0B'
+        })
+        .count();
+    if control_count >= 4 {
+        return true;
     }
 
     false
