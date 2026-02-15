@@ -1837,7 +1837,7 @@ impl<'a> CheckerState<'a> {
         // Collect from named re-exports (export { X } from './module')
         if let Some(reexports) = target_binder.reexports.get(&target_file_name) {
             let reexports = reexports.clone();
-            for (exported_name, (source_module, original_name)) in reexports.iter() {
+            for (exported_name, (source_module, original_name)) in &reexports {
                 if !result.has(exported_name) {
                     let name = original_name.as_deref().unwrap_or(exported_name);
                     if let Some(source_idx) = self
@@ -2934,7 +2934,7 @@ impl<'a> CheckerState<'a> {
         match query::classify_for_base_instance_merge(self.ctx.types, base_instance_type) {
             query::BaseInstanceMergeKind::Object(base_shape_id) => {
                 let base_shape = self.ctx.types.object_shape(base_shape_id);
-                for base_prop in base_shape.properties.iter() {
+                for base_prop in &base_shape.properties {
                     properties
                         .entry(base_prop.name)
                         .or_insert_with(|| base_prop.clone());

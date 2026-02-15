@@ -76,7 +76,7 @@ impl<'a> CheckerState<'a> {
 
         // First pass: count expanded arguments (spreads of tuple/array literals expand to multiple args)
         let mut expanded_count = 0usize;
-        for &arg_idx in args.iter() {
+        for &arg_idx in args {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx)
                 && arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                 && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
@@ -130,7 +130,7 @@ impl<'a> CheckerState<'a> {
 
                     // If it's a tuple type, expand its elements
                     if let Some(elems) = tuple_elements_for_type(self.ctx.types, spread_type) {
-                        for elem in elems.iter() {
+                        for elem in &elems {
                             arg_types.push(elem.type_id);
                             effective_index += 1;
                         }
@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
                             && let Some(literal) = self.ctx.arena.get_literal_expr(expr_node)
                         {
                             // It's an array literal - get each element's type individually
-                            for &elem_idx in literal.elements.nodes.iter() {
+                            for &elem_idx in &literal.elements.nodes {
                                 if elem_idx.is_none() {
                                     continue;
                                 }

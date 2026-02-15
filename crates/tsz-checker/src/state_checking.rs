@@ -2413,7 +2413,7 @@ impl<'a> CheckerState<'a> {
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
 
-            for &member in members.iter() {
+            for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
                 let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
                     continue;
@@ -4674,7 +4674,7 @@ impl<'a> CheckerState<'a> {
         let mut assigned = FxHashSet::default();
 
         // Track parameter properties as already assigned
-        for _key in tracked.iter() {
+        for _key in tracked {
             // Parameter properties are assigned in the parameter list
             // We'll collect them separately if needed
         }

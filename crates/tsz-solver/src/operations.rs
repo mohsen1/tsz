@@ -1629,7 +1629,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut max = 0usize;
         let mut variadic = false;
 
-        for elem in elements.iter() {
+        for elem in elements {
             if elem.rest {
                 let expansion = self.expand_tuple_rest(elem.type_id);
                 for fixed in expansion.fixed {
@@ -3175,7 +3175,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut substitution = TypeSubstitution::new();
-        for (&placeholder, _) in var_map.iter() {
+        for (&placeholder, _) in var_map {
             if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(placeholder) {
                 // Use UNKNOWN instead of ANY for unresolved placeholders
                 // to expose hidden type errors instead of silently accepting all values

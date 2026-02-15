@@ -528,7 +528,7 @@ impl Project {
         let arena = file.arena();
         let expected_symbol = file.binder().file_locals.get(namespace_name);
 
-        for node in arena.nodes.iter() {
+        for node in &arena.nodes {
             if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {

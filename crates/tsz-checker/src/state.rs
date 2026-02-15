@@ -845,14 +845,14 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(array) = self.ctx.arena.get_literal_expr(node) {
-                    for &elem_idx in array.elements.nodes.iter() {
+                    for &elem_idx in &array.elements.nodes {
                         self.clear_type_cache_recursive(elem_idx);
                     }
                 }
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 if let Some(obj) = self.ctx.arena.get_literal_expr(node) {
-                    for &prop_idx in obj.elements.nodes.iter() {
+                    for &prop_idx in &obj.elements.nodes {
                         self.clear_type_cache_recursive(prop_idx);
                     }
                 }

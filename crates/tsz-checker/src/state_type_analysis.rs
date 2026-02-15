@@ -862,7 +862,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Second pass: Now resolve constraints and defaults with all type parameters in scope
-        for &param_idx in param_indices.iter() {
+        for &param_idx in &param_indices {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };

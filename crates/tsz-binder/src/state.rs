@@ -1392,7 +1392,7 @@ impl BinderState {
         let mut name_interner = Interner::new();
         let mut merged_by_name: FxHashMap<Atom, SymbolId> = FxHashMap::default();
 
-        for lib_ctx in lib_contexts.iter() {
+        for lib_ctx in lib_contexts {
             let lib_binder_ptr = Arc::as_ptr(&lib_ctx.binder) as usize;
 
             // Process all symbols in this lib binder

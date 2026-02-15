@@ -2276,12 +2276,12 @@ pub fn collect_property_name_atoms_for_diagnostics(
         }
         match classify_property_traversal(db, type_id) {
             PropertyTraversalKind::Object(shape) => {
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     out.push(prop.name);
                 }
             }
             PropertyTraversalKind::Callable(shape) => {
-                for prop in shape.properties.iter() {
+                for prop in &shape.properties {
                     out.push(prop.name);
                 }
             }

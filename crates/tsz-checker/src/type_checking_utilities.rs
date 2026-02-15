@@ -228,7 +228,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<NodeIndex> {
         let mut current_expanded_index = 0;
 
-        for &arg_idx in args.iter() {
+        for &arg_idx in args {
             if let Some(arg_node) = self.ctx.arena.get(arg_idx) {
                 // Check if this is a spread element
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
@@ -522,7 +522,7 @@ impl<'a> CheckerState<'a> {
             query::LiteralKeyKind::Union(members) => {
                 let mut string_keys = Vec::with_capacity(members.len());
                 let mut number_keys = Vec::new();
-                for &member in members.iter() {
+                for &member in &members {
                     match query::literal_key_kind(self.ctx.types, member) {
                         query::LiteralKeyKind::StringLiteral(atom) => string_keys.push(atom),
                         query::LiteralKeyKind::NumberLiteral(num) => number_keys.push(num),
@@ -2992,7 +2992,7 @@ impl<'a> CheckerState<'a> {
             query::classify_for_union_members(self.ctx.types, effective_left)
         {
             tracing::trace!("effective_left is union");
-            for &left_member in left_members.iter() {
+            for &left_member in &left_members {
                 tracing::trace!(?left_member, ?effective_right, "checking union member");
                 if !self.types_have_no_overlap(left_member, effective_right) {
                     tracing::trace!("union member overlaps - union overlaps");
@@ -3007,7 +3007,7 @@ impl<'a> CheckerState<'a> {
             query::classify_for_union_members(self.ctx.types, effective_right)
         {
             tracing::trace!("effective_right is union");
-            for &right_member in right_members.iter() {
+            for &right_member in &right_members {
                 if !self.types_have_no_overlap(effective_left, right_member) {
                     return false;
                 }

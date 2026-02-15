@@ -527,7 +527,7 @@ impl<'a> Printer<'a> {
                             self.write(&temp_var);
                             self.write(" = ");
                             self.emit_object_literal_entries_es5(elems);
-                            for elem in elems.iter() {
+                            for elem in *elems {
                                 if self.is_computed_property_member(*elem) {
                                     self.write(", ");
                                     self.emit_property_assignment_es5(*elem, &temp_var);
@@ -563,7 +563,7 @@ impl<'a> Printer<'a> {
                                 self.write(&temp_var);
                                 self.write(" = ");
                                 self.emit_object_literal_entries_es5(elems);
-                                for elem in elems.iter() {
+                                for elem in *elems {
                                     if self.is_computed_property_member(*elem) {
                                         self.write(", ");
                                         self.emit_property_assignment_es5(*elem, &temp_var);
