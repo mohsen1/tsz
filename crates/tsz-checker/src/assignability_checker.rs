@@ -13,11 +13,12 @@
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::assignability::{
-    AssignabilityEvalKind, ExcessPropertiesKind, are_types_overlapping_with_env,
-    check_assignable_gate_with_overrides, classify_for_assignability_eval,
-    classify_for_excess_properties, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_assignable_with_resolver, is_callable_type,
-    is_redeclaration_identical_with_resolver, is_subtype_with_resolver, object_shape_for_type,
+    AssignabilityEvalKind, AssignabilityQueryInputs, ExcessPropertiesKind,
+    are_types_overlapping_with_env, check_assignable_gate_with_overrides,
+    classify_for_assignability_eval, classify_for_excess_properties,
+    is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
+    is_assignable_with_resolver, is_callable_type, is_redeclaration_identical_with_resolver,
+    is_subtype_with_resolver, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -169,13 +170,15 @@ impl<'a> CheckerState<'a> {
         // This enables access to symbol information for enum type detection
         let overrides = CheckerOverrideProvider::new(self, None);
         let result = is_assignable_with_overrides(
-            self.ctx.types,
-            &self.ctx,
-            source,
-            target,
-            flags,
-            &self.ctx.inheritance_graph,
-            self.ctx.sound_mode(),
+            &AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            },
             &overrides,
         );
 
@@ -207,13 +210,15 @@ impl<'a> CheckerState<'a> {
         let flags = self.ctx.pack_relation_flags();
         let overrides = CheckerOverrideProvider::new(self, Some(env));
         is_assignable_with_overrides(
-            self.ctx.types,
-            env,
-            source,
-            target,
-            flags,
-            &self.ctx.inheritance_graph,
-            self.ctx.sound_mode(),
+            &AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: env,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            },
             &overrides,
         )
     }
@@ -632,18 +637,16 @@ impl<'a> CheckerState<'a> {
         // (CheckerContext resolver + checker overrides) so mismatch suppression and
         // diagnostic rendering observe identical compatibility semantics.
         let overrides = CheckerOverrideProvider::new(self, None);
-        let gate = check_assignable_gate_with_overrides(
-            self.ctx.types,
-            &self.ctx,
+        let inputs = AssignabilityQueryInputs {
+            db: self.ctx.types,
+            resolver: &self.ctx,
             source,
             target,
-            self.ctx.pack_relation_flags(),
-            &self.ctx.inheritance_graph,
-            self.ctx.sound_mode(),
-            &overrides,
-            Some(&self.ctx),
-            true,
-        );
+            flags: self.ctx.pack_relation_flags(),
+            inheritance_graph: &self.ctx.inheritance_graph,
+            sound_mode: self.ctx.sound_mode(),
+        };
+        let gate = check_assignable_gate_with_overrides(&inputs, &overrides, Some(&self.ctx), true);
         if gate.related {
             return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
                 weak_union_violation: false,

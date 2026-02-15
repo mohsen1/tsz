@@ -213,27 +213,27 @@ impl<'a> SemanticTokensProvider<'a> {
         }
 
         // First check if this is a declaration (has a symbol directly bound to its parent)
-        if let Some(sym_id) = self.find_declaration_symbol(node_idx) {
-            if let Some(symbol) = self.binder.get_symbol(sym_id) {
-                let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
-                modifiers |= semantic_token_modifiers::DECLARATION;
+        if let Some(sym_id) = self.find_declaration_symbol(node_idx)
+            && let Some(symbol) = self.binder.get_symbol(sym_id)
+        {
+            let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
+            modifiers |= semantic_token_modifiers::DECLARATION;
 
-                // Check for const variable (readonly modifier)
-                modifiers |= self.get_contextual_modifiers(node_idx, symbol);
+            // Check for const variable (readonly modifier)
+            modifiers |= self.get_contextual_modifiers(node_idx, symbol);
 
-                self.emit_token_at(node_idx, token_type, modifiers);
-                return;
-            }
+            self.emit_token_at(node_idx, token_type, modifiers);
+            return;
         }
 
         // Try to resolve this identifier as a reference
-        if let Some(sym_id) = self.binder.resolve_identifier(self.arena, node_idx) {
-            if let Some(symbol) = self.binder.get_symbol(sym_id) {
-                let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
-                modifiers |= self.get_contextual_modifiers_for_ref(symbol);
-                self.emit_token_at(node_idx, token_type, modifiers);
-                return;
-            }
+        if let Some(sym_id) = self.binder.resolve_identifier(self.arena, node_idx)
+            && let Some(symbol) = self.binder.get_symbol(sym_id)
+        {
+            let (token_type, mut modifiers) = self.map_symbol_to_token(symbol);
+            modifiers |= self.get_contextual_modifiers_for_ref(symbol);
+            self.emit_token_at(node_idx, token_type, modifiers);
+            return;
         }
 
         // Check if this identifier is used as a type reference to a type parameter
@@ -340,10 +340,10 @@ impl<'a> SemanticTokensProvider<'a> {
         let mut modifiers = 0u32;
 
         // Check for const variable -> READONLY modifier
-        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-            if self.is_const_variable(ident_idx) {
-                modifiers |= semantic_token_modifiers::READONLY;
-            }
+        if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+            && self.is_const_variable(ident_idx)
+        {
+            modifiers |= semantic_token_modifiers::READONLY;
         }
 
         // Check for exported symbol
@@ -375,20 +375,18 @@ impl<'a> SemanticTokensProvider<'a> {
         // Check for const variable -> READONLY modifier
         if symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
             // Check the declaration to see if it's const
-            if let Some(decl_idx) = symbol.declarations.first() {
-                if let Some(decl_node) = self.arena.get(*decl_idx) {
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-                        // Walk up to the variable declaration list to check for CONST flag
-                        if let Some(ext) = self.arena.get_extended(*decl_idx) {
-                            let parent_idx = ext.parent;
-                            if let Some(parent_node) = self.arena.get(parent_idx) {
-                                if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
-                                    if (parent_node.flags as u32 & node_flags::CONST) != 0 {
-                                        modifiers |= semantic_token_modifiers::READONLY;
-                                    }
-                                }
-                            }
-                        }
+            if let Some(decl_idx) = symbol.declarations.first()
+                && let Some(decl_node) = self.arena.get(*decl_idx)
+                && decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            {
+                // Walk up to the variable declaration list to check for CONST flag
+                if let Some(ext) = self.arena.get_extended(*decl_idx) {
+                    let parent_idx = ext.parent;
+                    if let Some(parent_node) = self.arena.get(parent_idx)
+                        && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        && (parent_node.flags as u32 & node_flags::CONST) != 0
+                    {
+                        modifiers |= semantic_token_modifiers::READONLY;
                     }
                 }
             }
@@ -426,10 +424,10 @@ impl<'a> SemanticTokensProvider<'a> {
         let Some(parent) = self.arena.get(parent_idx) else {
             return false;
         };
-        if parent.kind == syntax_kind_ext::TYPE_PARAMETER {
-            if let Some(tp) = self.arena.get_type_parameter(parent) {
-                return tp.name == ident_idx;
-            }
+        if parent.kind == syntax_kind_ext::TYPE_PARAMETER
+            && let Some(tp) = self.arena.get_type_parameter(parent)
+        {
+            return tp.name == ident_idx;
         }
         false
     }
@@ -490,16 +488,13 @@ impl<'a> SemanticTokensProvider<'a> {
 
             if let Some(tp_list) = type_params {
                 for &tp_idx in &tp_list.nodes {
-                    if let Some(tp_node) = self.arena.get(tp_idx) {
-                        if let Some(tp_data) = self.arena.get_type_parameter(tp_node) {
-                            if let Some(tp_name_node) = self.arena.get(tp_data.name) {
-                                if let Some(tp_ident) = self.arena.get_identifier(tp_name_node) {
-                                    if tp_ident.escaped_text == *name {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
+                    if let Some(tp_node) = self.arena.get(tp_idx)
+                        && let Some(tp_data) = self.arena.get_type_parameter(tp_node)
+                        && let Some(tp_name_node) = self.arena.get(tp_data.name)
+                        && let Some(tp_ident) = self.arena.get_identifier(tp_name_node)
+                        && tp_ident.escaped_text == *name
+                    {
+                        return true;
                     }
                 }
             }
@@ -601,12 +596,11 @@ impl<'a> SemanticTokensProvider<'a> {
             SemanticTokenType::Property
         } else if flags & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
             // Check if it's a parameter
-            if let Some(decl_idx) = symbol.declarations.first() {
-                if let Some(decl_node) = self.arena.get(*decl_idx) {
-                    if decl_node.kind == syntax_kind_ext::PARAMETER {
-                        return (SemanticTokenType::Parameter, modifiers);
-                    }
-                }
+            if let Some(decl_idx) = symbol.declarations.first()
+                && let Some(decl_node) = self.arena.get(*decl_idx)
+                && decl_node.kind == syntax_kind_ext::PARAMETER
+            {
+                return (SemanticTokenType::Parameter, modifiers);
             }
             SemanticTokenType::Variable
         } else if flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {

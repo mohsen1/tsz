@@ -1028,12 +1028,11 @@ impl<'a> CheckerState<'a> {
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
         let mut updates = Vec::new();
-        if !first_decl.is_none() {
-            if let Some(node) = self.ctx.arena.get(first_decl)
-                && let Some(interface) = self.ctx.arena.get_interface(node)
-            {
-                (params, updates) = self.push_type_parameters(&interface.type_parameters);
-            }
+        if !first_decl.is_none()
+            && let Some(node) = self.ctx.arena.get(first_decl)
+            && let Some(interface) = self.ctx.arena.get_interface(node)
+        {
+            (params, updates) = self.push_type_parameters(&interface.type_parameters);
         }
 
         let type_param_bindings = self.get_type_param_bindings();

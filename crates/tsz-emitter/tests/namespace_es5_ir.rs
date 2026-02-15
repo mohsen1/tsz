@@ -65,17 +65,16 @@ fn transform_and_emit(source: &str) -> String {
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
         && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(info) = find_namespace_info(&parser, stmt_idx)
     {
-        if let Some(info) = find_namespace_info(&parser, stmt_idx) {
-            let transformer = NamespaceES5Transformer::new(&parser.arena);
-            let ir = if info.is_exported {
-                transformer.transform_exported_namespace(info.ns_idx)
-            } else {
-                transformer.transform_namespace(info.ns_idx)
-            };
-            if let Some(ir) = ir {
-                return IRPrinter::emit_to_string(&ir);
-            }
+        let transformer = NamespaceES5Transformer::new(&parser.arena);
+        let ir = if info.is_exported {
+            transformer.transform_exported_namespace(info.ns_idx)
+        } else {
+            transformer.transform_namespace(info.ns_idx)
+        };
+        if let Some(ir) = ir {
+            return IRPrinter::emit_to_string(&ir);
         }
     }
     String::new()
@@ -89,17 +88,16 @@ fn transform_and_emit_commonjs(source: &str) -> String {
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
         && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(info) = find_namespace_info(&parser, stmt_idx)
     {
-        if let Some(info) = find_namespace_info(&parser, stmt_idx) {
-            let transformer = NamespaceES5Transformer::with_commonjs(&parser.arena, true);
-            let ir = if info.is_exported {
-                transformer.transform_exported_namespace(info.ns_idx)
-            } else {
-                transformer.transform_namespace(info.ns_idx)
-            };
-            if let Some(ir) = ir {
-                return IRPrinter::emit_to_string(&ir);
-            }
+        let transformer = NamespaceES5Transformer::with_commonjs(&parser.arena, true);
+        let ir = if info.is_exported {
+            transformer.transform_exported_namespace(info.ns_idx)
+        } else {
+            transformer.transform_namespace(info.ns_idx)
+        };
+        if let Some(ir) = ir {
+            return IRPrinter::emit_to_string(&ir);
         }
     }
     String::new()
@@ -549,18 +547,17 @@ fn transform_and_emit_with_comments(source: &str) -> String {
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
         && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(info) = find_namespace_info(&parser, stmt_idx)
     {
-        if let Some(info) = find_namespace_info(&parser, stmt_idx) {
-            let mut transformer = NamespaceES5Transformer::new(&parser.arena);
-            transformer.set_source_text(source);
-            let ir = if info.is_exported {
-                transformer.transform_exported_namespace(info.ns_idx)
-            } else {
-                transformer.transform_namespace(info.ns_idx)
-            };
-            if let Some(ir) = ir {
-                return IRPrinter::emit_to_string(&ir);
-            }
+        let mut transformer = NamespaceES5Transformer::new(&parser.arena);
+        transformer.set_source_text(source);
+        let ir = if info.is_exported {
+            transformer.transform_exported_namespace(info.ns_idx)
+        } else {
+            transformer.transform_namespace(info.ns_idx)
+        };
+        if let Some(ir) = ir {
+            return IRPrinter::emit_to_string(&ir);
         }
     }
     String::new()
@@ -642,21 +639,20 @@ fn test_trailing_comment_ir_structure() {
     if let Some(root_node) = parser.arena.get(root)
         && let Some(source_file) = parser.arena.get_source_file(root_node)
         && let Some(&stmt_idx) = source_file.statements.nodes.first()
+        && let Some(info) = find_namespace_info(&parser, stmt_idx)
     {
-        if let Some(info) = find_namespace_info(&parser, stmt_idx) {
-            let mut transformer = NamespaceES5Transformer::new(&parser.arena);
-            transformer.set_source_text(source);
-            let ir = transformer.transform_namespace(info.ns_idx);
-            if let Some(IRNode::NamespaceIIFE { body, .. }) = &ir {
-                let has_trailing = body.iter().any(|n| matches!(n, IRNode::TrailingComment(_)));
-                assert!(
-                    has_trailing,
-                    "Body should contain TrailingComment node. Body: {:?}",
-                    body
-                );
-            } else {
-                panic!("Expected NamespaceIIFE, got: {:?}", ir);
-            }
+        let mut transformer = NamespaceES5Transformer::new(&parser.arena);
+        transformer.set_source_text(source);
+        let ir = transformer.transform_namespace(info.ns_idx);
+        if let Some(IRNode::NamespaceIIFE { body, .. }) = &ir {
+            let has_trailing = body.iter().any(|n| matches!(n, IRNode::TrailingComment(_)));
+            assert!(
+                has_trailing,
+                "Body should contain TrailingComment node. Body: {:?}",
+                body
+            );
+        } else {
+            panic!("Expected NamespaceIIFE, got: {:?}", ir);
         }
     }
 }

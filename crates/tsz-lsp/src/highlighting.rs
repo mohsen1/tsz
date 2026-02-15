@@ -105,10 +105,10 @@ impl<'a> DocumentHighlightProvider<'a> {
         position: Position,
     ) -> Option<Vec<DocumentHighlight>> {
         // First, check if we're on a keyword that should trigger keyword highlighting
-        if let Some(kw_highlights) = self.get_keyword_highlights(position) {
-            if !kw_highlights.is_empty() {
-                return Some(kw_highlights);
-            }
+        if let Some(kw_highlights) = self.get_keyword_highlights(position)
+            && !kw_highlights.is_empty()
+        {
+            return Some(kw_highlights);
         }
 
         // Use FindReferences to get all occurrences
@@ -326,20 +326,20 @@ impl<'a> DocumentHighlightProvider<'a> {
         highlights.push(DocumentHighlight::text(self.keyword_range(if_kw_offset, 2)));
 
         // If there's an else clause, highlight the "else" keyword
-        if !if_data.else_statement.is_none() {
-            if let Some(else_node) = self.arena.get(if_data.else_statement) {
-                // The "else" keyword appears just before the else clause.
-                // Note: then_node.end includes trailing trivia which may extend
-                // past the "else" keyword, so search a window before else_node.pos.
-                let else_search_end = else_node.pos as usize;
-                let else_search_start = else_search_end.saturating_sub(20);
-                if let Some(else_offset) =
-                    self.find_keyword_in_range(else_search_start, else_search_end, "else")
-                {
-                    highlights.push(DocumentHighlight::text(
-                        self.keyword_range(else_offset as u32, 4),
-                    ));
-                }
+        if !if_data.else_statement.is_none()
+            && let Some(else_node) = self.arena.get(if_data.else_statement)
+        {
+            // The "else" keyword appears just before the else clause.
+            // Note: then_node.end includes trailing trivia which may extend
+            // past the "else" keyword, so search a window before else_node.pos.
+            let else_search_end = else_node.pos as usize;
+            let else_search_start = else_search_end.saturating_sub(20);
+            if let Some(else_offset) =
+                self.find_keyword_in_range(else_search_start, else_search_end, "else")
+            {
+                highlights.push(DocumentHighlight::text(
+                    self.keyword_range(else_offset as u32, 4),
+                ));
             }
         }
 
@@ -369,23 +369,18 @@ impl<'a> DocumentHighlightProvider<'a> {
             // Note: then_node.end may include trailing trivia past "else",
             // so search a window before else_node.pos instead.
             for (i, node) in self.arena.nodes.iter().enumerate() {
-                if node.kind == syntax_kind_ext::IF_STATEMENT {
-                    if let Some(if_data) = self.arena.get_if_statement(node) {
-                        if !if_data.else_statement.is_none() {
-                            if let Some(else_node) = self.arena.get(if_data.else_statement) {
-                                let else_search_end = else_node.pos as usize;
-                                let else_search_start = else_search_end.saturating_sub(20);
-                                if let Some(else_kw_off) = self.find_keyword_in_range(
-                                    else_search_start,
-                                    else_search_end,
-                                    "else",
-                                ) {
-                                    if else_kw_off == word_start {
-                                        return Some(NodeIndex(i as u32));
-                                    }
-                                }
-                            }
-                        }
+                if node.kind == syntax_kind_ext::IF_STATEMENT
+                    && let Some(if_data) = self.arena.get_if_statement(node)
+                    && !if_data.else_statement.is_none()
+                    && let Some(else_node) = self.arena.get(if_data.else_statement)
+                {
+                    let else_search_end = else_node.pos as usize;
+                    let else_search_start = else_search_end.saturating_sub(20);
+                    if let Some(else_kw_off) =
+                        self.find_keyword_in_range(else_search_start, else_search_end, "else")
+                        && else_kw_off == word_start
+                    {
+                        return Some(NodeIndex(i as u32));
                     }
                 }
             }
@@ -428,39 +423,39 @@ impl<'a> DocumentHighlightProvider<'a> {
         ));
 
         // Highlight "catch" if present
-        if !try_data.catch_clause.is_none() {
-            if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
-                let catch_kw_offset = self.skip_whitespace_forward(catch_node.pos as usize) as u32;
-                highlights.push(DocumentHighlight::text(
-                    self.keyword_range(catch_kw_offset, 5),
-                ));
-            }
+        if !try_data.catch_clause.is_none()
+            && let Some(catch_node) = self.arena.get(try_data.catch_clause)
+        {
+            let catch_kw_offset = self.skip_whitespace_forward(catch_node.pos as usize) as u32;
+            highlights.push(DocumentHighlight::text(
+                self.keyword_range(catch_kw_offset, 5),
+            ));
         }
 
         // Highlight "finally" if present
-        if !try_data.finally_block.is_none() {
-            if let Some(finally_node) = self.arena.get(try_data.finally_block) {
-                // The "finally" keyword is right before the finally block
-                // We need to search backward from the block start
-                let search_start = if !try_data.catch_clause.is_none() {
-                    if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
-                        catch_node.end as usize
-                    } else {
-                        try_data.try_block.0 as usize
-                    }
-                } else if let Some(try_block) = self.arena.get(try_data.try_block) {
-                    try_block.end as usize
+        if !try_data.finally_block.is_none()
+            && let Some(finally_node) = self.arena.get(try_data.finally_block)
+        {
+            // The "finally" keyword is right before the finally block
+            // We need to search backward from the block start
+            let search_start = if !try_data.catch_clause.is_none() {
+                if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                    catch_node.end as usize
                 } else {
-                    try_node.pos as usize
-                };
-
-                if let Some(finally_kw_offset) =
-                    self.find_keyword_in_range(search_start, finally_node.end as usize, "finally")
-                {
-                    highlights.push(DocumentHighlight::text(
-                        self.keyword_range(finally_kw_offset as u32, 7),
-                    ));
+                    try_data.try_block.0 as usize
                 }
+            } else if let Some(try_block) = self.arena.get(try_data.try_block) {
+                try_block.end as usize
+            } else {
+                try_node.pos as usize
+            };
+
+            if let Some(finally_kw_offset) =
+                self.find_keyword_in_range(search_start, finally_node.end as usize, "finally")
+            {
+                highlights.push(DocumentHighlight::text(
+                    self.keyword_range(finally_kw_offset as u32, 7),
+                ));
             }
         }
 
@@ -493,17 +488,14 @@ impl<'a> DocumentHighlightProvider<'a> {
         // For "catch" keyword, find the try statement that has a catch clause at this position
         if word == "catch" {
             for (i, node) in self.arena.nodes.iter().enumerate() {
-                if node.kind == syntax_kind_ext::TRY_STATEMENT {
-                    if let Some(try_data) = self.arena.get_try(node) {
-                        if !try_data.catch_clause.is_none() {
-                            if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
-                                let catch_kw_start =
-                                    self.skip_whitespace_forward(catch_node.pos as usize);
-                                if catch_kw_start == word_start {
-                                    return Some(NodeIndex(i as u32));
-                                }
-                            }
-                        }
+                if node.kind == syntax_kind_ext::TRY_STATEMENT
+                    && let Some(try_data) = self.arena.get_try(node)
+                    && !try_data.catch_clause.is_none()
+                    && let Some(catch_node) = self.arena.get(try_data.catch_clause)
+                {
+                    let catch_kw_start = self.skip_whitespace_forward(catch_node.pos as usize);
+                    if catch_kw_start == word_start {
+                        return Some(NodeIndex(i as u32));
                     }
                 }
             }
@@ -513,34 +505,29 @@ impl<'a> DocumentHighlightProvider<'a> {
         // For "finally" keyword, find the try statement that has a finally block
         if word == "finally" {
             for (i, node) in self.arena.nodes.iter().enumerate() {
-                if node.kind == syntax_kind_ext::TRY_STATEMENT {
-                    if let Some(try_data) = self.arena.get_try(node) {
-                        if !try_data.finally_block.is_none() {
-                            // Check if the finally keyword is within this try statement
-                            if node.pos <= offset && node.end > offset {
-                                // Verify the finally keyword position
-                                let search_start = if !try_data.catch_clause.is_none() {
-                                    if let Some(catch_node) = self.arena.get(try_data.catch_clause)
-                                    {
-                                        catch_node.end as usize
-                                    } else {
-                                        node.pos as usize
-                                    }
-                                } else if let Some(try_block) = self.arena.get(try_data.try_block) {
-                                    try_block.end as usize
-                                } else {
-                                    node.pos as usize
-                                };
-                                if let Some(finally_kw) = self.find_keyword_in_range(
-                                    search_start,
-                                    node.end as usize,
-                                    "finally",
-                                ) {
-                                    if finally_kw == word_start {
-                                        return Some(NodeIndex(i as u32));
-                                    }
-                                }
+                if node.kind == syntax_kind_ext::TRY_STATEMENT
+                    && let Some(try_data) = self.arena.get_try(node)
+                    && !try_data.finally_block.is_none()
+                {
+                    // Check if the finally keyword is within this try statement
+                    if node.pos <= offset && node.end > offset {
+                        // Verify the finally keyword position
+                        let search_start = if !try_data.catch_clause.is_none() {
+                            if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
+                                catch_node.end as usize
+                            } else {
+                                node.pos as usize
                             }
+                        } else if let Some(try_block) = self.arena.get(try_data.try_block) {
+                            try_block.end as usize
+                        } else {
+                            node.pos as usize
+                        };
+                        if let Some(finally_kw) =
+                            self.find_keyword_in_range(search_start, node.end as usize, "finally")
+                            && finally_kw == word_start
+                        {
+                            return Some(NodeIndex(i as u32));
                         }
                     }
                 }
@@ -570,19 +557,16 @@ impl<'a> DocumentHighlightProvider<'a> {
         ));
 
         // Highlight all case/default clauses in the case block
-        if let Some(case_block_node) = self.arena.get(switch_data.case_block) {
-            if let Some(block_data) = self.arena.get_block(case_block_node) {
-                for &clause_idx in &block_data.statements.nodes {
-                    if let Some(clause_node) = self.arena.get(clause_idx) {
-                        let kw_offset =
-                            self.skip_whitespace_forward(clause_node.pos as usize) as u32;
-                        if clause_node.kind == syntax_kind_ext::CASE_CLAUSE {
-                            highlights
-                                .push(DocumentHighlight::text(self.keyword_range(kw_offset, 4)));
-                        } else if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
-                            highlights
-                                .push(DocumentHighlight::text(self.keyword_range(kw_offset, 7)));
-                        }
+        if let Some(case_block_node) = self.arena.get(switch_data.case_block)
+            && let Some(block_data) = self.arena.get_block(case_block_node)
+        {
+            for &clause_idx in &block_data.statements.nodes {
+                if let Some(clause_node) = self.arena.get(clause_idx) {
+                    let kw_offset = self.skip_whitespace_forward(clause_node.pos as usize) as u32;
+                    if clause_node.kind == syntax_kind_ext::CASE_CLAUSE {
+                        highlights.push(DocumentHighlight::text(self.keyword_range(kw_offset, 4)));
+                    } else if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
+                        highlights.push(DocumentHighlight::text(self.keyword_range(kw_offset, 7)));
                     }
                 }
             }
@@ -722,31 +706,27 @@ impl<'a> DocumentHighlightProvider<'a> {
     /// Find a do-while statement whose "while" keyword is at the given position.
     fn find_do_while_for_while_keyword(&self, while_kw_start: usize) -> Option<NodeIndex> {
         for (i, node) in self.arena.nodes.iter().enumerate() {
-            if node.kind == syntax_kind_ext::DO_STATEMENT {
-                if let Some(loop_data) = self.arena.get_loop(node) {
-                    // Search using condition node position to avoid trivia issues
-                    let found_kw = if !loop_data.condition.is_none() {
-                        if let Some(cond_node) = self.arena.get(loop_data.condition) {
-                            let search_end = cond_node.pos as usize;
-                            let search_start = search_end.saturating_sub(20);
-                            self.find_keyword_in_range(search_start, search_end, "while")
-                        } else {
-                            None
-                        }
-                    } else if let Some(stmt_node) = self.arena.get(loop_data.statement) {
-                        self.find_keyword_in_range(
-                            stmt_node.end as usize,
-                            node.end as usize,
-                            "while",
-                        )
+            if node.kind == syntax_kind_ext::DO_STATEMENT
+                && let Some(loop_data) = self.arena.get_loop(node)
+            {
+                // Search using condition node position to avoid trivia issues
+                let found_kw = if !loop_data.condition.is_none() {
+                    if let Some(cond_node) = self.arena.get(loop_data.condition) {
+                        let search_end = cond_node.pos as usize;
+                        let search_start = search_end.saturating_sub(20);
+                        self.find_keyword_in_range(search_start, search_end, "while")
                     } else {
                         None
-                    };
-                    if let Some(while_kw) = found_kw {
-                        if while_kw == while_kw_start {
-                            return Some(NodeIndex(i as u32));
-                        }
                     }
+                } else if let Some(stmt_node) = self.arena.get(loop_data.statement) {
+                    self.find_keyword_in_range(stmt_node.end as usize, node.end as usize, "while")
+                } else {
+                    None
+                };
+                if let Some(while_kw) = found_kw
+                    && while_kw == while_kw_start
+                {
+                    return Some(NodeIndex(i as u32));
                 }
             }
         }

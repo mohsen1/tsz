@@ -66,11 +66,11 @@ fn strip_json_comments(input: &str) -> String {
             result.push(c);
             if c == '"' {
                 in_string = false;
-            } else if c == '\\' {
-                if let Some(&next) = chars.peek() {
-                    result.push(next);
-                    chars.next();
-                }
+            } else if c == '\\'
+                && let Some(&next) = chars.peek()
+            {
+                result.push(next);
+                chars.next();
             }
         } else if c == '"' {
             in_string = true;
@@ -92,12 +92,12 @@ fn strip_json_comments(input: &str) -> String {
                     // Block comment - skip until */
                     chars.next();
                     while let Some(ch) = chars.next() {
-                        if ch == '*' {
-                            if let Some(&'/') = chars.peek() {
-                                chars.next();
-                                result.push(' '); // Replace with space
-                                break;
-                            }
+                        if ch == '*'
+                            && let Some(&'/') = chars.peek()
+                        {
+                            chars.next();
+                            result.push(' '); // Replace with space
+                            break;
                         }
                     }
                 } else {

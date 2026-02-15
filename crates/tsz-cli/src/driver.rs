@@ -28,7 +28,7 @@ use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use crate::driver_resolution::{
-    ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
+    EmitOutputsContext, ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
     collect_import_bindings, collect_module_specifiers, collect_module_specifiers_from_text,
     collect_star_export_specifiers, collect_type_packages_from_root, default_type_roots,
     emit_outputs, env_flag, normalize_type_roots, resolve_module_specifier,
@@ -941,16 +941,16 @@ fn compile_inner(
     let emitted_files = if !should_emit {
         Vec::new()
     } else {
-        let outputs = emit_outputs(
-            &program,
-            &resolved,
-            &base_dir,
-            root_dir.as_deref(),
-            out_dir.as_deref(),
-            declaration_dir.as_deref(),
-            dirty_paths.as_ref(),
-            type_caches_ref,
-        )?;
+        let outputs = emit_outputs(EmitOutputsContext {
+            program: &program,
+            options: &resolved,
+            base_dir: &base_dir,
+            root_dir: root_dir.as_deref(),
+            out_dir: out_dir.as_deref(),
+            declaration_dir: declaration_dir.as_deref(),
+            dirty_paths: dirty_paths.as_ref(),
+            type_caches: type_caches_ref,
+        })?;
         write_outputs(&outputs)?
     };
     perf_log_phase("emit_outputs", emit_outputs_start);
@@ -1427,10 +1427,10 @@ fn is_binary_file(bytes: &[u8]) -> bool {
     // Check for UTF-16 BOM
     // UTF-16 BE: FE FF
     // UTF-16 LE: FF FE
-    if bytes.len() >= 2 {
-        if (bytes[0] == 0xFE && bytes[1] == 0xFF) || (bytes[0] == 0xFF && bytes[1] == 0xFE) {
-            return true;
-        }
+    if bytes.len() >= 2
+        && ((bytes[0] == 0xFE && bytes[1] == 0xFF) || (bytes[0] == 0xFF && bytes[1] == 0xFE))
+    {
+        return true;
     }
 
     // Check for many null bytes (binary file indicator)
@@ -1776,15 +1776,14 @@ fn read_source_files(
                         for root in &type_roots {
                             for candidate in &candidates {
                                 let package_root = root.join(candidate);
-                                if package_root.is_dir() {
-                                    if let Some(entry) =
+                                if package_root.is_dir()
+                                    && let Some(entry) =
                                     crate::driver_resolution::resolve_type_package_entry_with_mode(
                                         &package_root, mode, options,
                                     )
                                 {
                                     result = Some(entry);
                                     break;
-                                }
                                 }
                             }
                             if result.is_some() {
@@ -1968,46 +1967,45 @@ fn collect_diagnostics(
                         }
                         // Check if this is NotFound and the old resolver would find it (virtual test files)
                         // In that case, validate Node16 rules before accepting the fallback
-                        if failure.is_not_found() {
-                            if let Some(resolved) = resolve_module_specifier(
+                        if failure.is_not_found()
+                            && let Some(resolved) = resolve_module_specifier(
                                 file_path,
                                 specifier,
                                 options,
                                 base_dir,
                                 &mut resolution_cache,
                                 &program_paths,
-                            ) {
-                                // Validate Node16/NodeNext extension requirements for virtual files
-                                let resolution_kind = options.effective_module_resolution();
-                                let is_node16_or_next = matches!(
-                                    resolution_kind,
-                                    crate::config::ModuleResolutionKind::Node16
-                                        | crate::config::ModuleResolutionKind::NodeNext
-                                );
+                            )
+                        {
+                            // Validate Node16/NodeNext extension requirements for virtual files
+                            let resolution_kind = options.effective_module_resolution();
+                            let is_node16_or_next = matches!(
+                                resolution_kind,
+                                crate::config::ModuleResolutionKind::Node16
+                                    | crate::config::ModuleResolutionKind::NodeNext
+                            );
 
-                                if is_node16_or_next {
-                                    // Check if importing file is ESM (by extension or path)
-                                    let file_path_str = file_path.to_string_lossy();
-                                    let importing_ext =
-                                        tsz::module_resolver::ModuleExtension::from_path(file_path);
-                                    let is_esm = importing_ext.forces_esm()
-                                        || file_path_str.ends_with(".mts")
-                                        || file_path_str.ends_with(".mjs");
+                            if is_node16_or_next {
+                                // Check if importing file is ESM (by extension or path)
+                                let file_path_str = file_path.to_string_lossy();
+                                let importing_ext =
+                                    tsz::module_resolver::ModuleExtension::from_path(file_path);
+                                let is_esm = importing_ext.forces_esm()
+                                    || file_path_str.ends_with(".mts")
+                                    || file_path_str.ends_with(".mjs");
 
-                                    // Check if specifier has an extension
-                                    let specifier_has_extension =
-                                        Path::new(specifier).extension().is_some();
+                                // Check if specifier has an extension
+                                let specifier_has_extension =
+                                    Path::new(specifier).extension().is_some();
 
-                                    // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
-                                    // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
-                                    // even though the file exists, because ESM requires explicit extensions
-                                    if is_esm
-                                        && !specifier_has_extension
-                                        && specifier.starts_with('.')
-                                    {
-                                        // Emit TS2307 error - module cannot be found with the exact specifier
-                                        // (even though the file exists, ESM requires explicit extension)
-                                        resolved_module_errors.insert(
+                                // In Node16/NodeNext ESM mode, relative imports must have explicit extensions
+                                // If the import is extensionless, TypeScript treats it as "cannot find module" (TS2307)
+                                // even though the file exists, because ESM requires explicit extensions
+                                if is_esm && !specifier_has_extension && specifier.starts_with('.')
+                                {
+                                    // Emit TS2307 error - module cannot be found with the exact specifier
+                                    // (even though the file exists, ESM requires explicit extension)
+                                    resolved_module_errors.insert(
                                             (file_idx, specifier.clone()),
                                             tsz::checker::context::ResolutionError {
                                                 code: tsz::module_resolver::CANNOT_FIND_MODULE,
@@ -2017,18 +2015,17 @@ fn collect_diagnostics(
                                                 ),
                                             },
                                         );
-                                        continue; // Don't add to resolved_modules - this is an error
-                                    }
+                                    continue; // Don't add to resolved_modules - this is an error
                                 }
-
-                                // Fallback succeeded and passed validation - add to resolved paths
-                                let canonical = canonicalize_or_owned(&resolved);
-                                if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
-                                    resolved_module_paths
-                                        .insert((file_idx, specifier.clone()), target_idx);
-                                }
-                                continue; // Virtual file found and validated, skip error
                             }
+
+                            // Fallback succeeded and passed validation - add to resolved paths
+                            let canonical = canonicalize_or_owned(&resolved);
+                            if let Some(&target_idx) = canonical_to_file_idx.get(&canonical) {
+                                resolved_module_paths
+                                    .insert((file_idx, specifier.clone()), target_idx);
+                            }
+                            continue; // Virtual file found and validated, skip error
                         }
 
                         // Check if this is a JSON module import without resolveJsonModule enabled
@@ -2058,15 +2055,11 @@ fn collect_diagnostics(
                             failure_to_use,
                             tsz::module_resolver::ResolutionFailure::NotFound { .. }
                                 | tsz::module_resolver::ResolutionFailure::PackageJsonError { .. }
-                        ) {
-                            if let Some(js_path) = module_resolver.probe_js_file(
-                                specifier,
-                                file_path,
-                                span,
-                                *import_kind,
-                            ) {
-                                if options.checker.no_implicit_any {
-                                    resolved_module_errors.insert(
+                        ) && let Some(js_path) =
+                            module_resolver.probe_js_file(specifier, file_path, span, *import_kind)
+                        {
+                            if options.checker.no_implicit_any {
+                                resolved_module_errors.insert(
                                         (file_idx, specifier.clone()),
                                         tsz::checker::context::ResolutionError {
                                             code: 7016,
@@ -2076,13 +2069,12 @@ fn collect_diagnostics(
                                             ),
                                         },
                                     );
-                                }
-                                // Mark the module as "resolved" so the checker doesn't
-                                // independently emit TS2307. The module is treated as
-                                // untyped (type `any`) — no target file index needed.
-                                resolved_module_specifiers.insert((file_idx, specifier.clone()));
-                                continue;
                             }
+                            // Mark the module as "resolved" so the checker doesn't
+                            // independently emit TS2307. The module is treated as
+                            // untyped (type `any`) — no target file index needed.
+                            resolved_module_specifiers.insert((file_idx, specifier.clone()));
+                            continue;
                         }
 
                         // Convert ResolutionFailure to Diagnostic to get the error code and message
@@ -2281,22 +2273,23 @@ fn collect_diagnostics(
                 .par_iter()
                 .zip(per_file_binders.into_par_iter())
                 .map(|(&file_idx, binder)| {
-                    check_file_for_parallel(
+                    let context = CheckFileForParallelContext {
                         file_idx,
                         binder,
                         program,
-                        &query_cache,
-                        &compiler_options,
-                        &lib_ctx_for_parallel,
-                        &all_arenas,
-                        &all_binders,
-                        &resolved_module_paths,
-                        &resolved_module_specifiers,
-                        &resolved_module_errors,
-                        &is_external_module_by_file,
+                        query_cache: &query_cache,
+                        compiler_options: &compiler_options,
+                        lib_contexts: &lib_ctx_for_parallel,
+                        all_arenas: &all_arenas,
+                        all_binders: &all_binders,
+                        resolved_module_paths: &resolved_module_paths,
+                        resolved_module_specifiers: &resolved_module_specifiers,
+                        resolved_module_errors: &resolved_module_errors,
+                        is_external_module_by_file: &is_external_module_by_file,
                         no_check,
                         check_js,
-                    )
+                    };
+                    check_file_for_parallel(context)
                 })
                 .collect()
         };
@@ -2306,22 +2299,23 @@ fn collect_diagnostics(
             .iter()
             .zip(per_file_binders.into_iter())
             .map(|(&file_idx, binder)| {
-                check_file_for_parallel(
+                let context = CheckFileForParallelContext {
                     file_idx,
                     binder,
                     program,
-                    &query_cache,
-                    &compiler_options,
-                    &lib_ctx_for_parallel,
-                    &all_arenas,
-                    &all_binders,
-                    &resolved_module_paths,
-                    &resolved_module_specifiers,
-                    &resolved_module_errors,
-                    &is_external_module_by_file,
+                    query_cache: &query_cache,
+                    compiler_options: &compiler_options,
+                    lib_contexts: &lib_ctx_for_parallel,
+                    all_arenas: &all_arenas,
+                    all_binders: &all_binders,
+                    resolved_module_paths: &resolved_module_paths,
+                    resolved_module_specifiers: &resolved_module_specifiers,
+                    resolved_module_errors: &resolved_module_errors,
+                    is_external_module_by_file: &is_external_module_by_file,
                     no_check,
                     check_js,
-                )
+                };
+                check_file_for_parallel(context)
             })
             .collect();
 
@@ -2431,19 +2425,19 @@ fn collect_diagnostics(
                     || resolved_module_paths.contains_key(&(file_idx, specifier.clone()))
                 {
                     resolved_modules.insert(specifier.clone());
-                } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone())) {
-                    if let Some(resolved) = resolve_module_specifier(
+                } else if !resolved_module_errors.contains_key(&(file_idx, specifier.clone()))
+                    && let Some(resolved) = resolve_module_specifier(
                         Path::new(&file.file_name),
                         specifier,
                         options,
                         base_dir,
                         &mut resolution_cache,
                         &program_paths,
-                    ) {
-                        let canonical = canonicalize_or_owned(&resolved);
-                        if program_paths.contains(&canonical) {
-                            resolved_modules.insert(specifier.clone());
-                        }
+                    )
+                {
+                    let canonical = canonicalize_or_owned(&resolved);
+                    if program_paths.contains(&canonical) {
+                        resolved_modules.insert(specifier.clone());
                     }
                 }
             }
@@ -2500,16 +2494,16 @@ fn collect_diagnostics(
                     .insert(file_path.clone(), file_diagnostics.clone());
                 c.export_hashes.insert(file_path.clone(), new_hash);
 
-                if old_hash != Some(new_hash) {
-                    if let Some(dependents) = c.reverse_dependencies.get(&file_path) {
-                        for dep_path in dependents {
-                            if let Some(&dep_idx) = canonical_to_file_idx.get(dep_path) {
-                                if checked_files.insert(dep_idx) {
-                                    work_queue.push_back(dep_idx);
-                                    c.type_caches.remove(dep_path);
-                                    c.diagnostics.remove(dep_path);
-                                }
-                            }
+                if old_hash != Some(new_hash)
+                    && let Some(dependents) = c.reverse_dependencies.get(&file_path)
+                {
+                    for dep_path in dependents {
+                        if let Some(&dep_idx) = canonical_to_file_idx.get(dep_path)
+                            && checked_files.insert(dep_idx)
+                        {
+                            work_queue.push_back(dep_idx);
+                            c.type_caches.remove(dep_path);
+                            c.diagnostics.remove(dep_path);
                         }
                     }
                 }
@@ -2634,29 +2628,46 @@ fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
     None
 }
 
+struct CheckFileForParallelContext<'a> {
+    file_idx: usize,
+    binder: BinderState,
+    program: &'a MergedProgram,
+    query_cache: &'a QueryCache<'a>,
+    compiler_options: &'a tsz_common::CheckerOptions,
+    lib_contexts: &'a [LibContext],
+    all_arenas: &'a Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,
+    all_binders: &'a Arc<Vec<Arc<BinderState>>>,
+    resolved_module_paths: &'a Arc<FxHashMap<(usize, String), usize>>,
+    resolved_module_specifiers: &'a Arc<FxHashSet<(usize, String)>>,
+    resolved_module_errors:
+        &'a Arc<FxHashMap<(usize, String), tsz::checker::context::ResolutionError>>,
+    is_external_module_by_file: &'a Arc<FxHashMap<String, bool>>,
+    no_check: bool,
+    check_js: bool,
+}
+
 /// Check a single file for the parallel checking path.
 ///
 /// This is extracted from the work queue loop so it can be called from rayon's par_iter.
 /// Each invocation creates its own CheckerState (with its own mutable context),
 /// while sharing thread-safe structures (TypeInterner via DashMap, QueryCache via RwLock).
-fn check_file_for_parallel(
-    file_idx: usize,
-    binder: BinderState,
-    program: &MergedProgram,
-    query_cache: &QueryCache,
-    compiler_options: &tsz_common::CheckerOptions,
-    lib_contexts: &[LibContext],
-    all_arenas: &Arc<Vec<Arc<tsz::parser::node::NodeArena>>>,
-    all_binders: &Arc<Vec<Arc<BinderState>>>,
-    resolved_module_paths: &Arc<FxHashMap<(usize, String), usize>>,
-    resolved_module_specifiers: &Arc<FxHashSet<(usize, String)>>,
-    resolved_module_errors: &Arc<
-        FxHashMap<(usize, String), tsz::checker::context::ResolutionError>,
-    >,
-    is_external_module_by_file: &Arc<FxHashMap<String, bool>>,
-    no_check: bool,
-    check_js: bool,
-) -> Vec<Diagnostic> {
+fn check_file_for_parallel<'a>(context: CheckFileForParallelContext<'a>) -> Vec<Diagnostic> {
+    let CheckFileForParallelContext {
+        file_idx,
+        binder,
+        program,
+        query_cache,
+        compiler_options,
+        lib_contexts,
+        all_arenas,
+        all_binders,
+        resolved_module_paths,
+        resolved_module_specifiers,
+        resolved_module_errors,
+        is_external_module_by_file,
+        no_check,
+        check_js,
+    } = context;
     let file = &program.files[file_idx];
     let module_specifiers = collect_module_specifiers(&file.arena, file.source_file);
 
@@ -3548,12 +3559,11 @@ fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<St
 
     // Filter for .d.ts files and get their modification times
     for path in emitted_files {
-        if path.extension().and_then(|s| s.to_str()) == Some("d.ts") {
-            if let Ok(metadata) = std::fs::metadata(path) {
-                if let Ok(modified) = metadata.modified() {
-                    dts_files_with_times.insert(modified, path.clone());
-                }
-            }
+        if path.extension().and_then(|s| s.to_str()) == Some("d.ts")
+            && let Ok(metadata) = std::fs::metadata(path)
+            && let Ok(modified) = metadata.modified()
+        {
+            dts_files_with_times.insert(modified, path.clone());
         }
     }
 

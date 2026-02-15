@@ -21,8 +21,10 @@ fn test_source_map_generator_class_method() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -80,8 +82,10 @@ fn test_source_map_generator_try_catch() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -134,8 +138,10 @@ fn test_source_map_generator_with_parameters() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -188,8 +194,10 @@ function* itemGenerator(): Generator<Item> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -244,8 +252,10 @@ fn test_source_map_generator_expression() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -305,8 +315,10 @@ fn test_source_map_namespace_with_function() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -365,8 +377,10 @@ fn test_source_map_namespace_with_class() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -426,8 +440,10 @@ fn test_source_map_namespace_with_enum() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -481,8 +497,10 @@ fn test_source_map_nested_namespace_dot_notation() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -540,8 +558,10 @@ namespace Merged {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -597,8 +617,10 @@ fn test_source_map_namespace_with_variables() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -660,8 +682,10 @@ fn test_source_map_exported_namespace() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -719,8 +743,10 @@ fn test_source_map_namespace_nested_declaration() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -778,8 +804,10 @@ fn test_source_map_namespace_with_interface_only() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -839,8 +867,10 @@ fn test_source_map_namespace_mixed_content() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -896,8 +926,10 @@ const result = sum(1, 2, 3, 4, 5);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -949,8 +981,10 @@ const greeting = concat("Hello", " ", "World");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1003,8 +1037,10 @@ const product = multiply(...nums);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1055,8 +1091,10 @@ const combined = [...first, ...second, 7, 8, 9];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1107,8 +1145,10 @@ const merged = { ...defaults, ...overrides, custom: true };"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1159,8 +1199,10 @@ console.log(first, second, remaining);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1211,8 +1253,10 @@ console.log(name, age, details);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1268,8 +1312,10 @@ fn test_source_map_rest_parameter_class_method() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1322,8 +1368,10 @@ const point = new Point(...coords);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1378,8 +1426,10 @@ const result = merge(a, b, c);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1433,8 +1483,10 @@ console.log(message);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1485,8 +1537,10 @@ console.log(greeting);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1539,8 +1593,10 @@ console.log(info);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1591,8 +1647,10 @@ console.log(outer);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1646,8 +1704,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1700,8 +1760,10 @@ greet(`Welcome, ${user}! Enjoy your stay.`);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1752,8 +1814,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1804,8 +1868,10 @@ console.log(grade);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1860,8 +1926,10 @@ console.log(content);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1920,8 +1988,10 @@ console.log(fmt.format("test message"));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -1976,8 +2046,10 @@ console.log(a, b, c);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2028,8 +2100,10 @@ console.log(first, second, third);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2080,8 +2154,10 @@ console.log(first, last);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2132,8 +2208,10 @@ console.log(first, third, fifth);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2187,8 +2265,10 @@ console.log(name, city, zip);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2239,8 +2319,10 @@ console.log(a, b, c, d);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2291,8 +2373,10 @@ console.log(host, port, protocol);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2343,8 +2427,10 @@ console.log(x, y, z);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2400,8 +2486,10 @@ processCoords([10, 20]);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2455,8 +2543,10 @@ console.log(first, second, count);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2511,8 +2601,10 @@ console.log(city);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2565,8 +2657,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2619,8 +2713,10 @@ console.log(item, val);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2679,8 +2775,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2732,8 +2830,10 @@ console.log(timeout, host);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2786,8 +2886,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2838,8 +2940,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2890,8 +2994,10 @@ console.log(obj);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -2942,8 +3048,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3001,8 +3109,10 @@ console.log(name, theme);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3057,8 +3167,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3111,8 +3223,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3163,8 +3277,10 @@ console.log(port);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3217,8 +3333,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3272,8 +3390,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3324,8 +3444,10 @@ console.log(value);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3377,8 +3499,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3430,8 +3554,10 @@ console.log(merged.host, merged.port);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3485,8 +3611,10 @@ console.log(message);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3546,8 +3674,10 @@ console.log(endpoint, timeout, retries);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3602,8 +3732,10 @@ console.log(value);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3654,8 +3786,10 @@ console.log(value);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3706,8 +3840,10 @@ console.log(obj.active);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3758,8 +3894,10 @@ console.log(config.debug);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3810,8 +3948,10 @@ console.log(arr);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3862,8 +4002,10 @@ console.log(flags);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3918,8 +4060,10 @@ console.log(a, b, c);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -3974,8 +4118,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4029,8 +4175,10 @@ console.log(name);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4088,8 +4236,10 @@ console.log(settings);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4143,8 +4293,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4196,8 +4348,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4248,8 +4402,10 @@ console.log(value);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4299,8 +4455,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4350,8 +4508,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4403,8 +4563,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4455,8 +4617,10 @@ console.log(a, b);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4509,8 +4673,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4564,8 +4730,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4620,8 +4788,10 @@ console.log(accumulator, squared, cubed, complex);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4675,8 +4845,10 @@ console.log(value);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4728,8 +4900,10 @@ console.log(sum);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4785,8 +4959,10 @@ console.log(add, sub, mul, div, mod);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4840,8 +5016,10 @@ console.log(isLess, isEqual, isGreater);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4892,8 +5070,10 @@ console.log(fromNumber, fromString);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -4947,8 +5127,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5000,8 +5182,10 @@ console.log(sum);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5053,8 +5237,10 @@ console.log(result);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5105,8 +5291,10 @@ console.log(arr, obj.small, obj.large);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5162,8 +5350,10 @@ console.log(power, asNumber);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5216,8 +5406,10 @@ fn test_source_map_dynamic_import_basic() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5267,8 +5459,10 @@ import(modulePath);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5319,8 +5513,10 @@ fn test_source_map_dynamic_import_then_chain() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5372,8 +5568,10 @@ fn test_source_map_dynamic_import_await() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5425,8 +5623,10 @@ loadLazy();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5478,8 +5678,10 @@ fn test_source_map_dynamic_import_destructuring() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5533,8 +5735,10 @@ if (isAdmin) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5584,8 +5788,10 @@ import(`./modules/${moduleName}`);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5636,8 +5842,10 @@ fn test_source_map_dynamic_import_catch() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5694,8 +5902,10 @@ loadModules(["a", "b", "c"]);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5750,8 +5960,10 @@ fn test_source_map_private_field_basic() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5804,8 +6016,10 @@ fn test_source_map_private_field_initialized() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5861,8 +6075,10 @@ fn test_source_map_private_field_constructor() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5921,8 +6137,10 @@ fn test_source_map_private_method() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -5976,8 +6194,10 @@ fn test_source_map_private_field_access() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6034,8 +6254,10 @@ fn test_source_map_private_field_assignment() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6092,8 +6314,10 @@ fn test_source_map_private_static_field() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6149,8 +6373,10 @@ fn test_source_map_private_static_method() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6210,8 +6436,10 @@ class Derived extends Base {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6286,8 +6514,10 @@ fn test_source_map_private_field_combined() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6349,8 +6579,10 @@ class Service {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6408,8 +6640,10 @@ class Immutable {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6467,8 +6701,10 @@ class Composed {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6526,8 +6762,10 @@ class Utils {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6586,8 +6824,10 @@ class Config {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6647,8 +6887,10 @@ class Data {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6708,8 +6950,10 @@ class Settings {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6768,8 +7012,10 @@ class Entity {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6829,8 +7075,10 @@ class Child extends Parent {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6907,8 +7155,10 @@ class ApiController {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -6967,8 +7217,10 @@ const dir = Direction.Up;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7023,8 +7275,10 @@ fn test_source_map_enum_with_initializers() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7086,8 +7340,10 @@ function checkStatus(s: Status) {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7145,8 +7401,10 @@ const level = App.LogLevel.Info;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7204,8 +7462,10 @@ enum Color {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7261,8 +7521,10 @@ const statusName = HttpStatus[200];"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7314,8 +7576,10 @@ fn test_source_map_enum_heterogeneous() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7380,8 +7644,10 @@ class Task {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7447,8 +7713,10 @@ function getFruitColor(fruit: Fruit): string {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7523,8 +7791,10 @@ const fileType = FileSystem.FileType.Directory;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7583,8 +7853,10 @@ fn test_source_map_class_expression_named() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7636,8 +7908,10 @@ const Derived = class extends Base {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7691,8 +7965,10 @@ fn test_source_map_class_expression_static_methods() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7757,8 +8033,10 @@ fn test_source_map_class_expression_accessors() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7813,8 +8091,10 @@ const instance = new DynamicClass();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7876,8 +8156,10 @@ const rect = new Rectangle(10, 20);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7934,8 +8216,10 @@ const Computed = class {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -7994,8 +8278,10 @@ const instance = new classes[0]();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8062,8 +8348,10 @@ fn test_source_map_class_expression_iife() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8144,8 +8432,10 @@ const c1 = new registry.Counter();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8197,9 +8487,11 @@ const comp = Component;"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8249,9 +8541,11 @@ myModule.init();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8301,9 +8595,11 @@ const joined = path.join("a", "b");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8359,9 +8655,11 @@ export class Calculator {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8412,9 +8710,11 @@ export { helper };"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8461,9 +8761,11 @@ export * as namespace from "./namespace";"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8511,9 +8813,11 @@ const comp = new ReactComponent();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8561,9 +8865,11 @@ const data: MyInterface = { name: "test" };"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8612,9 +8918,11 @@ console.log("Imports loaded");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8678,9 +8986,11 @@ export { helper as utilHelper };"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
-    options.module = crate::emitter::ModuleKind::CommonJS;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8733,8 +9043,10 @@ console.log(getTime(), getEmpty(), getNull(), getUndefined());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8783,8 +9095,10 @@ const result = [1, 2, 3].map(double).map(stringify);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8835,8 +9149,10 @@ const product = multiply(2, 3);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8886,8 +9202,10 @@ const joined = concat("a", "b", "c");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -8939,8 +9257,10 @@ const result = getXY(point) + getFirst(arr);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9002,8 +9322,10 @@ counter.increment();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9059,8 +9381,10 @@ console.log(result1, result2, result3, module.getValue());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9115,8 +9439,10 @@ const person = createPerson("Alice", 30);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9168,8 +9494,10 @@ const result = add5(10);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9242,8 +9570,10 @@ console.log(pipeline(5));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9298,8 +9628,10 @@ gen.next().then(console.log);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9352,8 +9684,10 @@ const gen = fetchSequence(urls);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9408,8 +9742,10 @@ const gen = outerGen();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9465,8 +9801,10 @@ const gen = safeGenerator();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9530,8 +9868,10 @@ const gen = stream.iterate();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9587,8 +9927,10 @@ const processed = processStream(numberStream());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9646,8 +9988,10 @@ async function consume() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9703,8 +10047,10 @@ const gen2 = namedAsyncGen();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9765,8 +10111,10 @@ async function collect() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9846,8 +10194,10 @@ const doubled = transform(queue, async n => n * 2);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9907,8 +10257,10 @@ processItems(numberGen());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -9968,8 +10320,10 @@ processData();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10032,8 +10386,10 @@ processNested();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10095,8 +10451,10 @@ safeIterate();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10158,8 +10516,10 @@ processWithControl();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10221,8 +10581,10 @@ processor.process(processor.generate());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10282,8 +10644,10 @@ processWithFetch();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10341,8 +10705,10 @@ labeledLoop();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10401,8 +10767,10 @@ findFirst().then(console.log);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10484,8 +10852,10 @@ processEvents(stream);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10543,8 +10913,10 @@ riskyOperation();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10606,8 +10978,10 @@ withCleanup();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10666,8 +11040,10 @@ guaranteedCleanup();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10730,8 +11106,10 @@ nestedTryCatch();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10794,8 +11172,10 @@ handleTypedError();"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10855,8 +11235,10 @@ try {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10918,8 +11300,10 @@ fetchWithRetry("https://example.com");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -10976,8 +11360,10 @@ console.log(conditionalThrow(false));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11051,8 +11437,10 @@ db.query("SELECT * FROM users");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11142,8 +11530,10 @@ manager.processWithResource("test", async (data) => {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11211,8 +11601,10 @@ console.log(getDay(3));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11273,8 +11665,10 @@ console.log(classify(5));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11338,8 +11732,10 @@ console.log(isWeekend("Saturday"));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11405,8 +11801,10 @@ process("start");"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11469,8 +11867,10 @@ console.log(colors);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11533,8 +11933,10 @@ console.log(classify("animal", 1));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11601,8 +12003,10 @@ asyncHandler("load").then(console.log);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11667,8 +12071,10 @@ console.log(checkPermission(MODE_READ | MODE_WRITE));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11749,8 +12155,10 @@ console.log(machine.getState());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11853,8 +12261,10 @@ console.log(handler.handleResponse({ status: HttpStatus.OK, message: "Success" }
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11917,8 +12327,10 @@ findValue([[1, 2], [3, 4]], 3);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -11978,8 +12390,10 @@ console.log(searchGrid(grid));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12043,8 +12457,10 @@ console.log(processItems([[1, 2], [-1, 3], [4, 5]]));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12107,8 +12523,10 @@ console.log(findPath([[0, 1], [2, 0]]));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12175,8 +12593,10 @@ console.log(processData(null));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12242,8 +12662,10 @@ handleEvent([
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12303,8 +12725,10 @@ asyncProcessor([Promise.resolve(1), Promise.resolve(-1)]);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12370,8 +12794,10 @@ retryOperation(5);"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12447,8 +12873,10 @@ console.log(processor.process());"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12536,8 +12964,10 @@ console.log(runner.run(tasks));"#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12590,8 +13020,10 @@ with (obj) {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12649,8 +13081,10 @@ with (config.settings) {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12704,8 +13138,10 @@ with (math) {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12762,8 +13198,10 @@ with (outer) {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12818,8 +13256,10 @@ console.log(calculate(3));"#;
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12873,8 +13313,10 @@ with (data) {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12932,8 +13374,10 @@ with (user) {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -12989,8 +13433,10 @@ console.log(state.count, state.message);"#;
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -13048,8 +13494,10 @@ console.log("Error count:", errorHandler.count);"#;
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 
@@ -13130,8 +13578,10 @@ console.log("Processed:", processApp());"#;
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES5;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
 

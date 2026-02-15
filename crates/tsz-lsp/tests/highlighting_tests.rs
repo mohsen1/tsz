@@ -869,28 +869,28 @@ fn test_debug_if_statement_positions() {
                 if let Some(then_node) = arena.get(if_data.then_statement) {
                     println!("  then: pos={}, end={}", then_node.pos, then_node.end);
                 }
-                if !if_data.else_statement.is_none() {
-                    if let Some(else_node) = arena.get(if_data.else_statement) {
+                if !if_data.else_statement.is_none()
+                    && let Some(else_node) = arena.get(if_data.else_statement)
+                {
+                    println!(
+                        "  else_statement: pos={}, end={}, kind={}",
+                        else_node.pos, else_node.end, else_node.kind
+                    );
+                    if let Some(then_node) = arena.get(if_data.then_statement) {
+                        let search_start = then_node.end as usize;
+                        let search_end = else_node.end as usize;
+                        let search_text = &source[search_start..search_end.min(source.len())];
                         println!(
-                            "  else_statement: pos={}, end={}, kind={}",
-                            else_node.pos, else_node.end, else_node.kind
+                            "  search range: {}..{}, text: '{}'",
+                            search_start, search_end, search_text
                         );
-                        if let Some(then_node) = arena.get(if_data.then_statement) {
-                            let search_start = then_node.end as usize;
-                            let search_end = else_node.end as usize;
-                            let search_text = &source[search_start..search_end.min(source.len())];
-                            println!(
-                                "  search range: {}..{}, text: '{}'",
-                                search_start, search_end, search_text
-                            );
-                            // Try to find "else" in this range
-                            if let Some(else_pos) =
-                                provider.find_keyword_in_range(search_start, search_end, "else")
-                            {
-                                println!("  FOUND 'else' at offset {}", else_pos);
-                            } else {
-                                println!("  DID NOT find 'else' in range");
-                            }
+                        // Try to find "else" in this range
+                        if let Some(else_pos) =
+                            provider.find_keyword_in_range(search_start, search_end, "else")
+                        {
+                            println!("  FOUND 'else' at offset {}", else_pos);
+                        } else {
+                            println!("  DID NOT find 'else' in range");
                         }
                     }
                 }

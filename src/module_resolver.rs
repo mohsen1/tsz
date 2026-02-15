@@ -657,14 +657,14 @@ impl ModuleResolver {
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
 
-        if let Some(extension) = explicit_ts_extension(specifier) {
-            if !self.allow_importing_ts_extensions {
-                return Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
-                    extension,
-                    containing_file: containing_file_str.clone(),
-                    span: specifier_span,
-                });
-            }
+        if let Some(extension) = explicit_ts_extension(specifier)
+            && !self.allow_importing_ts_extensions
+        {
+            return Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
+                extension,
+                containing_file: containing_file_str.clone(),
+                span: specifier_span,
+            });
         }
 
         self.current_package_type = match self.resolution_kind {
@@ -769,19 +769,19 @@ impl ModuleResolver {
 
             // Check for package.json
             let package_json_path = current.join("package.json");
-            if package_json_path.is_file() {
-                if let Ok(pj) = self.read_package_json(&package_json_path) {
-                    let package_type = pj.package_type.as_deref().and_then(|t| match t {
-                        "module" => Some(PackageType::Module),
-                        "commonjs" => Some(PackageType::CommonJs),
-                        _ => None,
-                    });
-                    // Cache all visited paths
-                    for path in visited {
-                        self.package_type_cache.insert(path, package_type);
-                    }
-                    return package_type;
+            if package_json_path.is_file()
+                && let Ok(pj) = self.read_package_json(&package_json_path)
+            {
+                let package_type = pj.package_type.as_deref().and_then(|t| match t {
+                    "module" => Some(PackageType::Module),
+                    "commonjs" => Some(PackageType::CommonJs),
+                    _ => None,
+                });
+                // Cache all visited paths
+                for path in visited {
+                    self.package_type_cache.insert(path, package_type);
                 }
+                return package_type;
             }
 
             // Move to parent
@@ -914,27 +914,25 @@ impl ModuleResolver {
         loop {
             let package_json_path = current.join("package.json");
 
-            if package_json_path.is_file() {
-                if let Ok(package_json) = self.read_package_json(&package_json_path)
-                    && let Some(imports) = &package_json.imports
+            if package_json_path.is_file()
+                && let Ok(package_json) = self.read_package_json(&package_json_path)
+                && let Some(imports) = &package_json.imports
+            {
+                let conditions = self.get_export_conditions(importing_module_kind);
+
+                if let Some(target) = self.resolve_imports_subpath(imports, specifier, &conditions)
                 {
-                    let conditions = self.get_export_conditions(importing_module_kind);
+                    // Resolve the target path
+                    let resolved_path = current.join(target.trim_start_matches("./"));
 
-                    if let Some(target) =
-                        self.resolve_imports_subpath(imports, specifier, &conditions)
-                    {
-                        // Resolve the target path
-                        let resolved_path = current.join(target.trim_start_matches("./"));
-
-                        if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
-                            return Ok(ResolvedModule {
-                                resolved_path: resolved.clone(),
-                                is_external: false,
-                                package_name: package_json.name.clone(),
-                                original_specifier: specifier.to_string(),
-                                extension: ModuleExtension::from_path(&resolved),
-                            });
-                        }
+                    if let Some(resolved) = self.try_file_or_directory(&resolved_path) {
+                        return Ok(ResolvedModule {
+                            resolved_path: resolved.clone(),
+                            is_external: false,
+                            package_name: package_json.name.clone(),
+                            original_specifier: specifier.to_string(),
+                            extension: ModuleExtension::from_path(&resolved),
+                        });
                     }
                 }
             }
@@ -1268,17 +1266,17 @@ impl ModuleResolver {
             if !package_name.starts_with("@types/") {
                 let types_package = types_package_name(&package_name);
                 let types_dir = current.join("node_modules").join(&types_package);
-                if types_dir.is_dir() {
-                    if let Ok(resolved) = self.resolve_package(
+                if types_dir.is_dir()
+                    && let Ok(resolved) = self.resolve_package(
                         &types_dir,
                         subpath.as_deref(),
                         specifier,
                         containing_file,
                         specifier_span,
                         &conditions,
-                    ) {
-                        return Ok(resolved);
-                    }
+                    )
+                {
+                    return Ok(resolved);
                 }
             }
 
@@ -1390,17 +1388,17 @@ impl ModuleResolver {
             if !package_name.starts_with("@types/") {
                 let types_package = types_package_name(&package_name);
                 let types_dir = node_modules.join(&types_package);
-                if types_dir.is_dir() {
-                    if let Ok(resolved) = self.resolve_package(
+                if types_dir.is_dir()
+                    && let Ok(resolved) = self.resolve_package(
                         &types_dir,
                         subpath.as_deref(),
                         specifier,
                         containing_file,
                         specifier_span,
                         &conditions,
-                    ) {
-                        return Ok(resolved);
-                    }
+                    )
+                {
+                    return Ok(resolved);
                 }
             }
 
@@ -1460,38 +1458,38 @@ impl ModuleResolver {
         loop {
             let package_json_path = current.join("package.json");
 
-            if package_json_path.is_file() {
-                if let Ok(package_json) = self.read_package_json(&package_json_path) {
-                    // Check if the package name matches
-                    if package_json.name.as_deref() == Some(package_name) {
-                        // This is a self-reference!
-                        if self.resolve_package_json_exports
-                            && let Some(exports) = &package_json.exports
-                        {
-                            let subpath_key = match subpath {
-                                Some(sp) => format!("./{}", sp),
-                                None => ".".to_string(),
-                            };
+            if package_json_path.is_file()
+                && let Ok(package_json) = self.read_package_json(&package_json_path)
+            {
+                // Check if the package name matches
+                if package_json.name.as_deref() == Some(package_name) {
+                    // This is a self-reference!
+                    if self.resolve_package_json_exports
+                        && let Some(exports) = &package_json.exports
+                    {
+                        let subpath_key = match subpath {
+                            Some(sp) => format!("./{}", sp),
+                            None => ".".to_string(),
+                        };
 
-                            if let Some(resolved) = self.resolve_package_exports_with_conditions(
-                                &current,
-                                exports,
-                                &subpath_key,
-                                conditions,
-                            ) {
-                                return Some(ResolvedModule {
-                                    resolved_path: resolved.clone(),
-                                    is_external: false,
-                                    package_name: Some(package_name.to_string()),
-                                    original_specifier: original_specifier.to_string(),
-                                    extension: ModuleExtension::from_path(&resolved),
-                                });
-                            }
+                        if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                            &current,
+                            exports,
+                            &subpath_key,
+                            conditions,
+                        ) {
+                            return Some(ResolvedModule {
+                                resolved_path: resolved.clone(),
+                                is_external: false,
+                                package_name: Some(package_name.to_string()),
+                                original_specifier: original_specifier.to_string(),
+                                extension: ModuleExtension::from_path(&resolved),
+                            });
                         }
                     }
-                    // Found a package.json but it's not a match - stop searching
-                    return None;
                 }
+                // Found a package.json but it's not a match - stop searching
+                return None;
             }
 
             // Move to parent directory
@@ -1533,34 +1531,34 @@ impl ModuleResolver {
             let subpath_key = format!("./{}", subpath);
 
             // Try exports field first (Node16+)
-            if self.resolve_package_json_exports {
-                if let Some(exports) = &package_json.exports {
-                    if let Some(resolved) = self.resolve_package_exports_with_conditions(
-                        package_dir,
-                        exports,
-                        &subpath_key,
-                        conditions,
-                    ) {
-                        return Ok(ResolvedModule {
-                            resolved_path: resolved.clone(),
-                            is_external: true,
-                            package_name: Some(package_json.name.clone().unwrap_or_default()),
-                            original_specifier: original_specifier.to_string(),
-                            extension: ModuleExtension::from_path(&resolved),
-                        });
-                    }
-                    // In Node16/NodeNext, exports field is authoritative for subpaths.
-                    // Bundler mode is more permissive and allows fallback.
-                    if matches!(
-                        self.resolution_kind,
-                        ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-                    ) {
-                        return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                            specifier: original_specifier.to_string(),
-                            containing_file: containing_file.to_string(),
-                            span: specifier_span,
-                        });
-                    }
+            if self.resolve_package_json_exports
+                && let Some(exports) = &package_json.exports
+            {
+                if let Some(resolved) = self.resolve_package_exports_with_conditions(
+                    package_dir,
+                    exports,
+                    &subpath_key,
+                    conditions,
+                ) {
+                    return Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        is_external: true,
+                        package_name: Some(package_json.name.clone().unwrap_or_default()),
+                        original_specifier: original_specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    });
+                }
+                // In Node16/NodeNext, exports field is authoritative for subpaths.
+                // Bundler mode is more permissive and allows fallback.
+                if matches!(
+                    self.resolution_kind,
+                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+                ) {
+                    return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                        specifier: original_specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
                 }
             }
 
@@ -1600,35 +1598,32 @@ impl ModuleResolver {
         // No subpath - resolve package entry point
 
         // Try exports "." field first (Node16+)
-        if self.resolve_package_json_exports {
-            if let Some(exports) = &package_json.exports {
-                if let Some(resolved) = self.resolve_package_exports_with_conditions(
-                    package_dir,
-                    exports,
-                    ".",
-                    conditions,
-                ) {
-                    return Ok(ResolvedModule {
-                        resolved_path: resolved.clone(),
-                        is_external: true,
-                        package_name: Some(package_json.name.clone().unwrap_or_default()),
-                        original_specifier: original_specifier.to_string(),
-                        extension: ModuleExtension::from_path(&resolved),
-                    });
-                }
-                // In Node16/NodeNext, exports field is authoritative.
-                // Do NOT fall through to types/main/index — emit TS2792.
-                // Bundler mode is more permissive and allows fallback.
-                if matches!(
-                    self.resolution_kind,
-                    ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
-                ) {
-                    return Err(ResolutionFailure::ModuleResolutionModeMismatch {
-                        specifier: original_specifier.to_string(),
-                        containing_file: containing_file.to_string(),
-                        span: specifier_span,
-                    });
-                }
+        if self.resolve_package_json_exports
+            && let Some(exports) = &package_json.exports
+        {
+            if let Some(resolved) =
+                self.resolve_package_exports_with_conditions(package_dir, exports, ".", conditions)
+            {
+                return Ok(ResolvedModule {
+                    resolved_path: resolved.clone(),
+                    is_external: true,
+                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    original_specifier: original_specifier.to_string(),
+                    extension: ModuleExtension::from_path(&resolved),
+                });
+            }
+            // In Node16/NodeNext, exports field is authoritative.
+            // Do NOT fall through to types/main/index — emit TS2792.
+            // Bundler mode is more permissive and allows fallback.
+            if matches!(
+                self.resolution_kind,
+                ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
+            ) {
+                return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                    specifier: original_specifier.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
             }
         }
 
@@ -1685,16 +1680,16 @@ impl ModuleResolver {
                     extension: ModuleExtension::from_path(&resolved),
                 });
             }
-            if let Some(declaration) = declaration_substitution_for_main(&main_path) {
-                if declaration.is_file() {
-                    return Ok(ResolvedModule {
-                        resolved_path: declaration.clone(),
-                        is_external: true,
-                        package_name: Some(package_json.name.clone().unwrap_or_default()),
-                        original_specifier: original_specifier.to_string(),
-                        extension: ModuleExtension::from_path(&declaration),
-                    });
-                }
+            if let Some(declaration) = declaration_substitution_for_main(&main_path)
+                && declaration.is_file()
+            {
+                return Ok(ResolvedModule {
+                    resolved_path: declaration.clone(),
+                    is_external: true,
+                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    original_specifier: original_specifier.to_string(),
+                    extension: ModuleExtension::from_path(&declaration),
+                });
             }
             // Try the main path as a file (with extension probing)
             if let Some(resolved) = self.try_file(&main_path) {
@@ -1933,15 +1928,15 @@ impl ModuleResolver {
     /// Try to resolve a file with various extensions
     fn try_file(&self, path: &Path) -> Option<PathBuf> {
         let suffixes = &self.module_suffixes;
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            if split_path_extension(path).is_none() {
-                if self.allow_arbitrary_extensions {
-                    if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
-                        return Some(resolved);
-                    }
-                }
-                return None;
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str())
+            && split_path_extension(path).is_none()
+        {
+            if self.allow_arbitrary_extensions
+                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
+            {
+                return Some(resolved);
             }
+            return None;
         }
         if let Some((base, extension)) = split_path_extension(path) {
             // Try extension substitution (.js → .ts/.tsx/.d.ts) for all resolution modes.
@@ -1969,10 +1964,10 @@ impl ModuleResolver {
                 return Some(resolved);
             }
         }
-        if self.resolve_json_module {
-            if let Some(resolved) = try_file_with_suffixes_and_extension(path, "json", suffixes) {
-                return Some(resolved);
-            }
+        if self.resolve_json_module
+            && let Some(resolved) = try_file_with_suffixes_and_extension(path, "json", suffixes)
+        {
+            return Some(resolved);
         }
 
         let index = path.join("index");
@@ -1981,10 +1976,10 @@ impl ModuleResolver {
                 return Some(resolved);
             }
         }
-        if self.resolve_json_module {
-            if let Some(resolved) = try_file_with_suffixes_and_extension(&index, "json", suffixes) {
-                return Some(resolved);
-            }
+        if self.resolve_json_module
+            && let Some(resolved) = try_file_with_suffixes_and_extension(&index, "json", suffixes)
+        {
+            return Some(resolved);
         }
 
         None
@@ -2032,24 +2027,24 @@ impl ModuleResolver {
         // Try as directory: check package.json for types/main, then index
         if path.is_dir() {
             let package_json_path = path.join("package.json");
-            if package_json_path.exists() {
-                if let Ok(pj) = self.read_package_json(&package_json_path) {
-                    // Try types/typings field first
-                    if let Some(types) = pj.types.or(pj.typings) {
-                        let types_path = path.join(&types);
-                        if let Some(resolved) = self.try_file(&types_path) {
-                            return Some(resolved);
-                        }
-                        if types_path.is_file() {
-                            return Some(types_path);
-                        }
+            if package_json_path.exists()
+                && let Ok(pj) = self.read_package_json(&package_json_path)
+            {
+                // Try types/typings field first
+                if let Some(types) = pj.types.or(pj.typings) {
+                    let types_path = path.join(&types);
+                    if let Some(resolved) = self.try_file(&types_path) {
+                        return Some(resolved);
                     }
-                    // Try main field with extension remapping
-                    if let Some(main) = &pj.main {
-                        let main_path = path.join(main);
-                        if let Some(resolved) = self.try_file(&main_path) {
-                            return Some(resolved);
-                        }
+                    if types_path.is_file() {
+                        return Some(types_path);
+                    }
+                }
+                // Try main field with extension remapping
+                if let Some(main) = &pj.main {
+                    let main_path = path.join(main);
+                    if let Some(resolved) = self.try_file(&main_path) {
+                        return Some(resolved);
                     }
                 }
             }
@@ -2079,10 +2074,10 @@ impl ModuleResolver {
                 }
                 return None;
             }
-            if self.allow_arbitrary_extensions {
-                if let Some(resolved) = try_arbitrary_extension_declaration(path, extension) {
-                    return Some(resolved);
-                }
+            if self.allow_arbitrary_extensions
+                && let Some(resolved) = try_arbitrary_extension_declaration(path, extension)
+            {
+                return Some(resolved);
             }
             return None;
         }
@@ -3785,9 +3780,11 @@ mod tests {
         fs::write(dir.join("node_modules/pkg/entrypoint.d.ts"), "export {};").unwrap();
         fs::write(dir.join("src/index.ts"), "import * as p from 'pkg';").unwrap();
 
-        let mut options = ResolvedCompilerOptions::default();
-        options.module_resolution = Some(ModuleResolutionKind::Node16);
-        options.resolve_package_json_exports = true;
+        let options = ResolvedCompilerOptions {
+            module_resolution: Some(ModuleResolutionKind::Node16),
+            resolve_package_json_exports: true,
+            ..Default::default()
+        };
 
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("pkg", &dir.join("src/index.ts"), Span::new(0, 3));
@@ -3832,11 +3829,13 @@ mod tests {
         fs::write(dir.join("app.ts"), "import jsx from './jsx';").unwrap();
         fs::write(dir.join("jsx.jsx"), "export default 1;").unwrap();
 
-        let mut options = ResolvedCompilerOptions::default();
-        options.allow_js = true;
-        options.jsx = None;
-        // Use Node resolution so allowJs is respected (Classic never resolves .jsx)
-        options.module_resolution = Some(ModuleResolutionKind::Node);
+        let options = ResolvedCompilerOptions {
+            allow_js: true,
+            jsx: None,
+            // Use Node resolution so allowJs is respected (Classic never resolves .jsx)
+            module_resolution: Some(ModuleResolutionKind::Node),
+            ..Default::default()
+        };
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("./jsx", &dir.join("app.ts"), Span::new(0, 10));
 
@@ -3857,10 +3856,12 @@ mod tests {
         fs::write(dir.join("app.ts"), "import tsx from './tsx';").unwrap();
         fs::write(dir.join("tsx.tsx"), "export default 1;").unwrap();
 
-        let mut options = ResolvedCompilerOptions::default();
-        options.jsx = None;
-        // Use Node resolution so .tsx files are found (Classic also finds .tsx, but be explicit)
-        options.module_resolution = Some(ModuleResolutionKind::Node);
+        let options = ResolvedCompilerOptions {
+            jsx: None,
+            // Use Node resolution so .tsx files are found (Classic also finds .tsx, but be explicit)
+            module_resolution: Some(ModuleResolutionKind::Node),
+            ..Default::default()
+        };
         let mut resolver = ModuleResolver::new(&options);
         let result = resolver.resolve("./tsx", &dir.join("app.ts"), Span::new(0, 10));
 
@@ -3881,8 +3882,10 @@ mod tests {
         fs::write(dir.join("app.ts"), "import data from './data.json';").unwrap();
         fs::write(dir.join("data.json"), "{\"value\": 42}").unwrap();
 
-        let mut options = ResolvedCompilerOptions::default();
-        options.resolve_json_module = false; // JSON modules disabled
+        let options = ResolvedCompilerOptions {
+            resolve_json_module: false, // JSON modules disabled
+            ..Default::default()
+        };
         let mut resolver = ModuleResolver::new(&options);
 
         let result = resolver.resolve("./data.json", &dir.join("app.ts"), Span::new(0, 10));

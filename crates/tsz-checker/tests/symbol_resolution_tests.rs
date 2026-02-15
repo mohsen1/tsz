@@ -369,21 +369,20 @@ namespace M {
     let mut b_has_export = false;
 
     for node in arena.nodes.iter() {
-        if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
-            if let Some(class) = arena.get_class(node)
-                && let Some(name_node) = arena.get(class.name)
-                && let Some(ident) = arena.get_identifier(name_node)
-                && ident.escaped_text == "B"
-            {
-                found_b = true;
-                if let Some(mods) = &class.modifiers {
-                    for &mod_idx in &mods.nodes {
-                        if let Some(mod_node) = arena.get(mod_idx)
-                            && mod_node.kind == SyntaxKind::ExportKeyword as u16
-                        {
-                            b_has_export = true;
-                            break;
-                        }
+        if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class) = arena.get_class(node)
+            && let Some(name_node) = arena.get(class.name)
+            && let Some(ident) = arena.get_identifier(name_node)
+            && ident.escaped_text == "B"
+        {
+            found_b = true;
+            if let Some(mods) = &class.modifiers {
+                for &mod_idx in &mods.nodes {
+                    if let Some(mod_node) = arena.get(mod_idx)
+                        && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                    {
+                        b_has_export = true;
+                        break;
                     }
                 }
             }
@@ -409,20 +408,19 @@ var t2: M.B[] = [];
 
     let mut found = false;
     for node in arena.nodes.iter() {
-        if let Some(type_ref) = arena.get_type_ref(node) {
-            if let Some(name_node) = arena.get(type_ref.type_name)
-                && name_node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME
-                && let Some(qn) = arena.get_qualified_name(name_node)
-                && let Some(left_node) = arena.get(qn.left)
-                && let Some(right_node) = arena.get(qn.right)
-                && let Some(left_ident) = arena.get_identifier(left_node)
-                && let Some(right_ident) = arena.get_identifier(right_node)
-                && left_ident.escaped_text == "M"
-                && right_ident.escaped_text == "B"
-            {
-                found = true;
-                break;
-            }
+        if let Some(type_ref) = arena.get_type_ref(node)
+            && let Some(name_node) = arena.get(type_ref.type_name)
+            && name_node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME
+            && let Some(qn) = arena.get_qualified_name(name_node)
+            && let Some(left_node) = arena.get(qn.left)
+            && let Some(right_node) = arena.get(qn.right)
+            && let Some(left_ident) = arena.get_identifier(left_node)
+            && let Some(right_ident) = arena.get_identifier(right_node)
+            && left_ident.escaped_text == "M"
+            && right_ident.escaped_text == "B"
+        {
+            found = true;
+            break;
         }
     }
 

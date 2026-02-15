@@ -170,12 +170,12 @@ fn extract_quoted_strings(message: &str) -> Vec<&str> {
             while let Some((pos, c)) = chars.next() {
                 if c == '\'' {
                     // Check for escaped quote ('')
-                    if let Some((_, next)) = chars.peek() {
-                        if *next == '\'' {
-                            // Skip the escaped quote
-                            chars.next();
-                            continue;
-                        }
+                    if let Some((_, next)) = chars.peek()
+                        && *next == '\''
+                    {
+                        // Skip the escaped quote
+                        chars.next();
+                        continue;
                     }
                     // Found closing quote
                     if content_start < pos {
@@ -244,10 +244,10 @@ fn parse_locale_json(json: &str) -> Option<FxHashMap<u32, String>> {
 
     let mut messages = FxHashMap::default();
     for (key, value) in obj {
-        if let Some(code) = extract_code_from_key(key) {
-            if let Some(msg) = value.as_str() {
-                messages.insert(code, msg.to_string());
-            }
+        if let Some(code) = extract_code_from_key(key)
+            && let Some(msg) = value.as_str()
+        {
+            messages.insert(code, msg.to_string());
         }
     }
 

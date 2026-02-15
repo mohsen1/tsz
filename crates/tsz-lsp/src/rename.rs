@@ -536,77 +536,74 @@ impl<'a> RenameProvider<'a> {
         // Check parent context
         if let Some(ext) = self.arena.get_extended(ref_node_idx) {
             let parent = ext.parent;
-            if !parent.is_none() {
-                if let Some(parent_node) = self.arena.get(parent) {
-                    // Shorthand property assignment: `{ x }` => when renaming
-                    // x to y, we need `{ x: y }` (insert old name as property
-                    // key prefix).
-                    if parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            if !parent.is_none()
+                && let Some(parent_node) = self.arena.get(parent)
+            {
+                // Shorthand property assignment: `{ x }` => when renaming
+                // x to y, we need `{ x: y }` (insert old name as property
+                // key prefix).
+                if parent_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    return RenameTextEdit::with_prefix(
+                        range,
+                        new_name.to_string(),
+                        format!("{}: ", old_name),
+                    );
+                }
+                // Also handle PROPERTY_ASSIGNMENT where name == initializer
+                // (legacy shorthand detection)
+                if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    && let Some(prop) = self.arena.get_property_assignment(parent_node)
+                    && prop.name == prop.initializer
+                {
+                    return RenameTextEdit::with_prefix(
+                        range,
+                        new_name.to_string(),
+                        format!("{}: ", old_name),
+                    );
+                }
+
+                // Binding element in destructuring: `const { x } = obj;`
+                // When renaming local x to y, we need `const { x: y } = obj;`.
+                if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                    && let Some(binding) = self.arena.get_binding_element(parent_node)
+                {
+                    // Only expand when there is no explicit
+                    // property_name (i.e., the shorthand form).
+                    if binding.property_name.is_none() {
                         return RenameTextEdit::with_prefix(
                             range,
                             new_name.to_string(),
                             format!("{}: ", old_name),
                         );
                     }
-                    // Also handle PROPERTY_ASSIGNMENT where name == initializer
-                    // (legacy shorthand detection)
-                    if parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
-                        if let Some(prop) = self.arena.get_property_assignment(parent_node) {
-                            if prop.name == prop.initializer {
-                                return RenameTextEdit::with_prefix(
-                                    range,
-                                    new_name.to_string(),
-                                    format!("{}: ", old_name),
-                                );
-                            }
-                        }
-                    }
+                }
 
-                    // Binding element in destructuring: `const { x } = obj;`
-                    // When renaming local x to y, we need `const { x: y } = obj;`.
-                    if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT {
-                        if let Some(binding) = self.arena.get_binding_element(parent_node) {
-                            // Only expand when there is no explicit
-                            // property_name (i.e., the shorthand form).
-                            if binding.property_name.is_none() {
-                                return RenameTextEdit::with_prefix(
-                                    range,
-                                    new_name.to_string(),
-                                    format!("{}: ", old_name),
-                                );
-                            }
-                        }
-                    }
+                // Import specifier shorthand: `import { foo } from 'mod'`
+                // When renaming foo to bar, we need
+                // `import { foo as bar } from 'mod'`.
+                if parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                    && let Some(spec) = self.arena.get_specifier(parent_node)
+                    && spec.property_name.is_none()
+                {
+                    return RenameTextEdit::with_prefix(
+                        range,
+                        new_name.to_string(),
+                        format!("{} as ", old_name),
+                    );
+                }
 
-                    // Import specifier shorthand: `import { foo } from 'mod'`
-                    // When renaming foo to bar, we need
-                    // `import { foo as bar } from 'mod'`.
-                    if parent_node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
-                        if let Some(spec) = self.arena.get_specifier(parent_node) {
-                            if spec.property_name.is_none() {
-                                return RenameTextEdit::with_prefix(
-                                    range,
-                                    new_name.to_string(),
-                                    format!("{} as ", old_name),
-                                );
-                            }
-                        }
-                    }
-
-                    // Export specifier shorthand: `export { foo }`
-                    // When renaming local foo to bar, we need
-                    // `export { bar as foo }` to keep the public API stable.
-                    if parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER {
-                        if let Some(spec) = self.arena.get_specifier(parent_node) {
-                            if spec.property_name.is_none() {
-                                return RenameTextEdit::with_suffix(
-                                    range,
-                                    new_name.to_string(),
-                                    format!(" as {}", old_name),
-                                );
-                            }
-                        }
-                    }
+                // Export specifier shorthand: `export { foo }`
+                // When renaming local foo to bar, we need
+                // `export { bar as foo }` to keep the public API stable.
+                if parent_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+                    && let Some(spec) = self.arena.get_specifier(parent_node)
+                    && spec.property_name.is_none()
+                {
+                    return RenameTextEdit::with_suffix(
+                        range,
+                        new_name.to_string(),
+                        format!(" as {}", old_name),
+                    );
                 }
             }
         }
@@ -638,18 +635,16 @@ impl<'a> RenameProvider<'a> {
 
         // Allow renaming string literal property names in computed element
         // access (`obj["propName"]`) and string-keyed property assignments.
-        if node.kind == SyntaxKind::StringLiteral as u16 {
-            if let Some(ext) = self.arena.get_extended(node_idx) {
-                let parent = ext.parent;
-                if !parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(parent) {
-                        if parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-                            || parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                        {
-                            return Some(node_idx);
-                        }
-                    }
-                }
+        if node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(ext) = self.arena.get_extended(node_idx)
+        {
+            let parent = ext.parent;
+            if !parent.is_none()
+                && let Some(parent_node) = self.arena.get(parent)
+                && (parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                    || parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT)
+            {
+                return Some(node_idx);
             }
         }
 
@@ -741,21 +736,17 @@ impl<'a> RenameProvider<'a> {
     /// Determine whether a block-scoped variable is `let` or `const`.
     fn let_or_const_kind(&self, symbol: &tsz_binder::Symbol) -> RenameSymbolKind {
         for &decl_idx in &symbol.declarations {
-            if let Some(decl_node) = self.arena.get(decl_idx) {
-                if decl_node.flags as u32 & tsz_parser::parser::flags::node_flags::CONST != 0 {
-                    return RenameSymbolKind::Const;
-                }
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && decl_node.flags as u32 & tsz_parser::parser::flags::node_flags::CONST != 0
+            {
+                return RenameSymbolKind::Const;
             }
-            if let Some(ext) = self.arena.get_extended(decl_idx) {
-                if !ext.parent.is_none() {
-                    if let Some(parent_node) = self.arena.get(ext.parent) {
-                        if parent_node.flags as u32 & tsz_parser::parser::flags::node_flags::CONST
-                            != 0
-                        {
-                            return RenameSymbolKind::Const;
-                        }
-                    }
-                }
+            if let Some(ext) = self.arena.get_extended(decl_idx)
+                && !ext.parent.is_none()
+                && let Some(parent_node) = self.arena.get(ext.parent)
+                && parent_node.flags as u32 & tsz_parser::parser::flags::node_flags::CONST != 0
+            {
+                return RenameSymbolKind::Const;
             }
         }
         RenameSymbolKind::Let
@@ -764,10 +755,10 @@ impl<'a> RenameProvider<'a> {
     /// Check whether a function-scoped variable is actually a parameter.
     fn is_parameter(&self, symbol: &tsz_binder::Symbol) -> bool {
         for &decl_idx in &symbol.declarations {
-            if let Some(decl_node) = self.arena.get(decl_idx) {
-                if decl_node.kind == syntax_kind_ext::PARAMETER {
-                    return true;
-                }
+            if let Some(decl_node) = self.arena.get(decl_idx)
+                && decl_node.kind == syntax_kind_ext::PARAMETER
+            {
+                return true;
             }
         }
         false

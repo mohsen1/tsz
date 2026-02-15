@@ -138,7 +138,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// # Parameters
     /// - `idx`: The node index to check
     /// - `context_type`: Optional contextual type hint for downward inference
-    fn compute_type_impl(&mut self, idx: NodeIndex, context_type: Option<TypeId>) -> TypeId {
+    fn compute_type_impl(&mut self, idx: NodeIndex, _context_type: Option<TypeId>) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             // Return UNKNOWN instead of ANY to expose missing nodes as errors
             return TypeId::UNKNOWN;
@@ -167,7 +167,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
                         return TypeId::ERROR;
                     }
                     // Recursively check inner expression with same context
-                    self.compute_type_impl(paren.expression, context_type)
+                    self.compute_type_impl(paren.expression, _context_type)
                 } else {
                     // Return DELEGATE to let CheckerState handle malformed nodes
                     TypeId::DELEGATE

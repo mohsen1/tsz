@@ -308,11 +308,11 @@ impl<'a> Printer<'a> {
             }
             // Emit comments between the previous node/comma and this node.
             // This handles comments like: func(a, /*comment*/ b, c) or func(/*c*/ a)
-            if let Some(node) = self.arena.get(idx) {
-                if let Some(prev_end) = prev_end {
-                    // For non-first nodes, emit comments between previous node end and current node start
-                    self.emit_unemitted_comments_between(prev_end, node.pos);
-                }
+            if let Some(node) = self.arena.get(idx)
+                && let Some(prev_end) = prev_end
+            {
+                // For non-first nodes, emit comments between previous node end and current node start
+                self.emit_unemitted_comments_between(prev_end, node.pos);
             }
             first = false;
             if let Some(node) = self.arena.get(idx) {
@@ -379,14 +379,13 @@ impl<'a> Printer<'a> {
             // Emit type arguments only for ES5 targets.
             // For ES6+, type arguments should be erased since JavaScript
             // doesn't support generics at runtime.
-            if self.ctx.target_es5 {
-                if let Some(ref type_args) = expr.type_arguments {
-                    if !type_args.nodes.is_empty() {
-                        self.write("<");
-                        self.emit_comma_separated(&type_args.nodes);
-                        self.write(">");
-                    }
-                }
+            if self.ctx.target_es5
+                && let Some(ref type_args) = expr.type_arguments
+                && !type_args.nodes.is_empty()
+            {
+                self.write("<");
+                self.emit_comma_separated(&type_args.nodes);
+                self.write(">");
             }
         } else {
             self.emit(idx);

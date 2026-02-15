@@ -95,10 +95,10 @@ impl<'a> UsageAnalyzer<'a> {
     fn has_export_modifier(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx) {
-                    if mod_node.kind == SyntaxKind::ExportKeyword as u16 {
-                        return true;
-                    }
+                if let Some(mod_node) = self.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
+                {
+                    return true;
                 }
             }
         }
@@ -158,17 +158,17 @@ impl<'a> UsageAnalyzer<'a> {
         match stmt_node.kind {
             // Exported declarations - only analyze if they have the Export modifier
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                if let Some(func) = self.arena.get_function(stmt_node) {
-                    if self.has_export_modifier(&func.modifiers) {
-                        self.analyze_function_declaration(stmt_idx);
-                    }
+                if let Some(func) = self.arena.get_function(stmt_node)
+                    && self.has_export_modifier(&func.modifiers)
+                {
+                    self.analyze_function_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                if let Some(class) = self.arena.get_class(stmt_node) {
-                    if self.has_export_modifier(&class.modifiers) {
-                        self.analyze_class_declaration(stmt_idx);
-                    }
+                if let Some(class) = self.arena.get_class(stmt_node)
+                    && self.has_export_modifier(&class.modifiers)
+                {
+                    self.analyze_class_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
@@ -177,61 +177,54 @@ impl<'a> UsageAnalyzer<'a> {
                 self.analyze_interface_declaration(stmt_idx);
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                if let Some(alias) = self.arena.get_type_alias(stmt_node) {
-                    if self.has_export_modifier(&alias.modifiers) {
-                        self.analyze_type_alias_declaration(stmt_idx);
-                    }
+                if let Some(alias) = self.arena.get_type_alias(stmt_node)
+                    && self.has_export_modifier(&alias.modifiers)
+                {
+                    self.analyze_type_alias_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_data) = self.arena.get_enum(stmt_node) {
-                    if self.has_export_modifier(&enum_data.modifiers) {
-                        self.analyze_enum_declaration(stmt_idx);
-                    }
+                if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                    && self.has_export_modifier(&enum_data.modifiers)
+                {
+                    self.analyze_enum_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                if let Some(var_stmt) = self.arena.get_variable(stmt_node) {
-                    if self.has_export_modifier(&var_stmt.modifiers) {
-                        self.analyze_variable_statement(stmt_idx);
-                    }
+                if let Some(var_stmt) = self.arena.get_variable(stmt_node)
+                    && self.has_export_modifier(&var_stmt.modifiers)
+                {
+                    self.analyze_variable_statement(stmt_idx);
                 }
             }
             // Export declarations - check if clause contains a declaration to analyze
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 // Check if export_clause contains a declaration we need to analyze
-                if let Some(export_node) = self.arena.get(stmt_idx) {
-                    if let Some(export) = self.arena.get_export_decl(export_node) {
-                        if !export.export_clause.is_none() {
-                            if let Some(clause_node) = self.arena.get(export.export_clause) {
-                                match clause_node.kind {
-                                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                                        self.analyze_function_declaration(export.export_clause);
-                                    }
-                                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                                        self.analyze_class_declaration(export.export_clause);
-                                    }
-                                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                                        self.analyze_interface_declaration(export.export_clause);
-                                    }
-                                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                                        self.analyze_type_alias_declaration(export.export_clause);
-                                    }
-                                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                                        self.analyze_enum_declaration(export.export_clause);
-                                    }
-                                    k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                                        self.analyze_variable_statement(export.export_clause);
-                                    }
-                                    k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                                        self.analyze_import_equals_declaration(
-                                            export.export_clause,
-                                        );
-                                    }
-                                    _ => {}
-                                }
-                            }
+                if let Some(export_node) = self.arena.get(stmt_idx)
+                    && let Some(export) = self.arena.get_export_decl(export_node)
+                    && !export.export_clause.is_none()
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                {
+                    match clause_node.kind {
+                        k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                            self.analyze_function_declaration(export.export_clause);
                         }
+                        k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                            self.analyze_class_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                            self.analyze_interface_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                            self.analyze_type_alias_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                            self.analyze_enum_declaration(export.export_clause);
+                        }
+                        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                            self.analyze_variable_statement(export.export_clause);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -387,10 +380,10 @@ impl<'a> UsageAnalyzer<'a> {
         // For computed properties, also walk the inferred type to catch symbols in the name expression
         // This handles cases like [Symbol.iterator]: Type where Symbol needs to be marked as used
         // Check the name node to see if it's a computed property
-        if let Some(name_node) = self.arena.get(prop.name) {
-            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                self.walk_inferred_type(prop_idx);
-            }
+        if let Some(name_node) = self.arena.get(prop.name)
+            && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+        {
+            self.walk_inferred_type(prop_idx);
         }
     }
 
@@ -504,10 +497,10 @@ impl<'a> UsageAnalyzer<'a> {
 
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
-                if let Some(sig) = self.arena.get_signature(member_node) {
-                    if !sig.type_annotation.is_none() {
-                        self.analyze_type_node(sig.type_annotation);
-                    }
+                if let Some(sig) = self.arena.get_signature(member_node)
+                    && !sig.type_annotation.is_none()
+                {
+                    self.analyze_type_node(sig.type_annotation);
                 }
             }
             k if k == syntax_kind_ext::METHOD_SIGNATURE => {

@@ -197,52 +197,48 @@ impl<'a> Printer<'a> {
         // Scan forward from the last parameter NAME to find ')' before '=>'
         // Important: Use the parameter NAME's end, not the whole parameter's end
         // (which includes type annotations that we want to detect)
-        if let Some(source) = self.source_text {
-            if let Some(last_param) = params.last() {
-                if let Some(param_node) = self.arena.get(*last_param) {
-                    if let Some(param_data) = self.arena.get_parameter(param_node) {
-                        // Get the parameter NAME's end position, not the whole parameter
-                        if let Some(name_node) = self.arena.get(param_data.name) {
-                            let end_pos = name_node.end as usize;
-                            tracing::trace!(
-                                end_pos,
-                                source_len = source.len(),
-                                "Scanning source from param NAME end"
-                            );
+        if let Some(source) = self.source_text
+            && let Some(last_param) = params.last()
+            && let Some(param_node) = self.arena.get(*last_param)
+            && let Some(param_data) = self.arena.get_parameter(param_node)
+        {
+            // Get the parameter NAME's end position, not the whole parameter
+            if let Some(name_node) = self.arena.get(param_data.name) {
+                let end_pos = name_node.end as usize;
+                tracing::trace!(
+                    end_pos,
+                    source_len = source.len(),
+                    "Scanning source from param NAME end"
+                );
 
-                            // Ensure we don't go out of bounds
-                            if end_pos < source.len() {
-                                // Scan forward from the end of the parameter NAME
-                                // Look for ')' (had parens) or '=' from '=>' (no parens)
-                                let suffix = &source[end_pos..];
-                                let preview = &suffix[..std::cmp::min(30, suffix.len())];
-                                tracing::trace!(preview, "Source suffix preview");
-                                for ch in suffix.chars() {
-                                    match ch {
-                                        // Whitespace - skip
-                                        ' ' | '\t' | '\n' | '\r' => continue,
-                                        // Found closing paren - had parens
-                                        ')' => {
-                                            tracing::trace!("Found ')' in source, returning true");
-                                            return true;
-                                        }
-                                        // Found '=' from '=>' - no parens (simple param without parens)
-                                        '=' => {
-                                            tracing::trace!("Found '=' in source, returning false");
-                                            return false;
-                                        }
-                                        // Colon indicates type annotation, keep scanning
-                                        ':' => {
-                                            tracing::trace!(
-                                                "Found ':' (type annotation), continuing scan"
-                                            );
-                                            continue;
-                                        }
-                                        // Any other character - keep scanning
-                                        _ => continue,
-                                    }
-                                }
+                // Ensure we don't go out of bounds
+                if end_pos < source.len() {
+                    // Scan forward from the end of the parameter NAME
+                    // Look for ')' (had parens) or '=' from '=>' (no parens)
+                    let suffix = &source[end_pos..];
+                    let preview = &suffix[..std::cmp::min(30, suffix.len())];
+                    tracing::trace!(preview, "Source suffix preview");
+                    for ch in suffix.chars() {
+                        match ch {
+                            // Whitespace - skip
+                            ' ' | '\t' | '\n' | '\r' => continue,
+                            // Found closing paren - had parens
+                            ')' => {
+                                tracing::trace!("Found ')' in source, returning true");
+                                return true;
                             }
+                            // Found '=' from '=>' - no parens (simple param without parens)
+                            '=' => {
+                                tracing::trace!("Found '=' in source, returning false");
+                                return false;
+                            }
+                            // Colon indicates type annotation, keep scanning
+                            ':' => {
+                                tracing::trace!("Found ':' (type annotation), continuing scan");
+                                continue;
+                            }
+                            // Any other character - keep scanning
+                            _ => continue,
                         }
                     }
                 }
@@ -253,26 +249,25 @@ impl<'a> Printer<'a> {
         // check if parameter has modifiers or type annotations.
         // Parameters with these MUST have had parens in valid TS.
         tracing::trace!("Entering fallback check for modifiers/type annotations");
-        if let Some(first_param) = params.first() {
-            if let Some(param_node) = self.arena.get(*first_param) {
-                if let Some(param) = self.arena.get_parameter(param_node) {
-                    // Check for modifiers (public, private, protected, readonly, etc.)
-                    if let Some(mods) = &param.modifiers {
-                        let mod_count = mods.nodes.len();
-                        tracing::trace!(mod_count, "Found modifiers");
-                        if !mods.nodes.is_empty() {
-                            tracing::trace!("Has modifiers, returning true");
-                            return true;
-                        }
-                    }
-                    // Check for type annotation
-                    let has_type = !param.type_annotation.is_none();
-                    tracing::trace!(has_type, "Type annotation check");
-                    if has_type {
-                        tracing::trace!("Has type annotation, returning true");
-                        return true;
-                    }
+        if let Some(first_param) = params.first()
+            && let Some(param_node) = self.arena.get(*first_param)
+            && let Some(param) = self.arena.get_parameter(param_node)
+        {
+            // Check for modifiers (public, private, protected, readonly, etc.)
+            if let Some(mods) = &param.modifiers {
+                let mod_count = mods.nodes.len();
+                tracing::trace!(mod_count, "Found modifiers");
+                if !mods.nodes.is_empty() {
+                    tracing::trace!("Has modifiers, returning true");
+                    return true;
                 }
+            }
+            // Check for type annotation
+            let has_type = !param.type_annotation.is_none();
+            tracing::trace!(has_type, "Type annotation check");
+            if has_type {
+                tracing::trace!("Has type annotation, returning true");
+                return true;
             }
         }
 
@@ -398,12 +393,12 @@ impl<'a> Printer<'a> {
             // Check if the return expression is multi-line in the source
             if let Some(expr_node) = self.arena.get(ret.expression) {
                 // Object literals with multiple properties are multi-line
-                if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                    if let Some(obj) = self.arena.get_literal_expr(expr_node) {
-                        if obj.elements.nodes.len() > 1 && !self.is_single_line(expr_node) {
-                            return false;
-                        }
-                    }
+                if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && let Some(obj) = self.arena.get_literal_expr(expr_node)
+                    && obj.elements.nodes.len() > 1
+                    && !self.is_single_line(expr_node)
+                {
+                    return false;
                 }
                 // Also check source text - if the expression spans multiple lines, not simple
                 if !self.is_single_line(expr_node) {
@@ -481,17 +476,17 @@ impl<'a> Printer<'a> {
                     if name_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
                         continue;
                     }
-                    if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
-                        if let Some(text) = self.source_text {
-                            let name_text = crate::printer::safe_slice::slice(
-                                text,
-                                name_node.pos as usize,
-                                name_node.end as usize,
-                            )
-                            .trim();
-                            if name_text == "this" {
-                                continue;
-                            }
+                    if name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        && let Some(text) = self.source_text
+                    {
+                        let name_text = crate::printer::safe_slice::slice(
+                            text,
+                            name_node.pos as usize,
+                            name_node.end as usize,
+                        )
+                        .trim();
+                        if name_text == "this" {
+                            continue;
                         }
                     }
                 }
@@ -516,24 +511,23 @@ impl<'a> Printer<'a> {
         // Emit trailing comments after the last parameter (e.g., `...rest /* comment */`).
         // We use the name node's end position, not the parameter node's end, because
         // the parameter node's end may extend past the comment (including trivia).
-        if let Some(&last_param) = params.last() {
-            if let Some(last_node) = self.arena.get(last_param)
-                && let Some(last_param) = self.arena.get_parameter(last_node)
-            {
-                // Use the end of the last thing we emitted (initializer or name)
-                let scan_pos = if !last_param.initializer.is_none() {
-                    if let Some(init_node) = self.arena.get(last_param.initializer) {
-                        init_node.end
-                    } else {
-                        last_node.end
-                    }
-                } else if let Some(name_node) = self.arena.get(last_param.name) {
-                    name_node.end
+        if let Some(&last_param) = params.last()
+            && let Some(last_node) = self.arena.get(last_param)
+            && let Some(last_param) = self.arena.get_parameter(last_node)
+        {
+            // Use the end of the last thing we emitted (initializer or name)
+            let scan_pos = if !last_param.initializer.is_none() {
+                if let Some(init_node) = self.arena.get(last_param.initializer) {
+                    init_node.end
                 } else {
                     last_node.end
-                };
-                self.emit_trailing_comments(scan_pos);
-            }
+                }
+            } else if let Some(name_node) = self.arena.get(last_param.name) {
+                name_node.end
+            } else {
+                last_node.end
+            };
+            self.emit_trailing_comments(scan_pos);
         }
     }
 

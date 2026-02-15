@@ -49,10 +49,10 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         }
 
         k if k == syntax_kind_ext::MODULE_BLOCK => {
-            if let Some(mod_block) = arena.get_module_block(node) {
-                if let Some(ref stmts) = mod_block.statements {
-                    children.extend(stmts.nodes.iter().copied());
-                }
+            if let Some(mod_block) = arena.get_module_block(node)
+                && let Some(ref stmts) = mod_block.statements
+            {
+                children.extend(stmts.nodes.iter().copied());
             }
         }
 
@@ -335,18 +335,18 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
         }
 
         k if k == syntax_kind_ext::RETURN_STATEMENT || k == syntax_kind_ext::THROW_STATEMENT => {
-            if let Some(ret) = arena.get_return_statement(node) {
-                if ret.expression.is_some() {
-                    children.push(ret.expression);
-                }
+            if let Some(ret) = arena.get_return_statement(node)
+                && ret.expression.is_some()
+            {
+                children.push(ret.expression);
             }
         }
 
         k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
-            if let Some(expr_stmt) = arena.get_expression_statement(node) {
-                if expr_stmt.expression.is_some() {
-                    children.push(expr_stmt.expression);
-                }
+            if let Some(expr_stmt) = arena.get_expression_statement(node)
+                && expr_stmt.expression.is_some()
+            {
+                children.push(expr_stmt.expression);
             }
         }
 

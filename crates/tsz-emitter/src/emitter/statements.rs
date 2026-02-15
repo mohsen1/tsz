@@ -701,17 +701,15 @@ impl<'a> Printer<'a> {
     fn emit_case_clause_body(&mut self, statements: &NodeList, label_end: u32) {
         // If single block statement and the block is on the same line as the
         // case/default label in source, emit it on the same line (e.g., `case 0: {`)
-        if statements.nodes.len() == 1 {
-            if let Some(stmt_node) = self.arena.get(statements.nodes[0]) {
-                if stmt_node.kind == syntax_kind_ext::BLOCK {
-                    if self.is_on_same_source_line(label_end, stmt_node.pos) {
-                        self.write(" ");
-                        self.emit(statements.nodes[0]);
-                        self.write_line();
-                        return;
-                    }
-                }
-            }
+        if statements.nodes.len() == 1
+            && let Some(stmt_node) = self.arena.get(statements.nodes[0])
+            && stmt_node.kind == syntax_kind_ext::BLOCK
+            && self.is_on_same_source_line(label_end, stmt_node.pos)
+        {
+            self.write(" ");
+            self.emit(statements.nodes[0]);
+            self.write_line();
+            return;
         }
 
         self.write_line();
@@ -745,22 +743,22 @@ impl<'a> Printer<'a> {
 
     pub(super) fn emit_break_statement(&mut self, node: &Node) {
         self.write("break");
-        if let Some(jump) = self.arena.get_jump_data(node) {
-            if !jump.label.is_none() {
-                self.write(" ");
-                self.emit(jump.label);
-            }
+        if let Some(jump) = self.arena.get_jump_data(node)
+            && !jump.label.is_none()
+        {
+            self.write(" ");
+            self.emit(jump.label);
         }
         self.write_semicolon();
     }
 
     pub(super) fn emit_continue_statement(&mut self, node: &Node) {
         self.write("continue");
-        if let Some(jump) = self.arena.get_jump_data(node) {
-            if !jump.label.is_none() {
-                self.write(" ");
-                self.emit(jump.label);
-            }
+        if let Some(jump) = self.arena.get_jump_data(node)
+            && !jump.label.is_none()
+        {
+            self.write(" ");
+            self.emit(jump.label);
         }
         self.write_semicolon();
     }

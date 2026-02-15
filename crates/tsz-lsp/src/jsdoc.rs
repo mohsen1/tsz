@@ -83,13 +83,12 @@ pub fn inline_param_jsdocs(
         if let Some(comment) = comments
             .iter()
             .find(|c| c.pos <= param_pos && param_pos < c.end)
+            && is_jsdoc_comment(comment, source_text)
         {
-            if is_jsdoc_comment(comment, source_text) {
-                let content = get_jsdoc_content(comment, source_text);
-                if !content.is_empty() {
-                    result.insert(param_name, content);
-                    continue;
-                }
+            let content = get_jsdoc_content(comment, source_text);
+            if !content.is_empty() {
+                result.insert(param_name, content);
+                continue;
             }
         }
 

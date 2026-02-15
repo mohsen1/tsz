@@ -434,8 +434,8 @@ impl LspServer {
     }
 
     fn handle_did_open(&mut self, params: Option<Value>) {
-        if let Some(params) = params {
-            if let (Some(uri), Some(text), Some(version)) = (
+        if let Some(params) = params
+            && let (Some(uri), Some(text), Some(version)) = (
                 params
                     .get("textDocument")
                     .and_then(|td| td.get("uri"))
@@ -448,18 +448,18 @@ impl LspServer {
                     .get("textDocument")
                     .and_then(|td| td.get("version"))
                     .and_then(serde_json::Value::as_i64),
-            ) {
-                self.documents.insert(
-                    uri.to_string(),
-                    DocumentState::new(text.to_string(), version as i32),
-                );
-            }
+            )
+        {
+            self.documents.insert(
+                uri.to_string(),
+                DocumentState::new(text.to_string(), version as i32),
+            );
         }
     }
 
     fn handle_did_change(&mut self, params: Option<Value>) {
-        if let Some(params) = params {
-            if let (Some(uri), Some(changes), Some(version)) = (
+        if let Some(params) = params
+            && let (Some(uri), Some(changes), Some(version)) = (
                 params
                     .get("textDocument")
                     .and_then(|td| td.get("uri"))
@@ -469,29 +469,28 @@ impl LspServer {
                     .get("textDocument")
                     .and_then(|td| td.get("version"))
                     .and_then(serde_json::Value::as_i64),
-            ) {
-                // Full sync mode - take the last change
-                if let Some(change) = changes.last() {
-                    if let Some(text) = change.get("text").and_then(|t| t.as_str()) {
-                        self.documents.insert(
-                            uri.to_string(),
-                            DocumentState::new(text.to_string(), version as i32),
-                        );
-                    }
-                }
+            )
+        {
+            // Full sync mode - take the last change
+            if let Some(change) = changes.last()
+                && let Some(text) = change.get("text").and_then(|t| t.as_str())
+            {
+                self.documents.insert(
+                    uri.to_string(),
+                    DocumentState::new(text.to_string(), version as i32),
+                );
             }
         }
     }
 
     fn handle_did_close(&mut self, params: Option<Value>) {
-        if let Some(params) = params {
-            if let Some(uri) = params
+        if let Some(params) = params
+            && let Some(uri) = params
                 .get("textDocument")
                 .and_then(|td| td.get("uri"))
                 .and_then(|u| u.as_str())
-            {
-                self.documents.remove(uri);
-            }
+        {
+            self.documents.remove(uri);
         }
     }
 

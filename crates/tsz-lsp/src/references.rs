@@ -471,106 +471,95 @@ impl<'a> FindReferences<'a> {
         let pk = parent_node.kind;
 
         // Variable declaration: `let x = 1` / `const x = 1` / `var x`
-        if pk == syntax_kind_ext::VARIABLE_DECLARATION {
-            if let Some(decl) = self.arena.get_variable_declaration(parent_node) {
-                if decl.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.arena.get_variable_declaration(parent_node)
+            && decl.name == node_idx
+        {
+            return true;
         }
 
         // Parameter declaration: `function foo(x)`
-        if pk == syntax_kind_ext::PARAMETER {
-            if let Some(param) = self.arena.get_parameter(parent_node) {
-                if param.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::PARAMETER
+            && let Some(param) = self.arena.get_parameter(parent_node)
+            && param.name == node_idx
+        {
+            return true;
         }
 
         // Function declaration: `function foo() {}`
-        if pk == syntax_kind_ext::FUNCTION_DECLARATION
+        if (pk == syntax_kind_ext::FUNCTION_DECLARATION
             || pk == syntax_kind_ext::FUNCTION_EXPRESSION
-            || pk == syntax_kind_ext::ARROW_FUNCTION
+            || pk == syntax_kind_ext::ARROW_FUNCTION)
+            && let Some(func) = self.arena.get_function(parent_node)
+            && func.name == node_idx
         {
-            if let Some(func) = self.arena.get_function(parent_node) {
-                if func.name == node_idx {
-                    return true;
-                }
-            }
+            return true;
         }
 
         // Class declaration/expression: `class Foo {}`
-        if pk == syntax_kind_ext::CLASS_DECLARATION || pk == syntax_kind_ext::CLASS_EXPRESSION {
-            if let Some(class) = self.arena.get_class(parent_node) {
-                if class.name == node_idx {
-                    return true;
-                }
-            }
+        if (pk == syntax_kind_ext::CLASS_DECLARATION || pk == syntax_kind_ext::CLASS_EXPRESSION)
+            && let Some(class) = self.arena.get_class(parent_node)
+            && class.name == node_idx
+        {
+            return true;
         }
 
         // Interface declaration: `interface Foo {}`
-        if pk == syntax_kind_ext::INTERFACE_DECLARATION {
-            if let Some(iface) = self.arena.get_interface(parent_node) {
-                if iface.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::INTERFACE_DECLARATION
+            && let Some(iface) = self.arena.get_interface(parent_node)
+            && iface.name == node_idx
+        {
+            return true;
         }
 
         // Type alias declaration: `type Foo = ...`
-        if pk == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-            if let Some(alias) = self.arena.get_type_alias(parent_node) {
-                if alias.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+            && let Some(alias) = self.arena.get_type_alias(parent_node)
+            && alias.name == node_idx
+        {
+            return true;
         }
 
         // Enum declaration: `enum Foo {}`
-        if pk == syntax_kind_ext::ENUM_DECLARATION {
-            if let Some(enm) = self.arena.get_enum(parent_node) {
-                if enm.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::ENUM_DECLARATION
+            && let Some(enm) = self.arena.get_enum(parent_node)
+            && enm.name == node_idx
+        {
+            return true;
         }
 
         // Enum member: `enum Foo { Bar }`
-        if pk == syntax_kind_ext::ENUM_MEMBER {
-            if let Some(member) = self.arena.get_enum_member(parent_node) {
-                if member.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::ENUM_MEMBER
+            && let Some(member) = self.arena.get_enum_member(parent_node)
+            && member.name == node_idx
+        {
+            return true;
         }
 
         // Module/namespace declaration: `namespace Foo {}`
-        if pk == syntax_kind_ext::MODULE_DECLARATION {
-            if let Some(module) = self.arena.get_module(parent_node) {
-                if module.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(module) = self.arena.get_module(parent_node)
+            && module.name == node_idx
+        {
+            return true;
         }
 
         // Import specifier: `import { x } from ...`
-        if pk == syntax_kind_ext::IMPORT_SPECIFIER {
-            if let Some(spec) = self.arena.get_specifier(parent_node) {
-                // The local name of the import is a write
-                if spec.name == node_idx {
-                    return true;
-                }
+        if pk == syntax_kind_ext::IMPORT_SPECIFIER
+            && let Some(spec) = self.arena.get_specifier(parent_node)
+        {
+            // The local name of the import is a write
+            if spec.name == node_idx {
+                return true;
             }
         }
 
         // Import clause (default import): `import x from ...`
-        if pk == syntax_kind_ext::IMPORT_CLAUSE {
-            if let Some(clause) = self.arena.get_import_clause(parent_node) {
-                if clause.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::IMPORT_CLAUSE
+            && let Some(clause) = self.arena.get_import_clause(parent_node)
+            && clause.name == node_idx
+        {
+            return true;
         }
 
         // Namespace import: `import * as ns from ...`
@@ -584,12 +573,11 @@ impl<'a> FindReferences<'a> {
         }
 
         // For-in/for-of: `for (const x of arr)` - the initializer's variable is a write
-        if pk == syntax_kind_ext::FOR_IN_STATEMENT || pk == syntax_kind_ext::FOR_OF_STATEMENT {
-            if let Some(for_data) = self.arena.get_for_in_of(parent_node) {
-                if for_data.initializer == node_idx {
-                    return true;
-                }
-            }
+        if (pk == syntax_kind_ext::FOR_IN_STATEMENT || pk == syntax_kind_ext::FOR_OF_STATEMENT)
+            && let Some(for_data) = self.arena.get_for_in_of(parent_node)
+            && for_data.initializer == node_idx
+        {
+            return true;
         }
 
         // Catch clause variable: `catch (e)`
@@ -598,73 +586,65 @@ impl<'a> FindReferences<'a> {
         }
 
         // Binary expression: check if this is the LHS of an assignment
-        if pk == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = self.arena.get_binary_expr(parent_node) {
-                let op = binary.operator_token;
-                let is_assignment = op >= SyntaxKind::EqualsToken as u16
-                    && op <= SyntaxKind::CaretEqualsToken as u16;
-                if is_assignment && binary.left == node_idx {
-                    return true;
-                }
+        if pk == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.arena.get_binary_expr(parent_node)
+        {
+            let op = binary.operator_token;
+            let is_assignment =
+                op >= SyntaxKind::EqualsToken as u16 && op <= SyntaxKind::CaretEqualsToken as u16;
+            if is_assignment && binary.left == node_idx {
+                return true;
             }
         }
 
         // Prefix unary: `++x` or `--x`
-        if pk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
-            if let Some(unary) = self.arena.get_unary_expr(parent_node) {
-                if unary.operator == SyntaxKind::PlusPlusToken as u16
-                    || unary.operator == SyntaxKind::MinusMinusToken as u16
-                {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr(parent_node)
+            && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+        {
+            return true;
         }
 
         // Postfix unary: `x++` or `x--`
-        if pk == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION {
-            if let Some(unary) = self.arena.get_unary_expr(parent_node) {
-                if unary.operator == SyntaxKind::PlusPlusToken as u16
-                    || unary.operator == SyntaxKind::MinusMinusToken as u16
-                {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr(parent_node)
+            && (unary.operator == SyntaxKind::PlusPlusToken as u16
+                || unary.operator == SyntaxKind::MinusMinusToken as u16)
+        {
+            return true;
         }
 
         // Property declaration in class: `class Foo { x = 1; }`
-        if pk == syntax_kind_ext::PROPERTY_DECLARATION {
-            if let Some(prop) = self.arena.get_property_decl(parent_node) {
-                if prop.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::PROPERTY_DECLARATION
+            && let Some(prop) = self.arena.get_property_decl(parent_node)
+            && prop.name == node_idx
+        {
+            return true;
         }
 
         // Method declaration
-        if pk == syntax_kind_ext::METHOD_DECLARATION {
-            if let Some(method) = self.arena.get_method_decl(parent_node) {
-                if method.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::METHOD_DECLARATION
+            && let Some(method) = self.arena.get_method_decl(parent_node)
+            && method.name == node_idx
+        {
+            return true;
         }
 
         // Get/Set accessor
-        if pk == syntax_kind_ext::GET_ACCESSOR || pk == syntax_kind_ext::SET_ACCESSOR {
-            if let Some(accessor) = self.arena.get_accessor(parent_node) {
-                if accessor.name == node_idx {
-                    return true;
-                }
-            }
+        if (pk == syntax_kind_ext::GET_ACCESSOR || pk == syntax_kind_ext::SET_ACCESSOR)
+            && let Some(accessor) = self.arena.get_accessor(parent_node)
+            && accessor.name == node_idx
+        {
+            return true;
         }
 
         // Type parameter: `function foo<T>()`
-        if pk == syntax_kind_ext::TYPE_PARAMETER {
-            if let Some(tp) = self.arena.get_type_parameter(parent_node) {
-                if tp.name == node_idx {
-                    return true;
-                }
-            }
+        if pk == syntax_kind_ext::TYPE_PARAMETER
+            && let Some(tp) = self.arena.get_type_parameter(parent_node)
+            && tp.name == node_idx
+        {
+            return true;
         }
 
         false
@@ -695,11 +675,12 @@ impl<'a> FindReferences<'a> {
 
         // The node itself might be the name child of a declaration.
         // Check if its parent is in the declaration set.
-        if let Some(ext) = self.arena.get_extended(node_idx) {
-            if !ext.parent.is_none() && declaration_set.contains(&ext.parent.0) {
-                // Make sure this node is actually the "name" of the parent declaration
-                return self.name_node_for(ext.parent) == Some(node_idx);
-            }
+        if let Some(ext) = self.arena.get_extended(node_idx)
+            && !ext.parent.is_none()
+            && declaration_set.contains(&ext.parent.0)
+        {
+            // Make sure this node is actually the "name" of the parent declaration
+            return self.name_node_for(ext.parent) == Some(node_idx);
         }
 
         false

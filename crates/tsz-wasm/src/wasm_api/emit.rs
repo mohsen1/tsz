@@ -79,10 +79,7 @@ pub struct TranspileOptions {
 
 impl TranspileOptions {
     fn to_printer_options(&self) -> PrinterOptions {
-        let mut opts = PrinterOptions::default();
-
-        // Map target
-        opts.target = match self.target.unwrap_or(1) {
+        let target = match self.target.unwrap_or(1) {
             0 => ScriptTarget::ES3,
             1 => ScriptTarget::ES5,
             2 => ScriptTarget::ES2015,
@@ -96,9 +93,7 @@ impl TranspileOptions {
             99 => ScriptTarget::ESNext,
             _ => ScriptTarget::ES5,
         };
-
-        // Map module
-        opts.module = match self.module.unwrap_or(0) {
+        let module = match self.module.unwrap_or(0) {
             0 => ModuleKind::None,
             1 => ModuleKind::CommonJS,
             2 => ModuleKind::AMD,
@@ -111,6 +106,12 @@ impl TranspileOptions {
             199 => ModuleKind::NodeNext,
             _ => ModuleKind::None,
         };
+        let mut opts = PrinterOptions {
+            target,
+            module,
+            ..Default::default()
+        };
+        // Map target
 
         opts.remove_comments = self.remove_comments.unwrap_or(false);
         opts.downlevel_iteration = self.downlevel_iteration.unwrap_or(false);
@@ -191,20 +192,24 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     let arena = parser.into_arena();
 
     // Create emit context with specified options
-    let mut opts = PrinterOptions::default();
-    opts.target = match target.unwrap_or(1) {
+    let target = match target.unwrap_or(1) {
         0 => ScriptTarget::ES3,
         1 => ScriptTarget::ES5,
         2 => ScriptTarget::ES2015,
         99 => ScriptTarget::ESNext,
         _ => ScriptTarget::ES5,
     };
-    opts.module = match module.unwrap_or(0) {
+    let module = match module.unwrap_or(0) {
         0 => ModuleKind::None,
         1 => ModuleKind::CommonJS,
         6 => ModuleKind::ES2015,
         99 => ModuleKind::ESNext,
         _ => ModuleKind::None,
+    };
+    let opts = PrinterOptions {
+        target,
+        module,
+        ..Default::default()
     };
 
     let module_kind = opts.module;
@@ -249,9 +254,11 @@ pub(crate) fn emit_file(
     target: ScriptTarget,
     module: ModuleKind,
 ) -> String {
-    let mut opts = PrinterOptions::default();
-    opts.target = target;
-    opts.module = module;
+    let opts = PrinterOptions {
+        target,
+        module,
+        ..Default::default()
+    };
 
     let mut ctx = EmitContext::with_options(opts.clone());
     ctx.auto_detect_module = true;

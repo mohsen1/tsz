@@ -703,11 +703,10 @@ impl<'a> ES5ClassTransformer<'a> {
             && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
             && let Some(call_node) = self.arena.get(expr_stmt.expression)
             && let Some(call) = self.arena.get_call_expr(call_node)
+            && let Some(ref call_args) = call.arguments
         {
-            if let Some(ref call_args) = call.arguments {
-                for &arg_idx in &call_args.nodes {
-                    args.push(self.convert_expression(arg_idx));
-                }
+            for &arg_idx in &call_args.nodes {
+                args.push(self.convert_expression(arg_idx));
             }
         }
 
@@ -736,19 +735,19 @@ impl<'a> ES5ClassTransformer<'a> {
                 continue;
             };
 
-            if has_parameter_property_modifier(self.arena, &param.modifiers) {
-                if let Some(param_name) = get_identifier_text(self.arena, param.name) {
-                    let receiver = if use_this {
-                        IRNode::id("_this")
-                    } else {
-                        IRNode::this()
-                    };
-                    // this.param = param; or _this.param = param;
-                    body.push(IRNode::expr_stmt(IRNode::assign(
-                        IRNode::prop(receiver, &param_name),
-                        IRNode::id(&param_name),
-                    )));
-                }
+            if has_parameter_property_modifier(self.arena, &param.modifiers)
+                && let Some(param_name) = get_identifier_text(self.arena, param.name)
+            {
+                let receiver = if use_this {
+                    IRNode::id("_this")
+                } else {
+                    IRNode::this()
+                };
+                // this.param = param; or _this.param = param;
+                body.push(IRNode::expr_stmt(IRNode::assign(
+                    IRNode::prop(receiver, &param_name),
+                    IRNode::id(&param_name),
+                )));
             }
         }
     }
@@ -891,10 +890,10 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return Some(PropertyNameIR::StringLiteral(lit.text.clone()));
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
-                return Some(PropertyNameIR::NumericLiteral(lit.text.clone()));
-            }
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            return Some(PropertyNameIR::NumericLiteral(lit.text.clone()));
         }
 
         None
@@ -980,16 +979,14 @@ impl<'a> ES5ClassTransformer<'a> {
             let arrow_indices = self.collect_arrow_functions_in_block(body_idx);
             // Check if any arrow function has a class_alias directive
             for &arrow_idx in &arrow_indices {
-                if let Some(dir) = transforms.get(arrow_idx) {
-                    if let crate::transform_context::TransformDirective::ES5ArrowFunction {
+                if let Some(dir) = transforms.get(arrow_idx)
+                    && let crate::transform_context::TransformDirective::ES5ArrowFunction {
                         class_alias,
                         ..
                     } = dir
-                    {
-                        if let Some(alias) = class_alias {
-                            return Some(alias.to_string());
-                        }
-                    }
+                    && let Some(alias) = class_alias
+                {
+                    return Some(alias.to_string());
                 }
             }
         }
@@ -1021,10 +1018,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     captures_this,
                     ..
                 }) = transforms.get(arrow_idx)
+                    && *captures_this
                 {
-                    if *captures_this {
-                        return true;
-                    }
+                    return true;
                 }
             } else {
                 // Fallback: directly check if arrow contains `this` reference
@@ -1059,10 +1055,9 @@ impl<'a> ES5ClassTransformer<'a> {
                         captures_this,
                         ..
                     }) = transforms.get(arrow_idx)
+                        && *captures_this
                     {
-                        if *captures_this {
-                            return true;
-                        }
+                        return true;
                     }
                 } else if contains_this_reference(self.arena, arrow_idx) {
                     return true;
@@ -1575,10 +1570,10 @@ impl<'a> ES5ClassTransformer<'a> {
             if let Some(lit) = self.arena.get_literal(name_node) {
                 return IRMethodName::StringLiteral(lit.text.clone());
             }
-        } else if name_node.kind == SyntaxKind::NumericLiteral as u16 {
-            if let Some(lit) = self.arena.get_literal(name_node) {
-                return IRMethodName::NumericLiteral(lit.text.clone());
-            }
+        } else if name_node.kind == SyntaxKind::NumericLiteral as u16
+            && let Some(lit) = self.arena.get_literal(name_node)
+        {
+            return IRMethodName::NumericLiteral(lit.text.clone());
         }
 
         IRMethodName::Identifier(String::new())
@@ -1607,12 +1602,11 @@ fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
         arena.get_identifier(node).map(|id| id.escaped_text.clone())
     } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
         // For computed property names like ["goodbye"], extract the string literal text
-        if let Some(computed) = arena.get_computed_property(node) {
-            if let Some(expr_node) = arena.get(computed.expression) {
-                if expr_node.kind == SyntaxKind::StringLiteral as u16 {
-                    return arena.get_literal(expr_node).map(|lit| lit.text.clone());
-                }
-            }
+        if let Some(computed) = arena.get_computed_property(node)
+            && let Some(expr_node) = arena.get(computed.expression)
+            && expr_node.kind == SyntaxKind::StringLiteral as u16
+        {
+            return arena.get_literal(expr_node).map(|lit| lit.text.clone());
         }
         None
     } else if node.kind == SyntaxKind::StringLiteral as u16 {
@@ -1666,32 +1660,31 @@ fn collect_accessor_pairs(
             continue;
         };
 
-        if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-            || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+        if (member_node.kind == syntax_kind_ext::GET_ACCESSOR
+            || member_node.kind == syntax_kind_ext::SET_ACCESSOR)
+            && let Some(accessor_data) = arena.get_accessor(member_node)
         {
-            if let Some(accessor_data) = arena.get_accessor(member_node) {
-                // Check static modifier matches what we're collecting
-                let is_static = has_static_modifier(arena, &accessor_data.modifiers);
-                if is_static != collect_static {
-                    continue;
-                }
-                // Skip abstract
-                if has_abstract_modifier(arena, &accessor_data.modifiers) {
-                    continue;
-                }
-                // Skip private
-                if is_private_identifier(arena, accessor_data.name) {
-                    continue;
-                }
+            // Check static modifier matches what we're collecting
+            let is_static = has_static_modifier(arena, &accessor_data.modifiers);
+            if is_static != collect_static {
+                continue;
+            }
+            // Skip abstract
+            if has_abstract_modifier(arena, &accessor_data.modifiers) {
+                continue;
+            }
+            // Skip private
+            if is_private_identifier(arena, accessor_data.name) {
+                continue;
+            }
 
-                let name = get_identifier_text(arena, accessor_data.name).unwrap_or_default();
-                let entry = accessor_map.entry(name).or_insert((None, None));
+            let name = get_identifier_text(arena, accessor_data.name).unwrap_or_default();
+            let entry = accessor_map.entry(name).or_insert((None, None));
 
-                if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                    entry.0 = Some(member_idx);
-                } else {
-                    entry.1 = Some(member_idx);
-                }
+            if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                entry.0 = Some(member_idx);
+            } else {
+                entry.1 = Some(member_idx);
             }
         }
     }
@@ -2200,13 +2193,13 @@ impl<'a> AstToIr<'a> {
 
     fn convert_labeled_statement(&self, idx: NodeIndex) -> IRNode {
         let node = self.arena.get(idx).unwrap();
-        if let Some(labeled) = self.arena.get_labeled_statement(node) {
-            if let Some(label) = get_identifier_text(self.arena, labeled.label) {
-                return IRNode::LabeledStatement {
-                    label,
-                    statement: Box::new(self.convert_statement(labeled.statement)),
-                };
-            }
+        if let Some(labeled) = self.arena.get_labeled_statement(node)
+            && let Some(label) = get_identifier_text(self.arena, labeled.label)
+        {
+            return IRNode::LabeledStatement {
+                label,
+                statement: Box::new(self.convert_statement(labeled.statement)),
+            };
         }
         IRNode::ASTRef(idx)
     }
@@ -2253,12 +2246,11 @@ impl<'a> AstToIr<'a> {
             };
 
             // Check for super.method(args) or super[expr](args) → _super.prototype.method.call(this, args)
-            if self.has_super {
-                if let Some(super_call) =
+            if self.has_super
+                && let Some(super_call) =
                     self.try_convert_super_method_call(call.expression, args.clone())
-                {
-                    return super_call;
-                }
+            {
+                return super_call;
             }
 
             let callee = self.convert_expression(call.expression);
@@ -2370,21 +2362,18 @@ impl<'a> AstToIr<'a> {
         // PropertyAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super.property → _super.prototype.property
-            if self.has_super {
-                if let Some(obj_node) = self.arena.get(access.expression) {
-                    if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
-                        if let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
-                        {
-                            return IRNode::PropertyAccess {
-                                object: Box::new(IRNode::PropertyAccess {
-                                    object: Box::new(IRNode::id("_super")),
-                                    property: "prototype".to_string(),
-                                }),
-                                property: name,
-                            };
-                        }
-                    }
-                }
+            if self.has_super
+                && let Some(obj_node) = self.arena.get(access.expression)
+                && obj_node.kind == SyntaxKind::SuperKeyword as u16
+                && let Some(name) = get_identifier_text(self.arena, access.name_or_argument)
+            {
+                return IRNode::PropertyAccess {
+                    object: Box::new(IRNode::PropertyAccess {
+                        object: Box::new(IRNode::id("_super")),
+                        property: "prototype".to_string(),
+                    }),
+                    property: name,
+                };
             }
 
             let object = self.convert_expression(access.expression);
@@ -2403,19 +2392,18 @@ impl<'a> AstToIr<'a> {
         // ElementAccessExpression uses AccessExprData
         if let Some(access) = self.arena.get_access_expr(node) {
             // Check for super[expr] → _super.prototype[expr]
-            if self.has_super {
-                if let Some(obj_node) = self.arena.get(access.expression) {
-                    if obj_node.kind == SyntaxKind::SuperKeyword as u16 {
-                        let index = self.convert_expression(access.name_or_argument);
-                        return IRNode::ElementAccess {
-                            object: Box::new(IRNode::PropertyAccess {
-                                object: Box::new(IRNode::id("_super")),
-                                property: "prototype".to_string(),
-                            }),
-                            index: Box::new(index),
-                        };
-                    }
-                }
+            if self.has_super
+                && let Some(obj_node) = self.arena.get(access.expression)
+                && obj_node.kind == SyntaxKind::SuperKeyword as u16
+            {
+                let index = self.convert_expression(access.name_or_argument);
+                return IRNode::ElementAccess {
+                    object: Box::new(IRNode::PropertyAccess {
+                        object: Box::new(IRNode::id("_super")),
+                        property: "prototype".to_string(),
+                    }),
+                    index: Box::new(index),
+                };
             }
 
             let object = self.convert_expression(access.expression);

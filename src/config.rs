@@ -393,17 +393,15 @@ pub fn resolve_compiler_options(
 
     // When module is not explicitly set, infer it from moduleResolution (matches tsc behavior).
     // tsc infers module: node16 when moduleResolution: node16, etc.
-    if !module_explicitly_set {
-        if let Some(mr) = resolved.module_resolution {
-            let inferred = match mr {
-                ModuleResolutionKind::Node16 => Some(ModuleKind::Node16),
-                ModuleResolutionKind::NodeNext => Some(ModuleKind::NodeNext),
-                _ => None,
-            };
-            if let Some(kind) = inferred {
-                resolved.printer.module = kind;
-                resolved.checker.module = kind;
-            }
+    if !module_explicitly_set && let Some(mr) = resolved.module_resolution {
+        let inferred = match mr {
+            ModuleResolutionKind::Node16 => Some(ModuleKind::Node16),
+            ModuleResolutionKind::NodeNext => Some(ModuleKind::NodeNext),
+            _ => None,
+        };
+        if let Some(kind) = inferred {
+            resolved.printer.module = kind;
+            resolved.checker.module = kind;
         }
     }
     let effective_resolution = resolved.effective_module_resolution();

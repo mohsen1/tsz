@@ -20,8 +20,10 @@ fn check_with_no_unused_params(source: &str) -> Vec<crate::diagnostics::Diagnost
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_unused_parameters = true;
+    let options = CheckerOptions {
+        no_unused_parameters: true,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -43,8 +45,10 @@ fn check_with_no_unused_locals(source: &str) -> Vec<crate::diagnostics::Diagnost
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_unused_locals = true;
+    let options = CheckerOptions {
+        no_unused_locals: true,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -249,8 +253,10 @@ fn test_no_unused_locals_only_no_type_param_errors() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_unused_locals = true; // only locals, not params
+    let options = CheckerOptions {
+        no_unused_locals: true,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -290,9 +296,11 @@ function f(this: A): number {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_unused_parameters = true;
-    options.no_unused_locals = true;
+    let options = CheckerOptions {
+        no_unused_parameters: true,
+        no_unused_locals: true,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -328,8 +336,10 @@ fn test_using_declaration_not_reported_unused() {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_unused_locals = true;
+    let options = CheckerOptions {
+        no_unused_locals: true,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -374,8 +384,10 @@ class Employee {
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
-    let mut options = CheckerOptions::default();
-    options.no_unused_locals = true;
+    let options = CheckerOptions {
+        no_unused_locals: true,
+        ..Default::default()
+    };
 
     let mut checker = CheckerState::new(
         parser.get_arena(),
