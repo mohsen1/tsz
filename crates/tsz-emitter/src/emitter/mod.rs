@@ -317,6 +317,9 @@ pub struct Printer<'a> {
 
     /// Current nesting depth for iterator for-of emission.
     pub(super) iterator_for_of_depth: usize,
+
+    /// Active nesting depth for downlevel destructuring read initialization.
+    pub(super) destructuring_read_depth: usize,
 }
 
 impl<'a> Printer<'a> {
@@ -376,6 +379,7 @@ impl<'a> Printer<'a> {
             hoisted_for_of_temps: Vec::new(),
             reserved_iterator_return_temps: FxHashMap::default(),
             iterator_for_of_depth: 0,
+            destructuring_read_depth: 0,
         }
     }
 

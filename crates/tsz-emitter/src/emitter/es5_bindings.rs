@@ -1068,7 +1068,9 @@ impl<'a> Printer<'a> {
         let read_temp = self.get_temp_var_name();
         self.write(&read_temp);
         self.write(" = __read(");
+        self.destructuring_read_depth += 1;
         self.emit(source_expr);
+        self.destructuring_read_depth -= 1;
         if element_count > 0 {
             self.write(", ");
             self.write(&element_count.to_string());
@@ -1099,7 +1101,7 @@ impl<'a> Printer<'a> {
                     self.emit_es5_destructuring_pattern_idx(elem.name, &rest_temp);
                 } else if self.has_identifier_text(elem.name) {
                     self.write(", ");
-                    self.emit_commonjs_binding_target(elem.name);
+                    self.emit(elem.name);
                     self.write(" = ");
                     self.write(&read_temp);
                     self.write(".slice(");
@@ -1127,7 +1129,7 @@ impl<'a> Printer<'a> {
                     let elem_source = format!("{}[{}]", read_temp, index);
                     if elem.initializer.is_none() {
                         self.write(", ");
-                        self.emit_commonjs_binding_target(elem.name);
+                        self.emit(elem.name);
                         self.write(" = ");
                         self.write(&elem_source);
                     } else {
@@ -1137,7 +1139,7 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.write(&elem_source);
                         self.write(", ");
-                        self.emit_commonjs_binding_target(elem.name);
+                        self.emit(elem.name);
                         self.write(" = ");
                         self.write(&value_name);
                         self.write(" === void 0 ? ");
