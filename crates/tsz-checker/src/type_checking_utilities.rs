@@ -2221,6 +2221,22 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a JSDoc comment has a `@type {expr}` tag.
+    ///
+    /// When `@type` declares a full function type (e.g., `@type {function((string)): string}`),
+    /// all parameters are typed and TS7006 should be suppressed.
+    pub(crate) fn jsdoc_has_type_tag(jsdoc: &str) -> bool {
+        for line in jsdoc.lines() {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("@type")
+                && rest.trim().starts_with('{')
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Extract `@template` type parameter names from a JSDoc comment.
     ///
     /// Supports simple forms like:

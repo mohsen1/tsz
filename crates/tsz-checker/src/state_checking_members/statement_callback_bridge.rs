@@ -131,11 +131,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 continue;
             };
             // Check if JSDoc provides a @param type for this parameter,
-            // or if the parameter has an inline /** @type {T} */ annotation
+            // or if the parameter has an inline /** @type {T} */ annotation,
+            // or if the function has a @type tag declaring its full type.
             let has_jsdoc_param = if param.type_annotation.is_none() {
                 let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
                     let pname = self.parameter_name_for_error(param.name);
-                    Self::jsdoc_has_param_type(jsdoc, &pname)
+                    Self::jsdoc_has_param_type(jsdoc, &pname) || Self::jsdoc_has_type_tag(jsdoc)
                 } else {
                     false
                 };
