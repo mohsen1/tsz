@@ -1333,7 +1333,7 @@ impl<'a> CheckerState<'a> {
         // types. Only do this when this access is NOT itself an optional chain
         // (`question_dot_token` is false) but is part of one (parent has `?.`).
         let object_type = if !access.question_dot_token
-            && crate::optional_chain::is_optional_chain(&self.ctx.arena, access.expression)
+            && crate::optional_chain::is_optional_chain(self.ctx.arena, access.expression)
         {
             let (non_nullish, _) = self.split_nullish_type(object_type);
             non_nullish.unwrap_or(object_type)

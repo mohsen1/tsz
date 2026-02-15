@@ -981,7 +981,7 @@ pub fn resolve_lib_files_from_dir_with_options(
         return Ok(Vec::new());
     }
 
-    let lib_map = build_lib_map(&lib_dir)?;
+    let lib_map = build_lib_map(lib_dir)?;
     let mut resolved = Vec::new();
     let mut pending: VecDeque<String> = lib_list
         .iter()
