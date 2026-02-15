@@ -86,6 +86,7 @@ pub enum IRNode {
     NewExpr {
         callee: Box<IRNode>,
         arguments: Vec<IRNode>,
+        explicit_arguments: bool,
     },
 
     /// Property access: `object.property`
@@ -726,10 +727,11 @@ impl IRNode {
     }
 
     /// Create a new expression: `new Constructor(args)`
-    pub fn new_expr(callee: IRNode, args: Vec<IRNode>) -> Self {
+    pub fn new_expr(callee: IRNode, args: Vec<IRNode>, explicit_args: bool) -> Self {
         IRNode::NewExpr {
             callee: Box::new(callee),
             arguments: args,
+            explicit_arguments: explicit_args,
         }
     }
 }

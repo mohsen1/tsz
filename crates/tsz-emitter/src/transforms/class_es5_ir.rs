@@ -2367,6 +2367,7 @@ impl<'a> AstToIr<'a> {
             IRNode::NewExpr {
                 callee: Box::new(callee),
                 arguments: args,
+                explicit_arguments: call_data.arguments.is_some(),
             }
         } else {
             IRNode::ASTRef(idx)

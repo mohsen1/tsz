@@ -1312,6 +1312,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     IRNode::NewExpr {
                         callee: Box::new(callee),
                         arguments: args,
+                        explicit_arguments: call.arguments.is_some(),
                     }
                 } else {
                     IRNode::Undefined

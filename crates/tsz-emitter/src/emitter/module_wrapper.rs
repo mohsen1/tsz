@@ -1,4 +1,5 @@
-use super::{ModuleKind, Printer};
+use super::Printer;
+use crate::emitter::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 
 impl<'a> Printer<'a> {

@@ -147,6 +147,15 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn is_noop_statement(node: &IRNode) -> bool {
+        match node {
+            IRNode::Sequence(nodes) if nodes.is_empty() => true,
+            IRNode::EmptyStatement => true,
+            IRNode::Raw(text) => text.trim().is_empty(),
+            _ => false,
+        }
+    }
+
     /// Create a new IR printer
     pub fn new() -> Self {
         Self {
@@ -317,12 +326,18 @@ impl<'a> IRPrinter<'a> {
                 self.emit_comma_separated(arguments);
                 self.write(")");
             }
-            IRNode::NewExpr { callee, arguments } => {
+            IRNode::NewExpr {
+                callee,
+                arguments,
+                explicit_arguments,
+            } => {
                 self.write("new ");
                 self.emit_node(callee);
-                self.write("(");
-                self.emit_comma_separated(arguments);
-                self.write(")");
+                if *explicit_arguments {
+                    self.write("(");
+                    self.emit_comma_separated(arguments);
+                    self.write(")");
+                }
             }
             IRNode::PropertyAccess { object, property } => {
                 self.emit_node(object);
@@ -1383,6 +1398,12 @@ impl<'a> IRPrinter<'a> {
                     i += 1;
                     continue;
                 }
+
+                if Self::is_noop_statement(&body[i]) {
+                    i += 1;
+                    continue;
+                }
+
                 self.write_indent();
                 let suppress_for_this_node = i + 1 < body.len()
                     && matches!(&body[i], IRNode::FunctionDecl { .. })

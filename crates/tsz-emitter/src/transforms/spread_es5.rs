@@ -405,6 +405,7 @@ impl<'a> ES5SpreadTransformer<'a> {
                 ],
             )))),
             arguments: vec![],
+            explicit_arguments: true,
         })
     }
 
