@@ -494,6 +494,24 @@ fn convert_options_to_tsconfig(
         opts.insert(canonical_key.to_string(), json_value);
     }
 
+    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
+    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+        let strict = *strict;
+        for key in [
+            "noImplicitAny",
+            "noImplicitThis",
+            "strictNullChecks",
+            "strictFunctionTypes",
+            "strictBindCallApply",
+            "strictPropertyInitialization",
+            "useUnknownInCatchVariables",
+            "alwaysStrict",
+        ] {
+            opts.entry(key.to_string())
+                .or_insert(serde_json::Value::Bool(strict));
+        }
+    }
+
     serde_json::Value::Object(opts)
 }
 

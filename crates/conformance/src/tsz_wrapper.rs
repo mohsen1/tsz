@@ -511,6 +511,26 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
         opts.insert(canonical_key.to_string(), json_value);
     }
 
+    // TypeScript's `strict` flag sets defaults for the strict option family when they are
+    // not explicitly provided. Materialize those defaults so downstream option parsing
+    // preserves both `strict: true` and `strict: false` behavior.
+    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+        let strict = *strict;
+        for key in [
+            "noImplicitAny",
+            "noImplicitThis",
+            "strictNullChecks",
+            "strictFunctionTypes",
+            "strictBindCallApply",
+            "strictPropertyInitialization",
+            "useUnknownInCatchVariables",
+            "alwaysStrict",
+        ] {
+            opts.entry(key.to_string())
+                .or_insert(serde_json::Value::Bool(strict));
+        }
+    }
+
     // Match tsc default compiler behavior for tests that omit @target.
     // TypeScript defaults target to ES5 when not specified.
     if !opts.contains_key("target") {
