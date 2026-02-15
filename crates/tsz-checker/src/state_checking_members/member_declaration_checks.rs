@@ -258,7 +258,11 @@ impl<'a> CheckerState<'a> {
                         if let Some(accessor_name) = self.get_property_name(accessor.name)
                             && accessor_name == name
                         {
-                            // Getters/setters are always accessible via super — they are methods.
+                            // In ES2015+, getters/setters are prototype methods accessible via super.
+                            // In ES5/ES3, they are property descriptors and not accessible via super.
+                            if self.ctx.compiler_options.target.is_es5() {
+                                return Some(false);
+                            }
                             return Some(true);
                         }
                     }
