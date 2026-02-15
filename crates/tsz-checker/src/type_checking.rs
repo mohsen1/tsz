@@ -482,6 +482,11 @@ impl<'a> CheckerState<'a> {
                 self.check_type_literal_duplicate_properties(&type_lit.members.nodes);
                 for &member_idx in &type_lit.members.nodes {
                     self.check_type_member_for_parameter_properties(member_idx);
+                    // TS1170: Computed property in type literal must have literal/unique symbol type
+                    if let Some(member_node) = self.ctx.arena.get(member_idx)
+                        && let Some(sig) = self.ctx.arena.get_signature(member_node) {
+                            self.check_type_literal_computed_property_name(sig.name);
+                        }
                 }
             }
         }

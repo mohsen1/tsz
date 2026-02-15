@@ -191,13 +191,18 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check a computed property name in a class property declaration (TS1166).
+    /// Check a computed property name requires a simple literal or unique symbol type.
     ///
-    /// In class property declarations, computed property names that are not
-    /// entity name expressions must have a type that is a string literal,
-    /// number literal, or unique symbol type. Entity name expressions (simple
-    /// identifiers or property access chains) are always allowed.
-    pub(crate) fn check_class_computed_property_name(&mut self, name_idx: NodeIndex) {
+    /// Used for TS1166 (class properties), TS1169 (interfaces), and TS1170 (type literals).
+    /// Entity name expressions (identifiers, property access chains) and literal
+    /// expressions are always allowed. Other expressions must have a literal or
+    /// unique symbol type.
+    fn check_computed_property_requires_literal(
+        &mut self,
+        name_idx: NodeIndex,
+        message: &str,
+        code: u32,
+    ) {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return;
         };
@@ -234,13 +239,38 @@ impl<'a> CheckerState<'a> {
         }
 
         if !tsz_solver::type_queries::is_type_usable_as_property_name(self.ctx.types, expr_type) {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.error_at_node(
-                name_idx,
-                diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
-                diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
-            );
+            self.error_at_node(name_idx, message, code);
         }
+    }
+
+    /// Check a computed property name in a class property declaration (TS1166).
+    pub(crate) fn check_class_computed_property_name(&mut self, name_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.check_computed_property_requires_literal(
+            name_idx,
+            diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
+            diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_CLASS_PROPERTY_DECLARATION_MUST_HAVE_A_SIMPLE_LITE,
+        );
+    }
+
+    /// Check a computed property name in an interface (TS1169).
+    pub(crate) fn check_interface_computed_property_name(&mut self, name_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.check_computed_property_requires_literal(
+            name_idx,
+            diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
+            diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_AN_INTERFACE_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYPE,
+        );
+    }
+
+    /// Check a computed property name in a type literal (TS1170).
+    pub(crate) fn check_type_literal_computed_property_name(&mut self, name_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.check_computed_property_requires_literal(
+            name_idx,
+            diagnostic_messages::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+            diagnostic_codes::A_COMPUTED_PROPERTY_NAME_IN_A_TYPE_LITERAL_MUST_REFER_TO_AN_EXPRESSION_WHOSE_TYP,
+        );
     }
 
     /// Check a computed property name for type errors (TS2464).
