@@ -590,12 +590,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut source_instantiated = source.clone();
         let mut target_instantiated = target.clone();
 
-        // Generic source vs generic target (same arity): normalize both signatures to source
-        // type parameter identities so alpha-equivalent signatures compare structurally.
+        // Generic source vs generic target (same arity): normalize both signatures so they
+        // can be compared structurally.
         //
-        // Constraint compatibility mostly follows target_constraint <: source_constraint for
-        // source <: target. However, when both constraints are free type parameters from an
-        // enclosing generic context, TypeScript accepts either related direction.
+        // Two strategies are used depending on constraint compatibility:
+        // 1. Alpha-renaming: map target type params to source type params, check constraints
+        //    bidirectionally. Works when constraints are related (especially outer-scope type
+        //    parameters like `T` vs `T1 extends T`).
+        // 2. Canonicalization (tsc-like): replace target type params with their constraints,
+        //    then infer source type params from the concrete target. Handles cases where
+        //    constraints differ structurally but are semantically equivalent through parameter
+        //    usage (e.g., `<S extends {p:string}[]>(x: S)` vs `<T extends {p:string}>(x: T[])`).
         if !source_instantiated.type_params.is_empty()
             && source_instantiated.type_params.len() == target_instantiated.type_params.len()
             && !target_instantiated.type_params.is_empty()
@@ -612,40 +617,52 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 source_identity_substitution.insert(source_tp.name, source_type_param_type);
             }
 
-            for (source_tp, target_tp) in source_instantiated
+            // Check constraint compatibility bidirectionally — accept if either direction holds.
+            let all_constraints_compatible = source_instantiated
                 .type_params
                 .iter()
                 .zip(target_instantiated.type_params.iter())
-            {
-                let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
-                let target_constraint = target_tp
-                    .constraint
-                    .map(|constraint| {
-                        instantiate_type(self.interner, constraint, &target_to_source_substitution)
-                    })
-                    .unwrap_or(TypeId::UNKNOWN);
+                .all(|(source_tp, target_tp)| {
+                    let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
+                    let target_constraint = target_tp
+                        .constraint
+                        .map(|constraint| {
+                            instantiate_type(
+                                self.interner,
+                                constraint,
+                                &target_to_source_substitution,
+                            )
+                        })
+                        .unwrap_or(TypeId::UNKNOWN);
 
-                let constraints_compatible = self
-                    .check_subtype(target_constraint, source_constraint)
-                    .is_true()
-                    || (matches!(
-                        self.interner.lookup(source_constraint),
-                        Some(TypeData::TypeParameter(_))
-                    ) && matches!(
-                        self.interner.lookup(target_constraint),
-                        Some(TypeData::TypeParameter(_))
-                    ) && self
-                        .check_subtype(source_constraint, target_constraint)
-                        .is_true());
-                if !constraints_compatible {
-                    return SubtypeResult::False;
+                    self.check_subtype(target_constraint, source_constraint)
+                        .is_true()
+                        || self
+                            .check_subtype(source_constraint, target_constraint)
+                            .is_true()
+                });
+
+            if all_constraints_compatible {
+                // Strategy 1: alpha-rename — both shapes use source type param identities
+                source_instantiated = self.instantiate_function_shape(
+                    &source_instantiated,
+                    &source_identity_substitution,
+                );
+                target_instantiated = self.instantiate_function_shape(
+                    &target_instantiated,
+                    &target_to_source_substitution,
+                );
+            } else {
+                // Strategy 2: canonicalize target — replace type params with constraints,
+                // then fall through to the generic-source → non-generic-target inference path
+                let mut canonical_substitution = TypeSubstitution::new();
+                for tp in &target_instantiated.type_params {
+                    canonical_substitution
+                        .insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
                 }
+                target_instantiated =
+                    self.instantiate_function_shape(&target_instantiated, &canonical_substitution);
             }
-
-            source_instantiated = self
-                .instantiate_function_shape(&source_instantiated, &source_identity_substitution);
-            target_instantiated = self
-                .instantiate_function_shape(&target_instantiated, &target_to_source_substitution);
         }
 
         // Contextual signature instantiation for generic source -> non-generic target.
