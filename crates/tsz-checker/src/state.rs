@@ -823,7 +823,17 @@ impl<'a> CheckerState<'a> {
             });
 
         if should_narrow_computed {
-            let narrowed = self.apply_flow_narrowing(idx, result);
+            let mut narrowed = self.apply_flow_narrowing(idx, result);
+            // FIX: Flow narrowing may return the original fresh type from the initializer
+            // expression, undoing the freshness stripping that get_type_of_identifier
+            // already performed. Re-apply freshness stripping to prevent "Zombie Freshness"
+            // where excess property checks fire on non-literal variable references.
+            if !self.ctx.compiler_options.sound_mode {
+                use tsz_solver::freshness::{is_fresh_object_type, widen_freshness};
+                if is_fresh_object_type(self.ctx.types, narrowed) {
+                    narrowed = widen_freshness(self.ctx.types, narrowed);
+                }
+            }
             tracing::trace!(
                 idx = idx.0,
                 type_id = result.0,
