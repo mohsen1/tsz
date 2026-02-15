@@ -1378,6 +1378,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 || k == SyntaxKind::NumericLiteral as u16
         ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
         {
+            // Canonicalize numeric property names (e.g. "1.", "1.0" -> "1")
+            if name_node.kind == SyntaxKind::NumericLiteral as u16
+                && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+            {
+                return Some(canonical);
+            }
             return Some(lit.text.clone());
         }
 

@@ -37,6 +37,20 @@ pub fn is_numeric_literal_name(name: &str) -> bool {
     js_number_to_string(value) == name
 }
 
+/// Canonicalizes a numeric property name to its JavaScript canonical form.
+///
+/// If the input parses as a finite number, returns `Some(canonical_form)` where
+/// canonical_form matches JavaScript's `Number.prototype.toString()`.
+/// For example, `"1."`, `"1.0"`, and `"1"` all canonicalize to `"1"`.
+/// Returns `None` if the name is not a numeric literal.
+pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
+    let value: f64 = name.parse().ok()?;
+    if !value.is_finite() && !value.is_nan() {
+        return None;
+    }
+    Some(js_number_to_string(value))
+}
+
 /// Converts a JavaScript number to its string representation.
 ///
 /// This matches JavaScript's `Number.prototype.toString()` behavior for proper

@@ -730,6 +730,11 @@ impl TypeResolver for TypeEnvironment {
     }
 }
 
+/// Maximum number of unique type pairs to track in cycle detection.
+/// Prevents unbounded memory growth in pathological cases.
+#[allow(dead_code)]
+pub const MAX_IN_PROGRESS_PAIRS: usize = limits::MAX_IN_PROGRESS_PAIRS as usize;
+
 // =============================================================================
 // Task #48: SubtypeVisitor - Visitor Pattern for Subtype Checking
 // =============================================================================
@@ -4504,6 +4509,18 @@ impl<'a, R: TypeResolver> AssignabilityChecker for SubtypeChecker<'a, R> {
     }
 }
 
+/// Convenience function for one-off subtype checks with a resolver
+#[allow(dead_code)]
+pub fn is_subtype_of_with_resolver<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let mut checker = SubtypeChecker::with_resolver(interner, resolver);
+    checker.is_subtype_of(source, target)
+}
+
 /// Check if two types are structurally identical using De Bruijn indices for cycles.
 ///
 /// This is the O(1) alternative to bidirectional subtyping for identity checks.
@@ -4541,6 +4558,19 @@ pub fn is_subtype_of_with_flags(
     flags: u16,
 ) -> bool {
     let mut checker = SubtypeChecker::new(interner).apply_flags(flags);
+    checker.is_subtype_of(source, target)
+}
+
+/// Convenience function for one-off subtype checks with a resolver, routed through a QueryDatabase.
+#[allow(dead_code)]
+pub fn is_subtype_of_with_resolver_and_db<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    resolver: &R,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let mut checker =
+        SubtypeChecker::with_resolver(db.as_type_database(), resolver).with_query_db(db);
     checker.is_subtype_of(source, target)
 }
 
