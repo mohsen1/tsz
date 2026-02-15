@@ -192,6 +192,8 @@ ensure_binaries() {
 generate_cache() {
     local force_regenerate="${1:-false}"
     
+    "$REPO_ROOT/scripts/ensure-pinned-typescript.sh" "$REPO_ROOT/scripts/emit"
+
     if [ "$force_regenerate" != "true" ] && [ -f "$CACHE_FILE" ]; then
         echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
         echo "Skipping cache generation."
@@ -248,13 +250,79 @@ generate_cache() {
 
 # Ensure cache exists - generate if not checked in
 ensure_cache() {
-    if [ -f "$CACHE_FILE" ]; then
-        return 0
+    if [ ! -f "$CACHE_FILE" ]; then
+        echo -e "${YELLOW}Cache not found, generating locally (this may take 10-15 minutes)...${NC}"
+        ensure_binaries
+        generate_cache
+        return
     fi
 
-    echo -e "${YELLOW}Cache not found, generating locally (this may take 10-15 minutes)...${NC}"
-    ensure_binaries
-    generate_cache
+    local pinned_version
+    pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"
+    if [ -z "$pinned_version" ]; then
+        echo -e "${YELLOW}Could not resolve pinned TypeScript version from scripts/typescript-versions.json${NC}"
+        echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
+        return
+    fi
+
+    local cache_report
+    cache_report="$(node - "$CACHE_FILE" "$pinned_version" <<'EOF'
+const fs = require('fs');
+const cachePath = process.argv[2];
+const pinnedVersion = process.argv[3];
+const cache = JSON.parse(fs.readFileSync(cachePath, 'utf8'));
+
+let missing = 0;
+let mismatch = 0;
+let samplePath = '';
+let sampleVersion = '';
+let checked = 0;
+
+for (const [path, entry] of Object.entries(cache)) {
+  checked += 1;
+  const actual = entry && entry.metadata && entry.metadata.typescript_version;
+  if (!actual) {
+    missing += 1;
+    if (!samplePath) {
+      samplePath = path;
+      sampleVersion = '<missing>';
+    }
+    continue;
+  }
+  if (actual !== pinnedVersion) {
+    mismatch += 1;
+    if (!samplePath) {
+      samplePath = path;
+      sampleVersion = actual;
+    }
+  }
+}
+
+if (checked === 0) {
+  console.log('EMPTY');
+  process.exit(1);
+}
+
+if (missing > 0 || mismatch > 0) {
+  console.log(`missing=${missing},mismatch=${mismatch},sample=${samplePath},sampleVersion=${sampleVersion}`);
+  process.exit(1);
+}
+
+console.log('ok');
+process.exit(0);
+EOF
+)"
+
+    if [ "$cache_report" != "ok" ]; then
+        echo -e "${YELLOW}TypeScript cache was generated with a different TypeScript version than pinned:${NC}"
+        echo "  Pinned version: $pinned_version"
+        echo "  Cache check: ${cache_report:-unknown}"
+        echo -e "${YELLOW}Re-run with --no-cache to regenerate cache, or update cache file to match pinned version.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}TypeScript cache version matches pinned version: $pinned_version${NC}"
+    return 0
 }
 
 run_tests() {
@@ -574,18 +642,18 @@ case "$COMMAND" in
             echo -e "${YELLOW}--no-cache flag set, regenerating cache...${NC}"
             generate_cache "true"
             echo ""
-        elif [ ! -f "$CACHE_FILE" ]; then
+        else
             ensure_cache
-            echo ""
         fi
         run_tests "${REMAINING_ARGS[@]}"
         ;;
     analyze)
         check_submodule_clean
         ensure_binaries
-        if [ ! -f "$CACHE_FILE" ]; then
+        if [ "$NO_CACHE" = "true" ]; then
+            generate_cache "true"
+        else
             ensure_cache
-            echo ""
         fi
         analyze_tests "${REMAINING_ARGS[@]}"
         ;;

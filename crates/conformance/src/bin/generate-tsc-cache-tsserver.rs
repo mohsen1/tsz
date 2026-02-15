@@ -53,6 +53,8 @@ struct TscCacheEntry {
 struct FileMetadata {
     mtime_ms: u64,
     size: u64,
+    #[serde(default)]
+    typescript_version: Option<String>,
 }
 
 /// Sequence number for tsserver requests
@@ -264,6 +266,8 @@ fn main() -> Result<()> {
     let test_files = discover_tests(&args.test_dir, args.max)?;
     println!("✓ Found {} test files", test_files.len());
 
+    let tsc_version = resolve_tsc_version().unwrap_or_else(|_| "unknown".to_string());
+    println!("📍 TypeScript version: {}", &tsc_version);
     println!("\n🚀 Starting tsserver...");
     let mut client = TsServerClient::new(&args.tsserver, args.verbose)?;
     println!("✓ tsserver started");
@@ -299,7 +303,13 @@ fn main() -> Result<()> {
         let test_dir_base = Path::new(&args.test_dir)
             .canonicalize()
             .unwrap_or_else(|_| PathBuf::from(&args.test_dir));
-        match process_test_file(&mut client, path, &temp_dir, &test_dir_base) {
+            match process_test_file(
+                &mut client,
+                path,
+                &temp_dir,
+                &test_dir_base,
+                &tsc_version,
+            ) {
             Ok(Some((key, entry))) => {
                 cache.insert(key, entry);
             }
@@ -571,6 +581,7 @@ fn process_test_file(
     path: &Path,
     temp_dir: &Path,
     test_dir_base: &Path,
+    tsc_version: &str,
 ) -> Result<Option<(String, TscCacheEntry)>> {
     use std::fs;
     use std::sync::atomic::AtomicU64;
@@ -701,7 +712,11 @@ fn process_test_file(
     Ok(Some((
         key,
         TscCacheEntry {
-            metadata: FileMetadata { mtime_ms, size },
+            metadata: FileMetadata {
+                mtime_ms,
+                size,
+                typescript_version: Some(tsc_version.to_string()),
+            },
             error_codes,
         },
     )))
@@ -715,4 +730,22 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
     let writer = BufWriter::new(file);
     serde_json::to_writer_pretty(writer, cache)?;
     Ok(())
+}
+
+fn resolve_tsc_version() -> Result<String> {
+    let script = "const fs = require('fs'); const p = require.resolve('typescript/package.json'); const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); console.log(pkg.version || 'unknown');";
+    let output = std::process::Command::new("node")
+        .args(["-e", script])
+        .output()?;
+
+    if !output.status.success() {
+        return Ok("unknown".to_string());
+    }
+
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        Ok("unknown".to_string())
+    } else {
+        Ok(version)
+    }
 }

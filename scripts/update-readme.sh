@@ -116,7 +116,7 @@ update_section() {
 
 # ── Get TypeScript version ───────────────────────────────────────────
 
-TS_VERSION=$(node -e "const v = require('./scripts/typescript-versions.json'); const m = Object.values(v.mappings)[0]; console.log(m?.npm || v.default?.npm || 'unknown')")
+TS_VERSION=$(node -e "const v = require('./scripts/typescript-versions.json'); const current = v.current && v.mappings[v.current]; console.log((current && current.npm) || v.default?.npm || 'unknown')")
 echo "TypeScript version: $TS_VERSION"
 echo ""
 

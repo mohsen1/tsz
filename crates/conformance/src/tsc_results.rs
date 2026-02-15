@@ -14,6 +14,9 @@ pub struct FileMetadata {
     pub mtime_ms: u64,
     /// File size in bytes
     pub size: u64,
+    /// TypeScript version used to generate this cache entry.
+    #[serde(default)]
+    pub typescript_version: Option<String>,
 }
 
 /// TSC diagnostic result from cache

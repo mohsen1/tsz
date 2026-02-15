@@ -179,6 +179,7 @@ ensure_submodule() {
 build_typescript_harness() {
     log_step "Building TypeScript harness (non-bundled)..."
     cd "$TS_DIR"
+    "$SCRIPT_DIR/ensure-pinned-typescript.sh" "$TS_DIR"
 
     # Install dependencies if needed
     if [[ ! -d "node_modules" ]] || [[ ! -d "node_modules/typescript" ]]; then
