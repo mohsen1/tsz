@@ -70,6 +70,21 @@ None currently. This is a fundamental soundness issue.
 - `assignmentCompatWithDiscriminatedUnion.ts` - expects 3 TS2322 errors, TSZ reports 0
 - Many other conformance tests likely affected
 
+## Debugging Notes (2026-02-15)
+
+### What Works
+- Direct literal assignment correctly errors: `const x: 1 = 1; const y: 3 = x;` → TS2322 ✓
+- Type alias literals correctly error: `type One = 1; type Three = 3; ...` → TS2322 ✓
+
+### What Fails
+- Object property literals incorrectly succeed: `type A = { x: 1 }; type B = { x: 3 }; b = a;` → No error ✗
+
+### Key Findings
+1. The `is_disjoint_unit_type` fast path at `subtype.rs:2220-2224` works correctly for direct literals
+2. `TypeLowering` at `lower.rs:2499-2510` creates proper literal TypeIds via `self.interner.literal_number(value)`
+3. Object property comparison never reaches the literal-to-literal check
+4. Likely cause: Property types are being compared via TypeId equality before expansion, or type aliases aren't being resolved to structural types
+
 ## Status
 
-Discovered during boolean discriminated union fix (2026-02-15). Pre-existing bug, not introduced by recent changes.
+Discovered during boolean discriminated union fix (2026-02-15). Pre-existing bug, not introduced by recent changes. **Blocks discriminated union tests** - causes missing TS2322 errors (TSZ accepts when TSC rejects).
