@@ -988,11 +988,16 @@ impl<'a> CheckerState<'a> {
             let at_top_level = self.ctx.function_depth == 0;
 
             if at_top_level {
-                self.error_at_node(
-                    stmt_idx,
-                    diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
-                    diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
-                );
+                // TS1431: Only emit when the file is NOT a module (no imports/exports).
+                // If the file is a module, top-level for-await is potentially valid
+                // (just needs the right module/target settings).
+                if !self.ctx.binder.is_external_module() {
+                    self.error_at_node(
+                        stmt_idx,
+                        diagnostic_messages::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
+                        diagnostic_codes::FOR_AWAIT_LOOPS_ARE_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_FILE_WHEN_THAT_FILE_IS_A,
+                    );
+                }
 
                 // TS1432: Top-level for-await requires ES2022+/ESNext module and ES2017+ target
                 if !self.supports_top_level_await() {
