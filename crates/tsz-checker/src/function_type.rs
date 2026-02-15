@@ -38,7 +38,6 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
-
         // Determine if this is a function expression or arrow function (a closure)
         let is_closure = matches!(
             node.kind,
@@ -1124,7 +1123,13 @@ impl<'a> CheckerState<'a> {
         }
 
         // Push from outermost to innermost (reverse the inner-to-outer collection)
+        // Use two-pass approach (like push_type_parameters) so that constraints
+        // like `U extends T` can reference other type parameters from the same scope.
         let mut updates = Vec::new();
+        let mut added_params: Vec<NodeIndex> = Vec::new();
+        let factory = self.ctx.types.factory();
+
+        // Pass 1: Add all type parameters to scope WITHOUT constraints
         for param_indices in enclosing_param_indices.into_iter().rev() {
             for param_idx in param_indices {
                 let Some(node) = self.ctx.arena.get(param_idx) else {
@@ -1143,24 +1148,65 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or_else(|| "T".to_string());
                 let atom = self.ctx.types.intern_string(&name);
 
-                // Create an unconstrained type parameter placeholder.
-                // Constraints are not resolved here - that happens in the proper
-                // check_function_declaration flow with full scope context.
                 let info = tsz_solver::TypeParamInfo {
                     name: atom,
                     constraint: None,
                     default: None,
                     is_const: false,
                 };
-                let type_id = self.ctx.types.factory().type_param(info);
+                let type_id = factory.type_param(info);
 
                 // Only add if not already in scope (inner scope should shadow outer)
                 if !self.ctx.type_parameter_scope.contains_key(&name) {
                     let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                     updates.push((name, previous));
+                    added_params.push(param_idx);
                 }
             }
         }
+
+        // Pass 2: Resolve constraints now that all type parameters are in scope
+        for param_idx in added_params {
+            let Some(node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(data) = self.ctx.arena.get_type_parameter(node) else {
+                continue;
+            };
+
+            if data.constraint == NodeIndex::NONE {
+                continue;
+            }
+
+            let name = self
+                .ctx
+                .arena
+                .get(data.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .map(|id_data| id_data.escaped_text.clone())
+                .unwrap_or_else(|| "T".to_string());
+            let atom = self.ctx.types.intern_string(&name);
+
+            let constraint_type = self.get_type_from_type_node(data.constraint);
+            let constraint = if constraint_type != TypeId::ERROR {
+                Some(constraint_type)
+            } else {
+                None
+            };
+
+            // Update scope with constrained version
+            let info = tsz_solver::TypeParamInfo {
+                name: atom,
+                constraint,
+                default: None,
+                is_const: false,
+            };
+            let constrained_type_id = factory.type_param(info);
+            self.ctx
+                .type_parameter_scope
+                .insert(name, constrained_type_id);
+        }
+
         updates
     }
 
