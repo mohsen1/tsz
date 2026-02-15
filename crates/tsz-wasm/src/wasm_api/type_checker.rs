@@ -22,10 +22,8 @@ use super::program::TsCompilerOptions;
 /// - `isTypeAssignableTo(source, target)` - Check assignability
 #[wasm_bindgen]
 pub struct TsTypeChecker {
-    /// Type interner pointer (borrowed from program)
-    /// SAFETY: The TsTypeChecker is always created from TsProgram and
-    /// must not outlive the program that created it
-    interner_ptr: *const TypeInterner,
+    /// Shared type interner.
+    interner: Arc<TypeInterner>,
 }
 
 #[wasm_bindgen]
@@ -78,14 +76,7 @@ impl TsTypeChecker {
     pub fn type_to_string(&self, type_handle: u32) -> String {
         let type_id = TypeId(type_handle);
 
-        // SAFETY: interner_ptr is valid for the lifetime of TsTypeChecker
-        // which is tied to the TsProgram that created it
-        if self.interner_ptr.is_null() {
-            return self.format_basic_type(type_id);
-        }
-
-        #[allow(unsafe_code)]
-        let interner = unsafe { &*self.interner_ptr };
+        let interner = &*self.interner;
         let mut formatter = TypeFormatter::new(interner);
         formatter.format(type_id)
     }
@@ -276,12 +267,10 @@ impl TsTypeChecker {
     /// Create a new type checker for a program
     pub(crate) fn new(
         _merged: &MergedProgram,
-        interner: &TypeInterner,
+        interner: Arc<TypeInterner>,
         _options: &TsCompilerOptions,
         _lib_files: &[Arc<LibFile>],
     ) -> Self {
-        TsTypeChecker {
-            interner_ptr: interner as *const TypeInterner,
-        }
+        TsTypeChecker { interner }
     }
 }

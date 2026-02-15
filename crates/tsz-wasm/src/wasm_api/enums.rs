@@ -7,8 +7,7 @@ use wasm_bindgen::prelude::*;
 
 /// SyntaxKind enum values
 /// Matches TypeScript's SyntaxKind exactly
-#[allow(non_snake_case)]
-pub mod SyntaxKind {
+pub mod syntax_kind {
     pub const UNKNOWN: u16 = 0;
     pub const END_OF_FILE_TOKEN: u16 = 1;
     pub const SINGLE_LINE_COMMENT_TRIVIA: u16 = 2;
@@ -121,6 +120,8 @@ pub mod SyntaxKind {
     pub const SOURCE_FILE: u16 = 312;
 }
 
+pub use syntax_kind as SyntaxKind;
+
 /// DiagnosticCategory enum
 #[wasm_bindgen]
 #[repr(u8)]
@@ -190,8 +191,7 @@ pub enum ScriptKind {
 }
 
 /// TypeFlags enum
-#[allow(non_snake_case)]
-pub mod TypeFlags {
+pub mod type_flags {
     pub const ANY: u32 = 1 << 0;
     pub const UNKNOWN: u32 = 1 << 1;
     pub const STRING: u32 = 1 << 2;
@@ -223,9 +223,10 @@ pub mod TypeFlags {
     pub const STRING_MAPPING: u32 = 1 << 28;
 }
 
+pub use type_flags as TypeFlags;
+
 /// SymbolFlags enum
-#[allow(non_snake_case)]
-pub mod SymbolFlags {
+pub mod symbol_flags {
     pub const NONE: u32 = 0;
     pub const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
     pub const BLOCK_SCOPED_VARIABLE: u32 = 1 << 1;
@@ -261,6 +262,8 @@ pub mod SymbolFlags {
     pub const NAMESPACE: u32 = VALUE_MODULE | NAMESPACE_MODULE | REGULAR_ENUM | CONST_ENUM;
     pub const MODULE: u32 = VALUE_MODULE | NAMESPACE_MODULE;
 }
+
+pub use symbol_flags as SymbolFlags;
 
 /// SignatureKind enum
 #[wasm_bindgen]
