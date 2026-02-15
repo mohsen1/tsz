@@ -21,6 +21,7 @@ pub struct CommentRange {
 
 impl CommentRange {
     /// Create a new comment range.
+    #[must_use]
     pub fn new(pos: u32, end: u32, is_multi_line: bool, has_trailing_new_line: bool) -> Self {
         CommentRange {
             pos,
@@ -31,6 +32,7 @@ impl CommentRange {
     }
 
     /// Get the comment text from source.
+    #[must_use]
     pub fn get_text<'a>(&self, source: &'a str) -> &'a str {
         let start = self.pos as usize;
         let end = self.end as usize;
@@ -46,6 +48,7 @@ impl CommentRange {
 ///
 /// This scans the source text and returns all single-line (//) and
 /// multi-line (/* */) comments with their positions.
+#[must_use]
 pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
     let mut comments = Vec::new();
     let bytes = source.as_bytes();
@@ -67,7 +70,9 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
 
             if next == b'/' {
                 // Single-line comment
-                let start = pos as u32;
+                let Ok(start) = u32::try_from(pos) else {
+                    break;
+                };
                 pos += 2;
 
                 // Scan to end of line
@@ -78,7 +83,7 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
                 let has_trailing_new_line = pos < len;
                 comments.push(CommentRange::new(
                     start,
-                    pos as u32,
+                    u32::try_from(pos).unwrap_or(u32::MAX),
                     false,
                     has_trailing_new_line,
                 ));
@@ -93,7 +98,9 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
                 continue;
             } else if next == b'*' {
                 // Multi-line comment
-                let start = pos as u32;
+                let Ok(start) = u32::try_from(pos) else {
+                    break;
+                };
                 pos += 2;
 
                 // Scan to closing */
@@ -117,7 +124,7 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
 
                 comments.push(CommentRange::new(
                     start,
-                    pos as u32,
+                    u32::try_from(pos).unwrap_or(u32::MAX),
                     true,
                     has_trailing_new_line,
                 ));
@@ -137,6 +144,7 @@ pub fn get_comment_ranges(source: &str) -> Vec<CommentRange> {
 /// Get leading comments before a position.
 ///
 /// Returns comments that appear before `pos` and after any previous code.
+#[must_use]
 pub fn get_leading_comments(
     _source: &str,
     pos: u32,
@@ -152,6 +160,7 @@ pub fn get_leading_comments(
 /// Get trailing comments after a position.
 ///
 /// Returns comments that appear after `pos` on the same line.
+#[must_use]
 pub fn get_trailing_comments(
     source: &str,
     pos: u32,
@@ -160,25 +169,31 @@ pub fn get_trailing_comments(
     let bytes = source.as_bytes();
 
     // Find the next newline after pos
-    let mut line_end = pos as usize;
+    let Ok(mut line_end) = usize::try_from(pos) else {
+        return Vec::new();
+    };
     while line_end < bytes.len() && bytes[line_end] != b'\n' && bytes[line_end] != b'\r' {
         line_end += 1;
     }
 
+    let line_end = u32::try_from(line_end).unwrap_or(u32::MAX);
+
     all_comments
         .iter()
-        .filter(|c| c.pos >= pos && c.pos < line_end as u32 && !c.is_multi_line)
+        .filter(|c| c.pos >= pos && c.pos < line_end && !c.is_multi_line)
         .cloned()
         .collect()
 }
 
 /// Format a single-line comment for output.
+#[must_use]
 pub fn format_single_line_comment(text: &str) -> String {
     // Already includes // prefix
     text.to_string()
 }
 
 /// Format a multi-line comment for output.
+#[must_use]
 pub fn format_multi_line_comment(text: &str, indent: &str) -> String {
     // For multi-line comments, we need to add indentation to each line
     let lines: Vec<&str> = text.lines().collect();
@@ -200,19 +215,22 @@ pub fn format_multi_line_comment(text: &str, indent: &str) -> String {
     result
 }
 
-/// Check if a comment is a JSDoc comment.
+/// Check if a comment is a `JSDoc` comment.
+#[must_use]
 pub fn is_jsdoc_comment(comment: &CommentRange, source: &str) -> bool {
     let text = comment.get_text(source);
     text.starts_with("/**") && !text.starts_with("/***")
 }
 
 /// Check if a comment is a triple-slash directive.
+#[must_use]
 pub fn is_triple_slash_directive(comment: &CommentRange, source: &str) -> bool {
     let text = comment.get_text(source);
     text.starts_with("///")
 }
 
-/// Extract the content of a JSDoc comment (without the delimiters).
+/// Extract the content of a `JSDoc` comment (without the delimiters).
+#[must_use]
 pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {
     let text = comment.get_text(source);
     if text.starts_with("/**") && text.ends_with("*/") {
@@ -244,13 +262,14 @@ pub fn get_jsdoc_content(comment: &CommentRange, source: &str) -> String {
 /// given position.
 ///
 /// # Arguments
-/// * `comments` - The cached comment ranges from SourceFileData
+/// * `comments` - The cached comment ranges from `SourceFileData`
 /// * `pos` - The position to find leading comments for
 ///
 /// # Returns
 /// Vector of comment ranges that appear before the given position.
 /// Comments are filtered to only include those immediately preceding
 /// the position (with at most one line of whitespace between).
+#[must_use]
 pub fn get_leading_comments_from_cache(
     comments: &[CommentRange],
     pos: u32,
@@ -280,9 +299,23 @@ pub fn get_leading_comments_from_cache(
         let check_pos = if result.is_empty() {
             pos
         } else {
-            result.last().unwrap().pos
+            match result.last() {
+                Some(last) => last.pos,
+                None => pos,
+            }
         };
-        let text_between = &source[comment.end as usize..check_pos as usize];
+        let Ok(start) = usize::try_from(comment.end) else {
+            continue;
+        };
+        let Ok(end) = usize::try_from(check_pos) else {
+            continue;
+        };
+        if start > end || end > source.len() {
+            continue;
+        }
+        let Some(text_between) = source.get(start..end) else {
+            continue;
+        };
         // Count newlines with early exit — we only need to know if count > 2
         let mut newline_count = 0usize;
         for byte in text_between.as_bytes() {

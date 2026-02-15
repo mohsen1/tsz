@@ -29,7 +29,7 @@
 /// the compiler emits **TS2589**:
 /// *"Type instantiation is excessively deep and possibly infinite."*
 ///
-/// Used by `tsz-checker` (function_type.rs, state_type_environment.rs)
+/// Used by `tsz-checker` (`function_type.rs`, `state_type_environment.rs`)
 /// and `tsz-solver` (instantiate.rs).
 ///
 /// # TypeScript example
@@ -56,7 +56,7 @@ pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
 /// Maximum depth for function call resolution.
 ///
 /// Prevents infinite recursion when resolving overloaded or recursive call
-/// chains. Used by `tsz-checker` (type_computation_complex.rs).
+/// chains. Used by `tsz-checker` (`type_computation_complex.rs`).
 ///
 /// # TypeScript example
 ///
@@ -75,7 +75,7 @@ pub const MAX_CALL_DEPTH: u32 = 20;
 /// Maximum depth for subtype checking.
 ///
 /// Prevents infinite recursion in recursive structural type comparisons.
-/// Used by `tsz-solver` (SubtypeChecker.max_depth, evaluate.rs union
+/// Used by `tsz-solver` (`SubtypeChecker.max_depth`, `evaluate.rs`) union
 /// simplification).
 ///
 /// # TypeScript example

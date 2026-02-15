@@ -33,10 +33,10 @@ fn test_position_to_offset_roundtrip() {
     let source = "const x = 1;\nlet y = 2;\nvar z = 3;";
     let map = LineMap::build(source);
 
-    for offset in 0..source.len() as u32 {
+    for offset in 0..u32::try_from(source.len()).unwrap_or_default() {
         let pos = map.offset_to_position(offset, source);
         let back = map.position_to_offset(pos, source).unwrap();
-        assert_eq!(offset, back, "roundtrip failed for offset {}", offset);
+        assert_eq!(offset, back, "roundtrip failed for offset {offset}");
     }
 }
 

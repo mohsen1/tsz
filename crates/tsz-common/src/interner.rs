@@ -4,7 +4,7 @@
 //! u32 indices (Atoms). This eliminates duplicate string allocations for common
 //! identifiers like "id", "value", "length", etc.
 //!
-//! Comparisons become integer comparisons (atom_a == atom_b) instead of string
+//! Comparisons become integer comparisons (`atom_a` == `atom_b`) instead of string
 //! comparisons, which is significantly faster.
 
 use rustc_hash::{FxHashMap, FxHasher};
@@ -23,19 +23,22 @@ impl Atom {
     /// A sentinel value representing no atom / empty string.
     pub const NONE: Atom = Atom(0);
 
-    /// Returns Atom::NONE - used for serde default.
+    /// Returns `Atom::NONE` - used for serde default.
+    #[must_use]
     #[inline]
     pub fn none() -> Atom {
         Atom::NONE
     }
 
     /// Check if this is the empty/none atom.
+    #[must_use]
     #[inline]
     pub fn is_none(self) -> bool {
         self.0 == 0
     }
 
     /// Get the raw index value.
+    #[must_use]
     #[inline]
     pub fn index(self) -> u32 {
         self.0
@@ -43,8 +46,9 @@ impl Atom {
 }
 
 const SHARD_BITS: u32 = 6;
-const SHARD_COUNT: usize = 1 << SHARD_BITS;
-const SHARD_MASK: u32 = (SHARD_COUNT as u32) - 1;
+const SHARD_COUNT: usize = 64;
+const SHARD_MASK: u32 = 63;
+const SHARD_MASK_U64: u64 = 63;
 const COMMON_STRINGS: &[&str] = &[
     // Keywords
     "break",
@@ -182,6 +186,7 @@ pub struct Interner {
 
 impl Interner {
     /// Create a new interner with the empty string pre-interned at index 0.
+    #[must_use]
     pub fn new() -> Self {
         let mut interner = Interner {
             map: FxHashMap::default(),
@@ -196,12 +201,13 @@ impl Interner {
 
     /// Intern a string, returning its Atom handle.
     /// If the string was already interned, returns the existing Atom.
+    #[must_use]
     #[inline]
     pub fn intern(&mut self, s: &str) -> Atom {
         if let Some(&atom) = self.map.get(s) {
             return atom;
         }
-        let atom = Atom(self.strings.len() as u32);
+        let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
         let owned: Arc<str> = Arc::from(s);
         self.strings.push(owned.clone());
         self.map.insert(owned, atom);
@@ -209,12 +215,13 @@ impl Interner {
     }
 
     /// Intern an owned String, avoiding allocation if possible.
+    #[must_use]
     #[inline]
     pub fn intern_owned(&mut self, s: String) -> Atom {
         if let Some(&atom) = self.map.get(s.as_str()) {
             return atom;
         }
-        let atom = Atom(self.strings.len() as u32);
+        let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
         let owned: Arc<str> = Arc::from(s.into_boxed_str());
         self.strings.push(owned.clone());
         self.map.insert(owned, atom);
@@ -223,27 +230,28 @@ impl Interner {
 
     /// Resolve an Atom back to its string value.
     /// Returns empty string if atom is out of bounds (safety for error recovery).
+    #[must_use]
     #[inline]
     pub fn resolve(&self, atom: Atom) -> &str {
-        self.strings
-            .get(atom.0 as usize)
-            .map(|s| s.as_ref())
-            .unwrap_or("")
+        self.strings.get(atom.0 as usize).map_or("", AsRef::as_ref)
     }
 
     /// Try to resolve an Atom, returning None if invalid.
+    #[must_use]
     #[inline]
     pub fn try_resolve(&self, atom: Atom) -> Option<&str> {
-        self.strings.get(atom.0 as usize).map(|s| s.as_ref())
+        self.strings.get(atom.0 as usize).map(AsRef::as_ref)
     }
 
     /// Get the number of interned strings.
+    #[must_use]
     #[inline]
     pub fn len(&self) -> usize {
         self.strings.len()
     }
 
     /// Check if the interner is empty (only has the empty string).
+    #[must_use]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.strings.len() <= 1
@@ -253,7 +261,7 @@ impl Interner {
     /// Call this after creating the interner for better cache locality.
     pub fn intern_common(&mut self) {
         for s in COMMON_STRINGS {
-            self.intern(s);
+            let _ = self.intern(s);
         }
     }
 }
@@ -269,6 +277,7 @@ struct InternerShard {
 }
 
 impl InternerShard {
+    #[must_use]
     fn new() -> Self {
         InternerShard {
             state: RwLock::new(ShardState::default()),
@@ -285,6 +294,7 @@ pub struct ShardedInterner {
 
 impl ShardedInterner {
     /// Create a new sharded interner with the empty string pre-interned at index 0.
+    #[must_use]
     pub fn new() -> Self {
         let shards = std::array::from_fn(|_| InternerShard::new());
 
@@ -302,6 +312,7 @@ impl ShardedInterner {
 
     /// Intern a string, returning its Atom handle.
     /// If the string was already interned, returns the existing Atom.
+    #[must_use]
     #[inline]
     pub fn intern(&self, s: &str) -> Atom {
         if s.is_empty() {
@@ -320,13 +331,16 @@ impl ShardedInterner {
             return atom;
         }
 
-        let local_index = state.strings.len() as u32;
+        let Ok(local_index) = u32::try_from(state.strings.len()) else {
+            return Atom::NONE;
+        };
         if local_index > (u32::MAX >> SHARD_BITS) {
             // Return empty atom on overflow instead of panicking
             return Atom::NONE;
         }
 
-        let atom = Self::make_atom(local_index, shard_idx as u32);
+        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
+        let atom = Self::make_atom(local_index, shard_idx_u32);
         let owned: Arc<str> = Arc::from(s);
         state.strings.push(owned.clone());
         state.map.insert(owned, atom);
@@ -334,6 +348,7 @@ impl ShardedInterner {
     }
 
     /// Intern an owned String, avoiding allocation if possible.
+    #[must_use]
     #[inline]
     pub fn intern_owned(&self, s: String) -> Atom {
         if s.is_empty() {
@@ -351,13 +366,16 @@ impl ShardedInterner {
             return atom;
         }
 
-        let local_index = state.strings.len() as u32;
+        let Ok(local_index) = u32::try_from(state.strings.len()) else {
+            return Atom::NONE;
+        };
         if local_index > (u32::MAX >> SHARD_BITS) {
             // Return empty atom on overflow instead of panicking
             return Atom::NONE;
         }
 
-        let atom = Self::make_atom(local_index, shard_idx as u32);
+        let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
+        let atom = Self::make_atom(local_index, shard_idx_u32);
         let owned: Arc<str> = Arc::from(s);
         state.strings.push(owned.clone());
         state.map.insert(owned, atom);
@@ -366,21 +384,24 @@ impl ShardedInterner {
 
     /// Resolve an Atom back to its string value.
     /// Returns empty string if atom is out of bounds (safety for error recovery).
+    #[must_use]
     #[inline]
     pub fn resolve(&self, atom: Atom) -> Arc<str> {
         self.try_resolve(atom).unwrap_or_else(|| Arc::from(""))
     }
 
     /// Try to resolve an Atom, returning None if invalid.
+    #[must_use]
     #[inline]
     pub fn try_resolve(&self, atom: Atom) -> Option<Arc<str>> {
-        let (shard_idx, local_index) = Self::split_atom(atom)?;
+        let (shard_idx, local_index) = Self::split_atom(atom);
         let shard = self.shards.get(shard_idx)?;
         let state = shard.state.read().ok()?; // Return None if lock is poisoned
         state.strings.get(local_index).cloned()
     }
 
     /// Get the number of interned strings.
+    #[must_use]
     #[inline]
     pub fn len(&self) -> usize {
         self.shards
@@ -397,6 +418,7 @@ impl ShardedInterner {
     }
 
     /// Check if the interner is empty (only has the empty string).
+    #[must_use]
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.len() <= 1
@@ -406,7 +428,7 @@ impl ShardedInterner {
     /// Call this after creating the interner for better cache locality.
     pub fn intern_common(&self) {
         for s in COMMON_STRINGS {
-            self.intern(s);
+            let _ = self.intern(s);
         }
     }
 
@@ -414,7 +436,7 @@ impl ShardedInterner {
     fn shard_for(s: &str) -> usize {
         let mut hasher = FxHasher::default();
         s.hash(&mut hasher);
-        (hasher.finish() as usize) & (SHARD_COUNT - 1)
+        usize::try_from(hasher.finish() & SHARD_MASK_U64).unwrap_or(0)
     }
 
     #[inline]
@@ -423,15 +445,15 @@ impl ShardedInterner {
     }
 
     #[inline]
-    fn split_atom(atom: Atom) -> Option<(usize, usize)> {
+    fn split_atom(atom: Atom) -> (usize, usize) {
         if atom == Atom::NONE {
-            return Some((0, 0));
+            return (0, 0);
         }
 
         let raw = atom.0;
-        let shard_idx = (raw & SHARD_MASK) as usize;
-        let local_index = (raw >> SHARD_BITS) as usize;
-        Some((shard_idx, local_index))
+        let shard_idx = usize::try_from(raw & SHARD_MASK).unwrap_or(0);
+        let local_index = usize::try_from(raw >> SHARD_BITS).unwrap_or(0);
+        (shard_idx, local_index)
     }
 }
 
