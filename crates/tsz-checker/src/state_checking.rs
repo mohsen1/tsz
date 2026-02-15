@@ -3248,7 +3248,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn get_readonly_element_access_name(
-        &mut self,
+        &self,
         object_type: TypeId,
         index_expr: NodeIndex,
         index_type: TypeId,
