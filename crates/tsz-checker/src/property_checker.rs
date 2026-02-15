@@ -68,16 +68,26 @@ impl<'a> CheckerState<'a> {
             && let Some(false) =
                 self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
         {
-            use crate::diagnostics::format_message;
-            let message = format_message(
-                diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
-                &[property_name],
-            );
-            self.error_at_node(
-                error_node,
-                &message,
-                diagnostic_codes::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
-            );
+            // ES5: TS2340 for all non-method super access (including getters/setters)
+            // ES2015+: TS2855 for field-only super access (getters/setters are methods)
+            if self.ctx.compiler_options.target.is_es5() {
+                self.error_at_node(
+                    error_node,
+                    diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+                    diagnostic_codes::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
+                );
+            } else {
+                use crate::diagnostics::format_message;
+                let message = format_message(
+                    diagnostic_messages::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
+                    &[property_name],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::CLASS_FIELD_DEFINED_BY_THE_PARENT_CLASS_IS_NOT_ACCESSIBLE_IN_THE_CHILD_CLASS_VIA,
+                );
+            }
             return false;
         }
 
