@@ -91,8 +91,7 @@ fn test_const_enum_erased() {
     let output = transform_enum("const enum CE { A = 0 }");
     assert!(
         output.trim().is_empty(),
-        "Const enums should be erased: {}",
-        output
+        "Const enums should be erased: {output}"
     );
 }
 

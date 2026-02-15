@@ -53,7 +53,7 @@ fn test_interner_bigint_literal() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "123");
         }
-        _ => panic!("Expected bigint literal, got {:?}", key),
+        _ => panic!("Expected bigint literal, got {key:?}"),
     }
 }
 
@@ -255,7 +255,7 @@ fn test_interner_object_property_lookup_cache() {
 
     let mut props = Vec::with_capacity(PROPERTY_MAP_THRESHOLD + 2);
     for i in 0..(PROPERTY_MAP_THRESHOLD + 2) {
-        let name = format!("prop{}", i);
+        let name = format!("prop{i}");
         props.push(PropertyInfo::new(
             interner.intern_string(&name),
             TypeId::NUMBER,
@@ -265,7 +265,7 @@ fn test_interner_object_property_lookup_cache() {
     let obj = interner.object(props);
     let shape_id = match interner.lookup(obj) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("expected object type, got {:?}", other),
+        other => panic!("expected object type, got {other:?}"),
     };
 
     let target_name = format!("prop{}", PROPERTY_MAP_THRESHOLD / 2);
@@ -275,7 +275,7 @@ fn test_interner_object_property_lookup_cache() {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties[idx].name, target_atom);
         }
-        other => panic!("expected cached lookup, got {:?}", other),
+        other => panic!("expected cached lookup, got {other:?}"),
     }
 
     let missing = interner.intern_string("missing");
@@ -290,7 +290,7 @@ fn test_interner_object_property_lookup_cache() {
     )]);
     let small_shape_id = match interner.lookup(small) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("expected object type, got {:?}", other),
+        other => panic!("expected object type, got {other:?}"),
     };
     assert_eq!(
         interner.object_property_index(small_shape_id, interner.intern_string("only")),
@@ -501,12 +501,12 @@ fn test_visibility_interning_distinct_shape_ids() {
     // They should also have different ObjectShapeIds
     let shape_public = match interner.lookup(obj_public) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     };
 
     let shape_private = match interner.lookup(obj_private) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     };
 
     assert_ne!(
@@ -552,12 +552,12 @@ fn test_parent_id_interning_distinct_shape_ids() {
     // They should also have different ObjectShapeIds
     let shape_class1 = match interner.lookup(obj_class1) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     };
 
     let shape_class2 = match interner.lookup(obj_class2) {
         Some(TypeData::Object(shape_id)) => shape_id,
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     };
 
     assert_ne!(

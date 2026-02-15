@@ -39,8 +39,7 @@ const x = new Foo();
         .count();
     assert!(
         ts2693_count >= 1,
-        "Expected at least 1 TS2693 error, got {}",
-        ts2693_count
+        "Expected at least 1 TS2693 error, got {ts2693_count}"
     );
 }
 
@@ -78,8 +77,7 @@ const x = new Foo();
         .count();
     assert!(
         ts2693_count >= 1,
-        "Expected at least 1 TS2693 error, got {}",
-        ts2693_count
+        "Expected at least 1 TS2693 error, got {ts2693_count}"
     );
 }
 
@@ -113,8 +111,7 @@ var results = number[];
         .count();
     assert!(
         ts2693_count >= 1,
-        "Expected at least 1 TS2693 error for `number[]` value recovery, got {}",
-        ts2693_count
+        "Expected at least 1 TS2693 error for `number[]` value recovery, got {ts2693_count}"
     );
 }
 
@@ -150,8 +147,7 @@ const result = str - 5;
         .count();
     assert!(
         ts2362_count >= 1,
-        "Expected at least 1 TS2362 error, got {}",
-        ts2362_count
+        "Expected at least 1 TS2362 error, got {ts2362_count}"
     );
 }
 
@@ -187,8 +183,7 @@ const result = flag * 10;
         .count();
     assert!(
         ts2362_count >= 1,
-        "Expected at least 1 TS2362 error, got {}",
-        ts2362_count
+        "Expected at least 1 TS2362 error, got {ts2362_count}"
     );
 }
 
@@ -225,8 +220,7 @@ const result = num / str;
         .count();
     assert!(
         ts2363_count >= 1,
-        "Expected at least 1 TS2363 error, got {}",
-        ts2363_count
+        "Expected at least 1 TS2363 error, got {ts2363_count}"
     );
 }
 
@@ -272,13 +266,11 @@ const r3 = obj % 2;  // TS2362
 
     assert!(
         ts2362_count >= 2,
-        "Expected at least 2 TS2362 errors, got {}",
-        ts2362_count
+        "Expected at least 2 TS2362 errors, got {ts2362_count}"
     );
     assert!(
         ts2363_count >= 1,
-        "Expected at least 1 TS2363 error, got {}",
-        ts2363_count
+        "Expected at least 1 TS2363 error, got {ts2363_count}"
     );
 }
 
@@ -319,8 +311,7 @@ const r5 = a % b;  // OK - number modulo
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no TS2362/TS2363 errors, got {}",
-        error_count
+        "Expected no TS2362/TS2363 errors, got {error_count}"
     );
 }
 
@@ -358,8 +349,7 @@ for (const x: string of numbers) {
         .count();
     assert!(
         ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {}",
-        ts2322_count
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }
 
@@ -397,8 +387,7 @@ for (const x: number of numbers) {
         .count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 errors, got {}",
-        ts2322_count
+        "Expected no TS2322 errors, got {ts2322_count}"
     );
 }
 
@@ -435,8 +424,7 @@ const x = new Foo();  // TS2693: Foo only refers to a type
         .count();
     assert!(
         ts2693_count >= 1,
-        "Expected at least 1 TS2693 error for type-only import, got {}",
-        ts2693_count
+        "Expected at least 1 TS2693 error for type-only import, got {ts2693_count}"
     );
 }
 
@@ -475,8 +463,7 @@ const x = MyInterface.prop;  // TS2693: MyInterface only refers to a type
         .count();
     assert!(
         ts2693_count >= 1,
-        "Expected at least 1 TS2693 error for interface property access, got {}",
-        ts2693_count
+        "Expected at least 1 TS2693 error for interface property access, got {ts2693_count}"
     );
 }
 
@@ -514,8 +501,7 @@ const result = base ** exp;  // TS2362: base is string, not number
         .count();
     assert!(
         ts2362_count >= 1,
-        "Expected at least 1 TS2362 error for exponentiation, got {}",
-        ts2362_count
+        "Expected at least 1 TS2362 error for exponentiation, got {ts2362_count}"
     );
 }
 
@@ -565,13 +551,11 @@ const r6 = 10 >>> obj;   // TS2363
 
     assert!(
         ts2362_count >= 3,
-        "Expected at least 3 TS2362 errors for bitwise operations, got {}",
-        ts2362_count
+        "Expected at least 3 TS2362 errors for bitwise operations, got {ts2362_count}"
     );
     assert!(
         ts2363_count >= 3,
-        "Expected at least 3 TS2363 errors for bitwise operations, got {}",
-        ts2363_count
+        "Expected at least 3 TS2363 errors for bitwise operations, got {ts2363_count}"
     );
 }
 
@@ -609,8 +593,7 @@ const result = str + num;  // OK: string concatenation
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no TS2362/TS2363 errors for string + number, got {}",
-        error_count
+        "Expected no TS2362/TS2363 errors for string + number, got {error_count}"
     );
 }
 
@@ -651,8 +634,7 @@ const result = MyEnum.A + MyEnum.B;  // OK: enum arithmetic is valid
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no TS2362/TS2363 errors for enum arithmetic, got {}",
-        error_count
+        "Expected no TS2362/TS2363 errors for enum arithmetic, got {error_count}"
     );
 }
 
@@ -688,8 +670,7 @@ const x = null.toString();  // TS18050: The value 'null' cannot be used here.
         .count();
     assert!(
         ts18050_count >= 1,
-        "Expected at least 1 TS18050 error for null property access, got {}",
-        ts18050_count
+        "Expected at least 1 TS18050 error for null property access, got {ts18050_count}"
     );
 }
 
@@ -725,8 +706,7 @@ const x = undefined.toString();  // TS18050: The value 'undefined' cannot be use
         .count();
     assert!(
         ts18050_count >= 1,
-        "Expected at least 1 TS18050 error for undefined property access, got {}",
-        ts18050_count
+        "Expected at least 1 TS18050 error for undefined property access, got {ts18050_count}"
     );
 }
 
@@ -764,8 +744,7 @@ const result = a - b;  // TS2362: left-hand side must be number/bigint/any/enum
         .count();
     assert!(
         ts2362_count >= 1,
-        "Expected at least 1 TS2362 error for string subtraction, got {}",
-        ts2362_count
+        "Expected at least 1 TS2362 error for string subtraction, got {ts2362_count}"
     );
 }
 
@@ -805,8 +784,7 @@ function test(x: never) {
         .count();
     assert!(
         ts18050_count >= 1,
-        "Expected at least 1 TS18050 error for never type property access, got {}",
-        ts18050_count
+        "Expected at least 1 TS18050 error for never type property access, got {ts18050_count}"
     );
 }
 
@@ -845,8 +823,7 @@ function test(x: never) {
         .count();
     assert!(
         ts18050_count >= 1,
-        "Expected at least 1 TS18050 error for never type call, got {}",
-        ts18050_count
+        "Expected at least 1 TS18050 error for never type call, got {ts18050_count}"
     );
 }
 
@@ -886,8 +863,7 @@ arr.hasOwnProperty("length");
         .count();
     assert!(
         ts2339_count == 0,
-        "Expected no TS2339 errors for array Object.prototype properties, got {}",
-        ts2339_count
+        "Expected no TS2339 errors for array Object.prototype properties, got {ts2339_count}"
     );
 }
 

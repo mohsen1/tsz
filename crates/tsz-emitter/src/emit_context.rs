@@ -1,4 +1,4 @@
-//! EmitContext - Transform state management for the emitter
+//! `EmitContext` - Transform state management for the emitter
 //!
 //! This module extracts transform-specific state from Printer into a dedicated
 //! context object. This follows the "Transform Context" pattern to:
@@ -71,34 +71,34 @@ pub struct ArrowTransformState {
 
 impl ArrowTransformState {
     /// Enter an arrow function that uses `this`
-    pub fn enter_arrow_with_this(&mut self) {
+    pub const fn enter_arrow_with_this(&mut self) {
         self.this_capture_depth += 1;
     }
 
     /// Exit an arrow function that uses `this`
-    pub fn exit_arrow_with_this(&mut self) {
+    pub const fn exit_arrow_with_this(&mut self) {
         if self.this_capture_depth > 0 {
             self.this_capture_depth -= 1;
         }
     }
 
     /// Check if we're currently capturing `this`
-    pub fn is_capturing_this(&self) -> bool {
+    pub const fn is_capturing_this(&self) -> bool {
         self.this_capture_depth > 0
     }
 
     /// Mark that `var _this = this;` has been emitted
-    pub fn mark_this_captured(&mut self) {
+    pub const fn mark_this_captured(&mut self) {
         self.this_captured_in_scope = true;
     }
 
     /// Check if `_this` capture statement has been emitted
-    pub fn is_this_captured(&self) -> bool {
+    pub const fn is_this_captured(&self) -> bool {
         self.this_captured_in_scope
     }
 
     /// Reset for a new scope (entering a function/class)
-    pub fn enter_new_scope(&mut self) {
+    pub const fn enter_new_scope(&mut self) {
         self.this_captured_in_scope = false;
     }
 }
@@ -121,36 +121,36 @@ impl DestructuringState {
     }
 
     /// Reset the counter (for a new file)
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.temp_var_counter = 0;
         self.for_of_counter = 0;
     }
 }
 
-/// State for CommonJS module transformation
+/// State for `CommonJS` module transformation
 #[derive(Debug, Default)]
 pub struct ModuleTransformState {
-    /// Whether we're currently inside CommonJS module transformation
+    /// Whether we're currently inside `CommonJS` module transformation
     pub commonjs_mode: bool,
 
-    /// Collected exported names for CommonJS (to emit exports.X = X; after declarations)
+    /// Collected exported names for `CommonJS` (to emit exports.X = X; after declarations)
     pub pending_exports: Vec<String>,
 
     /// Whether "use strict" has been emitted
     pub strict_mode_emitted: bool,
 
-    /// Whether the file contains an `export =` assignment (CommonJS export assignment)
-    /// If true, other named exports should be suppressed in CommonJS emit.
+    /// Whether the file contains an `export =` assignment (`CommonJS` export assignment)
+    /// If true, other named exports should be suppressed in `CommonJS` emit.
     pub has_export_assignment: bool,
 }
 
 impl ModuleTransformState {
-    /// Enter CommonJS module mode
-    pub fn enter_commonjs(&mut self) {
+    /// Enter `CommonJS` module mode
+    pub const fn enter_commonjs(&mut self) {
         self.commonjs_mode = true;
     }
 
-    /// Exit CommonJS module mode
+    /// Exit `CommonJS` module mode
     pub fn exit_commonjs(&mut self) {
         self.commonjs_mode = false;
         self.pending_exports.clear();
@@ -199,28 +199,28 @@ pub struct EmitContext {
     /// Block scoping transformation state (let/const → var)
     pub block_scope_state: BlockScopeState,
 
-    /// Private fields transformation state (#field → WeakMap)
+    /// Private fields transformation state (#field → `WeakMap`)
     pub private_field_state: PrivateFieldState,
 
     /// When true, emit `yield` instead of `await` in expression positions.
     /// Used for ES2015/ES2016 async lowering (function* + yield pattern).
     pub emit_await_as_yield: bool,
 
-    /// Auto-detect module mode: if true, detect imports/exports and apply CommonJS
+    /// Auto-detect module mode: if true, detect imports/exports and apply `CommonJS`
     pub auto_detect_module: bool,
 
-    /// Original module kind before wrapper body override (AMD/UMD → CommonJS).
+    /// Original module kind before wrapper body override (AMD/UMD → `CommonJS`).
     /// Used by export assignment to emit `return X` instead of `module.exports = X` in AMD.
     pub original_module_kind: Option<ModuleKind>,
 }
 
 impl EmitContext {
-    /// Create a new EmitContext with default options
+    /// Create a new `EmitContext` with default options
     pub fn new() -> Self {
         Self::with_options(PrinterOptions::default())
     }
 
-    /// Create a new EmitContext with the given options
+    /// Create a new `EmitContext` with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
         let target_es5 = matches!(options.target, ScriptTarget::ES3 | ScriptTarget::ES5);
         let needs_async_lowering = !options.target.supports_es2017();
@@ -241,7 +241,7 @@ impl EmitContext {
         }
     }
 
-    /// Create an EmitContext targeting ES5
+    /// Create an `EmitContext` targeting ES5
     pub fn es5() -> Self {
         let mut ctx = Self::new();
         ctx.target_es5 = true;
@@ -250,7 +250,7 @@ impl EmitContext {
         ctx
     }
 
-    /// Create an EmitContext targeting ES6+
+    /// Create an `EmitContext` targeting ES6+
     pub fn es6() -> Self {
         let mut ctx = Self::new();
         ctx.target_es5 = false;
@@ -264,12 +264,12 @@ impl EmitContext {
     // =========================================================================
 
     /// Check if targeting ES5 (needs class/arrow transforms)
-    pub fn is_es5(&self) -> bool {
+    pub const fn is_es5(&self) -> bool {
         self.target_es5
     }
 
     /// Get the new line string based on options
-    pub fn new_line(&self) -> &'static str {
+    pub const fn new_line(&self) -> &'static str {
         match self.options.new_line {
             NewLineKind::LineFeed => "\n",
             NewLineKind::CarriageReturnLineFeed => "\r\n",
@@ -277,12 +277,12 @@ impl EmitContext {
     }
 
     /// Check if comments should be removed
-    pub fn remove_comments(&self) -> bool {
+    pub const fn remove_comments(&self) -> bool {
         self.options.remove_comments
     }
 
-    /// Check if we're in CommonJS mode
-    pub fn is_commonjs(&self) -> bool {
+    /// Check if we're in `CommonJS` mode
+    pub const fn is_commonjs(&self) -> bool {
         matches!(self.options.module, ModuleKind::CommonJS)
     }
 
@@ -291,12 +291,12 @@ impl EmitContext {
     // =========================================================================
 
     /// Enter a new function scope (resets certain state)
-    pub fn enter_function_scope(&mut self) {
+    pub const fn enter_function_scope(&mut self) {
         self.arrow_state.enter_new_scope();
     }
 
     /// Enter a class scope
-    pub fn enter_class_scope(&mut self) {
+    pub const fn enter_class_scope(&mut self) {
         self.arrow_state.enter_new_scope();
     }
 
@@ -310,12 +310,12 @@ impl EmitContext {
     }
 
     /// Get the current temp var counter value
-    pub fn temp_var_counter(&self) -> u32 {
+    pub const fn temp_var_counter(&self) -> u32 {
         self.destructuring_state.temp_var_counter
     }
 
     /// Set the temp var counter (for restoring state)
-    pub fn set_temp_var_counter(&mut self, value: u32) {
+    pub const fn set_temp_var_counter(&mut self, value: u32) {
         self.destructuring_state.temp_var_counter = value;
     }
 }

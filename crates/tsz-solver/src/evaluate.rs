@@ -31,7 +31,7 @@ pub enum ConditionalResult {
     /// The condition was resolved to a definite type
     Resolved(TypeId),
     /// The condition could not be resolved (deferred)
-    /// This happens when check_type is a type parameter that hasn't been substituted
+    /// This happens when `check_type` is a type parameter that hasn't been substituted
     Deferred(TypeId),
 }
 
@@ -61,10 +61,10 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     resolver: &'a R,
     no_unchecked_indexed_access: bool,
     cache: FxHashMap<TypeId, TypeId>,
-    /// Unified recursion guard for TypeId cycle detection, depth, and iteration limits.
+    /// Unified recursion guard for `TypeId` cycle detection, depth, and iteration limits.
     guard: crate::recursion::RecursionGuard<TypeId>,
     /// Per-DefId recursion depth counter.
-    /// Allows recursive type aliases (like TrimRight) to expand up to MAX_DEF_DEPTH
+    /// Allows recursive type aliases (like `TrimRight`) to expand up to `MAX_DEF_DEPTH`
     /// times before stopping, matching tsc's TS2589 "Type instantiation is excessively
     /// deep and possibly infinite" behavior. Unlike a set-based cycle detector, this
     /// permits legitimate bounded recursion where each expansion converges.
@@ -132,7 +132,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
-    /// Maximum recursive expansion depth for a single DefId.
+    /// Maximum recursive expansion depth for a single `DefId`.
     /// Matches TypeScript's instantiation depth limit that triggers TS2589.
     const MAX_DEF_DEPTH: u32 = 50;
 
@@ -157,7 +157,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
-    pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
+    pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         self.no_unchecked_indexed_access = enabled;
     }
 
@@ -184,19 +184,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Get the type resolver.
     #[inline]
-    pub(crate) fn resolver(&self) -> &'a R {
+    pub(crate) const fn resolver(&self) -> &'a R {
         self.resolver
     }
 
-    /// Check if no_unchecked_indexed_access is enabled.
+    /// Check if `no_unchecked_indexed_access` is enabled.
     #[inline]
-    pub(crate) fn no_unchecked_indexed_access(&self) -> bool {
+    pub(crate) const fn no_unchecked_indexed_access(&self) -> bool {
         self.no_unchecked_indexed_access
     }
 
     /// Check if depth limit was exceeded.
     #[inline]
-    pub(crate) fn is_depth_exceeded(&self) -> bool {
+    pub(crate) const fn is_depth_exceeded(&self) -> bool {
         self.guard.is_exceeded()
     }
 
@@ -205,7 +205,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Used when an external condition (e.g. mapped key count or distribution
     /// size exceeds its limit) means further recursive evaluation should stop.
     #[inline]
-    pub(crate) fn mark_depth_exceeded(&mut self) {
+    pub(crate) const fn mark_depth_exceeded(&mut self) {
         self.guard.mark_exceeded();
     }
 
@@ -431,7 +431,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Expand type arguments by evaluating any that are TypeQuery or Application.
+    /// Expand type arguments by evaluating any that are `TypeQuery` or Application.
     /// Uses a loop instead of closure to allow mutable self access.
     fn expand_type_args(&mut self, args: &[TypeId]) -> Vec<TypeId> {
         let mut expanded = Vec::with_capacity(args.len());
@@ -441,7 +441,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         expanded
     }
 
-    /// Extract type parameter infos from a type by scanning for TypeParameter types.
+    /// Extract type parameter infos from a type by scanning for `TypeParameter` types.
     fn extract_type_params_from_type(&self, type_id: TypeId) -> Vec<TypeParamInfo> {
         let mut seen = FxHashSet::default();
         let mut params = Vec::new();
@@ -449,7 +449,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         params
     }
 
-    /// Recursively collect TypeParameter types from a type.
+    /// Recursively collect `TypeParameter` types from a type.
     fn collect_type_params(
         &self,
         type_id: TypeId,
@@ -545,12 +545,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Try to expand a type argument that may be a TypeQuery or Application.
+    /// Try to expand a type argument that may be a `TypeQuery` or Application.
     /// Returns the expanded type, or the original if it can't be expanded.
     /// This ensures type arguments are resolved before instantiation.
     ///
-    /// NOTE: This method uses self.evaluate() for Application, Conditional, Mapped,
-    /// and TemplateLiteral types to ensure recursion depth limits are enforced.
+    /// NOTE: This method uses `self.evaluate()` for Application, Conditional, Mapped,
+    /// and `TemplateLiteral` types to ensure recursion depth limits are enforced.
     fn try_expand_type_arg(&mut self, arg: TypeId) -> TypeId {
         let Some(key) = self.interner.lookup(arg) else {
             return arg;
@@ -563,7 +563,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     None => arg,
                 }
             }
-            TypeData::Application(_) => {
+            TypeData::Application(_)
+            | TypeData::Conditional(_)
+            | TypeData::Mapped(_)
+            | TypeData::TemplateLiteral(_) => {
                 // Use evaluate() to ensure depth limits are enforced
                 self.evaluate(arg)
             }
@@ -574,18 +577,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .resolve_lazy(def_id, self.interner)
                     .unwrap_or(arg)
             }
-            TypeData::Conditional(_) => {
-                // Use evaluate() to ensure depth limits are enforced
-                self.evaluate(arg)
-            }
-            TypeData::Mapped(_) => {
-                // Use evaluate() to ensure depth limits are enforced
-                self.evaluate(arg)
-            }
-            TypeData::TemplateLiteral(_) => {
-                // Use evaluate() to ensure depth limits are enforced
-                self.evaluate(arg)
-            }
             _ => arg,
         }
     }
@@ -593,17 +584,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Check if a type is "complex" and requires full evaluation for identity.
     ///
     /// Complex types are those whose structural identity depends on evaluation context:
-    /// - TypeParameter: Opaque until instantiation
+    /// - `TypeParameter`: Opaque until instantiation
     /// - Lazy: Requires resolution
     /// - Conditional: Requires evaluation of extends clause
     /// - Mapped: Requires evaluation of mapped type
-    /// - IndexAccess: Requires evaluation of T[K]
-    /// - KeyOf: Requires evaluation of keyof
+    /// - `IndexAccess`: Requires evaluation of T[K]
+    /// - `KeyOf`: Requires evaluation of keyof
     /// - Application: Requires expansion of Base<Args>
-    /// - TypeQuery: Requires resolution of typeof
-    /// - TemplateLiteral: Requires evaluation of template parts
-    /// - ReadonlyType: Wraps another type
-    /// - StringIntrinsic: Uppercase, Lowercase, Capitalize, Uncapitalize
+    /// - `TypeQuery`: Requires resolution of typeof
+    /// - `TemplateLiteral`: Requires evaluation of template parts
+    /// - `ReadonlyType`: Wraps another type
+    /// - `StringIntrinsic`: Uppercase, Lowercase, Capitalize, Uncapitalize
     ///
     /// These types are NOT safe for simplification because bypassing evaluation
     /// would produce incorrect results (e.g., treating T[K] as a distinct type from
@@ -616,7 +607,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// are now "unlocked" for simplification because:
     /// - `Lazy` types are canonicalized using De Bruijn indices
     /// - `Application` types are recursively canonicalized
-    /// - The SubtypeChecker's fast-path (Task #36) uses O(1) structural identity
+    /// - The `SubtypeChecker`'s fast-path (Task #36) uses O(1) structural identity
     ///
     /// Types that remain "complex" are those that are **inherently deferred**:
     /// - `TypeParameter`, `Infer`: Waiting for generic substitution
@@ -688,8 +679,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Simplify union members by removing redundant types using deep subtype checks.
     /// If A <: B, then A | B = B (A is redundant in the union).
     ///
-    /// This uses SubtypeChecker with bypass_evaluation=true to prevent infinite
-    /// recursion, since TypeEvaluator has already evaluated all members.
+    /// This uses `SubtypeChecker` with `bypass_evaluation=true` to prevent infinite
+    /// recursion, since `TypeEvaluator` has already evaluated all members.
     ///
     /// Performance: O(N²) where N is the number of members. We skip simplification
     /// if the union has more than 25 members to avoid excessive computation.
@@ -698,12 +689,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// 1. **Early exit for large unions** (>25 members) to avoid O(N²) explosion
     /// 2. **Skip complex types** that require full resolution:
-    ///    - TypeParameter, Infer, Conditional, Mapped, IndexAccess, KeyOf, TypeQuery
-    ///    - TemplateLiteral, ReadonlyType, String manipulation types
+    ///    - `TypeParameter`, Infer, Conditional, Mapped, `IndexAccess`, `KeyOf`, `TypeQuery`
+    ///    - `TemplateLiteral`, `ReadonlyType`, String manipulation types
     ///    - Note: Lazy and Application are NOW safe (Task #37: handled by Canonicalizer)
     /// 3. **Fast-path for any/unknown**: If any member is any, entire union becomes any
-    /// 4. **Identity check**: O(1) structural identity via SubtypeChecker (Task #36 fast-path)
-    /// 5. **Depth limit**: MAX_SUBTYPE_DEPTH enables deep recursive type simplification (Task #37)
+    /// 4. **Identity check**: O(1) structural identity via `SubtypeChecker` (Task #36 fast-path)
+    /// 5. **Depth limit**: `MAX_SUBTYPE_DEPTH` enables deep recursive type simplification (Task #37)
     ///
     /// ## Example Reductions
     ///
@@ -805,10 +796,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     // Visitor Pattern Implementation (North Star Rule 2)
     // =========================================================================
 
-    /// Visit a TypeData and return its evaluated form.
+    /// Visit a `TypeData` and return its evaluated form.
     ///
     /// This is the visitor dispatch method that routes to specific visit_* methods.
-    /// The visiting.remove() and cache.insert() are handled in evaluate() for symmetry.
+    /// The `visiting.remove()` and `cache.insert()` are handled in `evaluate()` for symmetry.
     fn visit_type_key(&mut self, type_id: TypeId, key: &TypeData) -> TypeId {
         match key {
             TypeData::Conditional(cond_id) => self.visit_conditional(*cond_id),

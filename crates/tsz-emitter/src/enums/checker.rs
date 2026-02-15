@@ -109,7 +109,7 @@ impl<'a> EnumChecker<'a> {
                     String::new(), // file name filled in later
                     member_node.pos,
                     member_node.end - member_node.pos,
-                    format!("Duplicate identifier '{}'.", member_name),
+                    format!("Duplicate identifier '{member_name}'."),
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
                 ));
             }
@@ -318,7 +318,7 @@ impl<'a> EnumChecker<'a> {
     }
 
     /// Check if a symbol refers to a const enum
-    pub fn is_symbol_const_enum(&self, symbol_flags: u32) -> bool {
+    pub const fn is_symbol_const_enum(&self, symbol_flags: u32) -> bool {
         symbol_flags & symbol_flags::CONST_ENUM != 0
     }
 

@@ -1,6 +1,6 @@
 //! Benchmarks for the Rust scanner implementation.
 //!
-//! Run with: cargo bench --bench scanner_bench
+//! Run with: cargo bench --bench `scanner_bench`
 //!
 //! These benchmarks help track performance of the scanner against various
 //! TypeScript source files and identify serialization overhead.
@@ -123,17 +123,15 @@ fn generate_large_source(lines: usize) -> String {
 
     for i in 0..lines {
         match i % 5 {
-            0 => source.push_str(&format!("const var{}: number = {};\n", i, i)),
-            1 => source.push_str(&format!("const str{}: string = \"value{}\";\n", i, i)),
+            0 => source.push_str(&format!("const var{i}: number = {i};\n")),
+            1 => source.push_str(&format!("const str{i}: string = \"value{i}\";\n")),
             2 => source.push_str(&format!(
-                "function fn{}(x: number): number {{ return x * {}; }}\n",
-                i, i
+                "function fn{i}(x: number): number {{ return x * {i}; }}\n"
             )),
             3 => source.push_str(&format!(
-                "interface I{} {{ value: number; name: string; }}\n",
-                i
+                "interface I{i} {{ value: number; name: string; }}\n"
             )),
-            _ => source.push_str(&format!("type T{} = {{ id: {}; data: string }};\n", i, i)),
+            _ => source.push_str(&format!("type T{i} = {{ id: {i}; data: string }};\n")),
         }
     }
 

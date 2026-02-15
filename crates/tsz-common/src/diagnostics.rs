@@ -49,7 +49,7 @@ pub struct Diagnostic {
 impl Diagnostic {
     /// Create a new error diagnostic.
     #[must_use]
-    pub fn error(file: String, start: u32, length: u32, message: String, code: u32) -> Self {
+    pub const fn error(file: String, start: u32, length: u32, message: String, code: u32) -> Self {
         Self {
             file,
             start,

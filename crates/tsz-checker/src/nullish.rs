@@ -41,7 +41,7 @@ use tsz_solver::{TypeDatabase, TypeId as SolverTypeId};
 /// For `left ?? right`:
 /// - If left is definitely nullish -> result is right's type
 /// - If left is definitely not nullish -> result is left's type
-/// - If left may be nullish -> result is NonNullable<left> | right
+/// - If left may be nullish -> result is `NonNullable`<left> | right
 pub fn get_nullish_coalescing_type(
     types: &dyn TypeDatabase,
     left_type: SolverTypeId,
@@ -124,7 +124,7 @@ impl PrecedenceError {
 ///
 /// For `target ??= value`:
 /// - The target must be a valid assignment target
-/// - The result type is NonNullable<target> | value
+/// - The result type is `NonNullable`<target> | value
 pub fn get_nullish_assignment_type(
     types: &dyn TypeDatabase,
     target_type: SolverTypeId,

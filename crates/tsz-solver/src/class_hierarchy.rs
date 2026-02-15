@@ -9,7 +9,7 @@
 //! - Apply inheritance rules (nominal for classes, structural for interfaces)
 //!
 //! Note: Cycle detection for inheritance (class A extends B, B extends A)
-//! is handled by the Checker using InheritanceGraph BEFORE calling these functions.
+//! is handled by the Checker using `InheritanceGraph` BEFORE calling these functions.
 //! This module assumes the inheritance graph is acyclic.
 
 use crate::TypeDatabase;
@@ -35,12 +35,12 @@ impl<'a> ClassTypeBuilder<'a> {
     /// Creates a class instance type by merging base class properties with own members.
     ///
     /// # Arguments
-    /// * `base_type` - The TypeId of the base class (or TypeId::ANY if no base)
+    /// * `base_type` - The `TypeId` of the base class (or `TypeId::ANY` if no base)
     /// * `own_members` - Properties/methods declared directly in this class
-    /// * `symbol` - The SymbolId of the class (for creating Ref type if needed)
+    /// * `symbol` - The `SymbolId` of the class (for creating Ref type if needed)
     ///
     /// # Returns
-    /// The TypeId representing the merged instance type.
+    /// The `TypeId` representing the merged instance type.
     pub fn create_instance_type(
         &self,
         base_type: TypeId,
@@ -111,7 +111,7 @@ impl<'a> ClassTypeBuilder<'a> {
     /// Requirements:
     /// - ALL properties (including private) are inherited.
     /// - Private members are inherited but not accessible (Checker handles access control).
-    /// - parent_id is updated to the current class for all own/overriding members.
+    /// - `parent_id` is updated to the current class for all own/overriding members.
     fn merge_properties(
         &self,
         base: Vec<PropertyInfo>,
@@ -162,9 +162,9 @@ impl<'a> ClassTypeBuilder<'a> {
 /// calling the Solver to construct class types.
 ///
 /// # Arguments
-/// * `child` - The SymbolId of the class being defined
-/// * `parent` - The SymbolId of the base class
-/// * `graph` - The InheritanceGraph to check against
+/// * `child` - The `SymbolId` of the class being defined
+/// * `parent` - The `SymbolId` of the base class
+/// * `graph` - The `InheritanceGraph` to check against
 ///
 /// # Returns
 /// `true` if adding child->parent would create a cycle.

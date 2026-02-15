@@ -319,11 +319,7 @@ fn test_ts2322_multiple_errors() {
     "#;
 
     let count = count_errors_with_code(source, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
-    assert!(
-        count >= 4,
-        "Expected at least 4 TS2322 errors, got {}",
-        count
-    );
+    assert!(count >= 4, "Expected at least 4 TS2322 errors, got {count}");
 }
 
 // =============================================================================
@@ -369,8 +365,7 @@ fn test_ts2322_no_false_positive_simple_generic_identity() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for Id<number> = 42, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for Id<number> = 42, got: {ts2322_errors:?}"
     );
 }
 
@@ -389,8 +384,7 @@ fn test_ts2322_no_false_positive_generic_object_wrapper() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for Box<number> = {{ value: 42 }}, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for Box<number> = {{ value: 42 }}, got: {ts2322_errors:?}"
     );
 }
 
@@ -409,8 +403,7 @@ fn test_ts2322_no_false_positive_conditional_type_true_branch() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for IsStr<string> = true, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for IsStr<string> = true, got: {ts2322_errors:?}"
     );
 }
 
@@ -429,8 +422,7 @@ fn test_ts2322_no_false_positive_conditional_type_false_branch() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for IsStr<number> = false, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for IsStr<number> = false, got: {ts2322_errors:?}"
     );
 }
 
@@ -451,8 +443,7 @@ fn test_ts2322_no_false_positive_user_defined_mapped_type() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for MyPartial<Cfg>, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for MyPartial<Cfg>, got: {ts2322_errors:?}"
     );
 }
 
@@ -471,8 +462,7 @@ fn test_ts2322_no_false_positive_conditional_infer() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for UnpackPromise<Promise<number>> = 42, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for UnpackPromise<Promise<number>> = 42, got: {ts2322_errors:?}"
     );
 }
 
@@ -506,8 +496,7 @@ fn test_ts2322_no_false_positive_conditional_expression_with_generics() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for conditional expression in generic function call, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for conditional expression in generic function call, got: {ts2322_errors:?}"
     );
 }
 
@@ -534,8 +523,7 @@ fn test_ts2322_no_false_positive_nested_conditional() {
         .collect();
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 for nested conditional expression, got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 for nested conditional expression, got: {ts2322_errors:?}"
     );
 }
 
@@ -556,15 +544,13 @@ fn test_ts2322_accessor_getter_setter_type_mismatch_message() {
 
     assert!(
         !ts2322.is_empty(),
-        "Expected TS2322 for accessor type mismatch; diagnostics: {:?}",
-        diagnostics
+        "Expected TS2322 for accessor type mismatch; diagnostics: {diagnostics:?}"
     );
     assert!(
         ts2322
             .iter()
             .any(|(_, msg)| msg.contains("string") && msg.contains("number")),
-        "Expected accessor TS2322 message to mention string and number; TS2322 diagnostics: {:?}",
-        ts2322
+        "Expected accessor TS2322 message to mention string and number; TS2322 diagnostics: {ts2322:?}"
     );
 }
 

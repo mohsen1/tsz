@@ -36,7 +36,7 @@ pub struct RelationPolicy {
     pub strict_subtype_checking: bool,
     /// Disables `any`-suppression in compatibility fast paths.
     pub strict_any_propagation: bool,
-    /// Controls how SubtypeChecker treats `any`.
+    /// Controls how `SubtypeChecker` treats `any`.
     pub any_propagation_mode: AnyPropagationMode,
 }
 
@@ -59,17 +59,17 @@ impl RelationPolicy {
         }
     }
 
-    pub fn with_strict_subtype_checking(mut self, strict: bool) -> Self {
+    pub const fn with_strict_subtype_checking(mut self, strict: bool) -> Self {
         self.strict_subtype_checking = strict;
         self
     }
 
-    pub fn with_strict_any_propagation(mut self, strict: bool) -> Self {
+    pub const fn with_strict_any_propagation(mut self, strict: bool) -> Self {
         self.strict_any_propagation = strict;
         self
     }
 
-    pub fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
+    pub const fn with_any_propagation_mode(mut self, mode: AnyPropagationMode) -> Self {
         self.any_propagation_mode = mode;
         self
     }
@@ -93,7 +93,7 @@ pub struct RelationResult {
 
 impl RelationResult {
     #[inline]
-    pub fn is_related(self) -> bool {
+    pub const fn is_related(self) -> bool {
         self.related
     }
 }

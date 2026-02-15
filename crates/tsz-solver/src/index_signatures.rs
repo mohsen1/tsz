@@ -300,7 +300,7 @@ impl<'a> TypeVisitor for IndexInfoCollector<'a> {
 /// Resolver for index signature queries on types.
 ///
 /// This struct provides a unified interface for querying index signatures
-/// across different type representations (ObjectWithIndex, Union, etc.).
+/// across different type representations (`ObjectWithIndex`, Union, etc.).
 pub struct IndexSignatureResolver<'a> {
     db: &'a dyn TypeDatabase,
 }

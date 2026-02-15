@@ -67,7 +67,6 @@ fn test_namespace_comment_after_erased_interface() {
     let output = emit_namespace(source);
     assert!(
         output.contains("// valid since Point is exported"),
-        "Comment after erased interface should be preserved. Got:\n{}",
-        output
+        "Comment after erased interface should be preserved. Got:\n{output}"
     );
 }

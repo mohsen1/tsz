@@ -3,7 +3,7 @@
 //! This module handles subtyping for TypeScript's object types:
 //! - Plain objects with named properties
 //! - Objects with index signatures (string and number)
-//! - Property compatibility (optional, readonly, type, write_type)
+//! - Property compatibility (optional, readonly, type, `write_type`)
 //! - **Rule #26**: Split Accessors (Getter/Setter Variance)
 //!   - Read types are covariant: source.read <: target.read
 //!   - Write types are contravariant: target.write <: source.write
@@ -616,7 +616,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Validates that a source object with an index signature can be a subtype of
     /// a target object with only named properties. For each target property:
     /// 1. Look up the property by name in source (including via index signatures)
-    /// 2. Check property compatibility (optional, readonly, type, write_type)
+    /// 2. Check property compatibility (optional, readonly, type, `write_type`)
     /// 3. If property not found in source, check if index signature can satisfy it
     pub(crate) fn check_object_with_index_to_object(
         &mut self,

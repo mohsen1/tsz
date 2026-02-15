@@ -23,7 +23,7 @@ impl<'a> LinkedEditingProvider<'a> {
     /// Provide linked editing ranges for the given position.
     ///
     /// # Arguments
-    /// * `root` - The root node of the AST (typically SourceFile)
+    /// * `root` - The root node of the AST (typically `SourceFile`)
     /// * `position` - The LSP position (line, column) where the cursor is
     ///
     /// # Returns
@@ -85,7 +85,7 @@ impl<'a> LinkedEditingProvider<'a> {
 
     /// Find if the given node (or its parents) is a JSX tag name.
     ///
-    /// Walks up the parent chain to check if we're inside a tag_name
+    /// Walks up the parent chain to check if we're inside a `tag_name`
     /// of a JSX opening or closing element.
     ///
     /// # Returns

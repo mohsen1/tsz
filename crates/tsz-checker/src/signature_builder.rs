@@ -3,11 +3,11 @@
 //! This module contains methods for building call and construct signatures.
 //! It handles:
 //! - Extracting parameters from function/method declarations
-//! - Building CallSignature from functions, methods, and constructors
+//! - Building `CallSignature` from functions, methods, and constructors
 //! - Instantiating signatures with type arguments
 //! - Processing return types and type predicates
 //!
-//! This module extends CheckerState with signature-related methods as part of
+//! This module extends `CheckerState` with signature-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::{CheckerState, ParamTypeResolutionMode};
@@ -26,7 +26,7 @@ impl<'a> CheckerState<'a> {
     // Call Signature Building
     // =========================================================================
 
-    /// Build a CallSignature from a function declaration/expression.
+    /// Build a `CallSignature` from a function declaration/expression.
     /// `func_idx` is the node index of the function declaration, used to resolve
     /// enclosing type parameters from outer generic scopes (e.g., inner function
     /// overloads referencing outer function type parameters).
@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Build a CallSignature from a method declaration.
+    /// Build a `CallSignature` from a method declaration.
     pub(crate) fn call_signature_from_method(
         &mut self,
         method: &tsz_parser::parser::node::MethodDeclData,
@@ -65,7 +65,7 @@ impl<'a> CheckerState<'a> {
         self.call_signature_from_method_with_this(method, None)
     }
 
-    /// Build a CallSignature from a method declaration with an explicit `this` type.
+    /// Build a `CallSignature` from a method declaration with an explicit `this` type.
     /// This is used for static methods where `this` refers to the constructor type.
     pub(crate) fn call_signature_from_method_with_this(
         &mut self,
@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Build a CallSignature from a constructor declaration.
+    /// Build a `CallSignature` from a constructor declaration.
     pub(crate) fn call_signature_from_constructor(
         &mut self,
         ctor: &tsz_parser::parser::node::ConstructorData,
@@ -136,7 +136,7 @@ impl<'a> CheckerState<'a> {
     // =========================================================================
 
     /// Instantiate a call signature with type arguments.
-    /// Similar to instantiate_constructor_signature but for call signatures.
+    /// Similar to `instantiate_constructor_signature` but for call signatures.
     pub(crate) fn instantiate_call_signature(
         &self,
         sig: &tsz_solver::CallSignature,
@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
     // Parameter Extraction
     // =========================================================================
 
-    /// Helper to extract parameters from a SignatureData.
+    /// Helper to extract parameters from a `SignatureData`.
     pub(crate) fn extract_params_from_signature(
         &mut self,
         sig: &tsz_parser::parser::node::SignatureData,

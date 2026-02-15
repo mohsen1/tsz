@@ -72,7 +72,7 @@ impl std::fmt::Display for FileInclusionReason {
         match self {
             Self::RootFile => write!(f, "Root file specified"),
             Self::IncludePattern(pattern) => {
-                write!(f, "Matched by include pattern '{}'", pattern)
+                write!(f, "Matched by include pattern '{pattern}'")
             }
             Self::ImportedFrom(path) => {
                 write!(f, "Imported from '{}'", path.display())
@@ -343,7 +343,7 @@ impl CompilationCache {
     }
 }
 
-/// Convert CompilationCache to BuildInfo for persistence
+/// Convert `CompilationCache` to `BuildInfo` for persistence
 fn compilation_cache_to_build_info(
     cache: &CompilationCache,
     root_files: &[PathBuf],
@@ -369,8 +369,8 @@ fn compilation_cache_to_build_info(
             .replace('\\', "/");
 
         // Create file info with version (hash) and signature
-        let version = format!("{:016x}", hash);
-        let signature = Some(format!("{:016x}", hash));
+        let version = format!("{hash:016x}");
+        let signature = Some(format!("{hash:016x}"));
         file_infos.insert(
             relative_path.clone(),
             IncrementalFileInfo {
@@ -390,7 +390,6 @@ fn compilation_cache_to_build_info(
                         .unwrap_or(d)
                         .to_string_lossy()
                         .replace('\\', "/")
-                        .to_string()
                 })
                 .collect();
             dependencies.insert(relative_path.clone(), dep_strs);
@@ -425,8 +424,7 @@ fn compilation_cache_to_build_info(
                         .strip_prefix(base_dir)
                         .unwrap_or(file_path)
                         .to_string_lossy()
-                        .replace('\\', "/")
-                        .to_string(),
+                        .replace('\\', "/"),
                     start: d.start,
                     length: d.length,
                     message_text: d.message_text.clone(),
@@ -442,8 +440,7 @@ fn compilation_cache_to_build_info(
                                     .strip_prefix(base_dir)
                                     .unwrap_or(rel_file_path)
                                     .to_string_lossy()
-                                    .replace('\\', "/")
-                                    .to_string(),
+                                    .replace('\\', "/"),
                                 start: r.start,
                                 length: r.length,
                                 message_text: r.message_text.clone(),
@@ -469,7 +466,6 @@ fn compilation_cache_to_build_info(
                 .unwrap_or(p)
                 .to_string_lossy()
                 .replace('\\', "/")
-                .to_string()
         })
         .collect();
 
@@ -498,7 +494,7 @@ fn compilation_cache_to_build_info(
     }
 }
 
-/// Load BuildInfo and create an initial CompilationCache from it
+/// Load `BuildInfo` and create an initial `CompilationCache` from it
 fn build_info_to_compilation_cache(build_info: &BuildInfo, base_dir: &Path) -> CompilationCache {
     let mut cache = CompilationCache::default();
 
@@ -807,7 +803,7 @@ fn compile_inner(
             .filter(|v| !v.is_empty())
             .map(|v| {
                 v.iter()
-                    .map(|s| format!("\"{}\"", s))
+                    .map(|s| format!("\"{s}\""))
                     .collect::<Vec<_>>()
                     .join(",")
             })
@@ -818,14 +814,13 @@ fn compile_inner(
             .filter(|v| !v.is_empty())
             .map(|v| {
                 v.iter()
-                    .map(|s| format!("\"{}\"", s))
+                    .map(|s| format!("\"{s}\""))
                     .collect::<Vec<_>>()
                     .join(",")
             })
             .unwrap_or_default();
         let message = format!(
-            "No inputs were found in config file '{}'. Specified 'include' paths were '[{}]' and 'exclude' paths were '[{}]'.",
-            config_name, include_str, exclude_str
+            "No inputs were found in config file '{config_name}'. Specified 'include' paths were '[{include_str}]' and 'exclude' paths were '[{exclude_str}]'."
         );
         return Ok(CompilationResult {
             diagnostics: vec![Diagnostic::error(config_name, 0, 0, message, 18003)],
@@ -1034,7 +1029,6 @@ fn compile_inner(
                                 .unwrap_or(p)
                                 .to_string_lossy()
                                 .replace('\\', "/")
-                                .to_string()
                         })
                         .collect(),
                     ..Default::default()
@@ -1908,7 +1902,7 @@ fn read_source_files(
     })
 }
 
-/// Load lib.d.ts files and create LibContext objects for the checker.
+/// Load lib.d.ts files and create `LibContext` objects for the checker.
 ///
 /// This function reuses already-loaded lib files from the binding phase, avoiding a second
 /// parse/bind pass during checker setup.
@@ -2094,8 +2088,7 @@ fn collect_diagnostics(
                                             tsz::checker::context::ResolutionError {
                                                 code: tsz::module_resolver::CANNOT_FIND_MODULE,
                                                 message: format!(
-                                                    "Cannot find module '{}' or its corresponding type declarations.",
-                                                    specifier
+                                                    "Cannot find module '{specifier}' or its corresponding type declarations."
                                                 ),
                                             },
                                         );
@@ -2195,8 +2188,7 @@ fn collect_diagnostics(
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
                             diagnostic.message = format!(
-                                "Cannot find module '{}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?",
-                                specifier
+                                "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?"
                             );
                         }
 
@@ -2660,8 +2652,7 @@ fn detect_missing_tslib_helper_diagnostic(
                 start,
                 length,
                 format!(
-                    "This syntax requires an imported helper named '{}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'.",
-                    helper_name
+                    "This syntax requires an imported helper named '{helper_name}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'."
                 ),
                 2343,
             ));
@@ -2735,9 +2726,9 @@ struct CheckFileForParallelContext<'a> {
 
 /// Check a single file for the parallel checking path.
 ///
-/// This is extracted from the work queue loop so it can be called from rayon's par_iter.
-/// Each invocation creates its own CheckerState (with its own mutable context),
-/// while sharing thread-safe structures (TypeInterner via DashMap, QueryCache via RwLock).
+/// This is extracted from the work queue loop so it can be called from rayon's `par_iter`.
+/// Each invocation creates its own `CheckerState` (with its own mutable context),
+/// while sharing thread-safe structures (`TypeInterner` via `DashMap`, `QueryCache` via `RwLock`).
 fn check_file_for_parallel<'a>(context: CheckFileForParallelContext<'a>) -> Vec<Diagnostic> {
     let CheckFileForParallelContext {
         file_idx,
@@ -2984,7 +2975,7 @@ fn collect_export_signatures(
                         specifiers.push(name.to_string());
                     } else {
                         let property = arena.get_identifier_text(spec.property_name).unwrap_or("");
-                        specifiers.push(format!("{} as {}", property, name));
+                        specifiers.push(format!("{property} as {name}"));
                     }
                 }
                 specifiers.sort();
@@ -3309,7 +3300,7 @@ fn export_default_signature(
     Some(format!("default:{type_str}"))
 }
 
-fn export_type_prefix(is_type_only: bool) -> &'static str {
+const fn export_type_prefix(is_type_only: bool) -> &'static str {
     if is_type_only { "type:" } else { "" }
 }
 
@@ -3645,7 +3636,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
 }
 
 /// Find the most recent .d.ts file from a list of emitted files
-/// Returns the relative path (from base_dir) as a String, or None if no .d.ts files were found
+/// Returns the relative path (from `base_dir`) as a String, or None if no .d.ts files were found
 fn find_latest_dts_file(emitted_files: &[PathBuf], base_dir: &Path) -> Option<String> {
     use std::collections::BTreeMap;
 

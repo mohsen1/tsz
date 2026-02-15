@@ -5,7 +5,7 @@
 //!
 //! The output is designed to match tsserver's `navtree` response format:
 //! - `name` corresponds to tsserver's `text`
-//! - `kind` corresponds to tsserver's `kind` (ScriptElementKind)
+//! - `kind` corresponds to tsserver's `kind` (`ScriptElementKind`)
 //! - `kind_modifiers` corresponds to tsserver's `kindModifiers`
 //! - `range` corresponds to tsserver's `spans[0]`
 //! - `selection_range` corresponds to tsserver's `nameSpan`
@@ -16,7 +16,7 @@ use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
-/// A symbol kind (matches LSP SymbolKind values).
+/// A symbol kind (matches LSP `SymbolKind` values).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[repr(u8)]
 pub enum SymbolKind {
@@ -49,31 +49,23 @@ pub enum SymbolKind {
 }
 
 impl SymbolKind {
-    /// Convert to tsserver's ScriptElementKind string.
-    pub fn to_script_element_kind(self) -> &'static str {
+    /// Convert to tsserver's `ScriptElementKind` string.
+    pub const fn to_script_element_kind(self) -> &'static str {
         match self {
             Self::File => "script",
-            Self::Module | Self::Namespace => "module",
+            Self::Module | Self::Namespace | Self::Package => "module",
             Self::Class => "class",
             Self::Method => "method",
-            Self::Property | Self::Field => "property",
+            Self::Property | Self::Field | Self::Key => "property",
             Self::Constructor => "constructor",
             Self::Enum => "enum",
             Self::Interface => "interface",
-            Self::Function => "function",
-            Self::Variable => "var",
+            Self::Function | Self::Event | Self::Operator => "function",
+            Self::Variable | Self::Boolean | Self::Array | Self::Object | Self::Null => "var",
             Self::Constant | Self::String | Self::Number => "const",
             Self::EnumMember => "enum member",
             Self::TypeParameter => "type parameter",
-            Self::Boolean => "var",
-            Self::Array => "var",
-            Self::Object => "var",
-            Self::Key => "property",
-            Self::Null => "var",
             Self::Struct => "type",
-            Self::Event => "function",
-            Self::Operator => "function",
-            Self::Package => "module",
         }
     }
 }
@@ -102,7 +94,7 @@ pub struct DocumentSymbol {
 
 impl DocumentSymbol {
     /// Create a new document symbol.
-    pub fn new(name: String, kind: SymbolKind, range: Range, selection_range: Range) -> Self {
+    pub const fn new(name: String, kind: SymbolKind, range: Range, selection_range: Range) -> Self {
         Self {
             name,
             detail: None,
@@ -126,13 +118,13 @@ impl DocumentSymbol {
         self
     }
 
-    /// Set the kind_modifiers field.
+    /// Set the `kind_modifiers` field.
     pub fn with_kind_modifiers(mut self, modifiers: String) -> Self {
         self.kind_modifiers = modifiers;
         self
     }
 
-    /// Set the container_name field.
+    /// Set the `container_name` field.
     pub fn with_container_name(mut self, container: String) -> Self {
         self.container_name = Some(container);
         self
@@ -791,7 +783,7 @@ impl<'a> DocumentSymbolProvider<'a> {
     }
 
     /// Check if a node kind is a declaration.
-    fn is_declaration(&self, kind: u16) -> bool {
+    const fn is_declaration(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::FUNCTION_DECLARATION
             || kind == syntax_kind_ext::CLASS_DECLARATION
             || kind == syntax_kind_ext::VARIABLE_STATEMENT

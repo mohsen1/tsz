@@ -25,9 +25,9 @@ struct ClassNode {
 }
 
 pub struct InheritanceGraph {
-    /// Map from SymbolId to graph node data
+    /// Map from `SymbolId` to graph node data
     nodes: RefCell<FxHashMap<SymbolId, ClassNode>>,
-    /// Maximum SymbolId seen so far (for BitSet sizing)
+    /// Maximum `SymbolId` seen so far (for `BitSet` sizing)
     max_symbol_id: RefCell<usize>,
 }
 
@@ -48,8 +48,8 @@ impl InheritanceGraph {
     /// Register a class or interface and its direct parents.
     ///
     /// # Arguments
-    /// * `child` - The SymbolId of the class/interface being defined
-    /// * `parents` - List of SymbolIds this type extends or implements
+    /// * `child` - The `SymbolId` of the class/interface being defined
+    /// * `parents` - List of `SymbolIds` this type extends or implements
     pub fn add_inheritance(&self, child: SymbolId, parents: &[SymbolId]) {
         let mut nodes = self.nodes.borrow_mut();
         let mut max_id = self.max_symbol_id.borrow_mut();
@@ -113,7 +113,7 @@ impl InheritanceGraph {
 
     /// Gets the Method Resolution Order (MRO) for a symbol.
     ///
-    /// Returns a list of SymbolIds in the order they should be searched for members.
+    /// Returns a list of `SymbolIds` in the order they should be searched for members.
     /// Implements a depth-first, left-to-right traversal (standard for TS/JS).
     pub fn get_resolution_order(&self, symbol_id: SymbolId) -> Vec<SymbolId> {
         self.ensure_mro(symbol_id);

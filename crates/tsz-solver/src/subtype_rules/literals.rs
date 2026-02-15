@@ -4,7 +4,7 @@
 //! - String literals ("hello", "world")
 //! - Number literals (42, 3.14)
 //! - Boolean literals (true, false)
-//! - BigInt literals (42n)
+//! - `BigInt` literals (42n)
 //! - Template literal type matching (using backtracking)
 //! - Template-to-template literal subtype matching (generalized pattern matching)
 
@@ -38,7 +38,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Literal types are subtypes of their corresponding intrinsic types:
     /// - String literals (e.g., "hello") are subtypes of `string`
     /// - Number literals (e.g., 42, 3.14) are subtypes of `number`
-    /// - BigInt literals (e.g., 42n) are subtypes of `bigint`
+    /// - `BigInt` literals (e.g., 42n) are subtypes of `bigint`
     /// - Boolean literals (true/false) are subtypes of `boolean`
     ///
     /// ## TypeScript Soundness:
@@ -235,7 +235,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Match a string wildcard using backtracking.
-    /// Tries all possible lengths from 0 to remaining.len()
+    /// Tries all possible lengths from 0 to `remaining.len()`
     pub(crate) fn match_string_wildcard(
         &self,
         remaining: &str,
@@ -497,15 +497,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Resolve template spans into owned ResolvedSpan values.
+    /// Resolve template spans into owned `ResolvedSpan` values.
     fn resolve_template_spans(&self, id: TemplateLiteralId) -> Vec<ResolvedSpan> {
         let spans = self.interner.template_list(id);
         spans
             .iter()
             .map(|span| match span {
-                TemplateSpan::Text(atom) => {
-                    ResolvedSpan::Text(self.interner.resolve_atom(*atom).to_string())
-                }
+                TemplateSpan::Text(atom) => ResolvedSpan::Text(self.interner.resolve_atom(*atom)),
                 TemplateSpan::Type(type_id) => ResolvedSpan::Type(*type_id),
             })
             .collect()
@@ -933,7 +931,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Convert a literal value to its string representation for template matching.
     fn literal_to_template_string(&self, lit: &LiteralValue) -> String {
         match lit {
-            LiteralValue::String(atom) => self.interner.resolve_atom(*atom).to_string(),
+            LiteralValue::String(atom) | LiteralValue::BigInt(atom) => {
+                self.interner.resolve_atom(*atom)
+            }
             LiteralValue::Number(n) => format_number_for_template(n.0),
             LiteralValue::Boolean(b) => {
                 if *b {
@@ -942,7 +942,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     "false".to_string()
                 }
             }
-            LiteralValue::BigInt(atom) => self.interner.resolve_atom(*atom).to_string(),
         }
     }
 }
@@ -966,10 +965,10 @@ pub(crate) fn format_number_for_template(num: f64) -> String {
     }
     // Use JavaScript-like formatting (no trailing .0 for integers)
     if num.fract() == 0.0 && num.abs() < 1e15 {
-        format!("{:.0}", num)
+        format!("{num:.0}")
     } else {
         // Use default Rust formatting which is close enough for most cases
-        let s = format!("{}", num);
+        let s = format!("{num}");
         // Remove unnecessary trailing zeros after decimal point
         s.trim_end_matches('0').trim_end_matches('.').to_string()
     }

@@ -64,7 +64,7 @@ pub struct TextEdit {
 
 impl TextEdit {
     /// Create a new text edit.
-    pub fn new(range: Range, new_text: String) -> Self {
+    pub const fn new(range: Range, new_text: String) -> Self {
         Self { range, new_text }
     }
 }
@@ -144,22 +144,22 @@ impl DocumentFormattingProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn prettier: {}", e))?;
+            .map_err(|e| format!("Failed to spawn prettier: {e}"))?;
 
         output
             .stdin
             .as_ref()
             .ok_or("Failed to open stdin")?
             .write_all(source_text.as_bytes())
-            .map_err(|e| format!("Failed to write to prettier stdin: {}", e))?;
+            .map_err(|e| format!("Failed to write to prettier stdin: {e}"))?;
 
         let result = output
             .wait_with_output()
-            .map_err(|e| format!("Failed to read prettier output: {}", e))?;
+            .map_err(|e| format!("Failed to read prettier output: {e}"))?;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            return Err(format!("Prettier failed: {}", stderr));
+            return Err(format!("Prettier failed: {stderr}"));
         }
 
         let formatted = String::from_utf8_lossy(&result.stdout).to_string();
@@ -182,16 +182,16 @@ impl DocumentFormattingProvider {
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()
-            .map_err(|e| format!("Failed to spawn eslint: {}", e))?;
+            .map_err(|e| format!("Failed to spawn eslint: {e}"))?;
 
         let result = output
             .wait_with_output()
-            .map_err(|e| format!("Failed to read eslint output: {}", e))?;
+            .map_err(|e| format!("Failed to read eslint output: {e}"))?;
 
         if !result.status.success() {
             let stderr = String::from_utf8_lossy(&result.stderr);
             if result.stdout.is_empty() {
-                return Err(format!("ESLint failed: {}", stderr));
+                return Err(format!("ESLint failed: {stderr}"));
             }
         }
 
@@ -339,7 +339,7 @@ impl DocumentFormattingProvider {
 
             // Apply proper indentation
             let indent_prefix = indent_str.repeat(effective_indent as usize);
-            let formatted_line = format!("{}{}", indent_prefix, processed);
+            let formatted_line = format!("{indent_prefix}{processed}");
 
             formatted_lines.push(formatted_line);
 
@@ -521,7 +521,7 @@ impl DocumentFormattingProvider {
             || trimmed.ends_with('`');
 
         if needs_semi && !trimmed.ends_with(';') {
-            format!("{};", trimmed)
+            format!("{trimmed};")
         } else {
             trimmed.to_string()
         }
@@ -537,7 +537,7 @@ impl DocumentFormattingProvider {
         let tabs = "\t".repeat(leading_tabs);
         let spaces = " ".repeat(remaining_spaces);
 
-        format!("{}{}{}", tabs, spaces, rest)
+        format!("{tabs}{spaces}{rest}")
     }
 
     // =========================================================================
@@ -584,7 +584,7 @@ impl DocumentFormattingProvider {
         if trimmed.ends_with(";;") {
             let fixed = &trimmed[..trimmed.len() - 1];
             let indent = Self::compute_indent_for_line(lines.as_slice(), line_idx, options);
-            let new_text = format!("{}{}", indent, fixed);
+            let new_text = format!("{indent}{fixed}");
             let line_len = current_line.len() as u32;
             return Ok(vec![TextEdit::new(
                 Range::new(Position::new(line, 0), Position::new(line, line_len)),
@@ -701,7 +701,7 @@ impl DocumentFormattingProvider {
                 String::new()
             }
         } else if should_indent {
-            format!("{}{}", prev_indent, indent_unit)
+            format!("{prev_indent}{indent_unit}")
         } else {
             prev_indent.to_string()
         }

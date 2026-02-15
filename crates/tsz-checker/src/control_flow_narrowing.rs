@@ -1,6 +1,6 @@
 //! Control Flow Narrowing (continued)
 //!
-//! Extracted from control_flow.rs: Second half of FlowAnalyzer impl block
+//! Extracted from `control_flow.rs`: Second half of `FlowAnalyzer` impl block
 //! containing narrowing methods for assignments, predicates, instanceof,
 //! in-operator, typeof, discriminants, literals, and reference matching.
 
@@ -393,7 +393,7 @@ impl<'a> FlowAnalyzer<'a> {
     /// Resolve a generic assertion predicate's type from the call's actual argument types.
     ///
     /// For `assertEqual<T>(value: any, type: T): asserts value is T` called as
-    /// `assertEqual(animal.type, 'cat' as const)`, the predicate's type_id is the
+    /// `assertEqual(animal.type, 'cat' as const)`, the predicate's `type_id` is the
     /// unresolved type parameter T. This method finds which parameter shares that type
     /// and resolves it to the corresponding argument's concrete type (e.g., literal 'cat').
     pub(crate) fn resolve_generic_predicate(
@@ -756,7 +756,7 @@ impl<'a> FlowAnalyzer<'a> {
         self.literal_atom_and_kind_from_node_or_type(idx)
     }
 
-    pub(crate) fn keep_in_operator_member(
+    pub(crate) const fn keep_in_operator_member(
         &self,
         presence: PropertyPresence,
         is_true_branch: bool,
@@ -774,7 +774,9 @@ impl<'a> FlowAnalyzer<'a> {
         prop_is_number: bool,
     ) -> PropertyPresence {
         match classify_for_property_presence(self.interner, type_id) {
-            PropertyPresenceKind::IntrinsicObject => PropertyPresence::Unknown,
+            PropertyPresenceKind::IntrinsicObject | PropertyPresenceKind::Unknown => {
+                PropertyPresence::Unknown
+            }
             PropertyPresenceKind::Object(shape_id) => {
                 self.property_presence_in_object(shape_id, prop_name, prop_is_number)
             }
@@ -788,7 +790,6 @@ impl<'a> FlowAnalyzer<'a> {
                     PropertyPresence::Unknown
                 }
             }
-            PropertyPresenceKind::Unknown => PropertyPresence::Unknown,
         }
     }
 
@@ -1990,13 +1991,13 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
-    /// Extract a TypeGuard from a condition node.
+    /// Extract a `TypeGuard` from a condition node.
     ///
-    /// This method translates AST nodes into AST-agnostic TypeGuard enums,
+    /// This method translates AST nodes into AST-agnostic `TypeGuard` enums,
     /// which can then be passed to the Solver's `narrow_type()` method.
     ///
     /// Returns `Some((guard, target, is_optional))` where:
-    /// - `guard` is the extracted TypeGuard
+    /// - `guard` is the extracted `TypeGuard`
     /// - `target` is the node being narrowed
     /// - `is_optional` is true for optional chaining calls (?.)
     ///
@@ -2104,7 +2105,7 @@ impl<'a> FlowAnalyzer<'a> {
         None
     }
 
-    /// Extract a TypeGuard from a call expression (user-defined type guard).
+    /// Extract a `TypeGuard` from a call expression (user-defined type guard).
     ///
     /// Handles both simple type guards `isString(x)` and `this` guards `obj.isString()`.
     /// Also handles optional chaining `obj?.isString(x)` by returning `is_optional = true`.

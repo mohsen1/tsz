@@ -30,7 +30,7 @@ impl<'a> ElementAccessEvaluator<'a> {
         }
     }
 
-    pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
+    pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
         self.no_unchecked_indexed_access = enabled;
     }
 

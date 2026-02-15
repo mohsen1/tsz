@@ -43,26 +43,20 @@ pub struct CodeFixPosition {
 }
 
 /// Mapping from TypeScript diagnostic error codes to code fix metadata.
-/// This provides the fix_name, fix_id, and description templates for common fixes.
+/// This provides the `fix_name`, `fix_id`, and description templates for common fixes.
 pub struct CodeFixRegistry;
 
 impl CodeFixRegistry {
     /// Get code fixes applicable for a given error code.
-    /// Returns a list of (fix_name, fix_id, description_template, fix_all_description) tuples.
+    /// Returns a list of (`fix_name`, `fix_id`, `description_template`, `fix_all_description`) tuples.
     pub fn fixes_for_error_code(
         error_code: u32,
     ) -> Vec<(&'static str, &'static str, &'static str, &'static str)> {
         match error_code {
             // === fixSpelling (shared with fixForgottenThisPropertyAccess) ===
             // Cannot find name '{0}'. Did you mean the instance member 'this.{0}'?
-            2663 => {
-                vec![
-                    ("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors"),
-                    ("fixForgottenThisPropertyAccess", "forgottenThisPropertyAccess", "Add 'this.' to unresolved variable", "Add qualifier to all unresolved variables matching a member name"),
-                ]
-            }
             // Cannot find name '{0}'. Did you mean the static member '{1}.{0}'?
-            2662 => {
+            2663 | 2662 => {
                 vec![
                     ("spelling", "fixSpelling", "Change spelling", "Fix all detected spelling errors"),
                     ("fixForgottenThisPropertyAccess", "forgottenThisPropertyAccess", "Add 'this.' to unresolved variable", "Add qualifier to all unresolved variables matching a member name"),

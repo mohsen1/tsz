@@ -1,6 +1,6 @@
 //! Namespace Type Checking Module
 //!
-//! This module contains namespace type checking methods for CheckerState
+//! This module contains namespace type checking methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
 
     /// Merge namespace exports into a function type for function+namespace merging.
     ///
-    /// This is similar to merge_namespace_exports_into_constructor but for functions.
+    /// This is similar to `merge_namespace_exports_into_constructor` but for functions.
     /// When a function and namespace are merged (same name), the namespace's exports
     /// become accessible as static properties on the function type.
     ///

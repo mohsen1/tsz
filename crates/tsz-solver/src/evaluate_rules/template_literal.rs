@@ -1,6 +1,6 @@
 //! Template literal type evaluation.
 //!
-//! Handles TypeScript's template literal types: `\`hello ${T}\``
+//! Handles TypeScript template literal types like "hello ${T}".
 
 use crate::subtype::TypeResolver;
 use crate::types::{LiteralValue, TemplateLiteralId, TemplateSpan, TypeData, TypeId};
@@ -111,7 +111,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut new_combinations = Vec::with_capacity(new_size);
                     for combo in &combinations {
                         for value in &string_values {
-                            new_combinations.push(format!("{}{}", combo, value));
+                            new_combinations.push(format!("{combo}{value}"));
                         }
                     }
                     combinations = new_combinations;
@@ -222,7 +222,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
                     if !(1e-6..1e21).contains(&abs_val) {
                         // Use scientific notation (Rust adds sign for negative exponents, but not positive)
-                        let mut s = format!("{:e}", n_val);
+                        let mut s = format!("{n_val:e}");
                         // Rust outputs "1e-7" for 1e-7 (good) but "1e21" instead of "1e+21" for 1e21
                         // We need to add "+" to positive exponents
                         if s.contains("e") && !s.contains("e-") && !s.contains("e+") {
@@ -240,7 +240,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         vec![s]
                     } else {
                         // Fixed-point notation
-                        let s = format!("{}", n_val);
+                        let s = format!("{n_val}");
                         tracing::trace!(result = %s, "extract_literal_strings: fixed-point");
                         vec![s]
                     }

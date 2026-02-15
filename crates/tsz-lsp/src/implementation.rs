@@ -4,9 +4,9 @@
 //! finds all concrete implementations of that type within the current file.
 //!
 //! Strategy:
-//! 1. Find the symbol at cursor position (reuse GoToDefinition pattern)
+//! 1. Find the symbol at cursor position (reuse `GoToDefinition` pattern)
 //! 2. Determine if it's an interface or abstract class
-//! 3. Walk all ClassDeclaration / InterfaceDeclaration nodes in the AST
+//! 3. Walk all `ClassDeclaration` / `InterfaceDeclaration` nodes in the AST
 //! 4. For each class/interface, check heritage clauses for the target name
 //! 5. Return locations of implementing classes/interfaces
 
@@ -38,7 +38,7 @@ pub struct ImplementationResult {
 }
 
 impl<'a> GoToImplementationProvider<'a> {
-    /// Get the escaped_text for an identifier node, reading directly from IdentifierData.
+    /// Get the `escaped_text` for an identifier node, reading directly from `IdentifierData`.
     ///
     /// This bypasses the interner-based `get_identifier_text` which requires the interner
     /// to be transferred from the scanner to the arena (done by `into_arena()` but not
@@ -54,7 +54,7 @@ impl<'a> GoToImplementationProvider<'a> {
     /// Tries multiple strategies:
     /// 1. Direct lookup in `node_symbols` (works for declaration nodes)
     /// 2. Parent lookup in `node_symbols` (works for name identifiers of declarations)
-    /// 3. Name-based lookup in `file_locals` using escaped_text
+    /// 3. Name-based lookup in `file_locals` using `escaped_text`
     pub fn resolve_symbol_at_node(&self, node_idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
         // Strategy 1: Direct lookup - the node itself is a declaration node
         if let Some(&sym_id) = self.binder.node_symbols.get(&node_idx.0) {
@@ -289,7 +289,7 @@ impl<'a> GoToImplementationProvider<'a> {
     /// Check if an expression node (typically an Identifier) matches the target name.
     /// Handles both simple identifiers and property access expressions (e.g., `Ns.Foo`).
     ///
-    /// Uses `escaped_text` directly from IdentifierData to avoid depending on the interner.
+    /// Uses `escaped_text` directly from `IdentifierData` to avoid depending on the interner.
     fn expression_matches_name(&self, expr_idx: NodeIndex, target_name: &str) -> bool {
         if expr_idx.is_none() {
             return false;
@@ -348,10 +348,10 @@ impl<'a> GoToImplementationProvider<'a> {
     ///
     /// # Arguments
     /// * `target_name` - The name of the interface/class to find implementations for
-    /// * `target_kind` - The kind of target (Interface, AbstractClass, or ConcreteClass)
+    /// * `target_kind` - The kind of target (Interface, `AbstractClass`, or `ConcreteClass`)
     ///
     /// # Returns
-    /// A vector of ImplementationResult containing the implementing class/interface names
+    /// A vector of `ImplementationResult` containing the implementing class/interface names
     /// and their locations
     pub fn find_implementations_for_name(
         &self,
@@ -409,7 +409,7 @@ impl<'a> GoToImplementationProvider<'a> {
     /// * `symbol_name` - The name of the symbol to resolve
     ///
     /// # Returns
-    /// The TargetKind if the symbol is found and is an interface or class, None otherwise
+    /// The `TargetKind` if the symbol is found and is an interface or class, None otherwise
     pub fn resolve_target_kind_for_name(&self, symbol_name: &str) -> Option<TargetKind> {
         // Look up the symbol by name in file_locals
         let symbol_id = self.binder.file_locals.get(symbol_name)?;

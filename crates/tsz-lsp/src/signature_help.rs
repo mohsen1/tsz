@@ -48,7 +48,7 @@ pub struct SignatureInformation {
     pub is_variadic: bool,
     /// Whether this is a constructor signature (affects display part kinds)
     pub is_constructor: bool,
-    /// JSDoc tags (non-param tags like @returns, @mytag, etc.)
+    /// `JSDoc` tags (non-param tags like @returns, @mytag, etc.)
     pub tags: Vec<JsdocTag>,
 }
 
@@ -83,7 +83,7 @@ enum CallSite<'a> {
 }
 
 impl<'a> CallSite<'a> {
-    fn expression(&self) -> NodeIndex {
+    const fn expression(&self) -> NodeIndex {
         match self {
             CallSite::Regular(data) => data.expression,
             CallSite::TaggedTemplate(data) => data.tag,
@@ -112,7 +112,7 @@ struct SignatureDocs {
 }
 
 impl SignatureDocs {
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.candidates.is_empty() && self.fallback.is_none()
     }
 }
@@ -555,7 +555,7 @@ impl<'a> SignatureHelpProvider<'a> {
     }
 
     /// Compute the applicable span for a regular call expression.
-    /// Returns (start_offset, length) as byte offsets in the source text.
+    /// Returns (`start_offset`, length) as byte offsets in the source text.
     fn compute_applicable_span(&self, call_idx: NodeIndex, data: &CallExprData) -> (u32, u32) {
         let call_node = match self.arena.get(call_idx) {
             Some(n) => n,
@@ -595,7 +595,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
     /// Determine the active parameter for a tagged template expression.
     ///
-    /// For tagged templates like `tag\`text ${expr1} text ${expr2} text\``:
+    /// For tagged templates like ``tag`text ${expr1} text ${expr2} text``:
     /// - Parameter 0 is always the templateStrings array
     /// - Parameter N (1-based) corresponds to the Nth ${} expression
     /// - Cursor in static template text maps to parameter 0
@@ -653,7 +653,7 @@ impl<'a> SignatureHelpProvider<'a> {
         0
     }
 
-    /// Extract signature information from a TypeId.
+    /// Extract signature information from a `TypeId`.
     fn get_signatures_from_type(
         &self,
         type_id: TypeId,
@@ -719,7 +719,7 @@ impl<'a> SignatureHelpProvider<'a> {
         vec![]
     }
 
-    /// Format a FunctionShape into SignatureInformation
+    /// Format a `FunctionShape` into `SignatureInformation`
     fn format_signature(
         &self,
         shape: &FunctionShape,
@@ -768,7 +768,7 @@ impl<'a> SignatureHelpProvider<'a> {
             let optional = if param.optional { "?" } else { "" };
             let rest = if param.rest { "..." } else { "" };
 
-            let param_label = format!("{}{}{}: {}", rest, name, optional, type_str);
+            let param_label = format!("{rest}{name}{optional}: {type_str}");
             parameters.push(ParameterInformation {
                 name: name.clone(),
                 label: param_label.clone(),
@@ -805,14 +805,14 @@ impl<'a> SignatureHelpProvider<'a> {
                 .unwrap_or_default();
             if predicate.asserts {
                 if type_part.is_empty() {
-                    format!("asserts {}", target_name)
+                    format!("asserts {target_name}")
                 } else {
-                    format!("asserts {} is {}", target_name, type_part)
+                    format!("asserts {target_name} is {type_part}")
                 }
             } else if type_part.is_empty() {
                 target_name
             } else {
-                format!("{} is {}", target_name, type_part)
+                format!("{target_name} is {type_part}")
             }
         } else if shape.return_type == TypeId::UNKNOWN {
             // Functions without return type annotation display as 'any' in TypeScript
@@ -823,11 +823,11 @@ impl<'a> SignatureHelpProvider<'a> {
         let prefix = if is_constructor {
             // Constructor signatures use the class name as prefix, not "new"
             // TypeScript shows: ClassName(params): ClassName
-            format!("{}{}(", callee_name, type_params_str)
+            format!("{callee_name}{type_params_str}(")
         } else {
-            format!("{}{}(", callee_name, type_params_str)
+            format!("{callee_name}{type_params_str}(")
         };
-        let suffix = format!("): {}", return_type_str);
+        let suffix = format!("): {return_type_str}");
 
         // Build full label: prefix + params joined by ", " + suffix
         let label = format!("{}{}{}", prefix, param_labels.join(", "), suffix,);

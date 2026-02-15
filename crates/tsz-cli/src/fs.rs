@@ -153,7 +153,7 @@ fn expand_include_patterns(patterns: &[String]) -> Vec<String> {
 
         // Directory pattern (no extension or glob at end) - expand to match all files
         let base = pattern.trim_end_matches('/');
-        expanded.push(format!("{}/**/*", base));
+        expanded.push(format!("{base}/**/*"));
     }
     expanded
 }
@@ -215,7 +215,7 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
         let glob =
-            Glob::new(pattern).with_context(|| format!("invalid glob pattern '{}'", pattern))?;
+            Glob::new(pattern).with_context(|| format!("invalid glob pattern '{pattern}'"))?;
         builder.add(glob);
     }
 

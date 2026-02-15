@@ -20,9 +20,9 @@
 //! Environment variables (tsserver-compatible):
 
 //! Environment variables (tsserver-compatible):
-//!   TSS_LOG     - Configure logging (e.g., "-level verbose -file /tmp/tsserver.log")
-//!   TSS_DEBUG   - Enable debug mode on specified port
-//!   TSS_DEBUG_BRK - Enable debug mode with break on startup
+//!   `TSS_LOG`     - Configure logging (e.g., "-level verbose -file /tmp/tsserver.log")
+//!   `TSS_DEBUG`   - Enable debug mode on specified port
+//!   `TSS_DEBUG_BRK` - Enable debug mode with break on startup
 //!
 //! Legacy usage:
 //! ```bash
@@ -161,7 +161,7 @@ struct ServerArgs {
     )]
     no_get_err_on_background_update: bool,
 
-    /// Allow loading language service plugins from local project node_modules.
+    /// Allow loading language service plugins from local project `node_modules`.
     #[arg(long = "allowLocalPluginLoads", alias = "allow-local-plugin-loads")]
     allow_local_plugin_loads: bool,
 
@@ -188,7 +188,7 @@ struct ServerArgs {
     validate_default_npm_location: bool,
 
     /// Named pipe for request cancellation semaphore.
-    /// If name ends with '*', actual pipe name is <name_without_*><requestId>.
+    /// If name ends with '*', actual pipe name is <`name_without`_*><requestId>.
     #[arg(long = "cancellationPipeName", alias = "cancellation-pipe-name")]
     cancellation_pipe_name: Option<String>,
 
@@ -236,7 +236,7 @@ struct ServerArgs {
     #[arg(long = "npmLocation", alias = "npm-location")]
     npm_location: Option<PathBuf>,
 
-    /// Enable project-wide IntelliSense in web context.
+    /// Enable project-wide `IntelliSense` in web context.
     #[arg(
         long = "enableProjectWideIntelliSenseOnWeb",
         alias = "enable-project-wide-intellisense-on-web"
@@ -501,7 +501,7 @@ pub(crate) struct Server {
     pub(crate) tests_lib_dir: PathBuf,
     /// Cache of parsed+bound lib files AND their dependencies (references)
     pub(crate) lib_cache: FxHashMap<String, (Arc<LibFile>, Vec<String>)>,
-    /// Cache for unified lib binder: (sorted lib names, unified LibFile)
+    /// Cache for unified lib binder: (sorted lib names, unified `LibFile`)
     /// This avoids recreating the expensive merged binder on every request
     pub(crate) unified_lib_cache: Option<(Vec<String>, Arc<LibFile>)>,
     /// Number of checks completed
@@ -588,7 +588,7 @@ impl Server {
         })
     }
 
-    fn next_seq(&mut self) -> u64 {
+    const fn next_seq(&mut self) -> u64 {
         self.response_seq += 1;
         self.response_seq
     }
@@ -614,7 +614,7 @@ impl Server {
     }
 
     /// Extract file path, line, and offset from tsserver request arguments.
-    /// Returns (file, line_1based, offset_1based).
+    /// Returns (file, `line_1based`, `offset_1based`).
     fn extract_file_position(args: &serde_json::Value) -> Option<(String, u32, u32)> {
         let file = args.get("file")?.as_str()?.to_string();
         let line = args.get("line")?.as_u64()? as u32;
@@ -623,7 +623,7 @@ impl Server {
     }
 
     /// Convert tsserver 1-based line/offset to 0-based LSP Position.
-    pub(crate) fn tsserver_to_lsp_position(line: u32, offset: u32) -> Position {
+    pub(crate) const fn tsserver_to_lsp_position(line: u32, offset: u32) -> Position {
         Position::new(line.saturating_sub(1), offset.saturating_sub(1))
     }
 
@@ -635,7 +635,7 @@ impl Server {
         })
     }
 
-    /// Convert a DefinitionInfo to a tsserver-compatible JSON value.
+    /// Convert a `DefinitionInfo` to a tsserver-compatible JSON value.
     fn definition_info_to_json(
         info: &tsz::lsp::definition::DefinitionInfo,
         file: &str,
@@ -979,7 +979,9 @@ impl Server {
         byte_pos.min(content.len())
     }
 
-    fn completion_kind_to_str(kind: tsz::lsp::completions::CompletionItemKind) -> &'static str {
+    const fn completion_kind_to_str(
+        kind: tsz::lsp::completions::CompletionItemKind,
+    ) -> &'static str {
         match kind {
             tsz::lsp::completions::CompletionItemKind::Variable => "var",
             tsz::lsp::completions::CompletionItemKind::Function => "function",
@@ -1110,7 +1112,7 @@ impl Server {
 
     /// Format a diagnostic for the tsserver protocol.
     ///
-    /// When `include_line_position` is true (the SessionClient always sets this),
+    /// When `include_line_position` is true (the `SessionClient` always sets this),
     /// the response includes 0-based `start`/`length` fields plus `startLocation`/
     /// `endLocation` with 1-based line/offset. When false, uses `start`/`end` as
     /// 1-based line/offset objects (the traditional tsserver format).
@@ -1194,14 +1196,8 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let interner = TypeInterner::new();
-            let provider = HoverProvider::new(
-                &arena,
-                &binder,
-                &line_map,
-                &interner,
-                &source_text,
-                file.clone(),
-            );
+            let provider =
+                HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file);
             let mut type_cache = None;
             let info = provider.get_hover(root, position, &mut type_cache)?;
 
@@ -1390,8 +1386,7 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let provider =
-                FindReferences::new(&arena, &binder, &line_map, file.clone(), &source_text);
+            let provider = FindReferences::new(&arena, &binder, &line_map, file, &source_text);
             let (_symbol_id, ref_infos) = provider.find_references_with_symbol(root, position)?;
 
             // Try to get symbol name from the position
@@ -1446,7 +1441,7 @@ impl Server {
                 &line_map,
                 &interner,
                 &source_text,
-                file.clone(),
+                file,
             );
             let completion_result = provider.get_completion_result(root, position)?;
 
@@ -1560,7 +1555,7 @@ impl Server {
     }
 
     /// Build rich displayParts for a completion entry, matching TypeScript's format.
-    /// Generates structured parts like: class ClassName, var name: Type, function name(...), etc.
+    /// Generates structured parts like: class `ClassName`, var name: Type, function name(...), etc.
     fn build_completion_display_parts(
         item: Option<&tsz::lsp::completions::CompletionItem>,
         name: &str,
@@ -1886,7 +1881,7 @@ impl Server {
                 &line_map,
                 &interner,
                 &source_text,
-                file.clone(),
+                file,
             );
             let mut type_cache = None;
             let sig_help = provider.get_signature_help(root, position, &mut type_cache)?;
@@ -2803,7 +2798,7 @@ impl Server {
     }
 
     /// Parse a display string (e.g. "const x: number") into structured displayParts.
-    /// This handles common patterns from the HoverProvider.
+    /// This handles common patterns from the `HoverProvider`.
     fn parse_display_string_to_parts(
         display_string: &str,
         kind: &str,
@@ -3428,7 +3423,7 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
-                CallHierarchyProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
+                CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
             let item = provider.prepare(root, position)?;
             Some(serde_json::json!([{
                 "name": item.name,
@@ -3454,7 +3449,7 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
-                CallHierarchyProvider::new(&arena, &binder, &line_map, file.clone(), &source_text);
+                CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
 
             let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
 
@@ -3549,13 +3544,8 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let provider = GoToImplementationProvider::new(
-                &arena,
-                &binder,
-                &line_map,
-                file.clone(),
-                &source_text,
-            );
+            let provider =
+                GoToImplementationProvider::new(&arena, &binder, &line_map, file, &source_text);
             let locations = provider.get_implementations(root, position)?;
             let body: Vec<serde_json::Value> = locations
                 .iter()
@@ -4104,7 +4094,7 @@ impl Server {
     /// This method implements **cumulative binding** to solve cross-lib symbol resolution:
     /// 1. Loads libs in dependency order using the old method (each with its own binder)
     /// 2. Creates a unified merged binder from all lib binders
-    /// 3. Returns a single LibFile with the merged binder
+    /// 3. Returns a single `LibFile` with the merged binder
     ///
     /// This allows proper cross-lib type resolution (e.g., `Array` from es5 visible in dom).
     fn load_libs_unified(&mut self, options: &CheckOptions) -> Result<Vec<Arc<LibFile>>> {
@@ -4232,9 +4222,9 @@ impl Server {
         }
 
         let candidates = [
-            self.lib_dir.join(format!("{}.d.ts", normalized)),
-            self.lib_dir.join(format!("lib.{}.d.ts", normalized)),
-            self.tests_lib_dir.join(format!("{}.d.ts", normalized)),
+            self.lib_dir.join(format!("{normalized}.d.ts")),
+            self.lib_dir.join(format!("lib.{normalized}.d.ts")),
+            self.tests_lib_dir.join(format!("{normalized}.d.ts")),
         ];
 
         for candidate in &candidates {
@@ -4247,7 +4237,7 @@ impl Server {
                 }
 
                 let file_name = candidate.file_name().map_or_else(
-                    || format!("lib.{}.d.ts", normalized),
+                    || format!("lib.{normalized}.d.ts"),
                     |s| s.to_string_lossy().to_string(),
                 );
                 let mut parser = ParserState::new(file_name.clone(), content);
@@ -4813,7 +4803,7 @@ fn run_tsserver_protocol(server: &mut Server) -> Result<()> {
                     command: "unknown".to_string(),
                     request_seq: 0,
                     success: false,
-                    message: Some(format!("invalid request: {}", e)),
+                    message: Some(format!("invalid request: {e}")),
                     body: None,
                 };
                 let json = serde_json::to_string(&error_response)?;
@@ -4850,7 +4840,7 @@ fn run_legacy_protocol(server: &mut Server) -> Result<()> {
             Err(e) => {
                 let error_response = LegacyResponse::Error(ErrorResponse {
                     id: 0,
-                    error: format!("invalid request: {}", e),
+                    error: format!("invalid request: {e}"),
                 });
                 writeln!(stdout, "{}", serde_json::to_string(&error_response)?)?;
                 stdout.flush()?;

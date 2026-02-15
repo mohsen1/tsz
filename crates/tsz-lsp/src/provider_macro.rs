@@ -1,9 +1,9 @@
 //! Macro to reduce boilerplate in LSP provider struct definitions.
 //!
 //! LSP providers fall into three tiers based on what they need:
-//! - `minimal`: arena, line_map, source_text
-//! - `binder`: arena, binder, line_map, file_name, source_text
-//! - `full`: arena, binder, line_map, interner, source_text, file_name, strict
+//! - `minimal`: arena, `line_map`, `source_text`
+//! - `binder`: arena, binder, `line_map`, `file_name`, `source_text`
+//! - `full`: arena, binder, `line_map`, interner, `source_text`, `file_name`, strict
 
 /// Define an LSP provider struct with standard fields and constructors.
 ///
@@ -38,7 +38,7 @@ macro_rules! define_lsp_provider {
         }
 
         impl<'a> $name<'a> {
-            pub fn new(
+            pub const fn new(
                 arena: &'a tsz_parser::parser::node::NodeArena,
                 line_map: &'a tsz_common::position::LineMap,
                 source_text: &'a str,
@@ -64,7 +64,7 @@ macro_rules! define_lsp_provider {
         }
 
         impl<'a> $name<'a> {
-            pub fn new(
+            pub const fn new(
                 arena: &'a tsz_parser::parser::node::NodeArena,
                 binder: &'a tsz_binder::BinderState,
                 line_map: &'a tsz_common::position::LineMap,
@@ -96,7 +96,7 @@ macro_rules! define_lsp_provider {
         }
 
         impl<'a> $name<'a> {
-            pub fn new(
+            pub const fn new(
                 arena: &'a tsz_parser::parser::node::NodeArena,
                 binder: &'a tsz_binder::BinderState,
                 line_map: &'a tsz_common::position::LineMap,
@@ -115,7 +115,7 @@ macro_rules! define_lsp_provider {
                 }
             }
 
-            pub fn with_strict(
+            pub const fn with_strict(
                 arena: &'a tsz_parser::parser::node::NodeArena,
                 binder: &'a tsz_binder::BinderState,
                 line_map: &'a tsz_common::position::LineMap,

@@ -1,6 +1,6 @@
-//! Type Printer - Convert TypeId to TypeScript syntax
+//! Type Printer - Convert `TypeId` to TypeScript syntax
 //!
-//! This module handles type reification: converting the Solver's internal TypeId
+//! This module handles type reification: converting the Solver's internal `TypeId`
 //! representation into printable TypeScript syntax for declaration emit (.d.ts files).
 
 use tsz_binder::{SymbolArena, SymbolId, symbol_flags};
@@ -35,7 +35,7 @@ pub struct TypePrinter<'a> {
 }
 
 impl<'a> TypePrinter<'a> {
-    pub fn new(interner: &'a TypeInterner) -> Self {
+    pub const fn new(interner: &'a TypeInterner) -> Self {
         Self {
             interner,
             symbol_arena: None,
@@ -46,19 +46,19 @@ impl<'a> TypePrinter<'a> {
     }
 
     /// Set the symbol arena for visibility checking.
-    pub fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
+    pub const fn with_symbols(mut self, symbol_arena: &'a SymbolArena) -> Self {
         self.symbol_arena = Some(symbol_arena);
         self
     }
 
     /// Set the type cache for resolving Lazy(DefId) types.
-    pub fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
+    pub const fn with_type_cache(mut self, type_cache: &'a TypeCacheView) -> Self {
         self.type_cache = Some(type_cache);
         self
     }
 
     /// Set the maximum recursion depth for type inlining.
-    pub fn with_max_depth(mut self, max_depth: u32) -> Self {
+    pub const fn with_max_depth(mut self, max_depth: u32) -> Self {
         self.max_depth = max_depth;
         self
     }
@@ -66,7 +66,7 @@ impl<'a> TypePrinter<'a> {
     /// Check if a symbol is visible (exported) from the current module.
     ///
     /// A symbol is visible if:
-    /// 1. It has the EXPORT_VALUE flag or is_exported field is true
+    /// 1. It has the `EXPORT_VALUE` flag or `is_exported` field is true
     /// 2. Its parent is not a Function or Method (not a local type)
     fn is_symbol_visible(&self, sym_id: SymbolId) -> bool {
         let Some(arena) = self.symbol_arena else {
@@ -93,10 +93,10 @@ impl<'a> TypePrinter<'a> {
 
     /// Resolve an atom to its string representation.
     fn resolve_atom(&self, atom: Atom) -> String {
-        self.interner.resolve_atom(atom).to_string()
+        self.interner.resolve_atom(atom)
     }
 
-    /// Convert a TypeId to TypeScript syntax string.
+    /// Convert a `TypeId` to TypeScript syntax string.
     pub fn print_type(&self, type_id: TypeId) -> String {
         // Fast path: check built-in intrinsics (TypeId < 100)
         if type_id.is_intrinsic() {
@@ -176,10 +176,10 @@ impl<'a> TypePrinter<'a> {
             return "any".to_string();
         }
         if let Some(index) = visitor::recursive_index(self.interner, type_id) {
-            return format!("T{}", index);
+            return format!("T{index}");
         }
         if let Some(index) = visitor::bound_parameter_index(self.interner, type_id) {
-            return format!("P{}", index);
+            return format!("P{index}");
         }
         if let Some(inner) = visitor::no_infer_inner_type(self.interner, type_id) {
             // NoInfer<T> evaluates to T, so format the inner type
@@ -193,11 +193,13 @@ impl<'a> TypePrinter<'a> {
     }
 
     fn print_intrinsic_type(&self, type_id: TypeId) -> String {
+        if matches!(type_id, TypeId::ERROR | TypeId::ANY) {
+            // Errors and `any` emit as `any` in declarations.
+            return "any".to_string();
+        }
         match type_id {
-            TypeId::ERROR => "any".to_string(), // Errors emit as `any` in declarations
             TypeId::NEVER => "never".to_string(),
             TypeId::UNKNOWN => "unknown".to_string(),
-            TypeId::ANY => "any".to_string(),
             TypeId::VOID => "void".to_string(),
             TypeId::UNDEFINED => "undefined".to_string(),
             TypeId::NULL => "null".to_string(),

@@ -94,7 +94,7 @@ impl LocaleMessages {
     }
 
     /// Returns true if this is the default (English) locale.
-    pub fn is_default(&self) -> bool {
+    pub const fn is_default(&self) -> bool {
         self.locale_id.is_empty()
     }
 }
@@ -148,7 +148,7 @@ fn substitute_params_from_english(_code: u32, template: &str, formatted_english:
     // Substitute parameters into the template
     let mut result = template.to_string();
     for (i, param) in params.iter().enumerate() {
-        let placeholder = format!("{{{}}}", i);
+        let placeholder = format!("{{{i}}}");
         result = result.replace(&placeholder, param);
     }
 
@@ -266,7 +266,7 @@ fn extract_code_from_key(key: &str) -> Option<u32> {
 }
 
 /// Get a list of all supported locale identifiers.
-pub fn supported_locales() -> &'static [&'static str] {
+pub const fn supported_locales() -> &'static [&'static str] {
     &[
         "cs", "de", "es", "fr", "it", "ja", "ko", "pl", "pt-br", "ru", "tr", "zh-cn", "zh-tw",
     ]

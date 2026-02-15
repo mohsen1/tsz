@@ -50,8 +50,7 @@ const b = identity(true);
 
     assert!(
         type_errors.is_empty(),
-        "Expected no type errors, got: {:?}",
-        type_errors
+        "Expected no type errors, got: {type_errors:?}"
     );
 }
 
@@ -95,8 +94,7 @@ logName(invalid);
 
     assert!(
         !type_errors.is_empty(),
-        "Expected errors for constraint violation, got: {:?}",
-        type_errors
+        "Expected errors for constraint violation, got: {type_errors:?}"
     );
 }
 
@@ -140,8 +138,7 @@ const x: string = identity(42);
     // Verify it's specifically a type mismatch error (TS2322)
     assert!(
         type_errors.iter().any(|d| d.code == 2322),
-        "Expected TS2322 error for type mismatch, got: {:?}",
-        type_errors
+        "Expected TS2322 error for type mismatch, got: {type_errors:?}"
     );
 }
 
@@ -199,7 +196,6 @@ const result = process(42, x => x.toString());
     // - U = string (from x.toString() in Round 2)
     assert!(
         type_errors.is_empty(),
-        "Expected no type errors for process inference, got: {:?}",
-        type_errors
+        "Expected no type errors for process inference, got: {type_errors:?}"
     );
 }

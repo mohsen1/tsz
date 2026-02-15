@@ -44,7 +44,7 @@ use crate::types::{TypeData, TypeId};
 
 /// Sound Mode diagnostic codes.
 ///
-/// These use the TS9xxx range to distinguish from standard TypeScript errors.
+/// These use the `TS9xxx` range to distinguish from standard TypeScript errors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u32)]
 pub enum SoundDiagnosticCode {
@@ -83,12 +83,12 @@ pub enum SoundDiagnosticCode {
 
 impl SoundDiagnosticCode {
     /// Get the numeric code.
-    pub fn code(self) -> u32 {
+    pub const fn code(self) -> u32 {
         self as u32
     }
 
     /// Get the diagnostic message template.
-    pub fn message(self) -> &'static str {
+    pub const fn message(self) -> &'static str {
         match self {
             Self::ExcessPropertyStickyFreshness => {
                 "Object literal has excess property '{0}' which will be silently lost when assigned to type '{1}'."
@@ -127,13 +127,13 @@ pub struct SoundDiagnostic {
     /// Message arguments for formatting
     pub args: Vec<String>,
 
-    /// Source location (file_id, start, end)
+    /// Source location (`file_id`, start, end)
     pub location: Option<(u32, u32, u32)>,
 }
 
 impl SoundDiagnostic {
     /// Create a new Sound Mode diagnostic.
-    pub fn new(code: SoundDiagnosticCode) -> Self {
+    pub const fn new(code: SoundDiagnosticCode) -> Self {
         Self {
             code,
             args: Vec::new(),
@@ -148,7 +148,7 @@ impl SoundDiagnostic {
     }
 
     /// Set the source location.
-    pub fn with_location(mut self, file_id: u32, start: u32, end: u32) -> Self {
+    pub const fn with_location(mut self, file_id: u32, start: u32, end: u32) -> Self {
         self.location = Some((file_id, start, end));
         self
     }
@@ -157,7 +157,7 @@ impl SoundDiagnostic {
     pub fn format_message(&self) -> String {
         let mut msg = self.code.message().to_string();
         for (i, arg) in self.args.iter().enumerate() {
-            let placeholder = format!("{{{}}}", i);
+            let placeholder = format!("{{{i}}}");
             msg = msg.replace(&placeholder, arg);
         }
         msg
@@ -290,8 +290,8 @@ impl<'a> SoundLawyer<'a> {
             if checker.is_subtype_of(*s_elem, *t_elem) && !checker.is_subtype_of(*t_elem, *s_elem) {
                 return Some(
                     SoundDiagnostic::new(SoundDiagnosticCode::MutableArrayCovariance)
-                        .with_arg(format!("{:?}", s_elem))
-                        .with_arg(format!("{:?}", t_elem)),
+                        .with_arg(format!("{s_elem:?}"))
+                        .with_arg(format!("{t_elem:?}")),
                 );
             }
         }
@@ -344,7 +344,7 @@ impl SoundModeConfig {
     }
 
     /// Create a minimal configuration (for gradual adoption).
-    pub fn minimal() -> Self {
+    pub const fn minimal() -> Self {
         Self {
             sticky_freshness: true,
             strict_any: false,

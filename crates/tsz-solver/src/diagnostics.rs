@@ -19,8 +19,8 @@
 //! The tracer pattern allows the same subtype checking logic to be used for both
 //! fast boolean checks and detailed diagnostic generation, eliminating logic drift.
 //!
-//! - **FastTracer**: Zero-cost abstraction that compiles to a simple boolean return
-//! - **DiagnosticTracer**: Collects detailed `SubtypeFailureReason` for error messages
+//! - **`FastTracer`**: Zero-cost abstraction that compiles to a simple boolean return
+//! - **`DiagnosticTracer`**: Collects detailed `SubtypeFailureReason` for error messages
 
 use crate::TypeDatabase;
 use crate::TypeFormatter;
@@ -76,7 +76,7 @@ pub trait SubtypeTracer {
     fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool;
 }
 
-/// Object-safe version of SubtypeTracer for dynamic dispatch.
+/// Object-safe version of `SubtypeTracer` for dynamic dispatch.
 ///
 /// This trait is dyn-compatible and can be used as `&mut dyn DynSubtypeTracer`.
 /// It has a simpler signature that takes the reason directly rather than a closure.
@@ -93,7 +93,7 @@ pub trait DynSubtypeTracer {
     fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool;
 }
 
-/// Blanket implementation for all SubtypeTracer types.
+/// Blanket implementation for all `SubtypeTracer` types.
 impl<T: SubtypeTracer> DynSubtypeTracer for T {
     fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool {
         self.on_mismatch(|| reason)
@@ -344,10 +344,10 @@ pub enum DiagnosticSeverity {
 /// Argument for a diagnostic message template.
 ///
 /// Instead of eagerly formatting types to strings, we store the raw data
-/// (TypeId, SymbolId, etc.) and only format when rendering.
+/// (`TypeId`, `SymbolId`, etc.) and only format when rendering.
 #[derive(Clone, Debug)]
 pub enum DiagnosticArg {
-    /// A type reference (will be formatted via TypeFormatter)
+    /// A type reference (will be formatted via `TypeFormatter`)
     Type(TypeId),
     /// A symbol reference (will be looked up by name)
     Symbol(SymbolId),
@@ -406,7 +406,7 @@ pub struct PendingDiagnostic {
 
 impl PendingDiagnostic {
     /// Create a new pending error diagnostic.
-    pub fn error(code: u32, args: Vec<DiagnosticArg>) -> Self {
+    pub const fn error(code: u32, args: Vec<DiagnosticArg>) -> Self {
         Self {
             code,
             args,
@@ -624,7 +624,7 @@ impl<'a> DiagnosticBuilder<'a> {
     /// Create a diagnostic builder with access to definition store.
     ///
     /// This prevents "Lazy(N)" fallback strings in diagnostic messages by
-    /// resolving DefIds to their type names.
+    /// resolving `DefIds` to their type names.
     pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
         self.formatter = self.formatter.with_def_store(def_store);
         self
@@ -635,10 +635,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let source_str = self.formatter.format(source);
         let target_str = self.formatter.format(target);
         TypeDiagnostic::error(
-            format!(
-                "Type '{}' is not assignable to type '{}'.",
-                source_str, target_str
-            ),
+            format!("Type '{source_str}' is not assignable to type '{target_str}'."),
             codes::TYPE_NOT_ASSIGNABLE,
         )
     }
@@ -654,8 +651,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let target_str = self.formatter.format(target);
         TypeDiagnostic::error(
             format!(
-                "Property '{}' is missing in type '{}' but required in type '{}'.",
-                prop_name, source_str, target_str
+                "Property '{prop_name}' is missing in type '{source_str}' but required in type '{target_str}'."
             ),
             codes::PROPERTY_MISSING,
         )
@@ -665,10 +661,7 @@ impl<'a> DiagnosticBuilder<'a> {
     pub fn property_not_exist(&mut self, prop_name: &str, type_id: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(type_id);
         TypeDiagnostic::error(
-            format!(
-                "Property '{}' does not exist on type '{}'.",
-                prop_name, type_str
-            ),
+            format!("Property '{prop_name}' does not exist on type '{type_str}'."),
             codes::PROPERTY_NOT_EXIST,
         )
     }
@@ -683,8 +676,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let type_str = self.formatter.format(type_id);
         TypeDiagnostic::error(
             format!(
-                "Property '{}' does not exist on type '{}'. Did you mean '{}'?",
-                prop_name, type_str, suggestion
+                "Property '{prop_name}' does not exist on type '{type_str}'. Did you mean '{suggestion}'?"
             ),
             codes::PROPERTY_NOT_EXIST_DID_YOU_MEAN,
         )
@@ -700,8 +692,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let param_str = self.formatter.format(param_type);
         TypeDiagnostic::error(
             format!(
-                "Argument of type '{}' is not assignable to parameter of type '{}'.",
-                arg_str, param_str
+                "Argument of type '{arg_str}' is not assignable to parameter of type '{param_str}'."
             ),
             codes::ARG_NOT_ASSIGNABLE,
         )
@@ -748,14 +739,14 @@ impl<'a> DiagnosticBuilder<'a> {
         }
 
         let code = cannot_find_name_code(name);
-        TypeDiagnostic::error(format!("Cannot find name '{}'.", name), code)
+        TypeDiagnostic::error(format!("Cannot find name '{name}'."), code)
     }
 
     /// Create a "Type X is not callable" diagnostic.
     pub fn not_callable(&mut self, type_id: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(type_id);
         TypeDiagnostic::error(
-            format!("Type '{}' has no call signatures.", type_str),
+            format!("Type '{type_str}' has no call signatures."),
             codes::NOT_CALLABLE,
         )
     }
@@ -763,7 +754,7 @@ impl<'a> DiagnosticBuilder<'a> {
     /// Create an "Expected N arguments but got M" diagnostic.
     pub fn argument_count_mismatch(&mut self, expected: usize, got: usize) -> TypeDiagnostic {
         TypeDiagnostic::error(
-            format!("Expected {} arguments, but got {}.", expected, got),
+            format!("Expected {expected} arguments, but got {got}."),
             codes::ARG_COUNT_MISMATCH,
         )
     }
@@ -771,10 +762,7 @@ impl<'a> DiagnosticBuilder<'a> {
     /// Create a "Cannot assign to readonly property" diagnostic.
     pub fn readonly_property(&mut self, prop_name: &str) -> TypeDiagnostic {
         TypeDiagnostic::error(
-            format!(
-                "Cannot assign to '{}' because it is a read-only property.",
-                prop_name
-            ),
+            format!("Cannot assign to '{prop_name}' because it is a read-only property."),
             codes::READONLY_PROPERTY,
         )
     }
@@ -784,8 +772,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let target_str = self.formatter.format(target);
         TypeDiagnostic::error(
             format!(
-                "Object literal may only specify known properties, and '{}' does not exist in type '{}'.",
-                prop_name, target_str
+                "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{target_str}'."
             ),
             codes::EXCESS_PROPERTY,
         )
@@ -801,7 +788,7 @@ impl<'a> DiagnosticBuilder<'a> {
     /// has no type annotation and no contextual type.
     pub fn implicit_any_parameter(&mut self, param_name: &str) -> TypeDiagnostic {
         TypeDiagnostic::error(
-            format!("Parameter '{}' implicitly has an 'any' type.", param_name),
+            format!("Parameter '{param_name}' implicitly has an 'any' type."),
             codes::IMPLICIT_ANY_PARAMETER,
         )
     }
@@ -817,10 +804,7 @@ impl<'a> DiagnosticBuilder<'a> {
     ) -> TypeDiagnostic {
         let type_str = self.formatter.format(implicit_type);
         TypeDiagnostic::error(
-            format!(
-                "Parameter '{}' implicitly has an '{}' type.",
-                param_name, type_str
-            ),
+            format!("Parameter '{param_name}' implicitly has an '{type_str}' type."),
             codes::IMPLICIT_ANY_PARAMETER,
         )
     }
@@ -831,7 +815,7 @@ impl<'a> DiagnosticBuilder<'a> {
     /// has no type annotation.
     pub fn implicit_any_member(&mut self, member_name: &str) -> TypeDiagnostic {
         TypeDiagnostic::error(
-            format!("Member '{}' implicitly has an 'any' type.", member_name),
+            format!("Member '{member_name}' implicitly has an 'any' type."),
             codes::IMPLICIT_ANY_MEMBER,
         )
     }
@@ -843,10 +827,7 @@ impl<'a> DiagnosticBuilder<'a> {
     pub fn implicit_any_variable(&mut self, var_name: &str, var_type: TypeId) -> TypeDiagnostic {
         let type_str = self.formatter.format(var_type);
         TypeDiagnostic::error(
-            format!(
-                "Variable '{}' implicitly has an '{}' type.",
-                var_name, type_str
-            ),
+            format!("Variable '{var_name}' implicitly has an '{type_str}' type."),
             codes::IMPLICIT_ANY,
         )
     }
@@ -859,8 +840,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let type_str = self.formatter.format(return_type);
         TypeDiagnostic::error(
             format!(
-                "'{}', which lacks return-type annotation, implicitly has an '{}' return type.",
-                func_name, type_str
+                "'{func_name}', which lacks return-type annotation, implicitly has an '{type_str}' return type."
             ),
             codes::IMPLICIT_ANY_RETURN,
         )
@@ -877,8 +857,7 @@ impl<'a> DiagnosticBuilder<'a> {
         let type_str = self.formatter.format(return_type);
         TypeDiagnostic::error(
             format!(
-                "Function expression, which lacks return-type annotation, implicitly has an '{}' return type.",
-                type_str
+                "Function expression, which lacks return-type annotation, implicitly has an '{type_str}' return type."
             ),
             codes::IMPLICIT_ANY_RETURN_FUNCTION_EXPRESSION,
         )
@@ -891,7 +870,7 @@ impl<'a> DiagnosticBuilder<'a> {
 
 /// Builder for creating lazy pending diagnostics.
 ///
-/// This builder creates PendingDiagnostic instances that defer expensive
+/// This builder creates `PendingDiagnostic` instances that defer expensive
 /// string formatting until rendering time.
 pub struct PendingDiagnosticBuilder;
 
@@ -902,39 +881,40 @@ pub struct PendingDiagnosticBuilder;
 impl SubtypeFailureReason {
     /// Return the primary diagnostic code for this failure reason.
     ///
-    /// This is the single source of truth for mapping SubtypeFailureReason variants
+    /// This is the single source of truth for mapping `SubtypeFailureReason` variants
     /// to diagnostic codes. Both the solver's `to_diagnostic` and the checker's
     /// `render_failure_reason` should use this to stay in sync.
-    pub fn diagnostic_code(&self) -> u32 {
+    pub const fn diagnostic_code(&self) -> u32 {
         match self {
-            Self::MissingProperty { .. } => codes::PROPERTY_MISSING,
+            Self::MissingProperty { .. } | Self::OptionalPropertyRequired { .. } => {
+                codes::PROPERTY_MISSING
+            }
             Self::MissingProperties { .. } => codes::MISSING_PROPERTIES,
             Self::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
-            Self::OptionalPropertyRequired { .. } => codes::PROPERTY_MISSING,
             Self::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
             Self::PropertyVisibilityMismatch { .. } => codes::PROPERTY_VISIBILITY_MISMATCH,
             Self::PropertyNominalMismatch { .. } => codes::PROPERTY_NOMINAL_MISMATCH,
-            Self::ReturnTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::ParameterTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::ReturnTypeMismatch { .. }
+            | Self::ParameterTypeMismatch { .. }
+            | Self::TupleElementMismatch { .. }
+            | Self::TupleElementTypeMismatch { .. }
+            | Self::ArrayElementMismatch { .. }
+            | Self::IndexSignatureMismatch { .. }
+            | Self::NoUnionMemberMatches { .. }
+            | Self::NoIntersectionMemberMatches { .. }
+            | Self::TypeMismatch { .. }
+            | Self::IntrinsicTypeMismatch { .. }
+            | Self::LiteralTypeMismatch { .. }
+            | Self::ErrorType { .. }
+            | Self::RecursionLimitExceeded
+            | Self::ParameterCountMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
             Self::TooManyParameters { .. } => codes::ARG_COUNT_MISMATCH,
-            Self::TupleElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::TupleElementTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::ArrayElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::IndexSignatureMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::NoUnionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::NoIntersectionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
-            Self::TypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::IntrinsicTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::LiteralTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::ErrorType { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            Self::RecursionLimitExceeded => codes::TYPE_NOT_ASSIGNABLE,
-            Self::ParameterCountMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
         }
     }
 
-    /// Convert this failure reason to a PendingDiagnostic.
+    /// Convert this failure reason to a `PendingDiagnostic`.
     ///
     /// This is the "explain slow" path - called only when we need to report
     /// an error and want a detailed message about why the type check failed.
@@ -1026,8 +1006,8 @@ impl SubtypeFailureReason {
                     codes::PROPERTY_VISIBILITY_MISMATCH,
                     vec![
                         (*property_name).into(),
-                        format!("{:?}", source_visibility).into(),
-                        format!("{:?}", target_visibility).into(),
+                        format!("{source_visibility:?}").into(),
+                        format!("{target_visibility:?}").into(),
                     ],
                 ))
             }
@@ -1106,16 +1086,8 @@ impl SubtypeFailureReason {
                 index: _,
                 source_element,
                 target_element,
-            } => PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![source.into(), target.into()],
-            )
-            .with_related(PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![(*source_element).into(), (*target_element).into()],
-            )),
-
-            Self::ArrayElementMismatch {
+            }
+            | Self::ArrayElementMismatch {
                 source_element,
                 target_element,
             } => PendingDiagnostic::error(
@@ -1164,6 +1136,22 @@ impl SubtypeFailureReason {
             Self::NoIntersectionMemberMatches {
                 source_type,
                 target_type,
+            }
+            | Self::TypeMismatch {
+                source_type,
+                target_type,
+            }
+            | Self::IntrinsicTypeMismatch {
+                source_type,
+                target_type,
+            }
+            | Self::LiteralTypeMismatch {
+                source_type,
+                target_type,
+            }
+            | Self::ErrorType {
+                source_type,
+                target_type,
             } => PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![(*source_type).into(), (*target_type).into()],
@@ -1176,41 +1164,6 @@ impl SubtypeFailureReason {
                 codes::NO_COMMON_PROPERTIES,
                 vec![(*source_type).into(), (*target_type).into()],
             ),
-
-            Self::TypeMismatch {
-                source_type,
-                target_type,
-            } => PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![(*source_type).into(), (*target_type).into()],
-            ),
-
-            Self::IntrinsicTypeMismatch {
-                source_type,
-                target_type,
-            } => PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![(*source_type).into(), (*target_type).into()],
-            ),
-
-            Self::LiteralTypeMismatch {
-                source_type,
-                target_type,
-            } => PendingDiagnostic::error(
-                codes::TYPE_NOT_ASSIGNABLE,
-                vec![(*source_type).into(), (*target_type).into()],
-            ),
-
-            Self::ErrorType {
-                source_type,
-                target_type,
-            } => {
-                // Error types indicate unresolved types that should trigger TS2322.
-                PendingDiagnostic::error(
-                    codes::TYPE_NOT_ASSIGNABLE,
-                    vec![(*source_type).into(), (*target_type).into()],
-                )
-            }
 
             Self::RecursionLimitExceeded => {
                 // Recursion limit - use the source/target from the call site
@@ -1347,10 +1300,10 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
         }
     }
 
-    /// Add access to definition store for DefId name resolution.
+    /// Add access to definition store for `DefId` name resolution.
     ///
     /// This prevents "Lazy(N)" fallback strings in diagnostic messages by
-    /// resolving DefIds to their type names.
+    /// resolving `DefIds` to their type names.
     pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
         self.builder = self.builder.with_def_store(def_store);
         self
@@ -1496,14 +1449,14 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
 // Diagnostic Conversion
 // =============================================================================
 
-/// Convert a solver TypeDiagnostic to a checker Diagnostic.
+/// Convert a solver `TypeDiagnostic` to a checker Diagnostic.
 ///
 /// This allows the solver's diagnostic infrastructure to integrate
 /// with the existing checker diagnostic system.
 impl TypeDiagnostic {
-    /// Convert to a checker::Diagnostic.
+    /// Convert to a `checker::Diagnostic`.
     ///
-    /// Uses the provided file_name if no span is present.
+    /// Uses the provided `file_name` if no span is present.
     pub fn to_checker_diagnostic(&self, default_file: &str) -> tsz_common::diagnostics::Diagnostic {
         use tsz_common::diagnostics::{
             Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation,
@@ -1575,11 +1528,11 @@ impl SourceLocation {
     }
 
     /// Get the length of this location.
-    pub fn length(&self) -> u32 {
+    pub const fn length(&self) -> u32 {
         self.end.saturating_sub(self.start)
     }
 
-    /// Convert to a SourceSpan.
+    /// Convert to a `SourceSpan`.
     pub fn to_span(&self) -> SourceSpan {
         SourceSpan::new(std::sync::Arc::clone(&self.file), self.start, self.length())
     }

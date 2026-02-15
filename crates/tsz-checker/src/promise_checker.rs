@@ -1,13 +1,13 @@
 //! Promise and Async Type Checking Module
 //!
 //! This module contains Promise and async-related type checking methods
-//! extracted from CheckerState as part of Phase 2 architecture refactoring.
+//! extracted from `CheckerState` as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
 //! - Promise type detection and validation
 //! - Type argument extraction from Promise<T>
 //! - Async function return type checking
-//! - Promise-like type recognition (Promise, PromiseLike, custom promises)
+//! - Promise-like type recognition (Promise, `PromiseLike`, custom promises)
 
 use crate::query_boundaries::promise_checker as query;
 use crate::state::CheckerState;
@@ -28,7 +28,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a name refers to a Promise-like type.
     ///
-    /// Returns true for "Promise", "PromiseLike", or any name containing "Promise".
+    /// Returns true for "Promise", "`PromiseLike`", or any name containing "Promise".
     /// This handles built-in Promise types as well as custom Promise implementations.
     pub fn is_promise_like_name(&self, name: &str) -> bool {
         matches!(name, "Promise" | "PromiseLike") || name.contains("Promise")
@@ -141,7 +141,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns Some(T) if the type is Promise<T>, None otherwise.
     /// This handles:
-    /// - Synthetic PROMISE_BASE type (when Promise symbol wasn't resolved)
+    /// - Synthetic `PROMISE_BASE` type (when Promise symbol wasn't resolved)
     /// - Direct Promise<T> applications
     /// - Type aliases that expand to Promise<T>
     /// - Classes that extend Promise<T>
@@ -252,7 +252,7 @@ impl<'a> CheckerState<'a> {
     /// Extract type argument from a type alias that expands to a Promise type.
     ///
     /// For example, given `type MyPromise<T> = Promise<T>`, this extracts
-    /// the type argument from MyPromise<U>.
+    /// the type argument from `MyPromise`<U>.
     pub fn promise_like_type_argument_from_alias(
         &mut self,
         sym_id: SymbolId,
@@ -342,7 +342,7 @@ impl<'a> CheckerState<'a> {
     /// Extract type argument from a class that extends Promise.
     ///
     /// For example, given `class MyPromise<T> extends Promise<T>`, this extracts
-    /// the type argument from MyPromise<U>.
+    /// the type argument from `MyPromise`<U>.
     pub fn promise_like_type_argument_from_class(
         &mut self,
         sym_id: SymbolId,
@@ -549,10 +549,10 @@ impl<'a> CheckerState<'a> {
     // Generator Type Helpers
     // =========================================================================
 
-    /// Extract the TReturn type argument from Generator<Y, R, N> or AsyncGenerator<Y, R, N>.
+    /// Extract the `TReturn` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
     ///
     /// For generator functions with explicit return types, the return statement
-    /// should be checked against TReturn (the second type argument), not the full
+    /// should be checked against `TReturn` (the second type argument), not the full
     /// Generator/AsyncGenerator type.
     ///
     /// Returns `Some(TReturn)` if the type is a Generator/AsyncGenerator/Iterator/AsyncIterator
@@ -572,10 +572,10 @@ impl<'a> CheckerState<'a> {
         is_generator_like.then(|| app.args[1])
     }
 
-    /// Extract the TYield type argument from Generator<Y, R, N> or AsyncGenerator<Y, R, N>.
+    /// Extract the `TYield` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
     ///
     /// For `yield expr` in a generator with an explicit return annotation,
-    /// `expr` must be assignable to TYield (the first type argument).
+    /// `expr` must be assignable to `TYield` (the first type argument).
     pub fn get_generator_yield_type_argument(&mut self, type_id: TypeId) -> Option<TypeId> {
         let app = query::type_application(self.ctx.types, type_id)?;
 
@@ -587,8 +587,8 @@ impl<'a> CheckerState<'a> {
             .then(|| app.args[0])
     }
 
-    /// Check if a type is a Generator-like base type (Generator, AsyncGenerator,
-    /// Iterator, AsyncIterator, IterableIterator, AsyncIterableIterator).
+    /// Check if a type is a Generator-like base type (Generator, `AsyncGenerator`,
+    /// Iterator, `AsyncIterator`, `IterableIterator`, `AsyncIterableIterator`).
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
         // Fast path: Check for Lazy types to known Generator-like types
         {

@@ -93,7 +93,7 @@ fn test_is_project_up_to_date_with_buildinfo() {
     let buildinfo_content = format!(
         r#"{{
   "version": "0.1.0",
-  "compilerVersion": "{}",
+  "compilerVersion": "{compiler_version}",
   "rootFiles": [],
   "fileInfos": {{}},
   "dependencies": {{}},
@@ -102,8 +102,7 @@ fn test_is_project_up_to_date_with_buildinfo() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": 1234567890
-}}"#,
-        compiler_version
+}}"#
     );
     std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
 
@@ -214,7 +213,7 @@ fn test_is_project_up_to_date_with_source_changes() {
     let buildinfo_content = format!(
         r#"{{
   "version": "0.1.0",
-  "compilerVersion": "{}",
+  "compilerVersion": "{compiler_version}",
   "rootFiles": ["src/index.ts"],
   "fileInfos": {{
     "src/index.ts": {{
@@ -228,8 +227,7 @@ fn test_is_project_up_to_date_with_source_changes() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": 1234567890
-}}"#,
-        compiler_version
+}}"#
     );
     std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
 
@@ -277,7 +275,7 @@ fn test_is_project_up_to_date_with_new_source_files() {
     let buildinfo_content = format!(
         r#"{{
   "version": "0.1.0",
-  "compilerVersion": "{}",
+  "compilerVersion": "{compiler_version}",
   "rootFiles": [],
   "fileInfos": {{}},
   "dependencies": {{}},
@@ -286,8 +284,7 @@ fn test_is_project_up_to_date_with_new_source_files() {
   "latestChangedDtsFile": null,
   "options": {{}},
   "buildTime": 1234567890
-}}"#,
-        compiler_version
+}}"#
     );
     std::fs::write(&buildinfo_path, buildinfo_content).unwrap();
 
@@ -359,7 +356,7 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
     let ref_buildinfo_content = format!(
         r#"{{
   "version": "0.1.0",
-  "compilerVersion": "{}",
+  "compilerVersion": "{compiler_version}",
   "rootFiles": [],
   "fileInfos": {{}},
   "dependencies": {{}},
@@ -367,9 +364,8 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
   "emitSignatures": {{}},
   "latestChangedDtsFile": "dist/index.d.ts",
   "options": {{}},
-  "buildTime": {}
-}}"#,
-        compiler_version, current_time
+  "buildTime": {current_time}
+}}"#
     );
     std::fs::write(&ref_buildinfo_path, ref_buildinfo_content).unwrap();
 
@@ -379,7 +375,7 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
     let main_buildinfo_content = format!(
         r#"{{
   "version": "0.1.0",
-  "compilerVersion": "{}",
+  "compilerVersion": "{compiler_version}",
   "rootFiles": [],
   "fileInfos": {{}},
   "dependencies": {{}},
@@ -387,9 +383,8 @@ fn test_is_project_up_to_date_cross_project_invalidation() {
   "emitSignatures": {{}},
   "latestChangedDtsFile": null,
   "options": {{}},
-  "buildTime": {}
-}}"#,
-        compiler_version, old_time
+  "buildTime": {old_time}
+}}"#
     );
     std::fs::write(&main_buildinfo_path, main_buildinfo_content).unwrap();
 

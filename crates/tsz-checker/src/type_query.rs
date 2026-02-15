@@ -1,6 +1,6 @@
 //! Type Query Utilities Module
 //!
-//! This module contains type query utility methods for CheckerState
+//! This module contains type query utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -8,7 +8,7 @@
 //! - Keyof type query utilities
 //! - Type name resolution helpers
 //!
-//! This module extends CheckerState with utilities for type query
+//! This module extends `CheckerState` with utilities for type query
 //! operations, providing cleaner APIs for typeof and keyof operations.
 
 use crate::query_boundaries::type_query as query;
@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a node represents a typeof type query.
     ///
-    /// Returns true if the node is a TypeQuery node (typeof expression).
+    /// Returns true if the node is a `TypeQuery` node (typeof expression).
     pub fn is_typeof_query(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::TYPE_QUERY;
 

@@ -24,9 +24,9 @@ use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Check if parameter types are compatible based on variance settings.
     ///
-    /// In strict mode (contravariant): target_type <: source_type
-    /// In legacy mode (bivariant): target_type <: source_type OR source_type <: target_type
-    /// See https://github.com/microsoft/TypeScript/issues/18654.
+    /// In strict mode (contravariant): `target_type` <: `source_type`
+    /// In legacy mode (bivariant): `target_type` <: `source_type` OR `source_type` <: `target_type`
+    /// See <https://github.com/microsoft/TypeScript/issues/18654>.
     pub(crate) fn are_parameters_compatible(
         &mut self,
         source_type: TypeId,
@@ -52,19 +52,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> bool {
         match (&source.type_predicate, &target.type_predicate) {
             // No predicates in either function - compatible
-            (None, None) => true,
+            (None, None) | (Some(_), None) | (None, Some(_)) => true,
 
             // Source has predicate, target doesn't - allow assignment.
             // Type predicates are implemented as runtime boolean returns, so a function with
             // a predicate is still callable where a plain boolean-returning function is
             // expected (as in ReturnType<T>).
-            (Some(_), None) => true,
-
-            // Source has no predicate, target has one - still compatible.
-            // This mirrors TypeScript's behavior: a less specific function (no predicate)
-            // can be used where a more specific function (with a predicate) is expected.
-            (None, Some(_)) => true,
-
             // Both have predicates - check compatibility
             (Some(source_pred), Some(target_pred)) => {
                 // First, check if predicates target the same parameter.
@@ -84,9 +77,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // Type guards (`x is T`) and assertions (`asserts x is T`) are NOT compatible
                 match (source_pred.asserts, target_pred.asserts) {
                     // Source is type guard, target is assertion - NOT compatible
-                    (false, true) => false,
                     // Source is assertion, target is type guard - NOT compatible
-                    (true, false) => false,
+                    (false, true) | (true, false) => false,
                     // Both same type - check type compatibility
                     (false, false) | (true, true) => {
                         match (source_pred.type_id, target_pred.type_id) {
@@ -94,8 +86,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                                 self.check_subtype(source_type, target_type).is_true()
                             }
                             (None, Some(_)) => false,
-                            (Some(_), None) => true,
-                            (None, None) => true,
+                            (Some(_), None) | (None, None) => true,
                         }
                     }
                 }
@@ -104,7 +95,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Check parameter compatibility with method bivariance support.
-    /// Methods are bivariant even when strict_function_types is enabled.
+    /// Methods are bivariant even when `strict_function_types` is enabled.
     pub(crate) fn are_parameters_compatible_impl(
         &mut self,
         source_type: TypeId,
@@ -255,7 +246,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    fn is_uninformative_contextual_inference_input(&self, ty: TypeId) -> bool {
+    const fn is_uninformative_contextual_inference_input(&self, ty: TypeId) -> bool {
         matches!(ty, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR)
     }
 
@@ -1204,14 +1195,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Evaluate a meta-type (conditional, index access, mapped, keyof, etc.) to its
-    /// concrete form. Uses TypeEvaluator with the resolver to correctly resolve
+    /// concrete form. Uses `TypeEvaluator` with the resolver to correctly resolve
     /// Lazy(DefId) types at all nesting levels (e.g., KeyOf(Lazy(DefId))).
     ///
-    /// Always uses TypeEvaluator with the resolver instead of query_db.evaluate_type()
-    /// because the checker populates DefId→TypeId mappings in the TypeEnvironment that
-    /// the query_db's resolver-less evaluator cannot access.
+    /// Always uses `TypeEvaluator` with the resolver instead of `query_db.evaluate_type()`
+    /// because the checker populates DefId→TypeId mappings in the `TypeEnvironment` that
+    /// the `query_db`'s resolver-less evaluator cannot access.
     ///
-    /// Results are cached in eval_cache to avoid re-evaluating the same type across
+    /// Results are cached in `eval_cache` to avoid re-evaluating the same type across
     /// multiple subtype checks. This turns O(n²) evaluate calls into O(n).
     pub(crate) fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         // Check local evaluation cache first.

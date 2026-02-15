@@ -130,7 +130,7 @@ pub struct TsDiagnosticRelatedInformation {
 }
 
 /// Returns the tsserver category string for a `DiagnosticCategory`.
-pub fn category_to_string(category: DiagnosticCategory) -> &'static str {
+pub const fn category_to_string(category: DiagnosticCategory) -> &'static str {
     match category {
         DiagnosticCategory::Error => "error",
         DiagnosticCategory::Warning => "warning",
@@ -140,7 +140,7 @@ pub fn category_to_string(category: DiagnosticCategory) -> &'static str {
 }
 
 /// Map a checker `DiagnosticCategory` to the LSP `DiagnosticSeverity`.
-pub fn category_to_severity(category: DiagnosticCategory) -> DiagnosticSeverity {
+pub const fn category_to_severity(category: DiagnosticCategory) -> DiagnosticSeverity {
     match category {
         DiagnosticCategory::Error => DiagnosticSeverity::Error,
         DiagnosticCategory::Warning => DiagnosticSeverity::Warning,
@@ -150,7 +150,7 @@ pub fn category_to_severity(category: DiagnosticCategory) -> DiagnosticSeverity 
 }
 
 /// Returns true if the diagnostic code represents an "unused" or "unnecessary" construct.
-pub fn is_unnecessary_code(code: u32) -> bool {
+pub const fn is_unnecessary_code(code: u32) -> bool {
     matches!(
         code,
         diagnostic_codes::IS_DECLARED_BUT_ITS_VALUE_IS_NEVER_READ
@@ -164,7 +164,7 @@ pub fn is_unnecessary_code(code: u32) -> bool {
 }
 
 /// Returns true if the diagnostic code represents a deprecated symbol usage.
-pub fn is_deprecated_code(code: u32) -> bool {
+pub const fn is_deprecated_code(code: u32) -> bool {
     matches!(code, 6385 | 6387)
 }
 
@@ -243,8 +243,8 @@ pub fn convert_diagnostics_batch(
         .collect()
 }
 
-/// Convert an LSP Position (0-indexed) to a tsserver TsPosition (1-indexed).
-fn lsp_to_ts_position(pos: Position) -> TsPosition {
+/// Convert an LSP Position (0-indexed) to a tsserver `TsPosition` (1-indexed).
+const fn lsp_to_ts_position(pos: Position) -> TsPosition {
     TsPosition {
         line: pos.line + 1,
         offset: pos.character + 1,
@@ -336,7 +336,7 @@ pub fn filter_suggestion_diagnostics(diagnostics: &[CheckerDiagnostic]) -> Vec<&
 
 /// Format a TypeScript error code string, e.g., "TS2322".
 pub fn format_ts_error_code(code: u32) -> String {
-    format!("TS{}", code)
+    format!("TS{code}")
 }
 
 #[cfg(test)]

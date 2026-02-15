@@ -1,6 +1,6 @@
 //! Literal Type Utilities Module
 //!
-//! This module contains literal type utility methods for CheckerState
+//! This module contains literal type utility methods for `CheckerState`
 //! as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
@@ -9,7 +9,7 @@
 //! - Literal type widening (const vs let)
 //! - Template literal type handling
 //!
-//! This module extends CheckerState with utilities for literal type
+//! This module extends `CheckerState` with utilities for literal type
 //! operations, providing cleaner APIs for literal type checking.
 
 use crate::state::CheckerState;
@@ -134,13 +134,13 @@ impl<'a> CheckerState<'a> {
             classify_literal_type(self.ctx.types, type1),
             classify_literal_type(self.ctx.types, type2),
         ) {
-            (LiteralTypeKind::String(a1), LiteralTypeKind::String(a2)) => a1 == a2,
+            (LiteralTypeKind::String(a1), LiteralTypeKind::String(a2))
+            | (LiteralTypeKind::BigInt(a1), LiteralTypeKind::BigInt(a2)) => a1 == a2,
             (LiteralTypeKind::Number(n1), LiteralTypeKind::Number(n2)) => {
                 // Compare using bits for proper f64 equality (handles NaN, -0.0, etc.)
                 n1.to_bits() == n2.to_bits()
             }
             (LiteralTypeKind::Boolean(b1), LiteralTypeKind::Boolean(b2)) => b1 == b2,
-            (LiteralTypeKind::BigInt(a1), LiteralTypeKind::BigInt(a2)) => a1 == a2,
             _ => false,
         }
     }
@@ -200,8 +200,7 @@ impl<'a> CheckerState<'a> {
                         flag_pos,
                         1,
                         format!(
-                            "This regular expression flag is only available when targeting '{}' or later.",
-                            target_name
+                            "This regular expression flag is only available when targeting '{target_name}' or later."
                         ),
                         diagnostic_codes::THIS_REGULAR_EXPRESSION_FLAG_IS_ONLY_AVAILABLE_WHEN_TARGETING_OR_LATER,
                     );

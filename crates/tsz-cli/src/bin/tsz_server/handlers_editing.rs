@@ -466,31 +466,31 @@ impl Server {
                 // Multi-line template with @param and/or @returns tags
                 let mut lines = Vec::new();
                 lines.push("/**".to_string());
-                lines.push(format!("{} * ", template_indent));
+                lines.push(format!("{template_indent} * "));
 
                 for param in &params {
                     if is_js_file {
                         if let Some(name) = param.strip_prefix("...") {
-                            lines.push(format!("{} * @param {{...any}} {}", template_indent, name));
+                            lines.push(format!("{template_indent} * @param {{...any}} {name}"));
                         } else {
-                            lines.push(format!("{} * @param {{any}} {}", template_indent, param));
+                            lines.push(format!("{template_indent} * @param {{any}} {param}"));
                         }
                     } else {
                         // For TS, strip the ... prefix
                         let name = param.strip_prefix("...").unwrap_or(param);
-                        lines.push(format!("{} * @param {}", template_indent, name));
+                        lines.push(format!("{template_indent} * @param {name}"));
                     }
                 }
 
                 if has_return {
-                    lines.push(format!("{} * @returns", template_indent));
+                    lines.push(format!("{template_indent} * @returns"));
                 }
 
-                lines.push(format!("{} */", template_indent));
+                lines.push(format!("{template_indent} */"));
                 // Add trailing indent when cursor and declaration are on the same line
                 // and cursor is at the very start of the line (only whitespace before it)
                 if _decl_on_same_line && before_cursor.chars().all(|c| c == ' ' || c == '\t') {
-                    lines.push(decl_indent.clone());
+                    lines.push(decl_indent);
                 }
 
                 let new_text = lines.join("\n");
@@ -608,12 +608,8 @@ impl Server {
 
             // Handle destructured params - use parameter index for naming
             if s.starts_with('{') || s.starts_with('[') {
-                let name = format!("param{}", param_index);
-                params.push(if is_rest {
-                    format!("...{}", name)
-                } else {
-                    name
-                });
+                let name = format!("param{param_index}");
+                params.push(if is_rest { format!("...{name}") } else { name });
                 param_index += 1;
                 continue;
             }
@@ -625,11 +621,7 @@ impl Server {
                 .collect();
 
             if !name.is_empty() {
-                params.push(if is_rest {
-                    format!("...{}", name)
-                } else {
-                    name
-                });
+                params.push(if is_rest { format!("...{name}") } else { name });
             }
             param_index += 1;
         }
@@ -895,10 +887,10 @@ impl Server {
                     return Some(ctor_decl.to_string());
                 }
             }
-            return Some(rhs.to_string());
+            return Some(rhs);
         }
 
-        Some(rhs.to_string())
+        Some(rhs)
     }
 
     /// Find the start of the parameter list (opening paren) in a declaration.

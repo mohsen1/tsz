@@ -7,7 +7,7 @@ use tsz_parser::ParserState as Parser;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 
-/// Test that WasmProgram treats lib files explicitly via addLibFile
+/// Test that `WasmProgram` treats lib files explicitly via addLibFile
 /// and not via file name detection
 ///
 /// This documents the expected behavior:
@@ -65,8 +65,7 @@ class MyClass {
         // regardless of filename
         assert_eq!(
             class_count, 1,
-            "Should find exactly 1 class in {}, got {}",
-            filename, class_count
+            "Should find exactly 1 class in {filename}, got {class_count}"
         );
 
         // Find method nodes (class methods are METHOD_DECLARATION, not FUNCTION_DECLARATION)
@@ -75,8 +74,7 @@ class MyClass {
         // We should find exactly 1 method in all cases
         assert_eq!(
             method_count, 1,
-            "Should find exactly 1 method in {}, got {}",
-            filename, method_count
+            "Should find exactly 1 method in {filename}, got {method_count}"
         );
     }
 }
@@ -115,24 +113,21 @@ class Example {
         let class_count = count_nodes_by_kind(&arena, syntax_kind_ext::CLASS_DECLARATION);
         assert_eq!(
             class_count, 1,
-            "Should find exactly 1 class in {}, got {}",
-            filename, class_count
+            "Should find exactly 1 class in {filename}, got {class_count}"
         );
 
         // Should find exactly 1 standalone function (class method is METHOD_DECLARATION, not FUNCTION_DECLARATION)
         let func_count = count_nodes_by_kind(&arena, syntax_kind_ext::FUNCTION_DECLARATION);
         assert_eq!(
             func_count, 1,
-            "Should find exactly 1 function in {}, got {}",
-            filename, func_count
+            "Should find exactly 1 function in {filename}, got {func_count}"
         );
 
         // Should find exactly 1 method in the class
         let method_count = count_nodes_by_kind(&arena, syntax_kind_ext::METHOD_DECLARATION);
         assert_eq!(
             method_count, 1,
-            "Should find exactly 1 method in {}, got {}",
-            filename, method_count
+            "Should find exactly 1 method in {filename}, got {method_count}"
         );
     }
 }

@@ -1,7 +1,7 @@
 //! ES5 Async Function Transform (IR-based)
 //!
 //! Transforms async functions to ES5 generators wrapped in __awaiter.
-//! This module produces IR nodes that are then printed by IRPrinter.
+//! This module produces IR nodes that are then printed by `IRPrinter`.
 //!
 //! # Transform Patterns
 //!
@@ -75,14 +75,14 @@ impl AsyncTransformState {
     }
 
     /// Reset for a new async function
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.label_counter = 0;
         self.in_async_body = false;
         self.has_await = false;
     }
 
     /// Get the next label number
-    pub fn next_label(&mut self) -> u32 {
+    pub const fn next_label(&mut self) -> u32 {
         let label = self.label_counter;
         self.label_counter += 1;
         label
@@ -111,7 +111,7 @@ pub mod opcodes {
 
 /// Async ES5 transformer that produces IR nodes instead of strings.
 ///
-/// This transformer mirrors the GeneratorES5Transformer pattern from generators.rs.
+/// This transformer mirrors the `GeneratorES5Transformer` pattern from generators.rs.
 /// It converts async functions to ES5 code using __awaiter and __generator helpers.
 pub struct AsyncES5Transformer<'a> {
     arena: &'a NodeArena,
@@ -121,7 +121,7 @@ pub struct AsyncES5Transformer<'a> {
 }
 
 impl<'a> AsyncES5Transformer<'a> {
-    /// Create a new AsyncES5Transformer
+    /// Create a new `AsyncES5Transformer`
     pub fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
@@ -131,23 +131,23 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    pub fn set_source_text(&mut self, source_text: &'a str) {
+    pub const fn set_source_text(&mut self, source_text: &'a str) {
         self.source_text = Some(source_text);
     }
 
     /// Get the helpers needed after transformation
-    pub fn get_helpers_needed(&self) -> &HelpersNeeded {
+    pub const fn get_helpers_needed(&self) -> &HelpersNeeded {
         &self.helpers_needed
     }
 
     /// Take the helpers needed (consumes the transformer)
-    pub fn take_helpers_needed(self) -> HelpersNeeded {
+    pub const fn take_helpers_needed(self) -> HelpersNeeded {
         self.helpers_needed
     }
 
     /// Transform an async function declaration to IR
     ///
-    /// Returns an IRNode::AwaiterCall with a nested IRNode::GeneratorBody
+    /// Returns an `IRNode::AwaiterCall` with a nested `IRNode::GeneratorBody`
     pub fn transform_async_function(&mut self, func_idx: NodeIndex) -> IRNode {
         self.state.reset();
         self.helpers_needed.awaiter = true;
@@ -1409,7 +1409,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    /// Convert object literal properties to IRProperty
+    /// Convert object literal properties to `IRProperty`
     fn convert_object_properties(&self, nodes: &[NodeIndex]) -> Vec<IRProperty> {
         let mut props = Vec::new();
         for &prop_idx in nodes {
@@ -1458,7 +1458,7 @@ impl<'a> AsyncES5Transformer<'a> {
         props
     }
 
-    /// Convert a property name node to IRPropertyKey
+    /// Convert a property name node to `IRPropertyKey`
     fn convert_property_key(&self, idx: NodeIndex) -> IRPropertyKey {
         let Some(node) = self.arena.get(idx) else {
             return IRPropertyKey::Identifier(String::new());
@@ -1633,7 +1633,7 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    /// Convert function parameters to IRParam vec
+    /// Convert function parameters to `IRParam` vec
     fn convert_parameters(&self, param_nodes: &[NodeIndex]) -> Vec<IRParam> {
         let mut params = Vec::new();
         for &param_idx in param_nodes {

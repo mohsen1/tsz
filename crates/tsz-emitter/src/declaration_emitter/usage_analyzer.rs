@@ -68,19 +68,19 @@ impl std::ops::BitOrAssign for UsageKind {
 pub struct UsageAnalyzer<'a> {
     /// AST arena for walking explicit type annotations
     arena: &'a NodeArena,
-    /// Binder state for symbol resolution (node_symbols)
+    /// Binder state for symbol resolution (`node_symbols`)
     binder: &'a BinderState,
-    /// Type cache view for inferred types and def_to_symbol mapping
+    /// Type cache view for inferred types and `def_to_symbol` mapping
     type_cache: &'a TypeCacheView,
     /// Type interner for type operations
     type_interner: &'a TypeInterner,
-    /// Map of import name -> SymbolId for resolving type references
+    /// Map of import name -> `SymbolId` for resolving type references
     import_name_map: &'a FxHashMap<String, SymbolId>,
     /// Map of symbols to their usage kind (Type, Value, or Both)
     used_symbols: FxHashMap<SymbolId, UsageKind>,
     /// Visited AST nodes (for cycle detection)
     visited_nodes: FxHashSet<NodeIndex>,
-    /// Visited TypeIds (for cycle detection)
+    /// Visited `TypeIds` (for cycle detection)
     visited_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Arc<NodeArena>,
@@ -131,7 +131,7 @@ impl<'a> UsageAnalyzer<'a> {
 
     /// Analyze all exported declarations in a source file.
     ///
-    /// Returns the map of SymbolIds to their usage kinds that are referenced in the public API.
+    /// Returns the map of `SymbolIds` to their usage kinds that are referenced in the public API.
     pub fn analyze(&mut self, root_idx: NodeIndex) -> &FxHashMap<SymbolId, UsageKind> {
         let Some(root_node) = self.arena.get(root_idx) else {
             return &self.used_symbols;
@@ -576,7 +576,7 @@ impl<'a> UsageAnalyzer<'a> {
     }
 
     /// Analyze an enum declaration.
-    fn analyze_enum_declaration(&mut self, _enum_idx: NodeIndex) {
+    const fn analyze_enum_declaration(&mut self, _enum_idx: NodeIndex) {
         // Enum declarations don't reference other types in their signature
     }
 
@@ -988,7 +988,7 @@ impl<'a> UsageAnalyzer<'a> {
 
     /// Walk an inferred type from the type cache.
     ///
-    /// This is the semantic walk - uses TypeId analysis via collect_all_types.
+    /// This is the semantic walk - uses `TypeId` analysis via `collect_all_types`.
     fn walk_inferred_type(&mut self, node_idx: NodeIndex) {
         // Look up the inferred TypeId for this node
         debug!("[DEBUG] walk_inferred_type: node_idx={:?}", node_idx);
@@ -1003,9 +1003,9 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
-    /// Walk a TypeId to extract all referenced symbols.
+    /// Walk a `TypeId` to extract all referenced symbols.
     ///
-    /// Uses collect_all_types() to get all TypeIds, then extracts DefIds/SymbolIds.
+    /// Uses `collect_all_types()` to get all `TypeIds`, then extracts DefIds/SymbolIds.
     fn walk_type_id(&mut self, type_id: tsz_solver::TypeId) {
         if !self.visited_types.insert(type_id) {
             return;
@@ -1123,8 +1123,8 @@ impl<'a> UsageAnalyzer<'a> {
     ///
     /// Categorizes symbols as:
     /// - Global/lib symbols: Ignored (don't need imports)
-    /// - Local symbols: Added to used_symbols (for elision logic)
-    /// - Foreign symbols: Added to both used_symbols AND foreign_symbols (for import generation)
+    /// - Local symbols: Added to `used_symbols` (for elision logic)
+    /// - Foreign symbols: Added to both `used_symbols` AND `foreign_symbols` (for import generation)
     fn mark_symbol_used(&mut self, sym_id: SymbolId, usage_kind: UsageKind) {
         debug!(
             "[DEBUG] mark_symbol_used: sym_id={:?}, usage_kind={:?}",
@@ -1174,7 +1174,7 @@ impl<'a> UsageAnalyzer<'a> {
     }
 
     /// Get the set of foreign symbols that need imports.
-    pub fn get_foreign_symbols(&self) -> &FxHashSet<SymbolId> {
+    pub const fn get_foreign_symbols(&self) -> &FxHashSet<SymbolId> {
         &self.foreign_symbols
     }
 }

@@ -257,7 +257,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
 // ── Helper functions for discriminated union checking ──
 
-/// Get the object shape id for a type (handles both Object and ObjectWithIndex).
+/// Get the object shape id for a type (handles both Object and `ObjectWithIndex`).
 fn get_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> Option<ObjectShapeId> {
     object_shape_id(db, type_id).or_else(|| object_with_index_shape_id(db, type_id))
 }

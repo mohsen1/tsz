@@ -15,7 +15,7 @@
 //!
 //! ### ES5 Class Transform
 //!
-//! When `target: ES5`, a ClassDeclaration needs transformation:
+//! When `target: ES5`, a `ClassDeclaration` needs transformation:
 //!
 //! ```typescript
 //! class Point {
@@ -26,7 +26,7 @@
 //! The lowering pass creates a `TransformDirective::ES5Class` for this node,
 //! which the printer will use to emit an IIFE pattern instead of `class`.
 //!
-//! ### CommonJS Export
+//! ### `CommonJS` Export
 //!
 //! When `module: CommonJS`, exported declarations need wrapping:
 //!
@@ -35,7 +35,7 @@
 //! ```
 //!
 //! The lowering pass creates a `TransformDirective::CommonJSExport` that
-//! chains with any other transforms (like ES5Class).
+//! chains with any other transforms (like `ES5Class`).
 
 use crate::emit_context::EmitContext;
 use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
@@ -90,7 +90,7 @@ pub struct LoweringPass<'a> {
     /// True when inside a class body in ES5 mode.
     /// Arrow functions inside class members should NOT propagate _this capture
     /// to the enclosing scope because the class IIFE creates its own scope
-    /// and class_es5_ir handles _this capture independently.
+    /// and `class_es5_ir` handles _this capture independently.
     in_es5_class: bool,
     /// Stack of enclosing non-arrow function body node indices.
     /// When an arrow function captures `this`, the top of this stack is the
@@ -98,7 +98,7 @@ pub struct LoweringPass<'a> {
     enclosing_function_bodies: Vec<NodeIndex>,
     /// Stack of capture variable names matching `enclosing_function_bodies`.
     /// Each entry is the name to use for `_this` capture in that scope
-    /// (e.g., "_this" or "_this_1" if there's a collision with a user-defined `_this`).
+    /// (e.g., "_this" or "_`this_1`" if there's a collision with a user-defined `_this`).
     enclosing_capture_names: Vec<Arc<str>>,
 }
 
@@ -1623,7 +1623,7 @@ impl<'a> LoweringPass<'a> {
         self.in_constructor = prev_in_constructor;
     }
 
-    /// Visit a call expression and detect super() calls
+    /// Visit a call expression and detect `super()` calls
     fn visit_call_expression(&mut self, node: &Node, idx: NodeIndex) {
         let Some(call) = self.arena.get_call_expr(node) else {
             return;
@@ -1801,7 +1801,7 @@ impl<'a> LoweringPass<'a> {
         };
     }
 
-    fn is_commonjs(&self) -> bool {
+    const fn is_commonjs(&self) -> bool {
         self.commonjs_mode
     }
 
@@ -1931,7 +1931,7 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
-    fn mark_async_helpers(&mut self) {
+    const fn mark_async_helpers(&mut self) {
         let helpers = self.transforms.helpers_mut();
         helpers.awaiter = true;
         // __generator is only needed for ES5 (ES2015+ has native generators)
@@ -2032,7 +2032,7 @@ impl<'a> LoweringPass<'a> {
 
     /// Check if function parameters have rest that needs __rest helper.
     /// Only object rest patterns need __rest. Function rest params use arguments loop,
-    /// and array rest elements use .slice().
+    /// and array rest elements use .`slice()`.
     fn function_parameters_need_rest_helper(&self, params: &NodeList) -> bool {
         params.nodes.iter().any(|&param_idx| {
             let Some(param_node) = self.arena.get(param_idx) else {
@@ -2055,7 +2055,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Check if a binding pattern (recursively) has an object rest element.
-    /// Only object rest patterns need the __rest helper. Array rest uses .slice().
+    /// Only object rest patterns need the __rest helper. Array rest uses .`slice()`.
     fn binding_pattern_has_object_rest(&self, idx: NodeIndex) -> bool {
         let Some(node) = self.arena.get(idx) else {
             return false;
@@ -2161,7 +2161,7 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Check if a for-of initializer contains binding patterns (destructuring)
-    /// Initializer can be VARIABLE_DECLARATION_LIST with declarations that have binding patterns
+    /// Initializer can be `VARIABLE_DECLARATION_LIST` with declarations that have binding patterns
     fn for_of_initializer_has_binding_pattern(&self, initializer: NodeIndex) -> bool {
         let Some(init_node) = self.arena.get(initializer) else {
             return false;

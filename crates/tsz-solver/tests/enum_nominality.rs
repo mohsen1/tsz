@@ -1,6 +1,6 @@
 //! Unit tests for enum nominal typing in the Solver layer.
 //!
-//! These tests verify that TypeData::Enum wrapper is preserved during type lowering,
+//! These tests verify that `TypeData::Enum` wrapper is preserved during type lowering,
 //! ensuring that enum member types maintain their nominal identity.
 
 use crate::compat::CompatChecker;
@@ -8,7 +8,7 @@ use crate::def::DefId;
 use crate::types::{LiteralValue, TypeData};
 use crate::{TypeId, TypeInterner};
 
-/// Test that TypeData::Enum wrapper is created for enum members.
+/// Test that `TypeData::Enum` wrapper is created for enum members.
 #[test]
 fn test_enum_member_typekey_wrapper() {
     let interner = TypeInterner::new();
@@ -36,7 +36,7 @@ fn test_enum_member_typekey_wrapper() {
     }
 }
 
-/// Test that different enum members have different TypeData::Enum types.
+/// Test that different enum members have different `TypeData::Enum` types.
 #[test]
 fn test_different_enum_members_different_types() {
     let interner = TypeInterner::new();
@@ -65,7 +65,7 @@ fn test_different_enum_members_different_types() {
     }
 }
 
-/// Test that enum members from different enums have different DefIds.
+/// Test that enum members from different enums have different `DefIds`.
 #[test]
 fn test_different_enums_different_defids() {
     let interner = TypeInterner::new();
@@ -95,7 +95,7 @@ fn test_different_enums_different_defids() {
     }
 }
 
-/// Test that TypeData::Enum preserves literal type information.
+/// Test that `TypeData::Enum` preserves literal type information.
 #[test]
 fn test_enum_preserves_literal_type() {
     let interner = TypeInterner::new();
@@ -161,7 +161,7 @@ fn test_unwrapped_literals_no_nominality() {
     ));
 }
 
-/// Test that TypeData::Enum with same DefId but different literals are different types.
+/// Test that `TypeData::Enum` with same `DefId` but different literals are different types.
 #[test]
 fn test_same_enum_different_members_different() {
     let interner = TypeInterner::new();
@@ -236,7 +236,7 @@ fn test_enum_nominal_typing_same_enum() {
 }
 
 /// Test that enum members ARE assignable to number in Solver layer (structural).
-/// Note: The Checker layer implements Rule #7 (numeric enums) with is_numeric_enum
+/// Note: The Checker layer implements Rule #7 (numeric enums) with `is_numeric_enum`
 /// to prevent number <-> enum assignability when appropriate. The Solver layer
 /// defaults to structural checking when it lacks checker context.
 #[test]
@@ -258,7 +258,7 @@ fn test_enum_member_assignable_to_number_structural() {
 }
 
 /// Test that number is NOT assignable to enum type in Solver layer.
-/// Note: The Checker layer implements Rule #7 (numeric enums) with is_numeric_enum.
+/// Note: The Checker layer implements Rule #7 (numeric enums) with `is_numeric_enum`.
 #[test]
 fn test_number_not_assignable_to_enum_member() {
     let interner = TypeInterner::new();

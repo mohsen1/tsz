@@ -61,18 +61,15 @@ fn test_class_with_extends() {
 
     assert!(
         output.contains("(function (_super)"),
-        "Should have _super parameter: {}",
-        output
+        "Should have _super parameter: {output}"
     );
     assert!(
         output.contains("__extends(Dog, _super)"),
-        "Should have extends helper: {}",
-        output
+        "Should have extends helper: {output}"
     );
     assert!(
         output.contains("_super.call(this"),
-        "Should have super.call pattern: {}",
-        output
+        "Should have super.call pattern: {output}"
     );
 }
 

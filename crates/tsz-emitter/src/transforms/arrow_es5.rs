@@ -58,7 +58,7 @@ impl Default for ArrowTransformContext {
 }
 
 impl ArrowTransformContext {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             needs_this_capture: false,
         }

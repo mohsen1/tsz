@@ -59,7 +59,7 @@ pub struct InlayHint {
 
 impl InlayHint {
     /// Create a new inlay hint.
-    pub fn new(position: Position, label: String, kind: InlayHintKind) -> Self {
+    pub const fn new(position: Position, label: String, kind: InlayHintKind) -> Self {
         Self {
             position,
             label,
@@ -72,18 +72,18 @@ impl InlayHint {
     pub fn parameter(position: Position, param_name: String) -> Self {
         Self::new(
             position,
-            format!(": {}", param_name),
+            format!(": {param_name}"),
             InlayHintKind::Parameter,
         )
     }
 
     /// Create a type hint.
     pub fn type_hint(position: Position, type_name: String) -> Self {
-        Self::new(position, format!(": {}", type_name), InlayHintKind::Type)
+        Self::new(position, format!(": {type_name}"), InlayHintKind::Type)
     }
 
     /// Convert to LSP range (for compatibility with other LSP features).
-    pub fn to_range(&self) -> Range {
+    pub const fn to_range(&self) -> Range {
         Range::new(self.position, self.position)
     }
 }
@@ -106,7 +106,7 @@ pub struct InlayHintsProvider<'a> {
 
 impl<'a> InlayHintsProvider<'a> {
     /// Create a new inlay hints provider with type checking support.
-    pub fn new(
+    pub const fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -245,7 +245,7 @@ impl<'a> InlayHintsProvider<'a> {
                         let pos = self.line_map.offset_to_position(arg_node.pos, self.source);
                         hints.push(InlayHint::new(
                             pos,
-                            format!("{}: ", param_name),
+                            format!("{param_name}: "),
                             InlayHintKind::Parameter,
                         ));
                     }
@@ -356,7 +356,7 @@ impl<'a> InlayHintsProvider<'a> {
 
         hints.push(InlayHint::new(
             pos,
-            format!(": {}", type_text),
+            format!(": {type_text}"),
             InlayHintKind::Type,
         ));
     }
@@ -423,7 +423,7 @@ impl<'a> InlayHintsProvider<'a> {
 
         hints.push(InlayHint::new(
             pos,
-            format!(": {}", return_type),
+            format!(": {return_type}"),
             InlayHintKind::Type,
         ));
     }

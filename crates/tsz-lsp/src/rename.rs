@@ -31,7 +31,7 @@ pub struct TextEdit {
 
 impl TextEdit {
     /// Create a new text edit.
-    pub fn new(range: Range, new_text: String) -> Self {
+    pub const fn new(range: Range, new_text: String) -> Self {
         Self { range, new_text }
     }
 }
@@ -60,7 +60,7 @@ pub struct RenameTextEdit {
 
 impl RenameTextEdit {
     /// Create a plain rename edit (no prefix/suffix).
-    pub fn new(range: Range, new_text: String) -> Self {
+    pub const fn new(range: Range, new_text: String) -> Self {
         Self {
             range,
             new_text,
@@ -70,7 +70,7 @@ impl RenameTextEdit {
     }
 
     /// Create a rename edit with prefix text.
-    pub fn with_prefix(range: Range, new_text: String, prefix_text: String) -> Self {
+    pub const fn with_prefix(range: Range, new_text: String, prefix_text: String) -> Self {
         Self {
             range,
             new_text,
@@ -80,7 +80,7 @@ impl RenameTextEdit {
     }
 
     /// Create a rename edit with suffix text.
-    pub fn with_suffix(range: Range, new_text: String, suffix_text: String) -> Self {
+    pub const fn with_suffix(range: Range, new_text: String, suffix_text: String) -> Self {
         Self {
             range,
             new_text,
@@ -172,7 +172,7 @@ impl Default for RenameWorkspaceEdit {
 // Prepare-rename result (tsserver-compatible)
 // ---------------------------------------------------------------------------
 
-/// The kind of a symbol for rename purposes (matches tsserver ScriptElementKind).
+/// The kind of a symbol for rename purposes (matches tsserver `ScriptElementKind`).
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum RenameSymbolKind {
     #[serde(rename = "let")]
@@ -348,7 +348,7 @@ impl<'a> RenameProvider<'a> {
 
     /// Perform the rename operation.
     ///
-    /// Returns a WorkspaceEdit with all the changes needed to rename the symbol,
+    /// Returns a `WorkspaceEdit` with all the changes needed to rename the symbol,
     /// or an error message if the rename is invalid.
     pub fn provide_rename_edits(
         &self,
@@ -546,7 +546,7 @@ impl<'a> RenameProvider<'a> {
                     return RenameTextEdit::with_prefix(
                         range,
                         new_name.to_string(),
-                        format!("{}: ", old_name),
+                        format!("{old_name}: "),
                     );
                 }
                 // Also handle PROPERTY_ASSIGNMENT where name == initializer
@@ -558,7 +558,7 @@ impl<'a> RenameProvider<'a> {
                     return RenameTextEdit::with_prefix(
                         range,
                         new_name.to_string(),
-                        format!("{}: ", old_name),
+                        format!("{old_name}: "),
                     );
                 }
 
@@ -573,7 +573,7 @@ impl<'a> RenameProvider<'a> {
                         return RenameTextEdit::with_prefix(
                             range,
                             new_name.to_string(),
-                            format!("{}: ", old_name),
+                            format!("{old_name}: "),
                         );
                     }
                 }
@@ -588,7 +588,7 @@ impl<'a> RenameProvider<'a> {
                     return RenameTextEdit::with_prefix(
                         range,
                         new_name.to_string(),
-                        format!("{} as ", old_name),
+                        format!("{old_name} as "),
                     );
                 }
 
@@ -602,7 +602,7 @@ impl<'a> RenameProvider<'a> {
                     return RenameTextEdit::with_suffix(
                         range,
                         new_name.to_string(),
-                        format!(" as {}", old_name),
+                        format!(" as {old_name}"),
                     );
                 }
             }
@@ -861,11 +861,10 @@ impl<'a> RenameProvider<'a> {
             let stripped = new_name.strip_prefix('#').unwrap_or(new_name);
             if !is_valid_private_identifier(stripped) {
                 return Err(format!(
-                    "'{}' is not a valid private identifier name",
-                    new_name
+                    "'{new_name}' is not a valid private identifier name"
                 ));
             }
-            return Ok(format!("#{}", stripped));
+            return Ok(format!("#{stripped}"));
         }
 
         // For string literal property names, accept any non-empty string
@@ -877,7 +876,7 @@ impl<'a> RenameProvider<'a> {
         }
 
         if new_name.starts_with('#') || !self.is_valid_identifier(new_name) {
-            return Err(format!("'{}' is not a valid identifier name", new_name));
+            return Err(format!("'{new_name}' is not a valid identifier name"));
         }
 
         Ok(new_name.to_string())

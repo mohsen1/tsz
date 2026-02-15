@@ -95,8 +95,7 @@ var r = c.foo('', '');      // Should NOT error (c is still C<string>)
     );
     assert!(
         !has_error(&diagnostics, 2345),
-        "Should NOT emit TS2345 - c.foo should use C's signature, not E's.\nActual errors: {:#?}",
-        diagnostics
+        "Should NOT emit TS2345 - c.foo should use C's signature, not E's.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -107,7 +106,7 @@ var r = c.foo('', '');      // Should NOT error (c is still C<string>)
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Parser didn't consume the invalid token after emitting error
-/// Fix: Added next_token() call in state_statements.rs after reserved word error
+/// Fix: Added `next_token()` call in `state_statements.rs` after reserved word error
 #[test]
 fn test_parser_cascading_error_suppression() {
     let source = r#"
@@ -132,18 +131,15 @@ class void {}
 
     assert!(
         has_error(&parser_diagnostics, 1005),
-        "Should emit TS1005 for syntax error.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should emit TS1005 for syntax error.\nActual errors: {parser_diagnostics:#?}"
     );
     assert_eq!(
         ts1005_count, 1,
-        "Should only emit one TS1005, got {}",
-        ts1005_count
+        "Should only emit one TS1005, got {ts1005_count}"
     );
     assert!(
         !has_error(&parser_diagnostics, 1068),
-        "Should NOT emit cascading TS1068 error.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should NOT emit cascading TS1068 error.\nActual errors: {parser_diagnostics:#?}"
     );
 }
 
@@ -208,7 +204,7 @@ fn test_method_implementation_name_formatting_probe() {
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Similar to class declarations, interfaces need to reject reserved words
-/// Fix: Added reserved word check in state_declarations.rs parse_interface_declaration
+/// Fix: Added reserved word check in `state_declarations.rs` `parse_interface_declaration`
 #[test]
 fn test_interface_reserved_word_error_suppression() {
     let source = r#"
@@ -232,19 +228,16 @@ interface void {}
 
     assert!(
         has_error(&parser_diagnostics, 1005),
-        "Should emit TS1005 for syntax error.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should emit TS1005 for syntax error.\nActual errors: {parser_diagnostics:#?}"
     );
     assert_eq!(
         ts1005_count, 1,
-        "Should only emit one TS1005, got {}",
-        ts1005_count
+        "Should only emit one TS1005, got {ts1005_count}"
     );
     // Check for common cascading errors
     assert!(
         !has_error(&parser_diagnostics, 1068),
-        "Should NOT emit cascading TS1068 error.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should NOT emit cascading TS1068 error.\nActual errors: {parser_diagnostics:#?}"
     );
 }
 
@@ -258,8 +251,7 @@ class C extends number {}
 
     assert!(
         has_error(&diagnostics, 2863),
-        "Expected TS2863 when class extends primitive type. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2863 when class extends primitive type. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -273,8 +265,7 @@ class C implements number {}
 
     assert!(
         has_error(&diagnostics, 2864),
-        "Expected TS2864 when class implements primitive type. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2864 when class implements primitive type. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -295,8 +286,7 @@ class E2<T> extends D2<T> { baz: T; }
     let ts2506_count = diagnostics.iter().filter(|(code, _)| *code == 2506).count();
     assert_eq!(
         ts2506_count, 6,
-        "Expected TS2506 on all six classes in the two cycles. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2506 on all six classes in the two cycles. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -310,8 +300,7 @@ interface I extends number {}
 
     assert!(
         has_error(&diagnostics, 2840),
-        "Expected TS2840 when interface extends primitive type. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2840 when interface extends primitive type. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -332,8 +321,7 @@ interface Z extends X, Y {}
 
     assert!(
         has_error(&diagnostics, 2320),
-        "Expected TS2320 when interface extends classes with conflicting private members. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2320 when interface extends classes with conflicting private members. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -358,8 +346,7 @@ class Test1 {
 
     assert!(
         has_error(&diagnostics, 2301),
-        "Expected TS2301 for constructor parameter capture in instance initializer. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2301 for constructor parameter capture in instance initializer. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -383,8 +370,7 @@ export class Test1 {
 
     assert!(
         has_error(&diagnostics, 2663),
-        "Expected TS2663 for missing free name in module instance initializer. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2663 for missing free name in module instance initializer. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -409,8 +395,7 @@ class Test {
 
     assert!(
         !has_error(&diagnostics, 2301),
-        "Did not expect TS2301 for locally shadowed identifier in initializer. Actual diagnostics: {:#?}",
-        diagnostics
+        "Did not expect TS2301 for locally shadowed identifier in initializer. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -425,8 +410,7 @@ let x = new alias.Class();
 
     assert!(
         !has_error(&diagnostics, 2708),
-        "Should not emit cascading TS2708 for unresolved imported namespace access. Actual diagnostics: {:#?}",
-        diagnostics
+        "Should not emit cascading TS2708 for unresolved imported namespace access. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -448,8 +432,7 @@ class Derived extends Base<number> {
 
     assert!(
         has_error(&diagnostics, 2345),
-        "Expected TS2345 for super argument type mismatch against instantiated base ctor. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2345 for super argument type mismatch against instantiated base ctor. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -467,8 +450,7 @@ class Derived extends Base {
 
     assert!(
         has_error(&diagnostics, 2377),
-        "Expected TS2377 for derived constructor missing super() call. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2377 for derived constructor missing super() call. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -488,8 +470,7 @@ class Derived extends Base {
 
     assert!(
         has_error(&diagnostics, 17009),
-        "Expected TS17009 when 'this' is used in a derived constructor without super(). Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS17009 when 'this' is used in a derived constructor without super(). Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -507,8 +488,7 @@ class A {
 
     assert!(
         !has_error(&diagnostics, 2551),
-        "Did not expect TS2551 in malformed syntax recovery path. Actual diagnostics: {:#?}",
-        diagnostics
+        "Did not expect TS2551 in malformed syntax recovery path. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -531,8 +511,7 @@ class Derived extends Base {
 
     assert!(
         has_error(&diagnostics, 17011),
-        "Expected TS17011 for super property access before super() call. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS17011 for super property access before super() call. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -554,8 +533,7 @@ class Derived extends Base {
 
     assert!(
         has_error(&diagnostics, 2855),
-        "Expected TS2855 for super property access to class field member. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2855 for super property access to class field member. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -578,13 +556,11 @@ class C extends B {
 
     assert!(
         has_error(&diagnostics, 2336),
-        "Expected TS2336 for super in constructor argument context. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS2336 for super in constructor argument context. Actual diagnostics: {diagnostics:#?}"
     );
     assert!(
         has_error(&diagnostics, 17011),
-        "Expected TS17011 for super property access before super() in constructor context. Actual diagnostics: {:#?}",
-        diagnostics
+        "Expected TS17011 for super property access before super() in constructor context. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -618,8 +594,7 @@ function f01(x: string | undefined) {
     // Should emit no errors
     assert!(
         diagnostics.is_empty(),
-        "Should emit no errors - x is narrowed to string after never-returning call.\nActual errors: {:#?}",
-        diagnostics
+        "Should emit no errors - x is narrowed to string after never-returning call.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -629,7 +604,7 @@ function f01(x: string | undefined) {
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Parser wasn't validating private identifier usage in object literals
-/// Fix: Added validation in state_expressions.rs parse_property_assignment
+/// Fix: Added validation in `state_expressions.rs` `parse_property_assignment`
 #[test]
 fn test_private_identifier_in_object_literal() {
     // TS18016 is a PARSER error, so we need to check parser diagnostics
@@ -650,8 +625,7 @@ const obj = {
 
     assert!(
         parser_diagnostics.iter().any(|(c, _)| *c == 18016),
-        "Should emit TS18016 for private identifier in object literal.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should emit TS18016 for private identifier in object literal.\nActual errors: {parser_diagnostics:#?}"
     );
 }
 
@@ -660,8 +634,8 @@ const obj = {
 /// Expected: TS18013 (property not accessible outside class)
 /// Status: FIXED (2026-02-09)
 ///
-/// Root cause: get_type_of_private_property_access didn't check class scope
-/// Fix: Added check in state_type_analysis.rs to emit TS18013 when !saw_class_scope
+/// Root cause: `get_type_of_private_property_access` didn't check class scope
+/// Fix: Added check in `state_type_analysis.rs` to emit TS18013 when !`saw_class_scope`
 #[test]
 fn test_private_identifier_access_outside_class() {
     let diagnostics = compile_and_get_diagnostics(
@@ -676,8 +650,7 @@ const x = f.#bar;  // Should error TS18013
 
     assert!(
         has_error(&diagnostics, 18013),
-        "Should emit TS18013 for private identifier access outside class.\nActual errors: {:#?}",
-        diagnostics
+        "Should emit TS18013 for private identifier access outside class.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -700,8 +673,7 @@ class Foo {
 
     assert!(
         !has_error(&diagnostics, 18013),
-        "Should NOT emit TS18013 when accessing private identifier inside class.\nActual errors: {:#?}",
-        diagnostics
+        "Should NOT emit TS18013 when accessing private identifier inside class.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -711,7 +683,7 @@ class Foo {
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Parser wasn't validating private identifier usage as parameters
-/// Fix: Added validation in state_statements.rs parse_parameter
+/// Fix: Added validation in `state_statements.rs` `parse_parameter`
 #[test]
 fn test_private_identifier_as_parameter() {
     // TS18009 is a PARSER error
@@ -732,8 +704,7 @@ class Foo {
 
     assert!(
         parser_diagnostics.iter().any(|(c, _)| *c == 18009),
-        "Should emit TS18009 for private identifier as parameter.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should emit TS18009 for private identifier as parameter.\nActual errors: {parser_diagnostics:#?}"
     );
 }
 
@@ -743,7 +714,7 @@ class Foo {
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Parser wasn't validating private identifier usage in variable declarations
-/// Fix: Added validation in state_statements.rs parse_variable_declaration_with_flags
+/// Fix: Added validation in `state_statements.rs` `parse_variable_declaration_with_flags`
 #[test]
 fn test_private_identifier_in_variable_declaration() {
     // TS18029 is a PARSER error
@@ -762,8 +733,7 @@ const #x = 1;
 
     assert!(
         parser_diagnostics.iter().any(|(c, _)| *c == 18029),
-        "Should emit TS18029 for private identifier in variable declaration.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should emit TS18029 for private identifier in variable declaration.\nActual errors: {parser_diagnostics:#?}"
     );
 }
 
@@ -773,7 +743,7 @@ const #x = 1;
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Parser wasn't validating private identifier usage in optional chains
-/// Fix: Added validation in state_expressions.rs when handling QuestionDotToken
+/// Fix: Added validation in `state_expressions.rs` when handling `QuestionDotToken`
 #[test]
 fn test_private_identifier_in_optional_chain() {
     // TS18030 is a PARSER error
@@ -797,8 +767,7 @@ class Bar {
 
     assert!(
         parser_diagnostics.iter().any(|(c, _)| *c == 18030),
-        "Should emit TS18030 for private identifier in optional chain.\nActual errors: {:#?}",
-        parser_diagnostics
+        "Should emit TS18030 for private identifier in optional chain.\nActual errors: {parser_diagnostics:#?}"
     );
 }
 
@@ -834,15 +803,13 @@ let x = f.#bar;  // Outside class - should error TS18013 only (not TS18016)
     // TS18016 is only for truly invalid positions (object literals, standalone expressions).
     assert!(
         !has_error(&relevant_diagnostics, 18016),
-        "Should NOT emit TS18016 for property access outside class (TSC doesn't).\nActual errors: {:#?}",
-        relevant_diagnostics
+        "Should NOT emit TS18016 for property access outside class (TSC doesn't).\nActual errors: {relevant_diagnostics:#?}"
     );
 
     // Should emit TS18013 (semantic error - property not accessible)
     assert!(
         has_error(&relevant_diagnostics, 18013),
-        "Should emit TS18013 for private identifier access outside class.\nActual errors: {:#?}",
-        relevant_diagnostics
+        "Should emit TS18013 for private identifier access outside class.\nActual errors: {relevant_diagnostics:#?}"
     );
 }
 
@@ -852,7 +819,7 @@ let x = f.#bar;  // Outside class - should error TS18013 only (not TS18016)
 /// Status: FIXED (2026-02-09)
 ///
 /// Root cause: Override checking didn't skip private identifiers
-/// Fix: Added check in class_checker.rs to skip override validation for names starting with '#'
+/// Fix: Added check in `class_checker.rs` to skip override validation for names starting with '#'
 #[test]
 fn test_private_field_no_override_error() {
     let diagnostics = compile_and_get_diagnostics(
@@ -877,14 +844,13 @@ class Child extends Parent {
     // Should NOT emit TS2416 (incompatible override) for private fields
     assert!(
         !has_error(&relevant_diagnostics, 2416),
-        "Should NOT emit TS2416 for private field with same name in child class.\nActual errors: {:#?}",
-        relevant_diagnostics
+        "Should NOT emit TS2416 for private field with same name in child class.\nActual errors: {relevant_diagnostics:#?}"
     );
 }
 
 /// Seam test: TS2430 should be reported for incompatible interface member types.
 ///
-/// Guards class_checker interface-extension compatibility after relation-helper refactors.
+/// Guards `class_checker` interface-extension compatibility after relation-helper refactors.
 #[test]
 fn test_interface_extension_incompatible_property_reports_ts2430() {
     let diagnostics = compile_and_get_diagnostics(
@@ -907,8 +873,7 @@ interface Derived extends Base {
 
     assert!(
         has_error(&relevant_diagnostics, 2430),
-        "Should emit TS2430 for incompatible interface extension member.\nActual errors: {:#?}",
-        relevant_diagnostics
+        "Should emit TS2430 for incompatible interface extension member.\nActual errors: {relevant_diagnostics:#?}"
     );
 }
 
@@ -933,8 +898,7 @@ if (x === 42) {
 
     assert!(
         has_error(&relevant_diagnostics, 2367),
-        "Should emit TS2367 for comparison of non-overlapping types.\nActual errors: {:#?}",
-        relevant_diagnostics
+        "Should emit TS2367 for comparison of non-overlapping types.\nActual errors: {relevant_diagnostics:#?}"
     );
 }
 
@@ -964,8 +928,7 @@ let {[foo]: bar} = {bar: "baz"};
 
     assert!(
         !has_error(&relevant, 2349),
-        "Should NOT emit TS2349 for computed property destructuring.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2349 for computed property destructuring.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1023,8 +986,7 @@ const fn2: <T>(x: T) => void = function test(t) { };
 
     assert!(
         !has_error(&relevant, 7006),
-        "Should NOT emit TS7006 - parameter 't' should be contextually typed as T.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS7006 - parameter 't' should be contextually typed as T.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1074,8 +1036,7 @@ f(t => { });
 
     assert!(
         !has_error(&relevant, 7006),
-        "Should NOT emit TS7006 - parameter 't' should be contextually typed from generic.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS7006 - parameter 't' should be contextually typed from generic.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1118,13 +1079,11 @@ const fn2: <T>(x: T) => void = function test(t) {
 
     assert!(
         !has_error(&relevant, 2322),
-        "Should NOT emit TS2322 for contextual generic outer type parameters.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2322 for contextual generic outer type parameters.\nActual errors: {relevant:#?}"
     );
     assert!(
         !has_error(&relevant, 2345),
-        "Should NOT emit TS2345 for contextual generic outer type parameters.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2345 for contextual generic outer type parameters.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1151,8 +1110,7 @@ var r23 = dot(id)(id);
 
     assert!(
         !has_error(&relevant, 2345),
-        "Should NOT emit TS2345 for contextual signature instantiation chain.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2345 for contextual signature instantiation chain.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1172,8 +1130,7 @@ setTimeout(() => 1, 0);
 
     assert!(
         !has_error(&relevant, 2345),
-        "Should NOT emit TS2345 for setTimeout callback assignability.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2345 for setTimeout callback assignability.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1197,8 +1154,7 @@ function makeTyped(obj: number[]) {
 
     assert!(
         !has_error(&relevant, 2769),
-        "Should NOT emit TS2769 for Int8Array(number[]).\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2769 for Int8Array(number[]).\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1246,8 +1202,7 @@ var f = function(x) { };
 
     assert!(
         has_error(&relevant, 7006),
-        "SHOULD emit TS7006 - parameter 'x' has no contextual type.\nActual errors: {:#?}",
-        relevant
+        "SHOULD emit TS7006 - parameter 'x' has no contextual type.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1269,8 +1224,8 @@ var f = function(x) { };
 ///    type parameters had no candidates. Fixed by using upper bounds (constraints)
 ///    in `get_current_substitution` instead of UNKNOWN.
 /// 2. The instantiated mapped type contained Lazy references that the solver's
-///    NoopResolver couldn't resolve. Fixed by evaluating the contextual type
-///    with the checker's Judge (which has the full TypeEnvironment resolver)
+///    `NoopResolver` couldn't resolve. Fixed by evaluating the contextual type
+///    with the checker's Judge (which has the full `TypeEnvironment` resolver)
 ///    before extracting property types.
 #[test]
 fn test_contextual_typing_mapped_type_generic_param() {
@@ -1320,8 +1275,7 @@ good2({ when: value => false });
     assert!(
         !has_error(&relevant, 7006),
         "Should NOT emit TS7006 - parameter 'value' should be contextually typed as string \
-         from the mapped type constraint Props.\nActual errors: {:#?}",
-        relevant
+         from the mapped type constraint Props.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1353,8 +1307,7 @@ type Test4 = Keys<string>;
     let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
     assert_eq!(
         ts2344_count, 3,
-        "Should emit exactly 3 TS2344 errors (one per bad type arg), not duplicates.\nActual errors: {:#?}",
-        diagnostics
+        "Should emit exactly 3 TS2344 errors (one per bad type arg), not duplicates.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -1385,8 +1338,7 @@ class C {
     assert_eq!(
         ts2339_errors.len(),
         1,
-        "Should emit exactly 1 TS2339 for 'this.p' in static method.\nActual errors: {:#?}",
-        diagnostics
+        "Should emit exactly 1 TS2339 for 'this.p' in static method.\nActual errors: {diagnostics:#?}"
     );
     assert!(
         ts2339_errors[0].1.contains("'p'") || ts2339_errors[0].1.contains("\"p\""),
@@ -1416,8 +1368,7 @@ let m: string = t.foo;   // OK - getter returns string
     assert_eq!(
         ts2339_errors.len(),
         0,
-        "Interface accessors should be recognized as properties. Got TS2339 errors: {:#?}",
-        ts2339_errors
+        "Interface accessors should be recognized as properties. Got TS2339 errors: {ts2339_errors:#?}"
     );
 }
 
@@ -1442,8 +1393,7 @@ let m: string = t.foo;   // OK - getter returns string
     assert_eq!(
         ts2339_errors.len(),
         0,
-        "Type literal accessors should be recognized as properties. Got TS2339 errors: {:#?}",
-        ts2339_errors
+        "Type literal accessors should be recognized as properties. Got TS2339 errors: {ts2339_errors:#?}"
     );
 }
 
@@ -1482,8 +1432,7 @@ var kitty = a(1);
 
     assert!(
         !has_error(&relevant, 2345),
-        "Should NOT emit TS2345 - a(1) should match inherited (bar: number) => string.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2345 - a(1) should match inherited (bar: number) => string.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1528,8 +1477,7 @@ class TimestampedUser extends Timestamped(User) {
 
     assert!(
         !has_error(&relevant, 2345),
-        "Should NOT emit TS2345 - User should be assignable to Constructor<{{}}>.\nActual errors: {:#?}",
-        relevant
+        "Should NOT emit TS2345 - User should be assignable to Constructor<{{}}>.\nActual errors: {relevant:#?}"
     );
 }
 
@@ -1559,8 +1507,7 @@ a({ fn(x) {} });
 
     assert!(
         !has_error(&diagnostics, 7006),
-        "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.fn.\nActual errors: {:#?}",
-        diagnostics
+        "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.fn.\nActual errors: {diagnostics:#?}"
     );
 }
 
@@ -1586,7 +1533,6 @@ b({ callback: (x) => {} });
 
     assert!(
         !has_error(&diagnostics, 7006),
-        "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.callback.\nActual errors: {:#?}",
-        diagnostics
+        "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.callback.\nActual errors: {diagnostics:#?}"
     );
 }

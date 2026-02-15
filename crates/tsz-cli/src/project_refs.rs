@@ -34,7 +34,7 @@ pub struct ProjectReference {
     pub circular: bool,
 }
 
-/// Extended TsConfig that includes project references
+/// Extended `TsConfig` that includes project references
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TsConfigWithReferences {
@@ -45,7 +45,7 @@ pub struct TsConfigWithReferences {
     pub references: Option<Vec<ProjectReference>>,
 }
 
-/// Extended CompilerOptions with composite project settings
+/// Extended `CompilerOptions` with composite project settings
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CompositeCompilerOptions {
@@ -136,7 +136,7 @@ impl ProjectReferenceGraph {
             )
         })?;
 
-        stack.push(canonical_root.clone());
+        stack.push(canonical_root);
 
         // BFS to load all referenced projects
         while let Some(config_path) = stack.pop() {
@@ -210,7 +210,7 @@ impl ProjectReferenceGraph {
     }
 
     /// Get the number of projects
-    pub fn project_count(&self) -> usize {
+    pub const fn project_count(&self) -> usize {
         self.projects.len()
     }
 

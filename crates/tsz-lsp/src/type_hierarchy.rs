@@ -42,7 +42,7 @@ pub struct TypeHierarchyProvider<'a> {
 
 impl<'a> TypeHierarchyProvider<'a> {
     /// Create a new type hierarchy provider.
-    pub fn new(
+    pub const fn new(
         arena: &'a NodeArena,
         _binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -184,7 +184,7 @@ impl<'a> TypeHierarchyProvider<'a> {
     // -----------------------------------------------------------------------
 
     /// Check whether a node kind is a class or interface declaration.
-    fn is_type_declaration(&self, kind: u16) -> bool {
+    const fn is_type_declaration(&self, kind: u16) -> bool {
         kind == syntax_kind_ext::CLASS_DECLARATION
             || kind == syntax_kind_ext::CLASS_EXPRESSION
             || kind == syntax_kind_ext::INTERFACE_DECLARATION
@@ -256,7 +256,7 @@ impl<'a> TypeHierarchyProvider<'a> {
         }
     }
 
-    /// Get the name NodeIndex of a class or interface declaration.
+    /// Get the name `NodeIndex` of a class or interface declaration.
     fn get_declaration_name_idx(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.get(decl_idx)?;
 
@@ -535,7 +535,7 @@ impl<'a> TypeHierarchyProvider<'a> {
         })
     }
 
-    /// Get the SymbolKind for a class or interface declaration.
+    /// Get the `SymbolKind` for a class or interface declaration.
     fn get_type_symbol_kind(&self, decl_idx: NodeIndex) -> SymbolKind {
         let node = match self.arena.get(decl_idx) {
             Some(n) => n,

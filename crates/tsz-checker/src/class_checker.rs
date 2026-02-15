@@ -7,7 +7,7 @@
 //! - Abstract member implementations (TS2654)
 //! - Implements clause validation (TS2420)
 //!
-//! This module extends CheckerState with class/interface-related methods as part of
+//! This module extends `CheckerState` with class/interface-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::diagnostics::diagnostic_codes;
@@ -400,8 +400,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             class_data.name,
                             &format!(
-                                "Class static side '{}' incorrectly extends base class static side '{}'.",
-                                derived_class_name, base_class_name
+                                "Class static side '{derived_class_name}' incorrectly extends base class static side '{base_class_name}'."
                             ),
                             diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
                         );
@@ -409,8 +408,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             class_data.name,
                             &format!(
-                                "Class '{}' incorrectly extends base class '{}'.",
-                                derived_class_name, base_class_name
+                                "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'."
                             ),
                             diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
                         );
@@ -460,8 +458,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "'{}' is defined as an accessor in class '{}', but is overridden here in '{}' as an instance property.",
-                            member_name, base_class_name, derived_class_name
+                            "'{member_name}' is defined as an accessor in class '{base_class_name}', but is overridden here in '{derived_class_name}' as an instance property."
                         ),
                         diagnostic_codes::IS_DEFINED_AS_AN_ACCESSOR_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_INSTANCE_PROP,
                     );
@@ -473,8 +470,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "'{}' is defined as a property in class '{}', but is overridden here in '{}' as an accessor.",
-                            member_name, base_class_name, derived_class_name
+                            "'{member_name}' is defined as a property in class '{base_class_name}', but is overridden here in '{derived_class_name}' as an accessor."
                         ),
                         diagnostic_codes::IS_DEFINED_AS_A_PROPERTY_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_ACCESSOR,
                     );
@@ -490,8 +486,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Class '{}' defines instance member property '{}', but extended class '{}' defines it as instance member function.",
-                            base_class_name, member_name, derived_class_name
+                            "Class '{base_class_name}' defines instance member property '{member_name}', but extended class '{derived_class_name}' defines it as instance member function."
                         ),
                         diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_PROPERTY_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
                     );
@@ -503,8 +498,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Class '{}' defines instance member accessor '{}', but extended class '{}' defines it as instance member function.",
-                            base_class_name, member_name, derived_class_name
+                            "Class '{base_class_name}' defines instance member accessor '{member_name}', but extended class '{derived_class_name}' defines it as instance member function."
                         ),
                         diagnostic_codes::CLASS_DEFINES_INSTANCE_MEMBER_ACCESSOR_BUT_EXTENDED_CLASS_DEFINES_IT_AS_INSTANCE,
                     );
@@ -550,8 +544,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Class static side '{}' incorrectly extends base class static side '{}'.",
-                            derived_class_name, base_class_name
+                            "Class static side '{derived_class_name}' incorrectly extends base class static side '{base_class_name}'."
                         ),
                         diagnostic_codes::CLASS_STATIC_SIDE_INCORRECTLY_EXTENDS_BASE_CLASS_STATIC_SIDE,
                     );
@@ -560,8 +553,7 @@ impl<'a> CheckerState<'a> {
                     self.error_at_node(
                         member_name_idx,
                         &format!(
-                            "Property '{}' in type '{}' is not assignable to the same property in base type '{}'.",
-                            member_name, derived_class_name, base_class_name
+                            "Property '{member_name}' in type '{derived_class_name}' is not assignable to the same property in base type '{base_class_name}'."
                         ),
                         diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                     );
@@ -796,8 +788,7 @@ impl<'a> CheckerState<'a> {
                                     self.error_at_node(
                                         iface_data.name,
                                         &format!(
-                                            "Interface '{}' cannot simultaneously extend types '{}' and '{}'.",
-                                            derived_name, prev_base_name, base_name
+                                            "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                     );
@@ -904,8 +895,7 @@ impl<'a> CheckerState<'a> {
                                     self.error_at_node(
                                         *derived_member_idx,
                                         &format!(
-                                            "Interface '{}' incorrectly extends interface '{}'.",
-                                            derived_name, base_name
+                                            "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                         ),
                                         diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                     );
@@ -917,8 +907,7 @@ impl<'a> CheckerState<'a> {
                                                     pos,
                                                     end - pos,
                                                     format!(
-                                                        "Property '{}' is private in type '{}' but not in type '{}'.",
-                                                        member_name, base_name, derived_name
+                                                        "Property '{member_name}' is private in type '{base_name}' but not in type '{derived_name}'."
                                                     ),
                                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                                 );
@@ -953,8 +942,7 @@ impl<'a> CheckerState<'a> {
                                     self.error_at_node(
                                             iface_data.name,
                                             &format!(
-                                                "Interface '{}' cannot simultaneously extend types '{}' and '{}'.",
-                                                derived_name, prev_base_name, base_name
+                                                "Interface '{derived_name}' cannot simultaneously extend types '{prev_base_name}' and '{base_name}'."
                                             ),
                                             diagnostic_codes::INTERFACE_CANNOT_SIMULTANEOUSLY_EXTEND_TYPES_AND,
                                         );
@@ -1082,8 +1070,7 @@ impl<'a> CheckerState<'a> {
                                 self.error_at_node(
                                     iface_data.name,
                                     &format!(
-                                        "Interface '{}' incorrectly extends interface '{}'.",
-                                        derived_name, base_name
+                                        "Interface '{derived_name}' incorrectly extends interface '{base_name}'."
                                     ),
                                     diagnostic_codes::INTERFACE_INCORRECTLY_EXTENDS_INTERFACE,
                                 );
@@ -1124,10 +1111,7 @@ impl<'a> CheckerState<'a> {
             self.error(
                 pos,
                 end - pos,
-                format!(
-                    "Type '{}' is not assignable to type '{}'.",
-                    source_type, target_type
-                ),
+                format!("Type '{source_type}' is not assignable to type '{target_type}'."),
                 code,
             );
         }
@@ -1145,16 +1129,13 @@ impl<'a> CheckerState<'a> {
             self.error(
                 pos,
                 end - pos,
-                format!("Types of property '{}' are incompatible.", member_name),
+                format!("Types of property '{member_name}' are incompatible."),
                 code,
             );
             self.error(
                 pos,
                 end - pos,
-                format!(
-                    "Type '{}' is not assignable to type '{}'.",
-                    source_type, target_type
-                ),
+                format!("Type '{source_type}' is not assignable to type '{target_type}'."),
                 code,
             );
         }
@@ -1291,15 +1272,14 @@ impl<'a> CheckerState<'a> {
                 // TS2654: Multiple missing members
                 let missing_list = missing_members
                     .iter()
-                    .map(|s| format!("'{}'", s))
+                    .map(|s| format!("'{s}'"))
                     .collect::<Vec<_>>()
                     .join(", ");
 
                 self.error_at_node(
                     class_idx,
                     &format!(
-                        "Non-abstract class '{}' is missing implementations for the following members of '{}': {}.",
-                        derived_class_name, base_class_name, missing_list
+                        "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {missing_list}."
                     ),
                     diagnostic_codes::NON_ABSTRACT_CLASS_IS_MISSING_IMPLEMENTATIONS_FOR_THE_FOLLOWING_MEMBERS_OF,
                 );
@@ -1459,8 +1439,7 @@ impl<'a> CheckerState<'a> {
                             && self.class_has_private_or_protected_members(base_class_data)
                         {
                             let message = format!(
-                                "Class '{}' incorrectly implements class '{}'. Did you mean to extend '{}' and inherit its members as a subclass?",
-                                class_name, interface_name, interface_name
+                                "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
                             );
                             self.error_at_node(
                                 type_idx,
@@ -1494,8 +1473,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             type_idx,
                             &format!(
-                                "Class '{}' incorrectly implements interface '{}'.",
-                                class_name, interface_name
+                                "Class '{class_name}' incorrectly implements interface '{interface_name}'."
                             ),
                             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                         );
@@ -1629,8 +1607,7 @@ impl<'a> CheckerState<'a> {
                             self.error_at_node(
                                 clause_idx,
                                 &format!(
-                                    "Class '{}' incorrectly implements interface '{}'. Index signature for type 'number' is missing in type '{}'.",
-                                    class_name, interface_name, class_name
+                                    "Class '{class_name}' incorrectly implements interface '{interface_name}'. Index signature for type 'number' is missing in type '{class_name}'."
                                 ),
                                 diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                             );
@@ -1641,15 +1618,14 @@ impl<'a> CheckerState<'a> {
                     if !missing_members.is_empty() {
                         let missing_list = missing_members
                             .iter()
-                            .map(|s| format!("'{}'", s))
+                            .map(|s| format!("'{s}'"))
                             .collect::<Vec<_>>()
                             .join(", ");
 
                         self.error_at_node(
                             clause_idx,
                             &format!(
-                                "Class '{}' incorrectly implements interface '{}'. Missing members: {}.",
-                                class_name, interface_name, missing_list
+                                "Class '{class_name}' incorrectly implements interface '{interface_name}'. Missing members: {missing_list}."
                             ),
                             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                         );
@@ -1660,8 +1636,7 @@ impl<'a> CheckerState<'a> {
                         self.error_at_node(
                             clause_idx,
                             &format!(
-                                "Class '{}' incorrectly implements interface '{}'. Property '{}' has type '{}' which is not assignable to type '{}'.",
-                                class_name, interface_name, member_name, actual, expected
+                                "Class '{class_name}' incorrectly implements interface '{interface_name}'. Property '{member_name}' has type '{actual}' which is not assignable to type '{expected}'."
                             ),
                             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                         );
@@ -1706,9 +1681,9 @@ impl<'a> CheckerState<'a> {
     /// access to those private members). Otherwise, TS2420 should be emitted.
     ///
     /// # Arguments
-    /// * `interface_idx` - The NodeIndex of the interface declaration
+    /// * `interface_idx` - The `NodeIndex` of the interface declaration
     /// * `interface_decl` - The interface data
-    /// * `class_idx` - The NodeIndex of the implementing class
+    /// * `class_idx` - The `NodeIndex` of the implementing class
     /// * `class_data` - The class data
     ///
     /// # Returns
@@ -1992,7 +1967,7 @@ impl<'a> CheckerState<'a> {
         )
     }
 
-    /// Internal implementation of find_member_in_class_chain with recursion guard.
+    /// Internal implementation of `find_member_in_class_chain` with recursion guard.
     fn find_member_in_class_chain_impl(
         &mut self,
         class_idx: NodeIndex,
@@ -2005,11 +1980,10 @@ impl<'a> CheckerState<'a> {
 
         // Check for cycles using the recursion guard
         match guard.enter(class_idx) {
-            RecursionResult::Cycle => {
-                // Circular inheritance detected - return None gracefully
-                return None;
-            }
-            RecursionResult::DepthExceeded | RecursionResult::IterationExceeded => {
+            RecursionResult::Cycle
+            | RecursionResult::DepthExceeded
+            | RecursionResult::IterationExceeded => {
+                // Circular inheritance/depth/iteration limits detected - return None gracefully
                 // Exceeded limits - bail out
                 return None;
             }
@@ -2084,7 +2058,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn class_member_visibility_conflicts(
+    const fn class_member_visibility_conflicts(
         &self,
         derived_visibility: MemberVisibility,
         base_visibility: MemberVisibility,

@@ -90,7 +90,7 @@ pub struct NamespaceES5Transformer<'a> {
 
 impl<'a> NamespaceES5Transformer<'a> {
     /// Create a new namespace transformer
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             is_commonjs: false,
@@ -99,8 +99,8 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
     }
 
-    /// Create a namespace transformer with CommonJS mode enabled
-    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
+    /// Create a namespace transformer with `CommonJS` mode enabled
+    pub const fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         Self {
             arena,
             is_commonjs,
@@ -115,13 +115,13 @@ impl<'a> NamespaceES5Transformer<'a> {
         self.source_text = Some(text);
     }
 
-    /// Set CommonJS mode
-    pub fn set_commonjs(&mut self, is_commonjs: bool) {
+    /// Set `CommonJS` mode
+    pub const fn set_commonjs(&mut self, is_commonjs: bool) {
         self.is_commonjs = is_commonjs;
     }
 
-    /// Extract leading comments from source text that fall within [from_pos, to_pos) range.
-    /// Returns IRNode::Raw nodes since the text already includes comment delimiters.
+    /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
+    /// Returns `IRNode::Raw` nodes since the text already includes comment delimiters.
     fn extract_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
         let source_text = match self.source_text {
             Some(t) => t,
@@ -256,7 +256,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         node_end
     }
 
-    /// Extract standalone comments (on their own line) within [from_pos, to_pos).
+    /// Extract standalone comments (on their own line) within [`from_pos`, `to_pos`).
     /// Unlike `extract_comments_in_range`, this filters out trailing comments
     /// that share a line with code — only comments on their own line are returned.
     fn extract_standalone_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
@@ -333,7 +333,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     ///
     /// # Arguments
     ///
-    /// * `ns_idx` - NodeIndex of the namespace declaration
+    /// * `ns_idx` - `NodeIndex` of the namespace declaration
     ///
     /// # Returns
     ///
@@ -353,7 +353,7 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Transform a namespace declaration that is known to be exported
     ///
-    /// Use this when the namespace is wrapped in an EXPORT_DECLARATION.
+    /// Use this when the namespace is wrapped in an `EXPORT_DECLARATION`.
     pub fn transform_exported_namespace(&self, ns_idx: NodeIndex) -> Option<IRNode> {
         self.transform_namespace_with_flags(ns_idx, true, true)
     }
@@ -445,10 +445,10 @@ impl<'a> NamespaceES5Transformer<'a> {
 
     /// Flatten a module name into parts (handles both identifiers and qualified names)
     ///
-    /// For qualified names like `A.B.C` (parsed as nested MODULE_DECLARATIONs), returns `["A", "B", "C"]`.
+    /// For qualified names like `A.B.C` (parsed as nested `MODULE_DECLARATIONs`), returns `["A", "B", "C"]`.
     /// For simple identifiers like `foo`, returns `["foo"]`.
     ///
-    /// Note: The parser creates nested MODULE_DECLARATION nodes for qualified namespace names,
+    /// Note: The parser creates nested `MODULE_DECLARATION` nodes for qualified namespace names,
     /// where each level has a single identifier name and the body points to the next level.
     pub fn flatten_module_name(&self, name_idx: NodeIndex) -> Option<Vec<String>> {
         let mut parts = Vec::new();
@@ -459,7 +459,7 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// Recursively collect name parts from qualified names
     ///
     /// Handles both:
-    /// 1. QUALIFIED_NAME nodes (left.right structure)
+    /// 1. `QUALIFIED_NAME` nodes (left.right structure)
     /// 2. Simple identifier nodes
     fn collect_name_parts(&self, idx: NodeIndex, parts: &mut Vec<String>) {
         let Some(node) = self.arena.get(idx) else {
@@ -479,12 +479,12 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
     }
 
-    /// Collect all name parts by walking through nested MODULE_DECLARATION chain
+    /// Collect all name parts by walking through nested `MODULE_DECLARATION` chain
     ///
     /// For `namespace A.B.C {}`, the parser creates:
-    /// MODULE_DECLARATION "A" -> body: MODULE_DECLARATION "B" -> body: MODULE_DECLARATION "C" -> body: MODULE_BLOCK
+    /// `MODULE_DECLARATION` "A" -> body: `MODULE_DECLARATION` "B" -> body: `MODULE_DECLARATION` "C" -> body: `MODULE_BLOCK`
     ///
-    /// This method walks through all levels and returns (["A", "B", "C"], innermost_body_idx)
+    /// This method walks through all levels and returns (["A", "B", "C"], `innermost_body_idx`)
     fn collect_all_namespace_parts(&self, ns_idx: NodeIndex) -> Option<(Vec<String>, NodeIndex)> {
         let mut parts = Vec::new();
         let mut current_idx = ns_idx;
@@ -948,7 +948,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 IRNode::NamespaceExport {
                     namespace: ns_name.to_string(),
                     name: func_name.clone(),
-                    value: Box::new(IRNode::Identifier(func_name.clone())),
+                    value: Box::new(IRNode::Identifier(func_name)),
                 },
             ]))
         } else {
@@ -1223,21 +1223,21 @@ impl<'a> NamespaceES5Transformer<'a> {
 // NamespaceTransformContext - Legacy context (for backward compatibility)
 // =============================================================================
 
-/// Context for namespace transformation (legacy, use NamespaceES5Transformer instead)
+/// Context for namespace transformation (legacy, use `NamespaceES5Transformer` instead)
 pub struct NamespaceTransformContext<'a> {
     arena: &'a NodeArena,
     is_commonjs: bool,
 }
 
 impl<'a> NamespaceTransformContext<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             is_commonjs: false,
         }
     }
 
-    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
+    pub const fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         Self { arena, is_commonjs }
     }
 
@@ -1299,11 +1299,11 @@ impl<'a> NamespaceTransformContext<'a> {
         declaration_keyword_from_var_declarations(self.arena, declarations)
     }
 
-    fn namespace_member_ast_ref_if_non_empty(&self, member_idx: NodeIndex) -> Option<IRNode> {
+    const fn namespace_member_ast_ref_if_non_empty(&self, member_idx: NodeIndex) -> Option<IRNode> {
         Some(IRNode::ASTRef(member_idx))
     }
 
-    /// Collect all name parts by walking through nested MODULE_DECLARATION chain
+    /// Collect all name parts by walking through nested `MODULE_DECLARATION` chain
     fn collect_all_namespace_parts(&self, ns_idx: NodeIndex) -> Option<(Vec<String>, NodeIndex)> {
         let mut parts = Vec::new();
         let mut current_idx = ns_idx;
@@ -1462,7 +1462,7 @@ impl<'a> NamespaceTransformContext<'a> {
                 IRNode::NamespaceExport {
                     namespace: ns_name.to_string(),
                     name: func_name.clone(),
-                    value: Box::new(IRNode::Identifier(func_name.clone())),
+                    value: Box::new(IRNode::Identifier(func_name)),
                 },
             ]))
         } else {
@@ -1742,7 +1742,7 @@ impl<'a> NamespaceTransformContext<'a> {
 // Helper Functions
 // =============================================================================
 
-/// Check if a namespace body (MODULE_BLOCK) contains any value declarations.
+/// Check if a namespace body (`MODULE_BLOCK`) contains any value declarations.
 /// Value declarations are: variables, functions, classes, enums, sub-namespaces.
 /// Type-only declarations (interfaces, type aliases) don't count.
 fn body_has_value_declarations(arena: &NodeArena, body_idx: NodeIndex) -> bool {
@@ -1817,8 +1817,8 @@ fn is_comment_node(node: &IRNode) -> bool {
         || matches!(node, IRNode::TrailingComment(_))
 }
 
-/// Check if a node is a namespace-like declaration (MODULE_DECLARATION or
-/// EXPORT_DECLARATION wrapping MODULE_DECLARATION). These have block bodies
+/// Check if a node is a namespace-like declaration (`MODULE_DECLARATION` or
+/// `EXPORT_DECLARATION` wrapping `MODULE_DECLARATION`). These have block bodies
 /// whose internal comments are handled by the sub-emitter.
 fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::node::Node) -> bool {
     if node.kind == syntax_kind_ext::MODULE_DECLARATION {
@@ -2033,7 +2033,7 @@ fn convert_exported_variable_declarations(
     result
 }
 
-/// Convert variable declarations to proper IR (VarDecl nodes)
+/// Convert variable declarations to proper IR (`VarDecl` nodes)
 fn convert_variable_declarations(
     arena: &NodeArena,
     declarations: &NodeList,
@@ -2081,7 +2081,7 @@ fn convert_variable_declarations(
     result
 }
 
-fn declaration_keyword_from_flags(flags: u16) -> &'static str {
+const fn declaration_keyword_from_flags(flags: u16) -> &'static str {
     if (flags & node_flags::LET as u16) != 0 {
         "let"
     } else {
@@ -2127,16 +2127,10 @@ fn collect_body_member_names(body: &[IRNode]) -> std::collections::HashSet<Strin
 /// Recursively collect declared names from IR nodes
 fn collect_member_names_from_node(node: &IRNode, names: &mut std::collections::HashSet<String>) {
     match node {
-        IRNode::ES5ClassIIFE { name, .. } => {
-            names.insert(name.clone());
-        }
-        IRNode::FunctionDecl { name, .. } => {
-            names.insert(name.clone());
-        }
-        IRNode::VarDecl { name, .. } => {
-            names.insert(name.clone());
-        }
-        IRNode::EnumIIFE { name, .. } => {
+        IRNode::ES5ClassIIFE { name, .. }
+        | IRNode::FunctionDecl { name, .. }
+        | IRNode::VarDecl { name, .. }
+        | IRNode::EnumIIFE { name, .. } => {
             names.insert(name.clone());
         }
         IRNode::Sequence(items) => {
@@ -2156,7 +2150,7 @@ fn generate_unique_param_name(
 ) -> String {
     let mut suffix = 1;
     loop {
-        let candidate = format!("{}_{}", ns_name, suffix);
+        let candidate = format!("{ns_name}_{suffix}");
         if !member_names.contains(&candidate) {
             return candidate;
         }
@@ -2223,25 +2217,19 @@ fn rewrite_exported_var_refs(
                 };
             }
         }
-        IRNode::BinaryExpr { left, right, .. } => {
+        IRNode::BinaryExpr { left, right, .. }
+        | IRNode::LogicalOr { left, right }
+        | IRNode::LogicalAnd { left, right } => {
             rewrite_exported_var_refs(left, ns_name, names);
             rewrite_exported_var_refs(right, ns_name, names);
         }
-        IRNode::PrefixUnaryExpr { operand, .. } => {
-            rewrite_exported_var_refs(operand, ns_name, names);
-        }
-        IRNode::PostfixUnaryExpr { operand, .. } => {
+        IRNode::PrefixUnaryExpr { operand, .. } | IRNode::PostfixUnaryExpr { operand, .. } => {
             rewrite_exported_var_refs(operand, ns_name, names);
         }
         IRNode::CallExpr {
             callee, arguments, ..
-        } => {
-            rewrite_exported_var_refs(callee, ns_name, names);
-            for arg in arguments {
-                rewrite_exported_var_refs(arg, ns_name, names);
-            }
         }
-        IRNode::NewExpr {
+        | IRNode::NewExpr {
             callee, arguments, ..
         } => {
             rewrite_exported_var_refs(callee, ns_name, names);
@@ -2264,13 +2252,14 @@ fn rewrite_exported_var_refs(
             rewrite_exported_var_refs(when_true, ns_name, names);
             rewrite_exported_var_refs(when_false, ns_name, names);
         }
-        IRNode::Parenthesized(inner) => rewrite_exported_var_refs(inner, ns_name, names),
+        IRNode::Parenthesized(inner) | IRNode::SpreadElement(inner) => {
+            rewrite_exported_var_refs(inner, ns_name, names)
+        }
         IRNode::CommaExpr(exprs) | IRNode::ArrayLiteral(exprs) => {
             for expr in exprs.iter_mut() {
                 rewrite_exported_var_refs(expr, ns_name, names);
             }
         }
-        IRNode::SpreadElement(inner) => rewrite_exported_var_refs(inner, ns_name, names),
         IRNode::ObjectLiteral { properties, .. } => {
             for prop in properties.iter_mut() {
                 if let IRPropertyKey::Computed(key) = &mut prop.key {
@@ -2279,14 +2268,13 @@ fn rewrite_exported_var_refs(
                 rewrite_exported_var_refs(&mut prop.value, ns_name, names);
             }
         }
-        IRNode::FunctionExpr { body, .. } | IRNode::FunctionDecl { body, .. } => {
+        IRNode::FunctionExpr { body, .. }
+        | IRNode::FunctionDecl { body, .. }
+        | IRNode::NamespaceIIFE { body, .. }
+        | IRNode::ES5ClassIIFE { body, .. } => {
             for stmt in body {
                 rewrite_exported_var_refs(stmt, ns_name, names);
             }
-        }
-        IRNode::LogicalOr { left, right } | IRNode::LogicalAnd { left, right } => {
-            rewrite_exported_var_refs(left, ns_name, names);
-            rewrite_exported_var_refs(right, ns_name, names);
         }
         IRNode::VarDecl {
             initializer: Some(initializer),
@@ -2299,10 +2287,9 @@ fn rewrite_exported_var_refs(
                 rewrite_exported_var_refs(item, ns_name, names);
             }
         }
-        IRNode::ExpressionStatement(expr) => {
-            rewrite_exported_var_refs(expr, ns_name, names);
-        }
-        IRNode::ReturnStatement(Some(expr)) | IRNode::ThrowStatement(expr) => {
+        IRNode::ExpressionStatement(expr)
+        | IRNode::ReturnStatement(Some(expr))
+        | IRNode::ThrowStatement(expr) => {
             rewrite_exported_var_refs(expr, ns_name, names);
         }
         IRNode::AwaiterCall {
@@ -2387,18 +2374,8 @@ fn rewrite_exported_var_refs(
                 }
             }
         }
-        IRNode::NamespaceIIFE { body, .. } => {
-            for stmt in body {
-                rewrite_exported_var_refs(stmt, ns_name, names);
-            }
-        }
         IRNode::NamespaceExport { value, .. } => {
             rewrite_exported_var_refs(value, ns_name, names);
-        }
-        IRNode::ES5ClassIIFE { body, .. } => {
-            for stmt in body {
-                rewrite_exported_var_refs(stmt, ns_name, names);
-            }
         }
         IRNode::PrototypeMethod { function, .. } | IRNode::StaticMethod { function, .. } => {
             rewrite_exported_var_refs(function, ns_name, names);

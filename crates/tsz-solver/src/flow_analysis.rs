@@ -224,7 +224,7 @@ impl<'a> FlowTypeEvaluator<'a> {
 
     /// Create flow facts from a set of definite assignments.
     ///
-    /// This is a convenience method for creating FlowFacts when you only
+    /// This is a convenience method for creating `FlowFacts` when you only
     /// have definite assignment information.
     pub fn facts_from_assignments(&self, assignments: FxHashSet<String>) -> FlowFacts {
         FlowFacts {
@@ -235,7 +235,7 @@ impl<'a> FlowTypeEvaluator<'a> {
 
     /// Create flow facts from a set of type narrowings.
     ///
-    /// This is a convenience method for creating FlowFacts when you only
+    /// This is a convenience method for creating `FlowFacts` when you only
     /// have type narrowing information.
     pub fn facts_from_narrowings(&self, narrowings: FxHashMap<String, TypeId>) -> FlowFacts {
         FlowFacts {

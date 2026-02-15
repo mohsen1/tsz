@@ -325,8 +325,7 @@ console.log(x);
         // We should have 2 yield points (yield 1 and yield 2)
         assert!(
             yield_count >= 2,
-            "Expected at least 2 yield points, got {}",
-            yield_count
+            "Expected at least 2 yield points, got {yield_count}"
         );
     }
 }
@@ -451,13 +450,11 @@ console.log(x);
 
         assert!(
             yield_count >= 2,
-            "Expected at least 2 yield points, got {}",
-            yield_count
+            "Expected at least 2 yield points, got {yield_count}"
         );
         assert!(
             await_count >= 2,
-            "Expected at least 2 await points, got {}",
-            await_count
+            "Expected at least 2 await points, got {await_count}"
         );
     }
 }
@@ -497,8 +494,7 @@ console.log(x);
 
         assert!(
             assignment_count >= 2,
-            "Expected at least 2 assignment nodes for variable tracking, got {}",
-            assignment_count
+            "Expected at least 2 assignment nodes for variable tracking, got {assignment_count}"
         );
     }
 }
@@ -572,8 +568,7 @@ console.log(x);
 
         assert!(
             yield_count >= 2,
-            "Expected at least 2 yield points in conditional branches, got {}",
-            yield_count
+            "Expected at least 2 yield points in conditional branches, got {yield_count}"
         );
     }
 }
@@ -613,8 +608,7 @@ yield 3;
 
         assert!(
             yield_count >= 3,
-            "Expected at least 3 yield points, got {}",
-            yield_count
+            "Expected at least 3 yield points, got {yield_count}"
         );
     }
 }
@@ -683,8 +677,7 @@ console.log(x);
         // Should have assignment for static property initializer
         assert!(
             assignment_count >= 1,
-            "Expected at least 1 assignment node for static property, got {}",
-            assignment_count
+            "Expected at least 1 assignment node for static property, got {assignment_count}"
         );
     }
 }

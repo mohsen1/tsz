@@ -26,21 +26,21 @@ impl Atom {
     /// Returns `Atom::NONE` - used for serde default.
     #[must_use]
     #[inline]
-    pub fn none() -> Self {
+    pub const fn none() -> Self {
         Self::NONE
     }
 
     /// Check if this is the empty/none atom.
     #[must_use]
     #[inline]
-    pub fn is_none(self) -> bool {
+    pub const fn is_none(self) -> bool {
         self.0 == 0
     }
 
     /// Get the raw index value.
     #[must_use]
     #[inline]
-    pub fn index(self) -> u32 {
+    pub const fn index(self) -> u32 {
         self.0
     }
 }
@@ -246,14 +246,14 @@ impl Interner {
     /// Get the number of interned strings.
     #[must_use]
     #[inline]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.strings.len()
     }
 
     /// Check if the interner is empty (only has the empty string).
     #[must_use]
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.strings.len() <= 1
     }
 
@@ -440,7 +440,7 @@ impl ShardedInterner {
     }
 
     #[inline]
-    fn make_atom(local_index: u32, shard_idx: u32) -> Atom {
+    const fn make_atom(local_index: u32, shard_idx: u32) -> Atom {
         Atom((local_index << SHARD_BITS) | (shard_idx & SHARD_MASK))
     }
 

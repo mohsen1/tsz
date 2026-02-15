@@ -59,7 +59,7 @@
 //! # Architecture
 //!
 //! This module uses the IR-based transformation pattern:
-//! - `AsyncES5Transformer` (in async_es5_ir.rs) produces IR nodes
+//! - `AsyncES5Transformer` (in `async_es5_ir.rs`) produces IR nodes
 //! - `AsyncES5Emitter` is a thin wrapper that uses `IRPrinter` to emit JavaScript
 //!
 //! This separation allows clean transform logic while delegating string emission
@@ -104,7 +104,7 @@ impl<'a> AsyncES5Emitter<'a> {
         }
     }
 
-    pub fn set_indent_level(&mut self, level: u32) {
+    pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
     }
 
@@ -121,7 +121,7 @@ impl<'a> AsyncES5Emitter<'a> {
         self.class_name = Some(name.to_string());
     }
 
-    pub fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
+    pub const fn set_source_map_context(&mut self, source_text: &'a str, source_index: u32) {
         self.source_text = Some(source_text);
         self.source_index = source_index;
         self.transformer.set_source_text(source_text);

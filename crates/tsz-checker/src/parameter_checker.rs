@@ -7,7 +7,7 @@
 //! - Parameter properties (TS2374)
 //! - Parameter initializers and self-references (TS2322, TS2372)
 //!
-//! This module extends CheckerState with parameter-related methods as part of
+//! This module extends `CheckerState` with parameter-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -180,7 +180,7 @@ impl<'a> CheckerState<'a> {
             // Simple Identifier: parameter name
             k if k == SyntaxKind::Identifier as u16 => {
                 if let Some(name) = self.node_text(name_idx) {
-                    let name_str = name.to_string();
+                    let name_str = name;
                     if !seen.insert(name_str.clone()) {
                         self.error_at_node(
                             name_idx,
@@ -414,7 +414,7 @@ impl<'a> CheckerState<'a> {
                 let self_refs = self.collect_self_references(param.initializer, &param_name);
                 if !self_refs.is_empty() {
                     use crate::diagnostics::diagnostic_codes;
-                    let msg = format!("Parameter '{}' cannot reference itself.", param_name);
+                    let msg = format!("Parameter '{param_name}' cannot reference itself.");
                     for ref_node in self_refs {
                         self.error_at_node(
                             ref_node,
@@ -441,8 +441,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let msg = format!(
-                        "Parameter '{}' cannot reference identifier '{}' declared after it.",
-                        param_name, later_name
+                        "Parameter '{param_name}' cannot reference identifier '{later_name}' declared after it."
                     );
                     for ref_node in refs {
                         self.error_at_node(

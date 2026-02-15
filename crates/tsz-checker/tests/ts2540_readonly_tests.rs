@@ -105,8 +105,7 @@ c.mut_prop = "ok";
     let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
     assert_eq!(
         ts2540_count, 1,
-        "Should emit exactly 1 TS2540 (for ro), got: {:?}",
-        diags
+        "Should emit exactly 1 TS2540 (for ro), got: {diags:?}"
     );
 }
 
@@ -199,8 +198,7 @@ obj.mut_prop = "ok";
     let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
     assert_eq!(
         ts2540_count, 1,
-        "Should emit exactly 1 TS2540 (for ro), got: {:?}",
-        diags
+        "Should emit exactly 1 TS2540 (for ro), got: {diags:?}"
     );
 }
 
@@ -222,8 +220,7 @@ obj.c = true;
     let ts2540_count = diags.iter().filter(|(code, _)| *code == 2540).count();
     assert_eq!(
         ts2540_count, 2,
-        "Should emit 2 TS2540 errors (for a and b), got: {:?}",
-        diags
+        "Should emit 2 TS2540 errors (for a and b), got: {diags:?}"
     );
 }
 

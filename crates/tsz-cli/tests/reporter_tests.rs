@@ -231,7 +231,7 @@ fn pretty_mode_snippet_line_number_alignment() {
     // Create a file with an error on line 10
     let mut source = String::new();
     for i in 1..=9 {
-        source.push_str(&format!("let a{} = {};\n", i, i));
+        source.push_str(&format!("let a{i} = {i};\n"));
     }
     source.push_str("let a10: number = \"string\";\n");
     write_file(&file_path, &source);

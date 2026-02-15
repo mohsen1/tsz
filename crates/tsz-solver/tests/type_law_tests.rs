@@ -1,7 +1,7 @@
 //! Type System Law Tests
 //!
 //! This module tests the mathematical properties that the type system must satisfy.
-//! These are the foundational laws from SOLVER.md Section 1 and SOLVER_ROADMAP.md Section 7.2.
+//! These are the foundational laws from SOLVER.md Section 1 and `SOLVER_ROADMAP.md` Section 7.2.
 //!
 //! ## Laws Tested
 //! - **Reflexivity**: T ≤ T (every type is a subtype of itself)
@@ -41,8 +41,7 @@ fn test_law_reflexivity_intrinsics() {
     for &ty in &intrinsics {
         assert!(
             checker.is_subtype_of(ty, ty),
-            "Reflexivity failed for intrinsic type: {:?}",
-            ty
+            "Reflexivity failed for intrinsic type: {ty:?}"
         );
     }
 }

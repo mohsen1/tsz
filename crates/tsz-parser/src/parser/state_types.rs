@@ -1339,7 +1339,7 @@ impl ParserState {
     }
 
     /// Check if the current token starts with `>` (includes compound tokens like `>>`, `>>>`, `>=`, etc.)
-    pub(crate) fn is_greater_than_or_compound(&self) -> bool {
+    pub(crate) const fn is_greater_than_or_compound(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::GreaterThanToken
@@ -1593,7 +1593,7 @@ impl ParserState {
     }
 
     /// Check if current token is a keyword that can be used as a property name
-    pub(crate) fn is_property_name_keyword(&self) -> bool {
+    pub(crate) const fn is_property_name_keyword(&self) -> bool {
         matches!(
             self.token(),
             SyntaxKind::TypeKeyword
@@ -2067,7 +2067,7 @@ impl ParserState {
 
     /// Get the arena
     #[must_use]
-    pub fn get_arena(&self) -> &NodeArena {
+    pub const fn get_arena(&self) -> &NodeArena {
         &self.arena
     }
 
@@ -2082,7 +2082,7 @@ impl ParserState {
 
     /// Get node count
     #[must_use]
-    pub fn get_node_count(&self) -> usize {
+    pub const fn get_node_count(&self) -> usize {
         self.arena.len()
     }
 

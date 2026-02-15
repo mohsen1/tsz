@@ -1,6 +1,6 @@
 //! Class Type Resolution Module
 //!
-//! This module contains class and constructor type resolution methods for CheckerState
+//! This module contains class and constructor type resolution methods for `CheckerState`
 //! as part of the Phase 2 architecture refactoring (god object decomposition).
 //!
 //! # Extracted Functions (~1,163 lines from state.rs)
@@ -53,11 +53,11 @@ impl<'a> CheckerState<'a> {
     /// - Private brand property for nominal typing (if class has private/protected members)
     ///
     /// # Arguments
-    /// * `class_idx` - The NodeIndex of the class declaration
+    /// * `class_idx` - The `NodeIndex` of the class declaration
     /// * `class` - The parsed class data
     ///
     /// # Returns
-    /// The TypeId representing the instance type of the class
+    /// The `TypeId` representing the instance type of the class
     pub(crate) fn get_class_instance_type(
         &mut self,
         class_idx: NodeIndex,
@@ -993,11 +993,11 @@ impl<'a> CheckerState<'a> {
     /// - Abstract class tracking
     ///
     /// # Arguments
-    /// * `class_idx` - The NodeIndex of the class declaration
+    /// * `class_idx` - The `NodeIndex` of the class declaration
     /// * `class` - The parsed class data
     ///
     /// # Returns
-    /// The TypeId representing the constructor type of the class
+    /// The `TypeId` representing the constructor type of the class
     pub(crate) fn get_class_constructor_type(
         &mut self,
         class_idx: NodeIndex,

@@ -1,22 +1,22 @@
 //! Type interning for structural deduplication.
 //!
 //! This module implements the type interning engine that converts
-//! TypeData structures into lightweight TypeId handles.
+//! `TypeData` structures into lightweight `TypeId` handles.
 //!
 //! Benefits:
-//! - O(1) type equality (just compare TypeId values)
+//! - O(1) type equality (just compare `TypeId` values)
 //! - Memory efficient (each unique structure stored once)
 //! - Cache-friendly (work with u32 arrays instead of heap objects)
 //!
 //! # Concurrency Strategy
 //!
-//! The TypeInterner uses a sharded DashMap-based architecture for lock-free
+//! The `TypeInterner` uses a sharded DashMap-based architecture for lock-free
 //! concurrent access:
 //!
-//! - **Sharded Type Storage**: 64 shards based on hash of TypeData to minimize contention
-//! - **DashMap for Interning**: Each shard uses DashMap for lock-free read/write operations
+//! - **Sharded Type Storage**: 64 shards based on hash of `TypeData` to minimize contention
+//! - **`DashMap` for Interning**: Each shard uses `DashMap` for lock-free read/write operations
 //! - **Arc for Immutability**: Type data is stored in Arc<T> for cheap cloning
-//! - **No RwLock<Vec<T>>**: Avoids the read-then-write deadlock pattern
+//! - **No `RwLock`<Vec<T>>**: Avoids the read-then-write deadlock pattern
 //!
 //! This design allows true parallel type checking without lock contention.
 
@@ -99,7 +99,7 @@ enum PrimitiveKind {
 }
 
 impl PrimitiveKind {
-    fn from_literal(literal: &LiteralValue) -> Self {
+    const fn from_literal(literal: &LiteralValue) -> Self {
         match literal {
             LiteralValue::String(_) => Self::String,
             LiteralValue::Number(_) => Self::Number,
@@ -124,7 +124,7 @@ impl LiteralSet {
     }
 }
 
-fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
+const fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
     match literal {
         LiteralValue::String(_) => LiteralDomain::String,
         LiteralValue::Number(_) => LiteralDomain::Number,
@@ -133,28 +133,28 @@ fn literal_domain(literal: &LiteralValue) -> LiteralDomain {
     }
 }
 
-/// Inner data for a TypeShard, lazily initialized.
+/// Inner data for a `TypeShard`, lazily initialized.
 struct TypeShardInner {
-    /// Map from TypeData to local index within this shard
+    /// Map from `TypeData` to local index within this shard
     key_to_index: DashMap<TypeData, u32, FxBuildHasher>,
-    /// Map from local index to TypeData (using Arc for shared access)
+    /// Map from local index to `TypeData` (using Arc for shared access)
     index_to_key: DashMap<u32, Arc<TypeData>, FxBuildHasher>,
 }
 
 /// A single shard of the type interned storage.
 ///
-/// Uses OnceLock for lazy initialization - DashMaps are only allocated
+/// Uses `OnceLock` for lazy initialization - `DashMaps` are only allocated
 /// when the shard is first accessed, reducing startup overhead.
 struct TypeShard {
     /// Lazily initialized inner maps
     inner: OnceLock<TypeShardInner>,
     /// Atomic counter for allocating new indices in this shard
-    /// Kept outside OnceLock for fast checks without initialization
+    /// Kept outside `OnceLock` for fast checks without initialization
     next_index: AtomicU32,
 }
 
 impl TypeShard {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             inner: OnceLock::new(),
             next_index: AtomicU32::new(0),
@@ -177,14 +177,14 @@ impl TypeShard {
     }
 }
 
-/// Inner data for ConcurrentSliceInterner, lazily initialized.
+/// Inner data for `ConcurrentSliceInterner`, lazily initialized.
 struct SliceInternerInner<T> {
     items: DashMap<u32, Arc<[T]>, FxBuildHasher>,
     map: DashMap<Arc<[T]>, u32, FxBuildHasher>,
 }
 
-/// Lock-free slice interner using DashMap for concurrent access.
-/// Uses lazy initialization to defer DashMap allocation until first use.
+/// Lock-free slice interner using `DashMap` for concurrent access.
+/// Uses lazy initialization to defer `DashMap` allocation until first use.
 struct ConcurrentSliceInterner<T> {
     inner: OnceLock<SliceInternerInner<T>>,
     next_id: AtomicU32,
@@ -194,7 +194,7 @@ impl<T> ConcurrentSliceInterner<T>
 where
     T: Eq + Hash + Clone + Send + Sync + 'static,
 {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             inner: OnceLock::new(),
             next_id: AtomicU32::new(1), // Reserve 0 for empty
@@ -257,14 +257,14 @@ where
     }
 }
 
-/// Inner data for ConcurrentValueInterner, lazily initialized.
+/// Inner data for `ConcurrentValueInterner`, lazily initialized.
 struct ValueInternerInner<T> {
     items: DashMap<u32, Arc<T>, FxBuildHasher>,
     map: DashMap<Arc<T>, u32, FxBuildHasher>,
 }
 
-/// Lock-free value interner using DashMap for concurrent access.
-/// Uses lazy initialization to defer DashMap allocation until first use.
+/// Lock-free value interner using `DashMap` for concurrent access.
+/// Uses lazy initialization to defer `DashMap` allocation until first use.
 struct ConcurrentValueInterner<T> {
     inner: OnceLock<ValueInternerInner<T>>,
     next_id: AtomicU32,
@@ -274,7 +274,7 @@ impl<T> ConcurrentValueInterner<T>
 where
     T: Eq + Hash + Clone + Send + Sync + 'static,
 {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             inner: OnceLock::new(),
             next_id: AtomicU32::new(0),
@@ -323,11 +323,11 @@ where
 
 /// Type interning table with lock-free concurrent access.
 ///
-/// Uses sharded DashMap structures for all internal storage, enabling
+/// Uses sharded `DashMap` structures for all internal storage, enabling
 /// true parallel type checking without lock contention.
 ///
-/// All internal structures use lazy initialization via OnceLock to minimize
-/// startup overhead - DashMaps are only allocated when first accessed.
+/// All internal structures use lazy initialization via `OnceLock` to minimize
+/// startup overhead - `DashMaps` are only allocated when first accessed.
 pub struct TypeInterner {
     /// Sharded storage for user-defined types (lazily initialized)
     shards: Vec<TypeShard>,
@@ -338,14 +338,14 @@ pub struct TypeInterner {
     tuple_lists: ConcurrentSliceInterner<TupleElement>,
     template_lists: ConcurrentSliceInterner<TemplateSpan>,
     object_shapes: ConcurrentValueInterner<ObjectShape>,
-    /// Object property maps: lazily initialized DashMap
+    /// Object property maps: lazily initialized `DashMap`
     object_property_maps: ObjectPropertyMap,
     function_shapes: ConcurrentValueInterner<FunctionShape>,
     callable_shapes: ConcurrentValueInterner<CallableShape>,
     conditional_types: ConcurrentValueInterner<ConditionalType>,
     mapped_types: ConcurrentValueInterner<MappedType>,
     applications: ConcurrentValueInterner<TypeApplication>,
-    /// Cache for is_unit_type checks (memoized O(1) lookup after first computation)
+    /// Cache for `is_unit_type` checks (memoized O(1) lookup after first computation)
     unit_type_cache: DashMap<TypeId, bool, FxBuildHasher>,
     /// The global Array base type (e.g., Array<T> from lib.d.ts)
     array_base_type: OnceLock<TypeId>,
@@ -364,8 +364,8 @@ impl std::fmt::Debug for TypeInterner {
 impl TypeInterner {
     /// Create a new type interner with pre-registered intrinsics.
     ///
-    /// Uses lazy initialization for all DashMap structures to minimize
-    /// startup overhead. DashMaps are only allocated when first accessed.
+    /// Uses lazy initialization for all `DashMap` structures to minimize
+    /// startup overhead. `DashMaps` are only allocated when first accessed.
     pub fn new() -> Self {
         let shards: Vec<TypeShard> = (0..SHARD_COUNT).map(|_| TypeShard::new()).collect();
 
@@ -392,7 +392,7 @@ impl TypeInterner {
     /// Set the global Array base type (e.g., Array<T> from lib.d.ts).
     ///
     /// This should be called once during primordial type setup when lib.d.ts is processed.
-    /// Once set, the value cannot be changed (OnceLock enforces this).
+    /// Once set, the value cannot be changed (`OnceLock` enforces this).
     pub fn set_array_base_type(&self, type_id: TypeId, params: Vec<TypeParamInfo>) {
         let _ = self.array_base_type.set(type_id);
         let _ = self.array_base_type_params.set(params);
@@ -498,8 +498,8 @@ impl TypeInterner {
 
     /// Get or create a property map for an object shape.
     ///
-    /// This uses a lock-free pattern with DashMap to avoid the read-then-write
-    /// deadlock that existed in the previous RwLock<Vec> implementation.
+    /// This uses a lock-free pattern with `DashMap` to avoid the read-then-write
+    /// deadlock that existed in the previous `RwLock`<Vec> implementation.
     fn object_property_map(
         &self,
         shape_id: ObjectShapeId,
@@ -597,11 +597,11 @@ impl TypeInterner {
         })
     }
 
-    /// Intern a type key and return its TypeId.
-    /// If the key already exists, returns the existing TypeId.
-    /// Otherwise, creates a new TypeId and stores the key.
+    /// Intern a type key and return its `TypeId`.
+    /// If the key already exists, returns the existing `TypeId`.
+    /// Otherwise, creates a new `TypeId` and stores the key.
     ///
-    /// This uses a lock-free pattern with DashMap for concurrent access.
+    /// This uses a lock-free pattern with `DashMap` for concurrent access.
     pub fn intern(&self, key: TypeData) -> TypeId {
         if let Some(id) = self.get_intrinsic_id(&key) {
             return id;
@@ -650,9 +650,9 @@ impl TypeInterner {
         }
     }
 
-    /// Look up the TypeData for a given TypeId.
+    /// Look up the `TypeData` for a given `TypeId`.
     ///
-    /// This uses lock-free DashMap access with lazy shard initialization.
+    /// This uses lock-free `DashMap` access with lazy shard initialization.
     pub fn lookup(&self, id: TypeId) -> Option<TypeData> {
         if id.is_intrinsic() || id.is_error() {
             return self.get_intrinsic_key(id);
@@ -754,7 +754,7 @@ impl TypeInterner {
         id
     }
 
-    fn get_intrinsic_id(&self, key: &TypeData) -> Option<TypeId> {
+    const fn get_intrinsic_id(&self, key: &TypeData) -> Option<TypeId> {
         match key {
             TypeData::Intrinsic(kind) => Some(kind.to_type_id()),
             TypeData::Error => Some(TypeId::ERROR),
@@ -765,10 +765,9 @@ impl TypeInterner {
         }
     }
 
-    fn get_intrinsic_key(&self, id: TypeId) -> Option<TypeData> {
+    const fn get_intrinsic_key(&self, id: TypeId) -> Option<TypeData> {
         match id {
-            TypeId::NONE => Some(TypeData::Error),
-            TypeId::ERROR => Some(TypeData::Error),
+            TypeId::NONE | TypeId::ERROR => Some(TypeData::Error),
             TypeId::NEVER => Some(TypeData::Intrinsic(IntrinsicKind::Never)),
             TypeId::UNKNOWN => Some(TypeData::Intrinsic(IntrinsicKind::Unknown)),
             TypeId::ANY => Some(TypeData::Intrinsic(IntrinsicKind::Any)),
@@ -780,11 +779,12 @@ impl TypeInterner {
             TypeId::STRING => Some(TypeData::Intrinsic(IntrinsicKind::String)),
             TypeId::BIGINT => Some(TypeData::Intrinsic(IntrinsicKind::Bigint)),
             TypeId::SYMBOL => Some(TypeData::Intrinsic(IntrinsicKind::Symbol)),
-            TypeId::OBJECT => Some(TypeData::Intrinsic(IntrinsicKind::Object)),
+            TypeId::OBJECT | TypeId::PROMISE_BASE => {
+                Some(TypeData::Intrinsic(IntrinsicKind::Object))
+            }
             TypeId::BOOLEAN_TRUE => Some(TypeData::Literal(LiteralValue::Boolean(true))),
             TypeId::BOOLEAN_FALSE => Some(TypeData::Literal(LiteralValue::Boolean(false))),
             TypeId::FUNCTION => Some(TypeData::Intrinsic(IntrinsicKind::Function)),
-            TypeId::PROMISE_BASE => Some(TypeData::Intrinsic(IntrinsicKind::Object)), // Promise base treated as object
             _ => None,
         }
     }
@@ -794,7 +794,7 @@ impl TypeInterner {
     // =========================================================================
 
     /// Intern an intrinsic type
-    pub fn intrinsic(&self, kind: IntrinsicKind) -> TypeId {
+    pub const fn intrinsic(&self, kind: IntrinsicKind) -> TypeId {
         kind.to_type_id()
     }
 
@@ -1068,9 +1068,9 @@ impl TypeInterner {
         self.intersection_from_iter([left, right])
     }
 
-    /// Create an intersection type WITHOUT triggering normalize_intersection
+    /// Create an intersection type WITHOUT triggering `normalize_intersection`
     ///
-    /// This is a low-level operation used by the SubtypeChecker to merge
+    /// This is a low-level operation used by the `SubtypeChecker` to merge
     /// properties from intersection members without causing infinite recursion.
     ///
     /// # Safety
@@ -1884,22 +1884,18 @@ impl TypeInterner {
                 has_null_or_undefined = true;
             } else {
                 // Check if this is an object type
-                match self.lookup(member) {
-                    // Task #48: Empty objects ARE object types and are disjoint from null/undefined
-                    // null & {} = never (null is not a non-nullish value)
-                    Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => {
-                        has_object_type = true;
-                    }
-                    // Array, tuple, function, callable are all object types that are disjoint from null/undefined
-                    Some(
-                        TypeData::Array(_)
-                        | TypeData::Tuple(_)
-                        | TypeData::Function(_)
-                        | TypeData::Callable(_),
-                    ) => {
-                        has_object_type = true;
-                    }
-                    _ => {}
+                // Task #48: Empty objects ARE object types and are disjoint from null/undefined
+                // null & {} = never (null is not a non-nullish value)
+                if let Some(
+                    TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Array(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Function(_)
+                    | TypeData::Callable(_),
+                ) = self.lookup(member)
+                {
+                    has_object_type = true;
                 }
             }
 
@@ -1948,7 +1944,9 @@ impl TypeInterner {
     fn get_primitive_kind(&self, type_id: TypeId) -> Option<PrimitiveKind> {
         match self.lookup(type_id) {
             // Direct primitives
-            Some(TypeData::Intrinsic(IntrinsicKind::String)) => Some(PrimitiveKind::String),
+            Some(TypeData::Intrinsic(IntrinsicKind::String) | TypeData::TemplateLiteral(_)) => {
+                Some(PrimitiveKind::String)
+            }
             Some(TypeData::Intrinsic(IntrinsicKind::Number)) => Some(PrimitiveKind::Number),
             Some(TypeData::Intrinsic(IntrinsicKind::Boolean)) => Some(PrimitiveKind::Boolean),
             Some(TypeData::Intrinsic(IntrinsicKind::Bigint)) => Some(PrimitiveKind::BigInt),
@@ -1956,13 +1954,12 @@ impl TypeInterner {
             // Literals - they inherit the kind of their base type
             Some(TypeData::Literal(lit)) => Some(PrimitiveKind::from_literal(&lit)),
             // Template literals are string-like
-            Some(TypeData::TemplateLiteral(_)) => Some(PrimitiveKind::String),
             _ => None,
         }
     }
 
     /// Check if two primitive kinds are disjoint (their intersection is never).
-    fn are_primitives_disjoint(a: PrimitiveKind, b: PrimitiveKind) -> bool {
+    const fn are_primitives_disjoint(a: PrimitiveKind, b: PrimitiveKind) -> bool {
         use PrimitiveKind::*;
         match (a, b) {
             // Same kind is never disjoint
@@ -1972,20 +1969,16 @@ impl TypeInterner {
             | (BigInt, BigInt)
             | (Symbol, Symbol) => false,
             // String is disjoint from number, boolean, bigint, symbol
-            (String, Number | Boolean | BigInt | Symbol) => true,
-            // Number is disjoint from string, boolean, bigint, symbol
-            (Number, String | Boolean | BigInt | Symbol) => true,
-            // Boolean is disjoint from string, number, bigint, symbol
-            (Boolean, String | Number | BigInt | Symbol) => true,
-            // BigInt is disjoint from string, number, boolean, symbol
-            (BigInt, String | Number | Boolean | Symbol) => true,
-            // Symbol is disjoint from everything except itself (already handled above)
-            (Symbol, String | Number | Boolean | BigInt) => true,
+            (String, Number | Boolean | BigInt | Symbol)
+            | (Number, String | Boolean | BigInt | Symbol)
+            | (Boolean, String | Number | BigInt | Symbol)
+            | (BigInt, String | Number | Boolean | Symbol)
+            | (Symbol, String | Number | Boolean | BigInt) => true,
         }
     }
 
     /// Check if a type is a literal type.
-    /// Uses the visitor pattern from solver::visitor.
+    /// Uses the visitor pattern from `solver::visitor`.
     fn is_literal(&self, type_id: TypeId) -> bool {
         is_literal_type(self, type_id)
     }
@@ -2139,9 +2132,9 @@ impl TypeInterner {
     }
 
     /// Shallow subtype check that avoids infinite recursion.
-    /// Uses TypeId identity for nested components instead of recursive checking.
-    /// This is safe for use during normalization because it only uses lookup() and
-    /// never calls intern() or evaluate().
+    /// Uses `TypeId` identity for nested components instead of recursive checking.
+    /// This is safe for use during normalization because it only uses `lookup()` and
+    /// never calls `intern()` or `evaluate()`.
     fn is_subtype_shallow(&self, source: TypeId, target: TypeId) -> bool {
         if source == target {
             return true;
@@ -2219,12 +2212,12 @@ impl TypeInterner {
 
     /// Shallow object shape subtype check.
     ///
-    /// Compares properties using TypeId equality (no recursion) to enable
+    /// Compares properties using `TypeId` equality (no recursion) to enable
     /// safe object reduction in unions/intersections without infinite recursion.
     ///
     /// ## Subtyping Rules:
     /// - **Width subtyping**: Source can have extra properties
-    /// - **Type Identity**: Common properties must have identical TypeIds (no deep check)
+    /// - **Type Identity**: Common properties must have identical `TypeIds` (no deep check)
     /// - **Optional**: Required <: Optional is true, Optional <: Required is false
     /// - **Readonly**: Mutable <: Readonly is true, Readonly <: Mutable is false
     /// - **Nominal**: If target has a symbol, source must have the same symbol
@@ -2317,7 +2310,7 @@ impl TypeInterner {
     }
 
     /// Check if a literal domain matches a primitive class.
-    fn literal_domain_matches_primitive(
+    const fn literal_domain_matches_primitive(
         &self,
         domain: LiteralDomain,
         class: PrimitiveClass,
@@ -2622,7 +2615,7 @@ impl TypeInterner {
         self.intern(TypeData::ReadonlyType(tuple_type))
     }
 
-    /// Wrap any type in a ReadonlyType marker
+    /// Wrap any type in a `ReadonlyType` marker
     /// This is used for the `readonly` type operator
     pub fn readonly_type(&self, inner: TypeId) -> TypeId {
         self.intern(TypeData::ReadonlyType(inner))
@@ -2651,7 +2644,7 @@ impl TypeInterner {
         self.intern(TypeData::Recursive(depth))
     }
 
-    /// Wrap a type in a KeyOf marker.
+    /// Wrap a type in a `KeyOf` marker.
     pub fn keyof(&self, inner: TypeId) -> TypeId {
         self.intern(TypeData::KeyOf(inner))
     }
@@ -2661,7 +2654,7 @@ impl TypeInterner {
         self.intern(TypeData::IndexAccess(object_type, index_type))
     }
 
-    /// Build a nominal enum type that preserves DefId identity and carries
+    /// Build a nominal enum type that preserves `DefId` identity and carries
     /// structural member information for compatibility with primitive relations.
     pub fn enum_type(&self, def_id: DefId, structural_type: TypeId) -> TypeId {
         self.intern(TypeData::Enum(def_id, structural_type))
@@ -3217,10 +3210,10 @@ impl TypeInterner {
         self.intern(TypeData::StringIntrinsic { kind, type_arg })
     }
 
-    /// Intern a type reference (deprecated - use lazy() with DefId instead).
+    /// Intern a type reference (deprecated - use `lazy()` with `DefId` instead).
     ///
     /// This method is kept for backward compatibility with tests and legacy code.
-    /// It converts SymbolRef to DefId and creates TypeData::Lazy.
+    /// It converts `SymbolRef` to `DefId` and creates `TypeData::Lazy`.
     ///
     /// **Phase 1 migration**: New code should use `lazy(def_id)` instead.
     pub fn reference(&self, symbol: SymbolRef) -> TypeId {
@@ -3233,7 +3226,7 @@ impl TypeInterner {
     /// Intern a lazy type reference (DefId-based).
     ///
     /// This is the replacement for `reference()` that uses Solver-owned
-    /// DefIds instead of Binder-owned SymbolRefs.
+    /// `DefIds` instead of Binder-owned `SymbolRefs`.
     ///
     /// Phase 1 migration: Use this method for all new type references
     /// to enable O(1) type equality across Binder and Solver boundaries.

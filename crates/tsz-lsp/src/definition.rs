@@ -264,7 +264,7 @@ impl<'a> GoToDefinition<'a> {
         None
     }
 
-    /// Get the definition location for a specific node (by NodeIndex).
+    /// Get the definition location for a specific node (by `NodeIndex`).
     ///
     /// This is useful when you already have the node index from another operation.
     pub fn get_definition_for_node(
@@ -381,7 +381,7 @@ impl<'a> GoToDefinition<'a> {
         }
     }
 
-    /// Try to resolve a node's identifier text via the binder's file_locals table.
+    /// Try to resolve a node's identifier text via the binder's `file_locals` table.
     ///
     /// This serves as a fallback when the scope-based resolution fails (e.g., for
     /// shorthand properties, certain export patterns, etc.)
@@ -483,7 +483,7 @@ impl<'a> GoToDefinition<'a> {
         None
     }
 
-    /// Fallback for member access in get_definition_internal (returns Location objects).
+    /// Fallback for member access in `get_definition_internal` (returns Location objects).
     fn try_member_access_fallback(
         &self,
         root: NodeIndex,
@@ -579,7 +579,7 @@ impl<'a> GoToDefinition<'a> {
         None
     }
 
-    /// Convert a symbol's declarations into rich DefinitionInfo objects.
+    /// Convert a symbol's declarations into rich `DefinitionInfo` objects.
     pub fn definition_infos_from_symbol(&self, symbol_id: SymbolId) -> Option<Vec<DefinitionInfo>> {
         let symbol = self.binder.symbols.get(symbol_id)?;
         let source_len = self.source_text.len() as u32;
@@ -706,7 +706,7 @@ impl<'a> GoToDefinition<'a> {
         None
     }
 
-    /// Try file_locals fallback but return DefinitionInfo.
+    /// Try `file_locals` fallback but return `DefinitionInfo`.
     fn try_file_locals_fallback_info(&self, node_idx: NodeIndex) -> Option<Vec<DefinitionInfo>> {
         let node = self.arena.get(node_idx)?;
         let pos = node.pos as usize;
@@ -725,7 +725,7 @@ impl<'a> GoToDefinition<'a> {
     }
 
     /// Compute the name span and context span for a declaration node.
-    /// Returns (name_range for the identifier, full declaration range for context).
+    /// Returns (`name_range` for the identifier, full declaration range for context).
     fn compute_name_and_context_spans(
         &self,
         decl_idx: NodeIndex,
@@ -763,7 +763,7 @@ impl<'a> GoToDefinition<'a> {
     }
 
     /// Get the span for the context (the full declaration statement).
-    /// For VariableDeclaration, walk up to VariableStatement.
+    /// For `VariableDeclaration`, walk up to `VariableStatement`.
     /// For other declarations, use the declaration node itself.
     /// Returns the span with leading trivia stripped (using getStart semantics).
     fn get_context_span_node(
@@ -1167,7 +1167,7 @@ impl<'a> GoToDefinition<'a> {
         (String::new(), String::new())
     }
 
-    /// Get identifier text from a NodeIndex using source_text.
+    /// Get identifier text from a `NodeIndex` using `source_text`.
     fn get_node_text(&self, idx: NodeIndex) -> String {
         if idx.is_none() {
             return String::new();
@@ -1326,8 +1326,9 @@ impl<'a> GoToDefinition<'a> {
         // Check if cursor is on the keyword portion of the node
         let (keyword_len, target_kind) = match node.kind {
             syntax_kind_ext::RETURN_STATEMENT => (6, "function"), // "return"
-            syntax_kind_ext::AWAIT_EXPRESSION => (5, "function"), // "await"
-            syntax_kind_ext::YIELD_EXPRESSION => (5, "function"), // "yield"
+            syntax_kind_ext::AWAIT_EXPRESSION | syntax_kind_ext::YIELD_EXPRESSION => {
+                (5, "function")
+            } // "await", "yield"
             syntax_kind_ext::SWITCH_STATEMENT => (6, "switch"),   // "switch"
             syntax_kind_ext::CASE_CLAUSE => (4, "switch"),        // "case"
             syntax_kind_ext::DEFAULT_CLAUSE => (7, "switch"),     // "default"
@@ -1364,9 +1365,6 @@ impl<'a> GoToDefinition<'a> {
         };
 
         let kind = match target_node.kind {
-            syntax_kind_ext::FUNCTION_DECLARATION => "function".to_string(),
-            syntax_kind_ext::FUNCTION_EXPRESSION => "function".to_string(),
-            syntax_kind_ext::ARROW_FUNCTION => "function".to_string(),
             syntax_kind_ext::METHOD_DECLARATION => "method".to_string(),
             syntax_kind_ext::CONSTRUCTOR => "constructor".to_string(),
             syntax_kind_ext::GET_ACCESSOR => "getter".to_string(),

@@ -29,7 +29,7 @@ impl Reporter {
 
     /// Set whether pretty mode is enabled (source snippets, colon-separated locations).
     /// By default, pretty mode matches the color setting.
-    pub fn set_pretty(&mut self, pretty: bool) {
+    pub const fn set_pretty(&mut self, pretty: bool) {
         self.pretty = pretty;
     }
 
@@ -85,7 +85,7 @@ impl Reporter {
         let file_display = self.relative_path(&diagnostic.file);
 
         if let Some((line, col)) = self.position_for(&diagnostic.file, diagnostic.start) {
-            out.push_str(&format!("{}({},{})", file_display, line, col));
+            out.push_str(&format!("{file_display}({line},{col})"));
         } else if !diagnostic.file.is_empty() {
             out.push_str(&file_display);
         }
@@ -127,7 +127,7 @@ impl Reporter {
                 out.push(':');
                 out.push_str(&col.to_string().yellow().to_string());
             } else {
-                out.push_str(&format!("{}:{}:{}", file_display, line, col));
+                out.push_str(&format!("{file_display}:{line}:{col}"));
             }
         } else if !diagnostic.file.is_empty() {
             if self.color {
@@ -277,9 +277,9 @@ impl Reporter {
     fn format_related_plain(&mut self, out: &mut String, related: &DiagnosticRelatedInformation) {
         let file_display = self.relative_path(&related.file);
         if let Some((line, col)) = self.position_for(&related.file, related.start) {
-            out.push_str(&format!("  {}({},{})", file_display, line, col));
+            out.push_str(&format!("  {file_display}({line},{col})"));
         } else if !related.file.is_empty() {
-            out.push_str(&format!("  {}", file_display));
+            out.push_str(&format!("  {file_display}"));
         }
         out.push_str(": ");
         let message = self.translate_message(related.code, &related.message_text);
@@ -306,7 +306,7 @@ impl Reporter {
                 out.push(':');
                 out.push_str(&col.to_string().yellow().to_string());
             } else {
-                out.push_str(&format!("{}:{}:{}", file_display, line, col));
+                out.push_str(&format!("{file_display}:{line}:{col}"));
             }
         } else if !related.file.is_empty() {
             if self.color {
@@ -450,10 +450,10 @@ impl Reporter {
                     out.push_str(&format!(
                         "Found 1 error in {}{}\n",
                         file,
-                        format!(":{}", first_line).dimmed()
+                        format!(":{first_line}").dimmed()
                     ));
                 } else {
-                    out.push_str(&format!("Found 1 error in {}:{}\n", file, first_line));
+                    out.push_str(&format!("Found 1 error in {file}:{first_line}\n"));
                 }
             } else {
                 // "Found N errors in the same file, starting at: file:line\n\n"
@@ -462,12 +462,11 @@ impl Reporter {
                         "Found {} errors in the same file, starting at: {}{}\n",
                         error_count,
                         file,
-                        format!(":{}", first_line).dimmed()
+                        format!(":{first_line}").dimmed()
                     ));
                 } else {
                     out.push_str(&format!(
-                        "Found {} errors in the same file, starting at: {}:{}\n",
-                        error_count, file, first_line
+                        "Found {error_count} errors in the same file, starting at: {file}:{first_line}\n"
                     ));
                 }
             }
@@ -476,8 +475,7 @@ impl Reporter {
         } else {
             // "Found N errors in M files." + file table (no trailing blank line)
             out.push_str(&format!(
-                "Found {} {} in {} files.",
-                error_count, error_word, unique_file_count
+                "Found {error_count} {error_word} in {unique_file_count} files."
             ));
             out.push('\n');
             out.push('\n');
@@ -488,7 +486,7 @@ impl Reporter {
             for (file, count) in &file_errors {
                 let first_line = first_error_lines.get(file).copied().unwrap_or(1);
                 out.push('\n');
-                out.push_str(&format!("{:>6}  {}:{}", count, file, first_line));
+                out.push_str(&format!("{count:>6}  {file}:{first_line}"));
             }
             out.push('\n');
         }
@@ -559,7 +557,7 @@ impl Reporter {
             return String::new();
         }
 
-        let label = format!("TS{}", code);
+        let label = format!("TS{code}");
         if self.color {
             label.bright_blue().to_string()
         } else {

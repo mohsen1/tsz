@@ -1,7 +1,7 @@
 //! Apparent type utilities.
 //!
 //! This module provides utilities for working with apparent types of primitives.
-//! Apparent types define the shape of primitive values (e.g., string has .length, .charAt(), etc.)
+//! Apparent types define the shape of primitive values (e.g., string has .length, .`charAt()`, etc.)
 
 use crate::apparent::apparent_primitive_members;
 use crate::subtype::TypeResolver;
@@ -15,7 +15,7 @@ use crate::{ApparentMemberKind, TypeDatabase};
 use super::super::evaluate::TypeEvaluator;
 
 /// Standalone helper to create an apparent method type.
-/// Used by both TypeEvaluator and visitors.
+/// Used by both `TypeEvaluator` and visitors.
 pub(crate) fn make_apparent_method_type(db: &dyn TypeDatabase, return_type: TypeId) -> TypeId {
     let rest_array = db.array(TypeId::ANY);
     let rest_param = ParamInfo {
@@ -37,7 +37,10 @@ pub(crate) fn make_apparent_method_type(db: &dyn TypeDatabase, return_type: Type
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Get the apparent type kind for a literal value.
-    pub(crate) fn apparent_literal_kind(&self, literal: &LiteralValue) -> Option<IntrinsicKind> {
+    pub(crate) const fn apparent_literal_kind(
+        &self,
+        literal: &LiteralValue,
+    ) -> Option<IntrinsicKind> {
         match literal {
             LiteralValue::String(_) => Some(IntrinsicKind::String),
             LiteralValue::Number(_) => Some(IntrinsicKind::Number),

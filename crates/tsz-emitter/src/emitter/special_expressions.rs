@@ -55,7 +55,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    fn is_expression_parenthesized(&self, node: &Node) -> bool {
+    const fn is_expression_parenthesized(&self, node: &Node) -> bool {
         node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
     }
 
@@ -181,7 +181,7 @@ impl<'a> Printer<'a> {
                 if let Some(call) = self.arena.get_call_expr(expr_node) {
                     let callee_text =
                         self.get_decorator_text_with_depth(call.expression, depth + 1);
-                    return format!("{}(...)", callee_text);
+                    return format!("{callee_text}(...)");
                 }
             }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
@@ -189,7 +189,7 @@ impl<'a> Printer<'a> {
                     let obj_text = self.get_decorator_text_with_depth(access.expression, depth + 1);
                     let prop_text =
                         self.get_decorator_text_with_depth(access.name_or_argument, depth + 1);
-                    return format!("{}.{}", obj_text, prop_text);
+                    return format!("{obj_text}.{prop_text}");
                 }
             }
             _ => {}

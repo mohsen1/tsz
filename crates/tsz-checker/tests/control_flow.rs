@@ -68,8 +68,7 @@ if (x) {}
             // boolean DOES narrow to false (because boolean = true | false)
             assert!(
                 members.contains(&falsy_boolean),
-                "boolean should narrow to false, got members: {:?}",
-                members
+                "boolean should narrow to false, got members: {members:?}"
             );
             assert!(members.contains(&TypeId::NULL), "null should be included");
             assert!(

@@ -2,7 +2,7 @@
 //!
 //! This module handles subtyping for TypeScript's generic and reference types:
 //! - Ref types (nominal references to type aliases, classes, interfaces)
-//! - TypeQuery (typeof expressions)
+//! - `TypeQuery` (typeof expressions)
 //! - Type applications (Generic<T, U>)
 //! - Mapped types ({ [K in keyof T]: T[K] })
 //! - Type expansion and instantiation
@@ -22,9 +22,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Helper for resolving two Ref/TypeQuery symbols and checking subtype.
     ///
     /// Handles the common pattern of:
-    /// - Both resolved: check s_type <: t_type
-    /// - Only source resolved: check s_type <: target
-    /// - Only target resolved: check source <: t_type
+    /// - Both resolved: check `s_type` <: `t_type`
+    /// - Only source resolved: check `s_type` <: target
+    /// - Only target resolved: check source <: `t_type`
     /// - Neither resolved: False
     pub(crate) fn check_resolved_pair_subtype(
         &mut self,
@@ -43,7 +43,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check Ref to Ref subtype with optional identity shortcut.
     ///
-    /// For class-to-class checks, uses InheritanceGraph for O(1) nominal subtyping
+    /// For class-to-class checks, uses `InheritanceGraph` for O(1) nominal subtyping
     /// before falling back to structural checking. This is critical for:
     /// - Performance: Avoids expensive member-by-member comparison
     /// - Correctness: Properly handles private/protected members (nominal, not structural)
@@ -51,13 +51,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// # DefId-Level Cycle Detection
     ///
-    /// This function implements cycle detection at the SymbolRef level (analogous to DefId)
+    /// This function implements cycle detection at the `SymbolRef` level (analogous to `DefId`)
     /// to catch recursive types before resolution. This prevents infinite expansion of
     /// types like:
     /// - `type List<T> = { head: T; tail: List<T> }`
     /// - `interface Recursive { self: Recursive }`
     ///
-    /// When we detect that we're comparing the same (source_sym, target_sym) pair that
+    /// When we detect that we're comparing the same (`source_sym`, `target_sym`) pair that
     /// we're already checking, we return `CycleDetected` (coinductive semantics) which
     /// implements coinductive subtype checking for recursive types.
     pub(crate) fn check_ref_ref_subtype(
@@ -140,11 +140,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check Lazy(DefId) to Lazy(DefId) subtype with optional identity shortcut.
     ///
-    /// Phase 3.1: Mirrors check_ref_ref_subtype but for DefId-based type identity.
-    /// This handles cycles in Lazy(DefId) types at the DefId level, preventing
-    /// infinite expansion of recursive type aliases that use DefId references.
+    /// Phase 3.1: Mirrors `check_ref_ref_subtype` but for DefId-based type identity.
+    /// This handles cycles in Lazy(DefId) types at the `DefId` level, preventing
+    /// infinite expansion of recursive type aliases that use `DefId` references.
     ///
-    /// Phase 3.2: Added InheritanceGraph bridge for O(1) nominal class subtype checking.
+    /// Phase 3.2: Added `InheritanceGraph` bridge for O(1) nominal class subtype checking.
     pub(crate) fn check_lazy_lazy_subtype(
         &mut self,
         source: TypeId,
@@ -224,7 +224,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
-    /// Check TypeQuery to TypeQuery subtype with optional identity shortcut.
+    /// Check `TypeQuery` to `TypeQuery` subtype with optional identity shortcut.
     pub(crate) fn check_typequery_typequery_subtype(
         &mut self,
         source: TypeId,
@@ -291,7 +291,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check TypeQuery (typeof) to structural type subtype.
+    /// Check `TypeQuery` (typeof) to structural type subtype.
     pub(crate) fn check_typequery_subtype(
         &mut self,
         _source: TypeId,
@@ -309,7 +309,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
-    /// Check structural type to TypeQuery (typeof) subtype.
+    /// Check structural type to `TypeQuery` (typeof) subtype.
     pub(crate) fn check_to_typequery_subtype(
         &mut self,
         source: TypeId,
@@ -334,8 +334,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// This function implements O(1) generic type assignability by using variance
     /// annotations to avoid expensive structural expansion. When both applications
     /// have the same base type, we use the variance mask to check each type argument:
-    /// - Covariant: check s_arg <: t_arg
-    /// - Contravariant: check t_arg <: s_arg (reversed)
+    /// - Covariant: check `s_arg` <: `t_arg`
+    /// - Contravariant: check `t_arg` <: `s_arg` (reversed)
     /// - Invariant: check both directions (mutual subtyping)
     /// - Independent: skip (no constraint needed)
     ///

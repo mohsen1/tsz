@@ -245,7 +245,6 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
 
     assert!(
         output.contains("x;\n(function (N)"),
-        "namespace IIFE should not be extra-indented inside nested Sequence. Got:\n{}",
-        output
+        "namespace IIFE should not be extra-indented inside nested Sequence. Got:\n{output}"
     );
 }

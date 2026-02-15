@@ -139,7 +139,7 @@ impl<'a> EnumTransformer<'a> {
     }
 
     /// Transform a property access to a const enum member
-    /// Returns Some(inlined_value) if this is a const enum access, None otherwise
+    /// Returns `Some(inlined_value)` if this is a const enum access, None otherwise
     pub fn try_inline_const_enum_access(
         &mut self,
         obj_name: &str,
@@ -175,7 +175,7 @@ impl<'a> EnumTransformer<'a> {
     }
 
     /// Transform an element access to a const enum member
-    /// E.g., ConstEnum["Member"]
+    /// E.g., `ConstEnum`["Member"]
     pub fn try_inline_const_enum_element_access(
         &mut self,
         obj_name: &str,
@@ -327,7 +327,7 @@ impl<'a> EnumTransformer<'a> {
                     let left = self.emit_expression(bin.left);
                     let right = self.emit_expression(bin.right);
                     let op = self.operator_to_string(bin.operator_token);
-                    format!("{} {} {}", left, op, right)
+                    format!("{left} {op} {right}")
                 } else {
                     "0".to_string()
                 }
@@ -336,7 +336,7 @@ impl<'a> EnumTransformer<'a> {
                 if let Some(unary) = self.arena.get_unary_expr(node) {
                     let operand = self.emit_expression(unary.operand);
                     let op = self.operator_to_string(unary.operator);
-                    format!("{}{}", op, operand)
+                    format!("{op}{operand}")
                 } else {
                     "0".to_string()
                 }
@@ -352,7 +352,7 @@ impl<'a> EnumTransformer<'a> {
                 if let Some(access) = self.arena.get_access_expr(node) {
                     let obj = self.emit_expression(access.expression);
                     let prop = self.emit_expression(access.name_or_argument);
-                    format!("{}.{}", obj, prop)
+                    format!("{obj}.{prop}")
                 } else {
                     "undefined".to_string()
                 }
@@ -361,7 +361,7 @@ impl<'a> EnumTransformer<'a> {
         }
     }
 
-    fn operator_to_string(&self, op: u16) -> &'static str {
+    const fn operator_to_string(&self, op: u16) -> &'static str {
         match op {
             k if k == SyntaxKind::PlusToken as u16 => "+",
             k if k == SyntaxKind::MinusToken as u16 => "-",

@@ -1,4 +1,4 @@
-//! # CheckerState - Type Checker Orchestration Layer
+//! # `CheckerState` - Type Checker Orchestration Layer
 //!
 //! This module serves as the orchestration layer for the TypeScript type checker.
 //! It coordinates between various specialized checking modules while maintaining
@@ -17,7 +17,7 @@
 //!
 //! ## Extracted Modules
 //!
-//! ### Type Computation (type_computation.rs - 3,189 lines)
+//! ### Type Computation (`type_computation.rs` - 3,189 lines)
 //! - `get_type_of_binary_expression`
 //! - `get_type_of_call_expression`
 //! - `get_type_of_property_access`
@@ -26,7 +26,7 @@
 //! - `get_type_of_array_literal`
 //! - And 30+ other type computation functions
 //!
-//! ### Type Checking (type_checking.rs - 9,556 lines)
+//! ### Type Checking (`type_checking.rs` - 9,556 lines)
 //! - **Section 1-54**: Organized by functionality
 //! - Declaration checking (classes, interfaces, enums)
 //! - Statement checking (if, while, for, return)
@@ -34,20 +34,20 @@
 //! - Constructor checking
 //! - Function signature validation
 //!
-//! ### Symbol Resolution (symbol_resolver.rs - 1,380 lines)
+//! ### Symbol Resolution (`symbol_resolver.rs` - 1,380 lines)
 //! - `resolve_type_to_symbol`
 //! - `resolve_value_symbol`
 //! - `resolve_heritage_symbol`
 //! - Private brand checking
 //! - Import/Export resolution
 //!
-//! ### Flow Analysis (flow_analysis.rs - 1,511 lines)
+//! ### Flow Analysis (`flow_analysis.rs` - 1,511 lines)
 //! - Definite assignment checking
 //! - Type narrowing (typeof, discriminant)
 //! - Control flow analysis
 //! - TDZ (temporal dead zone) detection
 //!
-//! ### Error Reporting (error_reporter.rs - 1,923 lines)
+//! ### Error Reporting (`error_reporter.rs` - 1,923 lines)
 //! - All `error_*` methods
 //! - Diagnostic formatting
 //! - Error reporting with detailed reasons
@@ -57,7 +57,7 @@
 //! The code remaining in this file is primarily:
 //! 1. **Orchestration** (~4,000 lines): Entry points that coordinate between modules
 //! 2. **Caching** (~2,000 lines): Node type cache, symbol type cache management
-//! 3. **Dispatchers** (~3,000 lines): `compute_type_of_node` delegates to type_computation functions
+//! 3. **Dispatchers** (~3,000 lines): `compute_type_of_node` delegates to `type_computation` functions
 //! 4. **Type Relations** (~2,000 lines): `is_assignable_to`, `is_subtype_of` (wrapper around solver)
 //! 5. **Constructor/Class Helpers** (~2,000 lines): Complex type resolution for classes and inheritance
 //!
@@ -109,10 +109,10 @@ thread_local! {
 // CheckerState
 // =============================================================================
 
-/// Type checker state using NodeArena and Solver type system.
+/// Type checker state using `NodeArena` and Solver type system.
 ///
 /// This is a performance-optimized checker that works directly with the
-/// cache-friendly Node architecture and uses the solver's TypeInterner
+/// cache-friendly Node architecture and uses the solver's `TypeInterner`
 /// for structural type equality.
 ///
 /// The state is stored in a `CheckerContext` which can be shared with
@@ -174,15 +174,15 @@ pub(crate) enum ParamTypeResolutionMode {
 // AssignabilityOverrideProvider Implementation
 // =============================================================================
 
-/// Helper struct that implements AssignabilityOverrideProvider by delegating
-/// to CheckerState methods. Captures the TypeEnvironment reference.
+/// Helper struct that implements `AssignabilityOverrideProvider` by delegating
+/// to `CheckerState` methods. Captures the `TypeEnvironment` reference.
 pub(crate) struct CheckerOverrideProvider<'a, 'b> {
     checker: &'a CheckerState<'b>,
     env: Option<&'a tsz_solver::TypeEnvironment>,
 }
 
 impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         checker: &'a CheckerState<'b>,
         env: Option<&'a tsz_solver::TypeEnvironment>,
     ) -> Self {
@@ -218,7 +218,7 @@ impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvid
 }
 
 impl<'a> CheckerState<'a> {
-    /// Create a new CheckerState.
+    /// Create a new `CheckerState`.
     ///
     /// # Arguments
     /// * `arena` - The AST node arena
@@ -238,14 +238,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a new CheckerState with a shared DefinitionStore.
+    /// Create a new `CheckerState` with a shared `DefinitionStore`.
     ///
     /// This ensures that all type definitions (interfaces, type aliases, etc.) across
-    /// different files and lib contexts share the same DefId namespace, preventing
-    /// DefId collisions.
+    /// different files and lib contexts share the same `DefId` namespace, preventing
+    /// `DefId` collisions.
     ///
     /// # Arguments
-    /// * `definition_store` - Shared DefinitionStore (wrapped in Arc for thread-safety)
+    /// * `definition_store` - Shared `DefinitionStore` (wrapped in Arc for thread-safety)
     /// * Other args same as `new()`
     pub fn new_with_shared_def_store(
         arena: &'a NodeArena,
@@ -267,7 +267,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a new CheckerState with a persistent cache.
+    /// Create a new `CheckerState` with a persistent cache.
     /// This allows reusing type checking results from previous queries.
     ///
     /// # Arguments
@@ -297,7 +297,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a child CheckerState that shares the parent's caches.
+    /// Create a child `CheckerState` that shares the parent's caches.
     /// This is used for temporary checkers (e.g., cross-file symbol resolution)
     /// to ensure cache results are not lost (fixes Cache Isolation Bug).
     pub fn with_parent_cache(
@@ -321,9 +321,9 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Thread-local guard for cross-arena delegation depth.
-    /// All cross-arena delegation points (delegate_cross_arena_symbol_resolution,
-    /// get_type_params_for_symbol, type_of_value_declaration) MUST call this
-    /// before creating a child CheckerState. Returns true if delegation is allowed.
+    /// All cross-arena delegation points (`delegate_cross_arena_symbol_resolution`,
+    /// `get_type_params_for_symbol`, `type_of_value_declaration`) MUST call this
+    /// before creating a child `CheckerState`. Returns true if delegation is allowed.
     pub(crate) fn enter_cross_arena_delegation() -> bool {
         let d = CROSS_ARENA_DEPTH.with(std::cell::Cell::get);
         if d >= 5 {
@@ -350,21 +350,21 @@ impl<'a> CheckerState<'a> {
     /// This flag is set by the driver before type checking based on parse diagnostics.
     /// It's used to suppress certain type-level diagnostics when the file
     /// has syntax errors (e.g., JSON files parsed as TypeScript).
-    pub(crate) fn has_parse_errors(&self) -> bool {
+    pub(crate) const fn has_parse_errors(&self) -> bool {
         self.ctx.has_parse_errors
     }
 
     /// Check if the source file has real syntax errors (not just conflict markers).
     /// Conflict markers (TS1185) are treated as trivia and don't affect AST structure,
     /// so they should not suppress TS2304 errors.
-    pub(crate) fn has_syntax_parse_errors(&self) -> bool {
+    pub(crate) const fn has_syntax_parse_errors(&self) -> bool {
         self.ctx.has_syntax_parse_errors
     }
 
     /// Apply `this` type substitution to a method call's return type.
     ///
     /// When a method returns `this`, the return type should be the type of the receiver.
-    /// For `obj.method()` where method returns `this`, we substitute ThisType with typeof obj.
+    /// For `obj.method()` where method returns `this`, we substitute `ThisType` with typeof obj.
     pub(crate) fn apply_this_substitution_to_call_return(
         &mut self,
         return_type: tsz_solver::TypeId,
@@ -396,7 +396,7 @@ impl<'a> CheckerState<'a> {
         return_type
     }
 
-    /// Create a new CheckerState with explicit compiler options.
+    /// Create a new `CheckerState` with explicit compiler options.
     ///
     /// # Arguments
     /// * `arena` - The AST node arena
@@ -416,9 +416,9 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a new CheckerState with explicit compiler options and a shared DefinitionStore.
+    /// Create a new `CheckerState` with explicit compiler options and a shared `DefinitionStore`.
     ///
-    /// This is used in parallel checking to ensure all files share the same DefId namespace.
+    /// This is used in parallel checking to ensure all files share the same `DefId` namespace.
     pub fn with_options_and_shared_def_store(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -440,7 +440,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a new CheckerState with explicit compiler options and a persistent cache.
+    /// Create a new `CheckerState` with explicit compiler options and a persistent cache.
     pub fn with_cache_and_options(
         arena: &'a NodeArena,
         binder: &'a BinderState,
@@ -473,12 +473,12 @@ impl<'a> CheckerState<'a> {
 
     /// Cache a computed symbol type for fast lookup and incremental type checking.
     ///
-    /// This function stores the computed type of a symbol in the symbol_types cache,
+    /// This function stores the computed type of a symbol in the `symbol_types` cache,
     /// allowing subsequent lookups to avoid recomputing the type.
     ///
     /// ## Caching Strategy:
     /// - Types are cached after first computation
-    /// - Cache key is the SymbolId
+    /// - Cache key is the `SymbolId`
     /// - Cache persists for the lifetime of the type check
     ///
     /// ## Incremental Type Checking:
@@ -488,7 +488,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Cache Invalidation:
     /// - Symbol modifications trigger dependency tracking
-    /// - Dependent symbols are tracked via record_symbol_dependency
+    /// - Dependent symbols are tracked via `record_symbol_dependency`
     /// - Cache is cleared for invalidated symbols
     ///
     /// ## Performance:
@@ -664,7 +664,7 @@ impl<'a> CheckerState<'a> {
     /// - **start**: Byte offset of error start in file
     /// - **length**: Length of the error span in bytes
     /// - **message**: Human-readable error message
-    /// - **code**: TypeScript error code (TSxxxx)
+    /// - **code**: TypeScript error code (`TSxxxx`)
     ///
     /// **Error Categories:**
     /// - **Error**: Type errors that prevent compilation
@@ -1016,7 +1016,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    /// Complex type computation that needs full CheckerState context.
+    /// Complex type computation that needs full `CheckerState` context.
     ///
     /// This is called when `ExpressionChecker` returns `TypeId::DELEGATE`,
     /// indicating the expression needs symbol resolution, contextual typing,

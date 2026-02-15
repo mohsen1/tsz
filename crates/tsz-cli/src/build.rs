@@ -51,7 +51,7 @@ pub fn build_solution(args: &CliArgs, cwd: &Path, _root_names: &[String]) -> Res
     for project_id in build_order {
         let project = graph
             .get_project(project_id)
-            .ok_or_else(|| anyhow::anyhow!("Project not found: {:?}", project_id))?;
+            .ok_or_else(|| anyhow::anyhow!("Project not found: {project_id:?}"))?;
 
         // Check if project is up-to-date
         if !args.force && is_project_up_to_date(project, args) {

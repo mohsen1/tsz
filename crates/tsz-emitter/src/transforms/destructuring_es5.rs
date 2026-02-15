@@ -54,7 +54,7 @@ pub struct ES5DestructuringTransformer<'a> {
 }
 
 impl<'a> ES5DestructuringTransformer<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             temp_var_counter: 0,
@@ -62,7 +62,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
     }
 
     /// Reset temporary variable counter
-    pub fn reset(&mut self) {
+    pub const fn reset(&mut self) {
         self.temp_var_counter = 0;
     }
 

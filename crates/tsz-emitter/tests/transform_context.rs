@@ -89,7 +89,7 @@ fn test_commonjs_export_names_shared() {
         inner: Box::new(TransformDirective::Identity),
     };
 
-    let cloned = directive.clone();
+    let cloned = directive;
     match cloned {
         TransformDirective::CommonJSExport {
             names: cloned_names,

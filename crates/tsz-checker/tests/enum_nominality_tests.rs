@@ -193,8 +193,7 @@ let s = x.toString();
     let ts2339 = diagnostics.iter().filter(|d| d.0 == 2339).count();
     assert_eq!(
         ts2339, 0,
-        "Expected no TS2339 for enum instance .toString(), got: {:?}",
-        diagnostics
+        "Expected no TS2339 for enum instance .toString(), got: {diagnostics:?}"
     );
 }
 
@@ -211,8 +210,7 @@ let s = x.toFixed();
     let ts2339 = diagnostics.iter().filter(|d| d.0 == 2339).count();
     assert_eq!(
         ts2339, 0,
-        "Expected no TS2339 for enum instance .toFixed(), got: {:?}",
-        diagnostics
+        "Expected no TS2339 for enum instance .toFixed(), got: {diagnostics:?}"
     );
 }
 
@@ -229,8 +227,7 @@ let n = x.valueOf();
     let ts2339 = diagnostics.iter().filter(|d| d.0 == 2339).count();
     assert_eq!(
         ts2339, 0,
-        "Expected no TS2339 for enum instance .valueOf(), got: {:?}",
-        diagnostics
+        "Expected no TS2339 for enum instance .valueOf(), got: {diagnostics:?}"
     );
 }
 
@@ -246,7 +243,6 @@ let bad = Foo.nonExistent;
     let ts2339 = diagnostics.iter().filter(|d| d.0 == 2339).count();
     assert_eq!(
         ts2339, 1,
-        "Expected 1 TS2339 for Foo.nonExistent, got: {:?}",
-        diagnostics
+        "Expected 1 TS2339 for Foo.nonExistent, got: {diagnostics:?}"
     );
 }

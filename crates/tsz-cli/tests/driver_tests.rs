@@ -1764,7 +1764,7 @@ fn compile_with_cache_emits_only_dirty_files() {
     assert!(result.emitted_files.contains(&beta_output));
 
     write_file(&alpha_path, "export const alpha = 2;");
-    let canonical = std::fs::canonicalize(&alpha_path).unwrap_or(alpha_path.clone());
+    let canonical = std::fs::canonicalize(&alpha_path).unwrap_or(alpha_path);
     cache.invalidate_paths_with_dependents(vec![canonical]);
 
     let result = compile_with_cache(&args, base, &mut cache).expect("compile should succeed");
@@ -1815,7 +1815,7 @@ fn compile_with_cache_updates_dependencies_for_changed_files() {
     );
     write_file(&extra_path, "export const value = ;");
 
-    let canonical = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
+    let canonical = std::fs::canonicalize(&index_path).unwrap_or(index_path);
     let result = compile_with_cache_and_changes(&args, base, &mut cache, &[canonical])
         .expect("compile should succeed");
     assert!(
@@ -1871,7 +1871,7 @@ fn compile_with_cache_skips_dependents_when_exports_unchanged() {
         .unwrap_or_else(|_| base.join("dist/src/util.js"));
     let index_output = std::fs::canonicalize(base.join("dist/src/index.js"))
         .unwrap_or_else(|_| base.join("dist/src/index.js"));
-    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path);
 
     let result = compile_with_cache_and_changes(&args, base, &mut cache, &[canonical])
         .expect("compile should succeed");
@@ -1922,7 +1922,7 @@ fn compile_with_cache_rechecks_dependents_on_export_change() {
         .unwrap_or_else(|_| base.join("dist/src/util.js"));
     let index_output = std::fs::canonicalize(base.join("dist/src/index.js"))
         .unwrap_or_else(|_| base.join("dist/src/index.js"));
-    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path);
 
     let result = compile_with_cache_and_changes(&args, base, &mut cache, &[canonical])
         .expect("compile should succeed");
@@ -1958,7 +1958,7 @@ fn compile_with_cache_invalidates_paths() {
     assert_eq!(cache.bind_len(), 1);
     assert_eq!(cache.diagnostics_len(), 1);
 
-    let canonical = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
+    let canonical = std::fs::canonicalize(&index_path).unwrap_or(index_path);
     cache.invalidate_paths_with_dependents(vec![canonical]);
     assert_eq!(cache.len(), 0);
     assert_eq!(cache.bind_len(), 0);
@@ -2003,7 +2003,7 @@ fn compile_with_cache_invalidates_dependents() {
     assert_eq!(cache.bind_len(), 2);
     assert_eq!(cache.diagnostics_len(), 2);
 
-    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical = std::fs::canonicalize(&util_path).unwrap_or(util_path);
     cache.invalidate_paths_with_dependents(vec![canonical]);
     assert_eq!(cache.len(), 0);
     assert_eq!(cache.bind_len(), 0);
@@ -2044,8 +2044,8 @@ fn invalidate_paths_with_dependents_symbols_keeps_unrelated_cache() {
     let result = compile_with_cache(&args, base, &mut cache).expect("compile should succeed");
     assert!(result.diagnostics.is_empty());
 
-    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
-    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path);
+    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path);
     let before = cache.symbol_cache_len(&canonical_index).unwrap_or(0);
     assert!(before > 0);
 
@@ -2087,8 +2087,8 @@ fn invalidate_paths_with_dependents_symbols_handles_reexports() {
     assert!(result.diagnostics.is_empty());
     assert_eq!(cache.len(), 2);
 
-    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
-    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path);
+    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path);
 
     cache.invalidate_paths_with_dependents_symbols(vec![canonical_util.clone()]);
 
@@ -2132,8 +2132,8 @@ fn invalidate_paths_with_dependents_symbols_handles_import_equals() {
     );
     assert_eq!(cache.len(), 2);
 
-    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
-    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path);
+    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path);
     let before_nodes = cache.node_cache_len(&canonical_index).unwrap_or(0);
     assert!(before_nodes > 0);
 
@@ -2174,8 +2174,8 @@ fn invalidate_paths_with_dependents_symbols_handles_namespace_reexports() {
     assert!(result.diagnostics.is_empty());
     assert_eq!(cache.len(), 2);
 
-    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
-    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path);
+    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path);
     let before_nodes = cache.node_cache_len(&canonical_index).unwrap_or(0);
     assert!(before_nodes > 0);
 
@@ -2216,8 +2216,8 @@ fn invalidate_paths_with_dependents_symbols_handles_star_reexports() {
     assert!(result.diagnostics.is_empty());
     assert_eq!(cache.len(), 2);
 
-    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path.clone());
-    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path.clone());
+    let canonical_index = std::fs::canonicalize(&index_path).unwrap_or(index_path);
+    let canonical_util = std::fs::canonicalize(&util_path).unwrap_or(util_path);
     let before_nodes = cache.node_cache_len(&canonical_index).unwrap_or(0);
     assert!(before_nodes > 0);
 
@@ -2392,18 +2392,15 @@ export * from './services/user-service';
         .expect("read service js");
     assert!(
         service_js.contains("require(") || service_js.contains("import"),
-        "Service JS should have require or import statements: {}",
-        service_js
+        "Service JS should have require or import statements: {service_js}"
     );
     assert!(
         service_js.contains("../models/user") || service_js.contains("./models/user"),
-        "Service JS should reference models/user: {}",
-        service_js
+        "Service JS should reference models/user: {service_js}"
     );
     assert!(
         service_js.contains("../utils/helpers") || service_js.contains("./utils/helpers"),
-        "Service JS should reference utils/helpers: {}",
-        service_js
+        "Service JS should reference utils/helpers: {service_js}"
     );
 
     // Verify index.js has re-exports (CommonJS uses Object.defineProperty pattern)
@@ -2411,16 +2408,14 @@ export * from './services/user-service';
     assert!(
         index_js.contains("exports")
             && (index_js.contains("require(") || index_js.contains("Object.defineProperty")),
-        "Index JS should have CommonJS exports: {}",
-        index_js
+        "Index JS should have CommonJS exports: {index_js}"
     );
 
     // Verify declaration file for index has re-export statements
     let index_dts = std::fs::read_to_string(base.join("dist/index.d.ts")).expect("read index d.ts");
     assert!(
         index_dts.contains("export *") && index_dts.contains("./models/user"),
-        "Index d.ts should have re-export statements: {}",
-        index_dts
+        "Index d.ts should have re-export statements: {index_dts}"
     );
 
     // Verify source map for user-service has correct sources
@@ -2532,21 +2527,18 @@ export function runApp(): string {
     let app_js = std::fs::read_to_string(base.join("dist/app.js")).expect("read app js");
     assert!(
         app_js.contains("./constants") || app_js.contains("constants"),
-        "App JS should reference constants: {}",
-        app_js
+        "App JS should reference constants: {app_js}"
     );
     assert!(
         app_js.contains("./math") || app_js.contains("math"),
-        "App JS should reference math: {}",
-        app_js
+        "App JS should reference math: {app_js}"
     );
 
     // Verify declaration file has correct exports
     let app_dts = std::fs::read_to_string(base.join("dist/app.d.ts")).expect("read app d.ts");
     assert!(
         app_dts.contains("runApp"),
-        "App d.ts should export runApp: {}",
-        app_dts
+        "App d.ts should export runApp: {app_dts}"
     );
 }
 
@@ -2636,8 +2628,7 @@ export { ConsoleLogger, createLogger } from './logger';
         std::fs::read_to_string(base.join("dist/src/index.d.ts")).expect("read index d.ts");
     assert!(
         index_dts.contains("Logger") && index_dts.contains("LogLevel"),
-        "Index d.ts should have type exports for Logger and LogLevel: {}",
-        index_dts
+        "Index d.ts should have type exports for Logger and LogLevel: {index_dts}"
     );
 
     // Verify logger.js has the class implementation
@@ -2645,8 +2636,7 @@ export { ConsoleLogger, createLogger } from './logger';
         std::fs::read_to_string(base.join("dist/src/logger.js")).expect("read logger js");
     assert!(
         logger_js.contains("ConsoleLogger") && logger_js.contains("createLogger"),
-        "Logger JS should have class and function exports: {}",
-        logger_js
+        "Logger JS should have class and function exports: {logger_js}"
     );
 }
 
@@ -2701,13 +2691,11 @@ export function greet(name: string): string {
     let dts = std::fs::read_to_string(base.join("dist/src/index.d.ts")).expect("read d.ts");
     assert!(
         dts.contains("VERSION") && dts.contains("string"),
-        "Declaration should contain VERSION: {}",
-        dts
+        "Declaration should contain VERSION: {dts}"
     );
     assert!(
         dts.contains("greet") && dts.contains("name"),
-        "Declaration should contain greet function: {}",
-        dts
+        "Declaration should contain greet function: {dts}"
     );
 }
 
@@ -2827,30 +2815,25 @@ export type UserRole = "admin" | "user" | "guest";
     // Interface should be in declaration
     assert!(
         dts.contains("interface User"),
-        "Declaration should contain User interface: {}",
-        dts
+        "Declaration should contain User interface: {dts}"
     );
     assert!(
         dts.contains("id") && dts.contains("number"),
-        "Declaration should contain id property: {}",
-        dts
+        "Declaration should contain id property: {dts}"
     );
     assert!(
         dts.contains("name") && dts.contains("string"),
-        "Declaration should contain name property: {}",
-        dts
+        "Declaration should contain name property: {dts}"
     );
 
     // Type aliases should be in declaration
     assert!(
         dts.contains("UserId"),
-        "Declaration should contain UserId type: {}",
-        dts
+        "Declaration should contain UserId type: {dts}"
     );
     assert!(
         dts.contains("UserRole"),
-        "Declaration should contain UserRole type: {}",
-        dts
+        "Declaration should contain UserRole type: {dts}"
     );
 }
 
@@ -2915,32 +2898,27 @@ export class Calculator {
     // Class should be in declaration
     assert!(
         dts.contains("class Calculator"),
-        "Declaration should contain Calculator class: {}",
-        dts
+        "Declaration should contain Calculator class: {dts}"
     );
 
     // Methods should be in declaration
     assert!(
         dts.contains("add") && dts.contains("void"),
-        "Declaration should contain add method with void return: {}",
-        dts
+        "Declaration should contain add method with void return: {dts}"
     );
     assert!(
         dts.contains("subtract") && dts.contains("void"),
-        "Declaration should contain subtract method with void return: {}",
-        dts
+        "Declaration should contain subtract method with void return: {dts}"
     );
     assert!(
         dts.contains("getResult") && dts.contains("number"),
-        "Declaration should contain getResult method: {}",
-        dts
+        "Declaration should contain getResult method: {dts}"
     );
 
     // Private members should be marked private in declaration
     assert!(
         dts.contains("private") && dts.contains("value"),
-        "Declaration should contain private value: {}",
-        dts
+        "Declaration should contain private value: {dts}"
     );
 }
 
@@ -3267,8 +3245,7 @@ fn compile_missing_file_in_files_array_returns_error() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("file not found") || err.contains("not found") || err.contains("missing"),
-        "Error should mention file not found: {}",
-        err
+        "Error should mention file not found: {err}"
     );
     // No output should be produced
     assert!(!base.join("dist").is_dir());
@@ -3322,8 +3299,7 @@ fn compile_missing_single_file_via_cli_args_returns_error() {
     let err = result.unwrap_err().to_string();
     assert!(
         err.contains("not found") || err.contains("No such file"),
-        "Error should mention file not found: {}",
-        err
+        "Error should mention file not found: {err}"
     );
 }
 

@@ -68,19 +68,19 @@ impl<'a> TracerSubtypeChecker<'a> {
     }
 
     /// Set whether to use strict function types.
-    pub fn with_strict_function_types(mut self, strict: bool) -> Self {
+    pub const fn with_strict_function_types(mut self, strict: bool) -> Self {
         self.strict_function_types = strict;
         self
     }
 
     /// Set whether to allow void return type optimization.
-    pub fn with_allow_void_return(mut self, allow: bool) -> Self {
+    pub const fn with_allow_void_return(mut self, allow: bool) -> Self {
         self.allow_void_return = allow;
         self
     }
 
     /// Set strict null checks mode.
-    pub fn with_strict_null_checks(mut self, strict: bool) -> Self {
+    pub const fn with_strict_null_checks(mut self, strict: bool) -> Self {
         self.strict_null_checks = strict;
         self
     }
@@ -285,19 +285,9 @@ impl<'a> TracerSubtypeChecker<'a> {
                 )
             }
 
-            (TypeData::Object(s_shape_id), TypeData::ObjectWithIndex(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.check_object_with_index_with_tracer(&s_shape, &t_shape, source, target, tracer)
-            }
-
-            (TypeData::ObjectWithIndex(s_shape_id), TypeData::ObjectWithIndex(t_shape_id)) => {
-                let s_shape = self.interner.object_shape(*s_shape_id);
-                let t_shape = self.interner.object_shape(*t_shape_id);
-                self.check_object_with_index_with_tracer(&s_shape, &t_shape, source, target, tracer)
-            }
-
-            (TypeData::ObjectWithIndex(s_shape_id), TypeData::Object(t_shape_id)) => {
+            (TypeData::Object(s_shape_id), TypeData::ObjectWithIndex(t_shape_id))
+            | (TypeData::ObjectWithIndex(s_shape_id), TypeData::ObjectWithIndex(t_shape_id))
+            | (TypeData::ObjectWithIndex(s_shape_id), TypeData::Object(t_shape_id)) => {
                 let s_shape = self.interner.object_shape(*s_shape_id);
                 let t_shape = self.interner.object_shape(*t_shape_id);
                 self.check_object_with_index_with_tracer(&s_shape, &t_shape, source, target, tracer)
@@ -322,16 +312,16 @@ impl<'a> TracerSubtypeChecker<'a> {
 
 impl<'a> TracerSubtypeChecker<'a> {
     /// Evaluate a type (handle Ref, Application, etc.)
-    fn evaluate_type(&self, type_id: TypeId) -> TypeId {
+    const fn evaluate_type(&self, type_id: TypeId) -> TypeId {
         // For now, just return the type as-is
         // A full implementation would handle Ref, Application, etc.
         type_id
     }
 
     /// Get apparent primitive shape for a type key.
-    /// Returns an ObjectShape for primitives that have apparent methods (e.g., String.prototype methods).
+    /// Returns an `ObjectShape` for primitives that have apparent methods (e.g., String.prototype methods).
     /// Currently returns None as apparent shapes are not yet implemented.
-    fn apparent_primitive_shape_for_key(&self, _key: &TypeData) -> Option<ObjectShape> {
+    const fn apparent_primitive_shape_for_key(&self, _key: &TypeData) -> Option<ObjectShape> {
         // TODO: Return apparent shapes for primitives (String, Number, etc.)
         // For example, string has { toString(): string, valueOf(): string, ... }
         None
@@ -352,19 +342,12 @@ impl<'a> TracerSubtypeChecker<'a> {
             // Same type
             (s, t) if s == t => true,
             // never is subtype of everything (bottom type) - but this should be caught earlier
-            (IntrinsicKind::Never, _) => true,
+            (IntrinsicKind::Never, _) | (IntrinsicKind::Function, IntrinsicKind::Object) => true,
             // Only never is subtype of never
             (_, IntrinsicKind::Never) => false,
             // any is subtype of everything except never (already handled above)
-            (IntrinsicKind::Any, _) => true,
-            // Everything is subtype of any
-            (_, IntrinsicKind::Any) => true,
-            // Everything is subtype of unknown
-            (_, IntrinsicKind::Unknown) => true,
-            // unknown is only subtype of unknown/any (already handled)
-            (IntrinsicKind::Unknown, _) => false,
-            // Function is subtype of object
-            (IntrinsicKind::Function, IntrinsicKind::Object) => true,
+            // everything is subtype of any and unknown
+            (IntrinsicKind::Any, _) | (_, IntrinsicKind::Any) | (_, IntrinsicKind::Unknown) => true,
             _ => false,
         };
 

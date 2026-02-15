@@ -144,7 +144,7 @@ impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
 
 /// Trait for providing checker-specific assignability overrides.
 ///
-/// This allows the solver's CompatChecker to call back into the checker
+/// This allows the solver's `CompatChecker` to call back into the checker
 /// for special cases that require binder/symbol information (enums,
 /// abstract constructors, constructor accessibility).
 pub trait AssignabilityOverrideProvider {
@@ -165,7 +165,7 @@ pub trait AssignabilityOverrideProvider {
     fn constructor_accessibility_override(&self, source: TypeId, target: TypeId) -> Option<bool>;
 }
 
-/// A no-op implementation of AssignabilityOverrideProvider for when no checker context is available.
+/// A no-op implementation of `AssignabilityOverrideProvider` for when no checker context is available.
 pub struct NoopOverrideProvider;
 
 impl AssignabilityOverrideProvider for NoopOverrideProvider {
@@ -209,7 +209,7 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
 
 impl<'a> CompatChecker<'a, NoopResolver> {
     /// Create a new compatibility checker without a resolver.
-    /// Note: Callers should configure strict_function_types explicitly via set_strict_function_types()
+    /// Note: Callers should configure `strict_function_types` explicitly via `set_strict_function_types()`
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         CompatChecker {
             interner,
@@ -291,7 +291,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Create a new compatibility checker with a resolver.
-    /// Note: Callers should configure strict_function_types explicitly via set_strict_function_types()
+    /// Note: Callers should configure `strict_function_types` explicitly via `set_strict_function_types()`
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         CompatChecker {
             interner,
@@ -310,15 +310,15 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Set the query database for Salsa-backed memoization.
-    /// Propagates to the internal SubtypeChecker.
+    /// Propagates to the internal `SubtypeChecker`.
     pub fn set_query_db(&mut self, db: &'a dyn QueryDatabase) {
         self.query_db = Some(db);
         self.subtype.query_db = Some(db);
     }
 
     /// Set the inheritance graph for nominal class subtype checking.
-    /// Propagates to the internal SubtypeChecker.
-    pub fn set_inheritance_graph(
+    /// Propagates to the internal `SubtypeChecker`.
+    pub const fn set_inheritance_graph(
         &mut self,
         graph: Option<&'a crate::inheritance::InheritanceGraph>,
     ) {
@@ -326,7 +326,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Configure strict function parameter checking.
-    /// See https://github.com/microsoft/TypeScript/issues/18654.
+    /// See <https://github.com/microsoft/TypeScript/issues/18654>.
     pub fn set_strict_function_types(&mut self, strict: bool) {
         if self.strict_function_types != strict {
             self.strict_function_types = strict;
@@ -351,7 +351,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Configure exact optional property types.
-    /// See https://github.com/microsoft/TypeScript/issues/13195.
+    /// See <https://github.com/microsoft/TypeScript/issues/13195>.
     pub fn set_exact_optional_property_types(&mut self, exact: bool) {
         if self.exact_optional_property_types != exact {
             self.exact_optional_property_types = exact;
@@ -375,14 +375,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Apply compiler options from a bitmask flags value.
     ///
     /// The flags correspond to `RelationCacheKey` bits:
-    /// - bit 0: strict_null_checks
-    /// - bit 1: strict_function_types
-    /// - bit 2: exact_optional_property_types
-    /// - bit 3: no_unchecked_indexed_access
-    /// - bit 4: disable_method_bivariance (strict_subtype_checking)
-    /// - bit 5: allow_void_return
-    /// - bit 6: allow_bivariant_rest
-    /// - bit 7: allow_bivariant_param_count
+    /// - bit 0: `strict_null_checks`
+    /// - bit 1: `strict_function_types`
+    /// - bit 2: `exact_optional_property_types`
+    /// - bit 3: `no_unchecked_indexed_access`
+    /// - bit 4: `disable_method_bivariance` (`strict_subtype_checking`)
+    /// - bit 5: `allow_void_return`
+    /// - bit 6: `allow_bivariant_rest`
+    /// - bit 7: `allow_bivariant_param_count`
     ///
     /// This is used by `QueryCache::is_assignable_to_with_flags` to ensure
     /// cached results respect the compiler configuration.
@@ -422,7 +422,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Get a reference to the lawyer layer for `any` propagation rules.
-    pub fn lawyer(&self) -> &AnyPropagationRules {
+    pub const fn lawyer(&self) -> &AnyPropagationRules {
         &self.lawyer
     }
 
@@ -432,10 +432,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         &mut self.lawyer
     }
 
-    /// Apply configuration from JudgeConfig.
+    /// Apply configuration from `JudgeConfig`.
     ///
-    /// This is used to configure the CompatChecker with settings from
-    /// the CompilerOptions (passed through JudgeConfig).
+    /// This is used to configure the `CompatChecker` with settings from
+    /// the `CompilerOptions` (passed through `JudgeConfig`).
     pub fn apply_config(&mut self, config: &crate::judge::JudgeConfig) {
         self.strict_function_types = config.strict_function_types;
         self.strict_null_checks = config.strict_null_checks;
@@ -661,7 +661,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Internal implementation of assignability check.
-    /// Extracted to share logic between is_assignable and is_assignable_strict.
+    /// Extracted to share logic between `is_assignable` and `is_assignable_strict`.
     fn is_assignable_impl(
         &mut self,
         source: TypeId,
@@ -903,7 +903,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.explain_failure(source, target)
     }
 
-    fn configure_subtype(&mut self, strict_function_types: bool) {
+    const fn configure_subtype(&mut self, strict_function_types: bool) {
         self.subtype.strict_function_types = strict_function_types;
         self.subtype.allow_void_return = true;
         self.subtype.allow_bivariant_rest = true;
@@ -1124,7 +1124,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Check if a type is an empty object target.
-    /// Uses the visitor pattern from solver::visitor.
+    /// Uses the visitor pattern from `solver::visitor`.
     fn is_empty_object_target(&self, target: TypeId) -> bool {
         is_empty_object_type_db(self.interner, target)
     }
@@ -1392,10 +1392,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     }
 
     /// Enum member assignability override.
-    /// Implements nominal typing for enum members: EnumA.X is NOT assignable to EnumB even if values match.
+    /// Implements nominal typing for enum members: EnumA.X is NOT assignable to `EnumB` even if values match.
     ///
     /// TypeScript enum rules:
-    /// 1. Different enums with different DefIds are NOT assignable (nominal typing)
+    /// 1. Different enums with different `DefIds` are NOT assignable (nominal typing)
     /// 2. Numeric enums are bidirectionally assignable to number (Rule #7 - Open Numeric Enums)
     /// 3. String enums are strictly nominal (string literals NOT assignable to string enums)
     /// 4. Same enum members with different values are NOT assignable (EnumA.X != EnumA.Y)
@@ -1567,7 +1567,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         visitor.visit_type(self.interner, type_id)
     }
 
-    /// Get the DefId of an enum type, handling both direct Enum members and Union-based Enums.
+    /// Get the `DefId` of an enum type, handling both direct Enum members and Union-based Enums.
     /// Check whether `type_id` is an enum whose underlying member is a string or number literal.
     fn is_literal_enum_member(&self, type_id: TypeId) -> bool {
         matches!(
@@ -1580,7 +1580,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         )
     }
 
-    /// Returns Some(def_id) if the type is an Enum or a Union of Enum members from the same enum.
+    /// Returns `Some(def_id)` if the type is an Enum or a Union of Enum members from the same enum.
     /// Returns None if the type is not an enum or contains mixed enums.
     fn get_enum_def_id(&self, type_id: TypeId) -> Option<crate::def::DefId> {
         use crate::{type_queries, visitor};

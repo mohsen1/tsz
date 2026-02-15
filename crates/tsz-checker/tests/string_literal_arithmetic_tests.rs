@@ -40,8 +40,7 @@ let y = x + 1;  // Should not emit TS2362 - this is string concatenation
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no TS2362/TS2363 errors for string literal union + number, got {}",
-        error_count
+        "Expected no TS2362/TS2363 errors for string literal union + number, got {error_count}"
     );
 }
 
@@ -77,8 +76,7 @@ let y = x - 1;  // Should emit TS2362 - this is arithmetic, not string concatena
         .count();
     assert!(
         error_count >= 1,
-        "Expected at least 1 TS2362 error for number | string - number, got {}",
-        error_count
+        "Expected at least 1 TS2362 error for number | string - number, got {error_count}"
     );
 }
 
@@ -114,8 +112,7 @@ let y = x + 1;  // Should not emit TS2362
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no TS2362/TS2363 errors, got {}",
-        error_count
+        "Expected no TS2362/TS2363 errors, got {error_count}"
     );
 }
 
@@ -151,7 +148,6 @@ let y = x + 1;  // Should not emit TS2362 - number literal union is valid for ar
         .count();
     assert_eq!(
         error_count, 0,
-        "Expected no TS2362/TS2363 errors for number literal union, got {}",
-        error_count
+        "Expected no TS2362/TS2363 errors for number literal union, got {error_count}"
     );
 }

@@ -1,7 +1,7 @@
 //! Performance tracing support for the `--generateTrace` flag.
 //!
-//! Generates Chrome DevTools compatible trace files that can be loaded in
-//! chrome://tracing or the Perfetto UI (https://ui.perfetto.dev/).
+//! Generates Chrome `DevTools` compatible trace files that can be loaded in
+//! <chrome://tracing> or the Perfetto UI (<https://ui.perfetto.dev>/).
 //!
 //! # Trace Format
 //!
@@ -110,7 +110,7 @@ impl Tracer {
     /// Begin a duration event
     pub fn begin(&mut self, name: &str, category: &str) {
         let ts = self.timestamp();
-        let key = format!("{}:{}", category, name);
+        let key = format!("{category}:{name}");
         self.active_spans.insert(key, Instant::now());
 
         self.events.push(TraceEvent {
@@ -133,7 +133,7 @@ impl Tracer {
         args: FxHashMap<String, serde_json::Value>,
     ) {
         let ts = self.timestamp();
-        let key = format!("{}:{}", category, name);
+        let key = format!("{category}:{name}");
         self.active_spans.insert(key, Instant::now());
 
         self.events.push(TraceEvent {
@@ -151,7 +151,7 @@ impl Tracer {
     /// End a duration event
     pub fn end(&mut self, name: &str, category: &str) {
         let ts = self.timestamp();
-        let key = format!("{}:{}", category, name);
+        let key = format!("{category}:{name}");
         self.active_spans.remove(&key);
 
         self.events.push(TraceEvent {

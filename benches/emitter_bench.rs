@@ -99,11 +99,10 @@ fn generate_large_source(functions: usize, statements_per_fn: usize) -> String {
 
     for f in 0..functions {
         source.push_str(&format!(
-            "function fn{}(x: number, y: number): number {{\n",
-            f
+            "function fn{f}(x: number, y: number): number {{\n"
         ));
         for s in 0..statements_per_fn {
-            source.push_str(&format!("    let v{} = x + {};\n", s, s));
+            source.push_str(&format!("    let v{s} = x + {s};\n"));
         }
         source.push_str("    return x + y;\n");
         source.push_str("}\n\n");
@@ -111,7 +110,7 @@ fn generate_large_source(functions: usize, statements_per_fn: usize) -> String {
 
     // Add some calls
     for f in 0..functions {
-        source.push_str(&format!("const r{} = fn{}(1, 2);\n", f, f));
+        source.push_str(&format!("const r{f} = fn{f}(1, 2);\n"));
     }
 
     source
@@ -170,7 +169,7 @@ fn bench_emit_throughput(c: &mut Criterion) {
     for (functions, statements) in [(10, 5), (20, 10), (50, 5), (100, 5)].iter() {
         let source = generate_large_source(*functions, *statements);
         let bytes = source.len() as u64;
-        let label = format!("{}fn_{}stmt", functions, statements);
+        let label = format!("{functions}fn_{statements}stmt");
 
         group.throughput(Throughput::Bytes(bytes));
         group.bench_with_input(BenchmarkId::new("emit", &label), &source, |b, source| {

@@ -1,6 +1,6 @@
 //! Concurrent type interning tests
 //!
-//! These tests verify that the TypeInterner's lock-free DashMap architecture
+//! These tests verify that the `TypeInterner`'s lock-free `DashMap` architecture
 //! enables true parallel type checking without lock contention or deadlocks.
 
 use crate::{
@@ -28,7 +28,7 @@ fn test_concurrent_string_interning_deduplication() {
     for (i, s) in strings.iter().enumerate() {
         let atom1 = results[i];
         let atom2 = interner.intern_string(s);
-        assert_eq!(atom1, atom2, "String should deduplicate: {}", s);
+        assert_eq!(atom1, atom2, "String should deduplicate: {s}");
     }
 
     // Verify we can resolve all atoms
@@ -47,7 +47,7 @@ fn test_concurrent_type_interning() {
         .into_par_iter()
         .map(|i| match i % 4 {
             0 => interner.literal_number(i as f64),
-            1 => interner.literal_string(&format!("str_{}", i)),
+            1 => interner.literal_string(&format!("str_{i}")),
             2 => interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
             3 => interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]),
             _ => panic!("internal error: unexpected concurrent partition index"),
@@ -72,7 +72,7 @@ fn test_concurrent_object_creation() {
             let props = vec![
                 PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
                 PropertyInfo {
-                    name: interner.intern_string(&format!("prop_{}", i)),
+                    name: interner.intern_string(&format!("prop_{i}")),
                     type_id: TypeId::STRING,
                     write_type: TypeId::STRING,
                     optional: false,
@@ -195,7 +195,7 @@ fn test_concurrent_property_map_building() {
     // Create a large object (above cache threshold)
     let props: Vec<PropertyInfo> = (0..30)
         .map(|i| PropertyInfo {
-            name: interner.intern_string(&format!("prop_{}", i)),
+            name: interner.intern_string(&format!("prop_{i}")),
             type_id: TypeId::STRING,
             write_type: TypeId::STRING,
             optional: false,
@@ -227,9 +227,8 @@ fn test_concurrent_property_map_building() {
     // All lookups should succeed
     for lookup in &lookups {
         match lookup {
-            PropertyLookup::Found(_) => {}
+            PropertyLookup::Found(_) | PropertyLookup::Uncached => {}
             PropertyLookup::NotFound => panic!("Property should be found"),
-            PropertyLookup::Uncached => {} // OK for small objects
         }
     }
 }
@@ -306,7 +305,7 @@ fn test_shard_distribution() {
         .map(|i| {
             interner.union(vec![
                 interner.literal_number(i as f64),
-                interner.literal_string(&format!("str_{}", i)),
+                interner.literal_string(&format!("str_{i}")),
             ])
         })
         .collect();
@@ -315,8 +314,7 @@ fn test_shard_distribution() {
     let total_types = interner.len();
     assert!(
         total_types > 1000,
-        "Should have interned many types: {}",
-        total_types
+        "Should have interned many types: {total_types}"
     );
 }
 
@@ -426,7 +424,7 @@ fn test_concurrent_template_literal_creation() {
         .map(|i| {
             let spans = vec![
                 TemplateSpan::Text(interner.intern_string("prefix_")),
-                TemplateSpan::Type(interner.literal_string(&format!("literal_{}", i))),
+                TemplateSpan::Type(interner.literal_string(&format!("literal_{i}"))),
             ];
             interner.template_literal(spans)
         })

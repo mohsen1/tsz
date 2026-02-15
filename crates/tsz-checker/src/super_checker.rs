@@ -2,12 +2,12 @@
 //!
 //! This module contains methods for validating super expression usage.
 //! It handles:
-//! - super() call validation (must be in constructors)
+//! - `super()` call validation (must be in constructors)
 //! - super property access validation (must be in valid contexts)
 //! - Derived class requirements
 //! - Static property initializer restrictions
 //!
-//! This module extends CheckerState with super-related methods as part of
+//! This module extends `CheckerState` with super-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -830,7 +830,7 @@ impl<'a> CheckerState<'a> {
     /// Validates that super expressions are used correctly:
     /// - TS17011: super cannot be in static property initializers
     /// - TS2335: super can only be used in derived classes
-    /// - TS2337: super() calls must be in constructors
+    /// - TS2337: `super()` calls must be in constructors
     /// - TS2336: super property access must be in valid contexts
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};

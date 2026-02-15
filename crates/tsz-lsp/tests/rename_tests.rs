@@ -462,8 +462,7 @@ fn test_rename_shorthand_property_produces_prefix() {
     let has_prefix_edit = edits.iter().any(|e| e.prefix_text.is_some());
     assert!(
         has_prefix_edit,
-        "Should produce a prefix_text edit for shorthand property: edits = {:?}",
-        edits
+        "Should produce a prefix_text edit for shorthand property: edits = {edits:?}"
     );
 
     if let Some(prefix_edit) = edits.iter().find(|e| e.prefix_text.is_some()) {
@@ -481,8 +480,7 @@ fn test_rename_shorthand_property_produces_prefix() {
     let has_folded = std_edits.iter().any(|e| e.new_text == "x: y");
     assert!(
         has_folded,
-        "Standard WorkspaceEdit should fold prefix into new_text: edits = {:?}",
-        std_edits
+        "Standard WorkspaceEdit should fold prefix into new_text: edits = {std_edits:?}"
     );
 }
 
@@ -507,8 +505,7 @@ fn test_rename_destructuring_produces_prefix() {
     let has_prefix = edits.iter().any(|e| e.prefix_text.is_some());
     assert!(
         has_prefix,
-        "Should produce prefix_text for destructuring binding: edits = {:?}",
-        edits
+        "Should produce prefix_text for destructuring binding: edits = {edits:?}"
     );
 }
 
@@ -533,8 +530,7 @@ fn test_rename_import_specifier_produces_prefix() {
     let has_prefix = edits.iter().any(|e| e.prefix_text.is_some());
     assert!(
         has_prefix,
-        "Should produce prefix_text for import specifier: edits = {:?}",
-        edits
+        "Should produce prefix_text for import specifier: edits = {edits:?}"
     );
 
     if let Some(prefix_edit) = edits.iter().find(|e| e.prefix_text.is_some()) {

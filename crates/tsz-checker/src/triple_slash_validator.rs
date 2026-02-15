@@ -6,7 +6,7 @@ use std::path::Path;
 
 /// Extract triple-slash reference paths from source text
 ///
-/// Returns a vector of (path, line_number) tuples for each reference directive found.
+/// Returns a vector of (path, `line_number`) tuples for each reference directive found.
 pub fn extract_reference_paths(source: &str) -> Vec<(String, usize)> {
     let mut references = Vec::new();
 
@@ -34,7 +34,7 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize)> {
 
 /// Extract `/// <reference types="..." />` directives from source text.
 ///
-/// Returns a vector of (type_name, resolution_mode, line_number) tuples.
+/// Returns a vector of (`type_name`, `resolution_mode`, `line_number`) tuples.
 /// `resolution_mode` is `Some("import")` or `Some("require")` if specified.
 pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usize)> {
     let mut references = Vec::new();
@@ -61,7 +61,7 @@ pub fn extract_reference_types(source: &str) -> Vec<(String, Option<String>, usi
 
 /// Extract `/// <amd-module name="..." />` directives from source text.
 ///
-/// Returns a vector of (module_name, line_number) tuples for each amd-module directive found.
+/// Returns a vector of (`module_name`, `line_number`) tuples for each amd-module directive found.
 /// Used to detect multiple AMD module name assignments (TS2458).
 pub fn extract_amd_module_names(source: &str) -> Vec<(String, usize)> {
     let mut amd_modules = Vec::new();
@@ -136,7 +136,7 @@ pub fn validate_reference_path(source_file: &Path, reference_path: &str) -> bool
         // Try TypeScript extensions in order: .ts, .tsx, .d.ts
         let extensions = [".ts", ".tsx", ".d.ts"];
         for ext in &extensions {
-            let path_with_ext = parent.join(format!("{}{}", reference_path, ext));
+            let path_with_ext = parent.join(format!("{reference_path}{ext}"));
             if path_with_ext.exists() {
                 return true;
             }

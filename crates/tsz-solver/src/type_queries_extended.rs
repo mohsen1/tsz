@@ -5,7 +5,7 @@
 //!
 //! These functions provide structured classification enums for various
 //! type-checking scenarios, allowing the checker layer to handle types
-//! without directly matching on TypeData.
+//! without directly matching on `TypeData`.
 
 use crate::def::DefId;
 use crate::{TypeData, TypeDatabase, TypeId};
@@ -16,14 +16,14 @@ use rustc_hash::FxHashSet;
 // =============================================================================
 
 /// Classification for all literal types including boolean.
-/// Used by literal_type.rs for comprehensive literal handling.
+/// Used by `literal_type.rs` for comprehensive literal handling.
 #[derive(Debug, Clone)]
 pub enum LiteralTypeKind {
     /// String literal type with the atom for the string value
     String(tsz_common::interner::Atom),
     /// Number literal type with the numeric value
     Number(f64),
-    /// BigInt literal type with the atom for the bigint value
+    /// `BigInt` literal type with the atom for the bigint value
     BigInt(tsz_common::interner::Atom),
     /// Boolean literal type with the boolean value
     Boolean(bool),
@@ -174,7 +174,7 @@ fn is_invalid_index_type_inner(
 /// Classification for spread operations.
 ///
 /// This enum provides a structured way to handle spread types without
-/// directly matching on TypeData in the checker layer.
+/// directly matching on `TypeData` in the checker layer.
 #[derive(Debug, Clone)]
 pub enum SpreadTypeKind {
     /// Array type - element type for spread
@@ -187,7 +187,7 @@ pub enum SpreadTypeKind {
     ObjectWithIndex(crate::types::ObjectShapeId),
     /// String literal - can be spread as characters
     StringLiteral(tsz_common::interner::Atom),
-    /// Lazy reference (DefId) - needs resolution to actual spreadable type
+    /// Lazy reference (`DefId`) - needs resolution to actual spreadable type
     Lazy(DefId),
     /// Type that needs further checks for iterability
     Other,
@@ -225,7 +225,7 @@ pub fn classify_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> SpreadTyp
 
 /// Check if a type has Symbol.iterator or is otherwise iterable.
 ///
-/// This is a helper for checking iterability without matching on TypeData.
+/// This is a helper for checking iterability without matching on `TypeData`.
 pub fn is_iterable_type_kind(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Handle intrinsic string type
     if type_id == TypeId::STRING {
@@ -237,8 +237,9 @@ pub fn is_iterable_type_kind(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     };
 
     match key {
-        TypeData::Array(_) | TypeData::Tuple(_) => true,
-        TypeData::Literal(crate::LiteralValue::String(_)) => true,
+        TypeData::Array(_)
+        | TypeData::Tuple(_)
+        | TypeData::Literal(crate::LiteralValue::String(_)) => true,
         TypeData::Object(shape_id) => {
             // Check for [Symbol.iterator] method
             let shape = db.object_shape(shape_id);
@@ -295,7 +296,7 @@ pub fn get_iterable_element_type_from_db(db: &dyn TypeDatabase, type_id: TypeId)
 /// Classification for type parameter types.
 ///
 /// This enum provides a structured way to handle type parameters without
-/// directly matching on TypeData in the checker layer.
+/// directly matching on `TypeData` in the checker layer.
 #[derive(Debug, Clone)]
 pub enum TypeParameterKind {
     /// Type parameter with info
@@ -323,8 +324,8 @@ pub fn classify_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> TypePa
     };
 
     match key {
-        TypeData::TypeParameter(info) => TypeParameterKind::TypeParameter(info.clone()),
-        TypeData::Infer(info) => TypeParameterKind::Infer(info.clone()),
+        TypeData::TypeParameter(info) => TypeParameterKind::TypeParameter(info),
+        TypeData::Infer(info) => TypeParameterKind::Infer(info),
         TypeData::Application(app_id) => TypeParameterKind::Application(app_id),
         TypeData::Union(list_id) => {
             let members = db.type_list(list_id);
@@ -339,7 +340,7 @@ pub fn classify_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> TypePa
     }
 }
 
-/// Check if a type is directly a type parameter (TypeParameter or Infer).
+/// Check if a type is directly a type parameter (`TypeParameter` or Infer).
 pub fn is_direct_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         classify_type_parameter(db, type_id),
@@ -378,7 +379,7 @@ pub fn get_callable_type_param_count(db: &dyn TypeDatabase, type_id: TypeId) -> 
 /// Classification for promise-like types.
 ///
 /// This enum provides a structured way to handle promise types without
-/// directly matching on TypeData in the checker layer.
+/// directly matching on `TypeData` in the checker layer.
 #[derive(Debug, Clone)]
 pub enum PromiseTypeKind {
     /// Type application (like Promise<T>) - contains base and args
@@ -387,7 +388,7 @@ pub enum PromiseTypeKind {
         base: TypeId,
         args: Vec<TypeId>,
     },
-    /// Lazy reference (DefId) - needs resolution to check if it's Promise
+    /// Lazy reference (`DefId`) - needs resolution to check if it's Promise
     Lazy(crate::def::DefId),
     /// Object type (might be Promise interface from lib)
     Object(crate::types::ObjectShapeId),
@@ -436,7 +437,7 @@ pub enum NewExpressionTypeKind {
     Callable(crate::types::CallableShapeId),
     /// Function type - always constructable
     Function(crate::types::FunctionShapeId),
-    /// TypeQuery (typeof X) - needs symbol resolution
+    /// `TypeQuery` (typeof X) - needs symbol resolution
     TypeQuery(crate::types::SymbolRef),
     /// Intersection type - check all members for construct signatures
     Intersection(Vec<TypeId>),
@@ -501,7 +502,7 @@ pub fn classify_for_new_expression(
 /// Classification for checking if a type contains abstract classes.
 #[derive(Debug, Clone)]
 pub enum AbstractClassCheckKind {
-    /// TypeQuery - check if symbol is abstract
+    /// `TypeQuery` - check if symbol is abstract
     TypeQuery(crate::types::SymbolRef),
     /// Union - check if any member is abstract
     Union(Vec<TypeId>),
@@ -543,12 +544,12 @@ pub fn classify_for_abstract_check(
 pub enum ConstructSignatureKind {
     /// Callable type with potential construct signatures
     Callable(crate::types::CallableShapeId),
-    /// Lazy reference (DefId) - resolve and check
+    /// Lazy reference (`DefId`) - resolve and check
     Lazy(crate::def::DefId),
     /// Symbol reference - may be a class (deprecated)
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::types::SymbolRef),
-    /// TypeQuery (typeof X) - check if class
+    /// `TypeQuery` (typeof X) - check if class
     TypeQuery(crate::types::SymbolRef),
     /// Application type - needs evaluation
     Application(crate::types::TypeApplicationId),
@@ -558,7 +559,7 @@ pub enum ConstructSignatureKind {
     Intersection(Vec<TypeId>),
     /// Type parameter with constraint
     TypeParameter { constraint: Option<TypeId> },
-    /// Function type - check is_constructor flag
+    /// Function type - check `is_constructor` flag
     Function(crate::types::FunctionShapeId),
     /// No construct signatures available
     NoConstruct,
@@ -918,14 +919,14 @@ pub fn classify_for_spread_properties(
 /// Classification for Lazy type resolution.
 #[derive(Debug, Clone)]
 pub enum LazyTypeKind {
-    /// DefId - resolve to actual type
+    /// `DefId` - resolve to actual type
     Lazy(crate::def::DefId),
     /// Not a Lazy type
     NotLazy,
-    /// Deprecated: SymbolRef - use Lazy instead
+    /// Deprecated: `SymbolRef` - use Lazy instead
     #[deprecated(note = "Use Lazy instead")]
     Ref(crate::def::DefId),
-    /// Deprecated: NotRef - use NotLazy instead
+    /// Deprecated: `NotRef` - use `NotLazy` instead
     #[deprecated(note = "Use NotLazy instead")]
     NotRef,
 }
@@ -942,11 +943,11 @@ pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> L
     }
 }
 
-/// Compatibility alias for RefTypeKind.
+/// Compatibility alias for `RefTypeKind`.
 #[deprecated(note = "Use LazyTypeKind instead")]
 pub type RefTypeKind = LazyTypeKind;
 
-/// Compatibility alias for classify_for_lazy_resolution.
+/// Compatibility alias for `classify_for_lazy_resolution`.
 #[deprecated(note = "Use classify_for_lazy_resolution instead")]
 pub fn classify_for_ref_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
     classify_for_lazy_resolution(db, type_id)
@@ -967,9 +968,9 @@ pub enum ConstructorCheckKind {
     Union(Vec<TypeId>),
     /// Application type - extract base and check
     Application { base: TypeId },
-    /// Lazy reference (DefId) - resolve to check if it's a class/interface
+    /// Lazy reference (`DefId`) - resolve to check if it's a class/interface
     Lazy(crate::def::DefId),
-    /// TypeQuery (typeof) - check referenced symbol
+    /// `TypeQuery` (typeof) - check referenced symbol
     TypeQuery(crate::types::SymbolRef),
     /// Not a constructor type or needs special handling
     Other,
@@ -1032,9 +1033,9 @@ pub fn is_narrowable_type_key(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Classification for types when extracting private brands.
 #[derive(Debug, Clone)]
 pub enum PrivateBrandKind {
-    /// Object type with shape_id - check properties for brand
+    /// Object type with `shape_id` - check properties for brand
     Object(crate::types::ObjectShapeId),
-    /// Callable type with shape_id - check properties for brand
+    /// Callable type with `shape_id` - check properties for brand
     Callable(crate::types::CallableShapeId),
     /// No private brand possible
     None,
@@ -1176,7 +1177,7 @@ pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
 
 /// Check if a type is specifically an object type with index signatures.
 ///
-/// Returns true only for TypeData::ObjectWithIndex, not for TypeData::Object.
+/// Returns true only for `TypeData::ObjectWithIndex`, not for `TypeData::Object`.
 pub fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::ObjectWithIndex(_)))
 }
@@ -1278,8 +1279,10 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         Some(TypeData::Intersection(members_id)) => {
             ElementIndexableKind::Intersection(db.type_list(members_id).to_vec())
         }
-        Some(TypeData::Literal(crate::LiteralValue::String(_))) => ElementIndexableKind::StringLike,
-        Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => ElementIndexableKind::StringLike,
+        Some(TypeData::Literal(crate::LiteralValue::String(_)))
+        | Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => {
+            ElementIndexableKind::StringLike
+        }
         _ => ElementIndexableKind::Other,
     }
 }
@@ -1329,7 +1332,7 @@ pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryK
 /// Classification for symbol reference types.
 #[derive(Debug, Clone)]
 pub enum SymbolRefKind {
-    /// Lazy reference (DefId)
+    /// Lazy reference (`DefId`)
     Lazy(crate::def::DefId),
     #[deprecated(note = "Lazy types don't use SymbolRef")]
     Ref(crate::types::SymbolRef),
@@ -1447,7 +1450,7 @@ pub fn unwrap_readonly_for_lookup(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
 
 /// Create a string literal type from a string value.
 ///
-/// This abstracts away the TypeData construction from the checker layer.
+/// This abstracts away the `TypeData` construction from the checker layer.
 pub fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId {
     let atom = db.intern_string(value);
     db.literal_string_atom(atom)
@@ -1455,14 +1458,14 @@ pub fn create_string_literal_type(db: &dyn TypeDatabase, value: &str) -> TypeId 
 
 /// Create a number literal type from a numeric value.
 ///
-/// This abstracts away the TypeData construction from the checker layer.
+/// This abstracts away the `TypeData` construction from the checker layer.
 pub fn create_number_literal_type(db: &dyn TypeDatabase, value: f64) -> TypeId {
     db.literal_number(value)
 }
 
 /// Create a boolean literal type.
 ///
-/// This abstracts away the TypeData construction from the checker layer.
+/// This abstracts away the `TypeData` construction from the checker layer.
 pub fn create_boolean_literal_type(db: &dyn TypeDatabase, value: bool) -> TypeId {
     db.literal_boolean(value)
 }
@@ -1474,21 +1477,21 @@ pub fn create_boolean_literal_type(db: &dyn TypeDatabase, value: bool) -> TypeId
 /// Classification for extracting instance types from constructor types.
 #[derive(Debug, Clone)]
 pub enum InstanceTypeKind {
-    /// Callable type - extract from construct_signatures return types
+    /// Callable type - extract from `construct_signatures` return types
     Callable(crate::types::CallableShapeId),
-    /// Function type - check is_constructor flag
+    /// Function type - check `is_constructor` flag
     Function(crate::types::FunctionShapeId),
     /// Intersection type - recursively extract instance types from members
     Intersection(Vec<TypeId>),
     /// Union type - recursively extract instance types from members
     Union(Vec<TypeId>),
-    /// ReadonlyType - unwrap and recurse
+    /// `ReadonlyType` - unwrap and recurse
     Readonly(TypeId),
     /// Type parameter with constraint - follow constraint
     TypeParameter { constraint: Option<TypeId> },
-    /// Symbol reference (Ref or TypeQuery) - needs resolution to class instance type
+    /// Symbol reference (Ref or `TypeQuery`) - needs resolution to class instance type
     SymbolRef(crate::types::SymbolRef),
-    /// Complex types (Conditional, Mapped, IndexAccess, KeyOf) - need evaluation
+    /// Complex types (Conditional, Mapped, `IndexAccess`, `KeyOf`) - need evaluation
     NeedsEvaluation,
     /// Not a constructor type
     NotConstructor,
@@ -1533,9 +1536,9 @@ pub fn classify_for_instance_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ins
 /// Classification for merging base instance into constructor return.
 #[derive(Debug, Clone)]
 pub enum ConstructorReturnMergeKind {
-    /// Callable type - update construct_signatures
+    /// Callable type - update `construct_signatures`
     Callable(crate::types::CallableShapeId),
-    /// Function type - check is_constructor flag
+    /// Function type - check `is_constructor` flag
     Function(crate::types::FunctionShapeId),
     /// Intersection type - update all members
     Intersection(Vec<TypeId>),
@@ -1570,7 +1573,7 @@ pub fn classify_for_constructor_return_merge(
 /// Classification for checking if a type is an abstract constructor type.
 #[derive(Debug, Clone)]
 pub enum AbstractConstructorKind {
-    /// TypeQuery (typeof AbstractClass) - check if symbol is abstract
+    /// `TypeQuery` (typeof `AbstractClass`) - check if symbol is abstract
     TypeQuery(crate::types::SymbolRef),
     /// Ref - resolve and check (deprecated)
     #[deprecated(note = "Lazy types don't use SymbolRef")]
@@ -1607,9 +1610,9 @@ pub fn classify_for_abstract_constructor(
 /// Classification for resolving types for property access.
 #[derive(Debug, Clone)]
 pub enum PropertyAccessResolutionKind {
-    /// Lazy type (DefId) - needs resolution to actual type
+    /// Lazy type (`DefId`) - needs resolution to actual type
     Lazy(DefId),
-    /// TypeQuery (typeof) - resolve the symbol
+    /// `TypeQuery` (typeof) - resolve the symbol
     TypeQuery(crate::types::SymbolRef),
     /// Application - needs evaluation
     Application(crate::types::TypeApplicationId),
@@ -1721,7 +1724,7 @@ pub fn classify_for_contextual_literal(
 /// Classification for evaluating mapped type constraints.
 #[derive(Debug, Clone)]
 pub enum MappedConstraintKind {
-    /// KeyOf type - evaluate operand
+    /// `KeyOf` type - evaluate operand
     KeyOf(TypeId),
     /// Union or Literal - return as-is
     Resolved,
@@ -1749,7 +1752,7 @@ pub fn classify_mapped_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Map
 /// Classification for evaluating types with symbol resolution.
 #[derive(Debug, Clone)]
 pub enum TypeResolutionKind {
-    /// Lazy - resolve to symbol type via DefId
+    /// Lazy - resolve to symbol type via `DefId`
     Lazy(DefId),
     /// Application - evaluate the application
     Application,
@@ -1893,7 +1896,7 @@ pub fn classify_for_excess_properties(
 /// Classification for checking constructor access level.
 #[derive(Debug, Clone)]
 pub enum ConstructorAccessKind {
-    /// Ref or TypeQuery - resolve symbol
+    /// Ref or `TypeQuery` - resolve symbol
     SymbolRef(crate::types::SymbolRef),
     /// Application - check base
     Application(crate::types::TypeApplicationId),
@@ -1989,7 +1992,7 @@ pub fn classify_for_binding_element(
 // Additional Accessor Helpers
 // =============================================================================
 
-/// Get the DefId from a Lazy type.
+/// Get the `DefId` from a Lazy type.
 pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
     match db.lookup(type_id) {
         Some(TypeData::Lazy(def_id)) => Some(def_id),
@@ -1997,7 +2000,7 @@ pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
     }
 }
 
-/// Get the DefId from a Lazy type.
+/// Get the `DefId` from a Lazy type.
 pub fn get_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
     match db.lookup(type_id) {
         Some(TypeData::Lazy(def_id)) => Some(def_id),
@@ -2005,8 +2008,8 @@ pub fn get_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::
     }
 }
 
-/// Get the DefId from a Lazy type.
-/// Returns (Option<SymbolRef>, Option<DefId>) - DefId will be Some for Lazy types.
+/// Get the `DefId` from a Lazy type.
+/// Returns (Option<SymbolRef>, Option<DefId>) - `DefId` will be Some for Lazy types.
 pub fn get_type_identity(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -2017,7 +2020,7 @@ pub fn get_type_identity(
     }
 }
 
-/// Get the enum components (DefId and member type) if the type is an Enum type.
+/// Get the enum components (`DefId` and member type) if the type is an Enum type.
 ///
 /// Returns `Some((def_id, member_type))` where:
 /// - `def_id` is the unique identity of the enum for nominal checking
@@ -2054,7 +2057,7 @@ pub fn get_conditional_type_id(
     }
 }
 
-/// Get the keyof inner type if the type is a KeyOf type.
+/// Get the keyof inner type if the type is a `KeyOf` type.
 pub fn get_keyof_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(inner)) => Some(inner),
@@ -2067,7 +2070,7 @@ pub fn get_keyof_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId>
 // =============================================================================
 
 /// Classification for traversing types to resolve symbols.
-/// Used by ensure_application_symbols_resolved_inner.
+/// Used by `ensure_application_symbols_resolved_inner`.
 #[derive(Debug, Clone)]
 pub enum SymbolResolutionTraversalKind {
     /// Application type - resolve base symbol and recurse
@@ -2076,7 +2079,7 @@ pub enum SymbolResolutionTraversalKind {
         base: TypeId,
         args: Vec<TypeId>,
     },
-    /// Lazy(DefId) type - resolve via DefId
+    /// Lazy(DefId) type - resolve via `DefId`
     Lazy(crate::def::DefId),
     /// Type parameter - recurse into constraint/default
     TypeParameter {
@@ -2097,13 +2100,13 @@ pub enum SymbolResolutionTraversalKind {
     Tuple(crate::types::TupleListId),
     /// Conditional type - recurse into all branches
     Conditional(crate::types::ConditionalTypeId),
-    /// Mapped type - recurse into constraint, template, name_type
+    /// Mapped type - recurse into constraint, template, `name_type`
     Mapped(crate::types::MappedTypeId),
     /// Readonly wrapper - recurse into inner
     Readonly(TypeId),
     /// Index access - recurse into both types
     IndexAccess { object: TypeId, index: TypeId },
-    /// KeyOf - recurse into inner
+    /// `KeyOf` - recurse into inner
     KeyOf(TypeId),
     /// Terminal type - no further traversal needed
     Terminal,

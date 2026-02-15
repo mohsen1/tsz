@@ -49,7 +49,6 @@ const result = getProperty(shape, cond ? "width" : "height");
 
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 errors for conditional expression with union type matching keyof constraint, got {}",
-        ts2322_count
+        "Expected no TS2322 errors for conditional expression with union type matching keyof constraint, got {ts2322_count}"
     );
 }

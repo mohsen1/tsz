@@ -1,11 +1,11 @@
-//! Emitter - Emitter using NodeArena
+//! Emitter - Emitter using `NodeArena`
 //!
 //! This emitter uses the Node architecture for cache-optimized AST access.
-//! It works directly with NodeArena instead of the old Node enum.
+//! It works directly with `NodeArena` instead of the old Node enum.
 //!
 //! # Architecture
 //!
-//! - Uses NodeArena for AST access (16-byte nodes, 13x cache improvement)
+//! - Uses `NodeArena` for AST access (16-byte nodes, 13x cache improvement)
 //! - Dispatches based on Node.kind (u16)
 //! - Uses accessor methods to get typed node data
 //!
@@ -129,7 +129,7 @@ struct TempScopeState {
 }
 
 impl ParamTransformPlan {
-    fn has_transforms(&self) -> bool {
+    const fn has_transforms(&self) -> bool {
         !self.params.is_empty() || self.rest.is_some()
     }
 }
@@ -223,13 +223,13 @@ enum EmitDirective {
 /// Maximum recursion depth for emit to prevent infinite loops
 const MAX_EMIT_RECURSION_DEPTH: u32 = 1000;
 
-/// Printer that works with NodeArena.
+/// Printer that works with `NodeArena`.
 ///
-/// Uses SourceWriter for output generation (enables source map support).
-/// Uses EmitContext for transform-specific state management.
-/// Uses TransformContext for directive-based transforms (Phase 2 architecture).
+/// Uses `SourceWriter` for output generation (enables source map support).
+/// Uses `EmitContext` for transform-specific state management.
+/// Uses `TransformContext` for directive-based transforms (Phase 2 architecture).
 pub struct Printer<'a> {
-    /// The NodeArena containing the AST.
+    /// The `NodeArena` containing the AST.
     pub(super) arena: &'a NodeArena,
 
     /// Source writer for output generation and source map tracking
@@ -256,16 +256,16 @@ pub struct Printer<'a> {
     /// Recursion depth counter to prevent infinite loops
     emit_recursion_depth: u32,
 
-    /// All comments in the source file, collected once during emit_source_file.
+    /// All comments in the source file, collected once during `emit_source_file`.
     /// Used for distributing comments to blocks and other nested constructs.
     pub(super) all_comments: Vec<tsz_common::comments::CommentRange>,
 
-    /// Shared index into all_comments, monotonically advancing as comments are emitted.
-    /// Used across emit_source_file and emit_block to prevent double-emission.
+    /// Shared index into `all_comments`, monotonically advancing as comments are emitted.
+    /// Used across `emit_source_file` and `emit_block` to prevent double-emission.
     pub(super) comment_emit_idx: usize,
 
     /// All identifier texts in the source file.
-    /// Collected once at emit_source_file start for temp name collision detection.
+    /// Collected once at `emit_source_file` start for temp name collision detection.
     /// Mirrors TypeScript's `sourceFile.identifiers` used by `makeUniqueName`.
     pub(super) file_identifiers: FxHashSet<String>,
 
@@ -293,7 +293,7 @@ pub struct Printer<'a> {
     pub(super) declared_namespace_names: FxHashSet<String>,
 
     /// Pending class field initializers to inject into constructor body.
-    /// Each entry is (field_name, initializer_node_index).
+    /// Each entry is (`field_name`, `initializer_node_index`).
     pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
 
     /// Temp names for assignment target values that need to be hoisted as `var _a, _b, ...;`.
@@ -426,19 +426,19 @@ impl<'a> Printer<'a> {
     }
 
     /// Set whether to target ES5 (classes→IIFEs, arrows→functions).
-    pub fn set_target_es5(&mut self, es5: bool) {
+    pub const fn set_target_es5(&mut self, es5: bool) {
         self.ctx.target_es5 = es5;
     }
 
-    /// Set the module kind (CommonJS, ESM, etc.).
-    pub fn set_module_kind(&mut self, kind: ModuleKind) {
+    /// Set the module kind (`CommonJS`, ESM, etc.).
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.ctx.options.module = kind;
     }
 
     /// Set auto-detect module mode. When enabled, the emitter will detect if
-    /// the source file contains import/export statements and apply CommonJS
+    /// the source file contains import/export statements and apply `CommonJS`
     /// transforms automatically.
-    pub fn set_auto_detect_module(&mut self, enabled: bool) {
+    pub const fn set_auto_detect_module(&mut self, enabled: bool) {
         self.ctx.auto_detect_module = enabled;
     }
 
@@ -455,12 +455,12 @@ impl<'a> Printer<'a> {
     /// - Skipping JS-only constructs
     /// - Emitting `declare` signatures instead of values
     /// - Keeping type-only information
-    pub fn set_declaration_emit(&mut self, enabled: bool) {
+    pub const fn set_declaration_emit(&mut self, enabled: bool) {
         self.ctx.flags.in_declaration_emit = enabled;
     }
 
     /// Set source text for source map generation without enabling comment emission.
-    pub fn set_source_map_text(&mut self, text: &'a str) {
+    pub const fn set_source_map_text(&mut self, text: &'a str) {
         self.source_map_text = Some(text);
     }
 
@@ -704,7 +704,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Apply a transform directive to a node.
-    /// This is called when a node has an entry in the TransformContext.
+    /// This is called when a node has an entry in the `TransformContext`.
     fn apply_transform(&mut self, node: &Node, idx: NodeIndex) {
         let Some(directive) = self.transforms.get(idx) else {
             // No transform, emit normally (should not happen if has_transform returned true)
@@ -798,7 +798,7 @@ impl<'a> Printer<'a> {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
                     if !enum_name.is_empty() {
                         if self.declared_namespace_names.contains(&enum_name) {
-                            let var_prefix = format!("var {};\n", enum_name);
+                            let var_prefix = format!("var {enum_name};\n");
                             if output.starts_with(&var_prefix) {
                                 output = output[var_prefix.len()..].to_string();
                             }
@@ -1091,7 +1091,7 @@ impl<'a> Printer<'a> {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
                     if !enum_name.is_empty() {
                         if self.declared_namespace_names.contains(&enum_name) {
-                            let var_prefix = format!("var {};\n", enum_name);
+                            let var_prefix = format!("var {enum_name};\n");
                             if output.starts_with(&var_prefix) {
                                 output = output[var_prefix.len()..].to_string();
                             }
@@ -1149,9 +1149,6 @@ impl<'a> Printer<'a> {
                         _ => {}
                     }
                 }
-            }
-            EmitDirective::Identity => {
-                self.emit_node_default(node, idx);
             }
             EmitDirective::Chain(directives) => {
                 self.emit_chained_directives(node, idx, directives.as_slice());
@@ -1254,7 +1251,7 @@ impl<'a> Printer<'a> {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
                     if !enum_name.is_empty() {
                         if self.declared_namespace_names.contains(&enum_name) {
-                            let var_prefix = format!("var {};\n", enum_name);
+                            let var_prefix = format!("var {enum_name};\n");
                             if output.starts_with(&var_prefix) {
                                 output = output[var_prefix.len()..].to_string();
                             }
@@ -1489,7 +1486,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Emit a node using default logic (no transforms).
-    /// This is the old emit_node logic extracted for reuse.
+    /// This is the old `emit_node` logic extracted for reuse.
     fn emit_node_default(&mut self, node: &Node, idx: NodeIndex) {
         // Emit the node without consulting transform directives.
         let kind = node.kind;
@@ -1591,7 +1588,7 @@ impl<'a> Printer<'a> {
         self.emit_recursion_depth -= 1;
     }
 
-    fn kind_may_have_transform(kind: u16) -> bool {
+    const fn kind_may_have_transform(kind: u16) -> bool {
         matches!(
             kind,
             k if k == syntax_kind_ext::SOURCE_FILE
@@ -2619,7 +2616,7 @@ fn is_valid_identifier_name(name: &str) -> bool {
     chars.all(|ch| ch == '_' || ch == '$' || ch.is_alphanumeric())
 }
 
-fn get_operator_text(op: u16) -> &'static str {
+const fn get_operator_text(op: u16) -> &'static str {
     match op {
         k if k == SyntaxKind::PlusToken as u16 => "+",
         k if k == SyntaxKind::MinusToken as u16 => "-",

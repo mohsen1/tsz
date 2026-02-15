@@ -8,7 +8,7 @@
 //! - Finding enclosing static blocks, computed properties, and heritage clauses
 //! - Finding class contexts for various member types
 //!
-//! This module extends CheckerState with scope-finding methods as part of
+//! This module extends `CheckerState` with scope-finding methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
@@ -28,7 +28,7 @@ impl<'a> CheckerState<'a> {
     /// Find the enclosing function for a given node.
     ///
     /// Traverses up the AST to find the first function-like node
-    /// (FunctionDeclaration, FunctionExpression, ArrowFunction, Method, etc.).
+    /// (`FunctionDeclaration`, `FunctionExpression`, `ArrowFunction`, Method, etc.).
     ///
     /// Returns Some(NodeIndex) if inside a function, None if at module/global scope.
     pub(crate) fn find_enclosing_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
@@ -95,8 +95,8 @@ impl<'a> CheckerState<'a> {
     /// Check if an `arguments` reference is directly inside an arrow function.
     ///
     /// Walks up the AST from the given node. If the first function-like node
-    /// encountered is an ArrowFunction, returns true. If it's a regular function
-    /// (FunctionDeclaration, FunctionExpression, Method, Constructor, Accessor),
+    /// encountered is an `ArrowFunction`, returns true. If it's a regular function
+    /// (`FunctionDeclaration`, `FunctionExpression`, Method, Constructor, Accessor),
     /// returns false since those have their own `arguments` binding.
     pub(crate) fn is_arguments_in_arrow_function(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
@@ -376,7 +376,7 @@ impl<'a> CheckerState<'a> {
     ///   so `this` inside them is valid (stops the search)
     /// - For methods/constructors, only the body creates a `this` scope —
     ///   decorator expressions and computed property names execute in the outer scope
-    /// - If we reach a MODULE_DECLARATION without hitting a function boundary,
+    /// - If we reach a `MODULE_DECLARATION` without hitting a function boundary,
     ///   `this` is in the namespace body → return true
     pub(crate) fn is_this_in_namespace_body(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
@@ -449,9 +449,9 @@ impl<'a> CheckerState<'a> {
     /// in a derived class constructor (TS17009).
     ///
     /// Detects two patterns:
-    /// 1. `super(this)` — `this` is an argument to the super() call itself
+    /// 1. `super(this)` — `this` is an argument to the `super()` call itself
     /// 2. `constructor(x = this.prop)` — `this` in a parameter default of
-    ///    a derived class constructor (evaluated before super() can run)
+    ///    a derived class constructor (evaluated before `super()` can run)
     /// 3. `this.prop; super();` — direct constructor-body access before first super call
     pub(crate) fn is_this_before_super_in_derived_constructor(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
@@ -645,7 +645,7 @@ impl<'a> CheckerState<'a> {
 
     /// Find the enclosing static block for a given node.
     ///
-    /// Traverses up the AST to find a CLASS_STATIC_BLOCK_DECLARATION.
+    /// Traverses up the AST to find a `CLASS_STATIC_BLOCK_DECLARATION`.
     /// Stops at function boundaries to avoid considering outer static blocks.
     ///
     /// Returns Some(NodeIndex) if inside a static block, None otherwise.
@@ -745,7 +745,7 @@ impl<'a> CheckerState<'a> {
 
     /// Find the enclosing computed property name for a given node.
     ///
-    /// Traverses up the AST to find a COMPUTED_PROPERTY_NAME.
+    /// Traverses up the AST to find a `COMPUTED_PROPERTY_NAME`.
     /// Stops at function boundaries (computed properties inside functions are evaluated at call time).
     ///
     /// Returns Some(NodeIndex) if inside a computed property name, None otherwise.
@@ -781,7 +781,7 @@ impl<'a> CheckerState<'a> {
 
     /// Find the enclosing heritage clause (extends/implements) for a node.
     ///
-    /// Returns the NodeIndex of the HERITAGE_CLAUSE if the node is inside one.
+    /// Returns the `NodeIndex` of the `HERITAGE_CLAUSE` if the node is inside one.
     /// Stops at function/class/interface boundaries.
     ///
     /// Returns Some(NodeIndex) if inside a heritage clause, None otherwise.
@@ -816,7 +816,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Check if an identifier is the direct expression of an ExpressionWithTypeArguments
+    /// Check if an identifier is the direct expression of an `ExpressionWithTypeArguments`
     /// in a heritage clause (e.g., `extends A` or `implements B`), as opposed to
     /// being nested deeper (e.g., as a function argument in `extends factory(A)`).
     ///

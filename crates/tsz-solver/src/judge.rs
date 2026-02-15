@@ -277,7 +277,7 @@ pub trait Judge {
     /// Used for:
     /// - for-of loop targets
     /// - Spread operators
-    /// - Array.from() arguments
+    /// - `Array.from()` arguments
     fn classify_iterable(&self, type_id: TypeId) -> IterableKind;
 
     /// Classify how a type can be called.
@@ -350,7 +350,7 @@ pub trait Judge {
 
 /// Default implementation of the Judge trait.
 ///
-/// Uses basic caching with FxHashMap. For production use with incremental
+/// Uses basic caching with `FxHashMap`. For production use with incremental
 /// compilation, consider a Salsa-based implementation.
 pub struct DefaultJudge<'a> {
     db: &'a dyn TypeDatabase,
@@ -534,10 +534,8 @@ impl<'a> Judge for DefaultJudge<'a> {
                         IterableKind::Array(elem) => element_types.push(elem),
                         IterableKind::Tuple(elems) => element_types.extend(elems),
                         IterableKind::String => element_types.push(TypeId::STRING),
-                        IterableKind::SyncIterator { element_type, .. } => {
-                            element_types.push(element_type);
-                        }
-                        IterableKind::AsyncIterator { element_type, .. } => {
+                        IterableKind::SyncIterator { element_type, .. }
+                        | IterableKind::AsyncIterator { element_type, .. } => {
                             element_types.push(element_type);
                         }
                         IterableKind::NotIterable => return IterableKind::NotIterable,
@@ -623,7 +621,9 @@ impl<'a> Judge for DefaultJudge<'a> {
         };
 
         match key {
-            TypeData::Literal(LiteralValue::String(_)) => flags |= PrimitiveFlags::STRING_LIKE,
+            TypeData::Literal(LiteralValue::String(_)) | TypeData::TemplateLiteral(_) => {
+                flags |= PrimitiveFlags::STRING_LIKE
+            }
             TypeData::Literal(LiteralValue::Number(_)) => flags |= PrimitiveFlags::NUMBER_LIKE,
             TypeData::Literal(LiteralValue::Boolean(_)) => flags |= PrimitiveFlags::BOOLEAN_LIKE,
             TypeData::Literal(LiteralValue::BigInt(_)) => flags |= PrimitiveFlags::BIGINT_LIKE,
@@ -633,7 +633,6 @@ impl<'a> Judge for DefaultJudge<'a> {
                     flags |= self.classify_primitive(member);
                 }
             }
-            TypeData::TemplateLiteral(_) => flags |= PrimitiveFlags::STRING_LIKE,
             _ => {}
         }
 
@@ -644,11 +643,13 @@ impl<'a> Judge for DefaultJudge<'a> {
         // Handle intrinsics
         match type_id {
             TypeId::ANY | TypeId::UNKNOWN => return TruthinessKind::Unknown,
-            TypeId::NEVER => return TruthinessKind::AlwaysFalsy,
-            TypeId::VOID | TypeId::UNDEFINED | TypeId::NULL => return TruthinessKind::AlwaysFalsy,
+            TypeId::NEVER
+            | TypeId::VOID
+            | TypeId::UNDEFINED
+            | TypeId::NULL
+            | TypeId::BOOLEAN_FALSE => return TruthinessKind::AlwaysFalsy,
             TypeId::BOOLEAN => return TruthinessKind::Sometimes,
             TypeId::BOOLEAN_TRUE => return TruthinessKind::AlwaysTruthy,
-            TypeId::BOOLEAN_FALSE => return TruthinessKind::AlwaysFalsy,
             _ => {}
         }
 

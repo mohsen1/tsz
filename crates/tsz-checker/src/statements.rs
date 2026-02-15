@@ -1,7 +1,7 @@
 //! Statement Type Checking
 //!
 //! Handles control flow statements and dispatches declarations.
-//! This module separates statement checking logic from the monolithic CheckerState.
+//! This module separates statement checking logic from the monolithic `CheckerState`.
 
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -10,8 +10,8 @@ use tsz_solver::TypeId;
 
 /// Trait for statement checking callbacks.
 ///
-/// This trait defines the interface that CheckerState must implement
-/// to allow StatementChecker to delegate type checking and other operations.
+/// This trait defines the interface that `CheckerState` must implement
+/// to allow `StatementChecker` to delegate type checking and other operations.
 pub trait StatementCheckCallbacks {
     /// Get access to the node arena for AST traversal.
     fn arena(&self) -> &NodeArena;
@@ -105,7 +105,7 @@ pub trait StatementCheckCallbacks {
         is_for_of: bool,
     );
 
-    /// Recursively check a nested statement (callback to check_statement).
+    /// Recursively check a nested statement (callback to `check_statement`).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
     /// Check switch statement exhaustiveness (Task 12: CFA Diagnostics).
@@ -150,24 +150,24 @@ pub trait StatementCheckCallbacks {
     fn check_continue_statement(&mut self, stmt_idx: NodeIndex);
 
     /// Enter an iteration statement (for/while/do-while/for-in/for-of).
-    /// Increments iteration_depth for break/continue validation.
+    /// Increments `iteration_depth` for break/continue validation.
     fn enter_iteration_statement(&mut self);
 
     /// Leave an iteration statement.
-    /// Decrements iteration_depth.
+    /// Decrements `iteration_depth`.
     fn leave_iteration_statement(&mut self);
 
     /// Enter a switch statement.
-    /// Increments switch_depth for break validation.
+    /// Increments `switch_depth` for break validation.
     fn enter_switch_statement(&mut self);
 
     /// Leave a switch statement.
-    /// Decrements switch_depth.
+    /// Decrements `switch_depth`.
     fn leave_switch_statement(&mut self);
 
     /// Save current iteration/switch context and reset it.
     /// Used when entering a function body (function creates new context).
-    /// Returns the saved (iteration_depth, switch_depth, had_outer_loop).
+    /// Returns the saved (`iteration_depth`, `switch_depth`, `had_outer_loop`).
     fn save_and_reset_control_flow_context(&mut self) -> (u32, u32, bool);
 
     /// Restore previously saved iteration/switch context.
@@ -200,12 +200,12 @@ pub trait StatementCheckCallbacks {
 ///
 /// This is a zero-sized struct that only provides the dispatching logic.
 /// All state and type checking operations are delegated back to the
-/// implementation of StatementCheckCallbacks (typically CheckerState).
+/// implementation of `StatementCheckCallbacks` (typically `CheckerState`).
 pub struct StatementChecker;
 
 impl StatementChecker {
     /// Create a new statement checker.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self
     }
 
@@ -292,7 +292,9 @@ impl StatementChecker {
                     state.check_function_implementations(&stmts);
                 }
             }
-            syntax_kind_ext::FUNCTION_DECLARATION => {
+            syntax_kind_ext::FUNCTION_DECLARATION
+            | syntax_kind_ext::FUNCTION_EXPRESSION
+            | syntax_kind_ext::ARROW_FUNCTION => {
                 state.check_function_declaration(stmt_idx);
             }
             syntax_kind_ext::WHILE_STATEMENT | syntax_kind_ext::DO_STATEMENT => {
@@ -565,9 +567,6 @@ impl StatementChecker {
             }
             syntax_kind_ext::CLASS_DECLARATION => {
                 state.check_class_declaration(stmt_idx);
-            }
-            syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION => {
-                state.check_function_declaration(stmt_idx);
             }
             syntax_kind_ext::WITH_STATEMENT => {
                 state.check_with_statement(stmt_idx);

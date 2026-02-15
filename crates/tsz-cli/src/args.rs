@@ -106,7 +106,7 @@ pub struct CliArgs {
     #[arg(long = "baseUrl", alias = "base-url")]
     pub base_url: Option<PathBuf>,
 
-    /// Specify multiple folders that act like './node_modules/@types'.
+    /// Specify multiple folders that act like './`node_modules/@types`'.
     #[arg(long = "typeRoots", alias = "type-roots", value_delimiter = ',')]
     pub type_roots: Option<Vec<PathBuf>>,
 
@@ -207,7 +207,7 @@ pub struct CliArgs {
     #[arg(long = "checkJs", alias = "check-js")]
     pub check_js: bool,
 
-    /// Specify the maximum folder depth used for checking JavaScript files from 'node_modules'.
+    /// Specify the maximum folder depth used for checking JavaScript files from '`node_modules`'.
     #[arg(long = "maxNodeModuleJsDepth", alias = "max-node-module-js-depth")]
     pub max_node_module_js_depth: Option<u32>,
 
@@ -292,7 +292,7 @@ pub struct CliArgs {
     #[arg(long = "preserveConstEnums", alias = "preserve-const-enums")]
     pub preserve_const_enums: bool,
 
-    /// Disable emitting declarations that have '@internal' in their JSDoc comments.
+    /// Disable emitting declarations that have '@internal' in their `JSDoc` comments.
     #[arg(long = "stripInternal", alias = "strip-internal")]
     pub strip_internal: bool,
 
@@ -301,7 +301,7 @@ pub struct CliArgs {
     pub emit_bom: bool,
 
     // ==================== Interop Constraints ====================
-    /// Emit additional JavaScript to ease support for importing CommonJS modules.
+    /// Emit additional JavaScript to ease support for importing `CommonJS` modules.
     #[arg(long = "esModuleInterop", alias = "es-module-interop")]
     pub es_module_interop: bool,
 
@@ -367,7 +367,7 @@ pub struct CliArgs {
     )]
     pub strict_property_initialization: Option<bool>,
 
-    /// Built-in iterators are instantiated with a 'TReturn' type of 'undefined' instead of 'any'.
+    /// Built-in iterators are instantiated with a '`TReturn`' type of 'undefined' instead of 'any'.
     #[arg(
         long = "strictBuiltinIteratorReturn",
         alias = "strict-builtin-iterator-return"
@@ -418,7 +418,7 @@ pub struct CliArgs {
     /// Enable Sound Mode for stricter type checking beyond TypeScript's defaults.
     /// Catches common unsoundness like mutable array covariance, method bivariance,
     /// `any` escapes, and excess properties via sticky freshness.
-    /// Uses TS9xxx diagnostic codes (TS9001-TS9008).
+    /// Uses `TS9xxx` diagnostic codes (TS9001-TS9008).
     #[arg(long)]
     pub sound: bool,
 
@@ -679,7 +679,7 @@ pub struct CliArgs {
 
     // ==================== Custom Options ====================
     /// Override the compiler version used for typesVersions resolution
-    /// (or set TSZ_TYPES_VERSIONS_COMPILER_VERSION).
+    /// (or set `TSZ_TYPES_VERSIONS_COMPILER_VERSION`).
     #[arg(
         long = "typesVersions",
         alias = "types-versions",
@@ -713,7 +713,7 @@ pub enum Target {
 }
 
 impl Target {
-    pub fn to_script_target(self) -> ScriptTarget {
+    pub const fn to_script_target(self) -> ScriptTarget {
         match self {
             Self::Es3 => ScriptTarget::ES3,
             Self::Es5 => ScriptTarget::ES5,
@@ -759,7 +759,7 @@ pub enum Module {
 }
 
 impl Module {
-    pub fn to_module_kind(self) -> ModuleKind {
+    pub const fn to_module_kind(self) -> ModuleKind {
         match self {
             Self::None => ModuleKind::None,
             Self::CommonJs => ModuleKind::CommonJS,
@@ -800,12 +800,12 @@ pub enum JsxEmit {
 pub enum ModuleResolution {
     /// Deprecated: TypeScript 1.6 resolution strategy.
     Classic,
-    /// Node.js style resolution for CommonJS.
+    /// Node.js style resolution for `CommonJS`.
     #[value(alias = "node")]
     Node10,
-    /// Node.js 16+ resolution for ES modules and CommonJS.
+    /// Node.js 16+ resolution for ES modules and `CommonJS`.
     Node16,
-    /// Latest Node.js resolution for ES modules and CommonJS.
+    /// Latest Node.js resolution for ES modules and `CommonJS`.
     #[value(name = "nodenext", alias = "node-next")]
     NodeNext,
     /// Resolution for bundlers (Webpack, Rollup, esbuild, etc).
@@ -813,7 +813,7 @@ pub enum ModuleResolution {
 }
 
 impl ModuleResolution {
-    pub fn to_module_resolution_kind(self) -> ModuleResolutionKind {
+    pub const fn to_module_resolution_kind(self) -> ModuleResolutionKind {
         match self {
             Self::Classic => ModuleResolutionKind::Classic,
             Self::Node10 => ModuleResolutionKind::Node,

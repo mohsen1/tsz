@@ -47,8 +47,7 @@ export class Component{i} {{
         return new Component{i}(name);
     }}
 }}
-"#,
-            i = i
+"#
         ));
     }
 

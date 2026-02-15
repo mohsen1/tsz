@@ -926,7 +926,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    /// Collect variable names from a VARIABLE_STATEMENT node
+    /// Collect variable names from a `VARIABLE_STATEMENT` node
     pub(super) fn collect_variable_names_from_node(&self, node: &Node) -> Vec<String> {
         let mut names = Vec::new();
         if let Some(var_stmt) = self.arena.get_variable(node) {
@@ -1375,7 +1375,7 @@ impl<'a> Printer<'a> {
 
     /// Check if we should emit the __esModule marker.
     /// Returns true if the file contains any ES6 module syntax (import/export),
-    /// excluding `export =` which is legacy CommonJS.
+    /// excluding `export =` which is legacy `CommonJS`.
     /// TypeScript emits __esModule for ANY module syntax, including type-only
     /// imports/exports, declared exports, and exported interfaces/type aliases.
     pub(super) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {

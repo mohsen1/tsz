@@ -6,7 +6,7 @@
 //! 3. Union distribution in template literals
 //! 4. Complex pattern backtracking
 //!
-//! Note: Trim is not currently implemented in StringIntrinsicKind
+//! Note: Trim is not currently implemented in `StringIntrinsicKind`
 
 use crate::intern::TypeInterner;
 use crate::types::*;
@@ -314,7 +314,7 @@ fn test_template_literal_with_boolean() {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2);
         }
-        other => panic!("Expected Union for `is-${{boolean}}`, got {:?}", other),
+        other => panic!("Expected Union for `is-${{boolean}}`, got {other:?}"),
     }
 }
 

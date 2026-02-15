@@ -59,7 +59,7 @@ pub struct NamespaceES5Emitter<'a> {
 }
 
 impl<'a> NamespaceES5Emitter<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         NamespaceES5Emitter {
             arena,
             source_text: None,
@@ -69,8 +69,8 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
-    /// Create a namespace emitter with CommonJS mode
-    pub fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
+    /// Create a namespace emitter with `CommonJS` mode
+    pub const fn with_commonjs(arena: &'a NodeArena, is_commonjs: bool) -> Self {
         NamespaceES5Emitter {
             arena,
             source_text: None,
@@ -80,7 +80,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         }
     }
 
-    /// Set the source text for ASTRef emission and comment extraction
+    /// Set the source text for `ASTRef` emission and comment extraction
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
         self.transformer.set_source_text(text);
@@ -88,7 +88,7 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     /// Set whether to emit a 'var' declaration for the namespace
     /// When false (e.g., when merging with a class/enum/function), the 'var' is omitted
-    pub fn set_should_declare_var(&mut self, value: bool) {
+    pub const fn set_should_declare_var(&mut self, value: bool) {
         self.should_declare_var = value;
     }
 
@@ -111,7 +111,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         printer.emit(&ir).to_string()
     }
 
-    /// Emit an exported namespace declaration (CommonJS attach-to-exports form).
+    /// Emit an exported namespace declaration (`CommonJS` attach-to-exports form).
     pub fn emit_exported_namespace(&mut self, ns_idx: NodeIndex) -> String {
         let ir = self.transformer.transform_exported_namespace(ns_idx);
         let ir = match ir {
@@ -129,7 +129,7 @@ impl<'a> NamespaceES5Emitter<'a> {
     }
 
     /// Set the indent level for output
-    pub fn set_indent_level(&mut self, level: u32) {
+    pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
     }
 }

@@ -6,7 +6,7 @@
 //! - Export declaration module specifier resolution
 //! - Circular re-export detection
 //!
-//! This module extends CheckerState with module-related methods as part of
+//! This module extends `CheckerState` with module-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -25,17 +25,17 @@ impl<'a> CheckerState<'a> {
 
     /// Check dynamic import module specifier for unresolved modules.
     ///
-    /// Validates that the module specifier in a dynamic import() call
+    /// Validates that the module specifier in a dynamic `import()` call
     /// can be resolved. Emits TS2307 if the module cannot be found.
     ///
     /// ## Parameters:
-    /// - `call`: The call expression node for the import() call
+    /// - `call`: The call expression node for the `import()` call
     ///
     /// ## Validation:
     /// - Only checks string literal specifiers (dynamic specifiers cannot be statically checked)
-    /// - Checks if module exists in resolved_modules, module_exports, shorthand_ambient_modules, or declared_modules
+    /// - Checks if module exists in `resolved_modules`, `module_exports`, `shorthand_ambient_modules`, or `declared_modules`
     /// - Emits TS2307 for unresolved module specifiers
-    /// - Validates CommonJS vs ESM import compatibility
+    /// - Validates `CommonJS` vs ESM import compatibility
     pub(crate) fn check_dynamic_import_module_specifier(
         &mut self,
         call: &tsz_parser::parser::node::CallExprData,
@@ -103,9 +103,7 @@ impl<'a> CheckerState<'a> {
             let error_code = error.code;
             let error_message = error.message.clone();
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx
-                    .modules_with_ts2307_emitted
-                    .insert(module_key.clone());
+                self.ctx.modules_with_ts2307_emitted.insert(module_key);
                 self.error_at_node(arg_idx, &error_message, error_code);
             }
             return;
@@ -115,9 +113,7 @@ impl<'a> CheckerState<'a> {
         // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
         let module_key = module_name.to_string();
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-            self.ctx
-                .modules_with_ts2307_emitted
-                .insert(module_key.clone());
+            self.ctx.modules_with_ts2307_emitted.insert(module_key);
             self.error_at_node_msg(
                 arg_idx,
                 diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
@@ -139,7 +135,7 @@ impl<'a> CheckerState<'a> {
     /// - `stmt_idx`: The export declaration statement node
     ///
     /// ## Validation:
-    /// - Checks if module exists in resolved_modules, module_exports, shorthand_ambient_modules, or declared_modules
+    /// - Checks if module exists in `resolved_modules`, `module_exports`, `shorthand_ambient_modules`, or `declared_modules`
     /// - Emits TS2307 for unresolved module specifiers
     /// - Validates re-exported members exist in source module
     /// - Checks for circular re-export chains
@@ -179,7 +175,7 @@ impl<'a> CheckerState<'a> {
                 .chain(std::iter::once(module_name.as_str()))
                 .collect();
             let cycle_str = cycle_path.join(" -> ");
-            let message = format!("Circular re-export detected: {}", cycle_str);
+            let message = format!("Circular re-export detected: {cycle_str}");
 
             // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
             let module_key = module_name.to_string();
@@ -251,9 +247,7 @@ impl<'a> CheckerState<'a> {
         // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
         let module_key = module_name.to_string();
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-            self.ctx
-                .modules_with_ts2307_emitted
-                .insert(module_key.clone());
+            self.ctx.modules_with_ts2307_emitted.insert(module_key);
             self.error_at_node_msg(
                 export_decl.module_specifier,
                 diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
@@ -403,9 +397,9 @@ impl<'a> CheckerState<'a> {
     // Dynamic Import Return Type
     // =========================================================================
 
-    /// Get the return type for a dynamic import() call.
+    /// Get the return type for a dynamic `import()` call.
     ///
-    /// Returns Promise<ModuleType> where ModuleType is an object containing
+    /// Returns Promise<ModuleType> where `ModuleType` is an object containing
     /// all the module's exports. Falls back to Promise<any> or just `any` when:
     /// - The module cannot be resolved
     /// - Promise is not available (ES5 target without lib)
@@ -528,7 +522,7 @@ impl<'a> CheckerState<'a> {
     /// Create a Promise<T> type for dynamic import expressions.
     ///
     /// Uses the same type resolution path as `var p: Promise<T>` to ensure
-    /// structural compatibility. Falls back to PROMISE_BASE without lib files.
+    /// structural compatibility. Falls back to `PROMISE_BASE` without lib files.
     fn create_promise_of(&mut self, inner_type: tsz_solver::TypeId) -> tsz_solver::TypeId {
         use tsz_solver::TypeId;
 

@@ -1,7 +1,7 @@
 //! Flow Narrowing Utilities Module
 //!
 //! This module contains flow narrowing and type analysis utility methods
-//! for CheckerState as part of Phase 2 architecture refactoring.
+//! for `CheckerState` as part of Phase 2 architecture refactoring.
 //!
 //! The methods in this module handle:
 //! - Discriminant property checking (union type narrowing)
@@ -9,7 +9,7 @@
 //! - Nullish type analysis
 //! - Flow-sensitive type queries
 //!
-//! This module extends CheckerState with utilities for type narrowing
+//! This module extends `CheckerState` with utilities for type narrowing
 //! operations, providing cleaner APIs for flow-sensitive type checking.
 
 use crate::state::CheckerState;

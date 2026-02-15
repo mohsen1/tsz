@@ -39,12 +39,12 @@ pub struct DocumentHighlight {
 
 impl DocumentHighlight {
     /// Create a new document highlight.
-    pub fn new(range: Range, kind: Option<DocumentHighlightKind>) -> Self {
+    pub const fn new(range: Range, kind: Option<DocumentHighlightKind>) -> Self {
         Self { range, kind }
     }
 
     /// Create a read highlight.
-    pub fn read(range: Range) -> Self {
+    pub const fn read(range: Range) -> Self {
         Self {
             range,
             kind: Some(DocumentHighlightKind::Read),
@@ -52,7 +52,7 @@ impl DocumentHighlight {
     }
 
     /// Create a write highlight.
-    pub fn write(range: Range) -> Self {
+    pub const fn write(range: Range) -> Self {
         Self {
             range,
             kind: Some(DocumentHighlightKind::Write),
@@ -60,7 +60,7 @@ impl DocumentHighlight {
     }
 
     /// Create a text highlight (read and write).
-    pub fn text(range: Range) -> Self {
+    pub const fn text(range: Range) -> Self {
         Self {
             range,
             kind: Some(DocumentHighlightKind::Text),
@@ -78,7 +78,7 @@ pub struct DocumentHighlightProvider<'a> {
 
 impl<'a> DocumentHighlightProvider<'a> {
     /// Create a new document highlight provider.
-    pub fn new(
+    pub const fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -909,7 +909,7 @@ impl<'a> DocumentHighlightProvider<'a> {
     /// Detect read/write access using AST-based analysis, falling back to text heuristics.
     ///
     /// This method first tries to find the AST node at the reference location and
-    /// uses the `is_write_access_node` method from FindReferences for accurate
+    /// uses the `is_write_access_node` method from `FindReferences` for accurate
     /// detection. If the AST lookup fails, it falls back to text-based heuristics.
     fn detect_access_kind_ast(
         &self,

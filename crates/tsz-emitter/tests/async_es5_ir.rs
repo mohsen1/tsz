@@ -62,8 +62,7 @@ fn test_variable_with_await() {
     assert!(output.contains("[4 /*yield*/"), "Should have yield");
     assert!(
         output.contains("var x;") || output.contains("var x\n"),
-        "Should declare var x before assignment to avoid ReferenceError: {}",
-        output
+        "Should declare var x before assignment to avoid ReferenceError: {output}"
     );
     assert!(output.contains("x = _a.sent()"), "Should assign _a.sent()");
 }
@@ -79,7 +78,6 @@ fn test_variable_declaration_order() {
             && yield_pos.is_some()
             && var_pos.expect("var_pos is Some, checked above")
                 < yield_pos.expect("yield_pos is Some, checked above"),
-        "Variable declaration must come before yield: {}",
-        output
+        "Variable declaration must come before yield: {output}"
     );
 }

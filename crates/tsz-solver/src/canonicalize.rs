@@ -114,9 +114,6 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
                 }
             }
 
-            // Handle references that are already canonical
-            TypeData::Recursive(_) | TypeData::BoundParameter(_) => type_id,
-
             // Recurse into composite types
             TypeData::Array(elem) => {
                 let c_elem = self.canonicalize(elem);

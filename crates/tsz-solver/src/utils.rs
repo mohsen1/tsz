@@ -19,7 +19,7 @@ pub fn is_numeric_property_name(interner: &dyn TypeDatabase, name: Atom) -> bool
 /// Checks if a string represents a numeric literal name.
 ///
 /// Returns `true` for:
-/// - "NaN", "Infinity", "-Infinity"
+/// - "`NaN`", "Infinity", "-Infinity"
 /// - Numeric strings that round-trip correctly through JavaScript's number-to-string conversion
 pub fn is_numeric_literal_name(name: &str) -> bool {
     if name == "NaN" || name == "Infinity" || name == "-Infinity" {
@@ -40,7 +40,7 @@ pub fn is_numeric_literal_name(name: &str) -> bool {
 /// Canonicalizes a numeric property name to its JavaScript canonical form.
 ///
 /// If the input parses as a finite number, returns `Some(canonical_form)` where
-/// canonical_form matches JavaScript's `Number.prototype.toString()`.
+/// `canonical_form` matches JavaScript's `Number.prototype.toString()`.
 /// For example, `"1."`, `"1.0"`, and `"1"` all canonicalize to `"1"`.
 /// Returns `None` if the name is not a numeric literal.
 pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
@@ -72,7 +72,7 @@ fn js_number_to_string(value: f64) -> String {
 
     let abs = value.abs();
     if !(1e-6..1e21).contains(&abs) {
-        let mut formatted = format!("{:e}", value);
+        let mut formatted = format!("{value:e}");
         if let Some(split) = formatted.find('e') {
             let (mantissa, exp) = formatted.split_at(split);
             let exp_digits = exp.strip_prefix('e').unwrap_or("");
@@ -148,10 +148,10 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
     }
 }
 
-/// Extension trait for TypeId with chainable methods for common operations.
+/// Extension trait for `TypeId` with chainable methods for common operations.
 ///
 /// This trait provides idiomatic Rust methods to reduce boilerplate when
-/// working with TypeId values. Methods are designed to be chainable and
+/// working with `TypeId` values. Methods are designed to be chainable and
 /// composable with iterator combinators.
 ///
 /// # Examples
@@ -163,7 +163,7 @@ pub fn intersection_or_single(db: &dyn TypeDatabase, types: Vec<TypeId>) -> Type
 pub trait TypeIdExt {
     /// Returns Some(self) if self is not NEVER, otherwise None.
     ///
-    /// This is useful for filter_map chains where you want to skip NEVER results.
+    /// This is useful for `filter_map` chains where you want to skip NEVER results.
     fn non_never(self) -> Option<Self>
     where
         Self: Sized;

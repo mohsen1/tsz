@@ -107,8 +107,8 @@ fn parses_target_variants() {
 
     for (input, expected) in targets {
         let args = CliArgs::try_parse_from(["tsz", "--target", input])
-            .unwrap_or_else(|_| panic!("--target {} should parse", input));
-        assert_eq!(args.target, Some(expected), "target {} failed", input);
+            .unwrap_or_else(|_| panic!("--target {input} should parse"));
+        assert_eq!(args.target, Some(expected), "target {input} failed");
     }
 }
 
@@ -138,8 +138,8 @@ fn parses_module_variants() {
 
     for (input, expected) in modules {
         let args = CliArgs::try_parse_from(["tsz", "--module", input])
-            .unwrap_or_else(|_| panic!("--module {} should parse", input));
-        assert_eq!(args.module, Some(expected), "module {} failed", input);
+            .unwrap_or_else(|_| panic!("--module {input} should parse"));
+        assert_eq!(args.module, Some(expected), "module {input} failed");
     }
 }
 
@@ -155,8 +155,8 @@ fn parses_jsx_variants() {
 
     for (input, expected) in jsx_modes {
         let args = CliArgs::try_parse_from(["tsz", "--jsx", input])
-            .unwrap_or_else(|_| panic!("--jsx {} should parse", input));
-        assert_eq!(args.jsx, Some(expected), "jsx {} failed", input);
+            .unwrap_or_else(|_| panic!("--jsx {input} should parse"));
+        assert_eq!(args.jsx, Some(expected), "jsx {input} failed");
     }
 }
 
@@ -174,12 +174,11 @@ fn parses_module_resolution_variants() {
 
     for (input, expected) in resolutions {
         let args = CliArgs::try_parse_from(["tsz", "--moduleResolution", input])
-            .unwrap_or_else(|_| panic!("--moduleResolution {} should parse", input));
+            .unwrap_or_else(|_| panic!("--moduleResolution {input} should parse"));
         assert_eq!(
             args.module_resolution,
             Some(expected),
-            "moduleResolution {} failed",
-            input
+            "moduleResolution {input} failed"
         );
     }
 }
@@ -194,12 +193,11 @@ fn parses_module_detection_variants() {
 
     for (input, expected) in detections {
         let args = CliArgs::try_parse_from(["tsz", "--moduleDetection", input])
-            .unwrap_or_else(|_| panic!("--moduleDetection {} should parse", input));
+            .unwrap_or_else(|_| panic!("--moduleDetection {input} should parse"));
         assert_eq!(
             args.module_detection,
             Some(expected),
-            "moduleDetection {} failed",
-            input
+            "moduleDetection {input} failed"
         );
     }
 }
@@ -595,13 +593,8 @@ fn parses_watch_file_variants() {
 
     for (input, expected) in variants {
         let args = CliArgs::try_parse_from(["tsz", "--watchFile", input])
-            .unwrap_or_else(|_| panic!("--watchFile {} should parse", input));
-        assert_eq!(
-            args.watch_file,
-            Some(expected),
-            "watchFile {} failed",
-            input
-        );
+            .unwrap_or_else(|_| panic!("--watchFile {input} should parse"));
+        assert_eq!(args.watch_file, Some(expected), "watchFile {input} failed");
     }
 }
 
@@ -625,12 +618,11 @@ fn parses_watch_directory_variants() {
 
     for (input, expected) in variants {
         let args = CliArgs::try_parse_from(["tsz", "--watchDirectory", input])
-            .unwrap_or_else(|_| panic!("--watchDirectory {} should parse", input));
+            .unwrap_or_else(|_| panic!("--watchDirectory {input} should parse"));
         assert_eq!(
             args.watch_directory,
             Some(expected),
-            "watchDirectory {} failed",
-            input
+            "watchDirectory {input} failed"
         );
     }
 }
@@ -646,12 +638,11 @@ fn parses_fallback_polling_variants() {
 
     for (input, expected) in variants {
         let args = CliArgs::try_parse_from(["tsz", "--fallbackPolling", input])
-            .unwrap_or_else(|_| panic!("--fallbackPolling {} should parse", input));
+            .unwrap_or_else(|_| panic!("--fallbackPolling {input} should parse"));
         assert_eq!(
             args.fallback_polling,
             Some(expected),
-            "fallbackPolling {} failed",
-            input
+            "fallbackPolling {input} failed"
         );
     }
 }
@@ -797,12 +788,11 @@ fn parses_imports_not_used_as_values_variants() {
 
     for (input, expected) in variants {
         let args = CliArgs::try_parse_from(["tsz", "--importsNotUsedAsValues", input])
-            .unwrap_or_else(|_| panic!("--importsNotUsedAsValues {} should parse", input));
+            .unwrap_or_else(|_| panic!("--importsNotUsedAsValues {input} should parse"));
         assert_eq!(
             args.imports_not_used_as_values,
             Some(expected),
-            "importsNotUsedAsValues {} failed",
-            input
+            "importsNotUsedAsValues {input} failed"
         );
     }
 }

@@ -36,14 +36,14 @@ use tsz_scanner::SyntaxKind;
 /// ES5 Class Transformer - produces IR nodes for ES5 class lowering
 pub struct ES5ClassTransformer<'a> {
     arena: &'a NodeArena,
-    /// Current class name (for WeakMap naming)
+    /// Current class name (for `WeakMap` naming)
     class_name: String,
     /// Whether we're using _this capture
     use_this_capture: bool,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             class_name: String::new(),
@@ -138,10 +138,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     .flat_map(|a| {
                         let mut inits = Vec::new();
                         if let Some(ref name) = a.get_var_name {
-                            inits.push(format!("{} = new WeakMap()", name));
+                            inits.push(format!("{name} = new WeakMap()"));
                         }
                         if let Some(ref name) = a.set_var_name {
-                            inits.push(format!("{} = new WeakMap()", name));
+                            inits.push(format!("{name} = new WeakMap()"));
                         }
                         inits
                     }),
@@ -221,8 +221,8 @@ impl<'a> ES5ClassTransformer<'a> {
         IRNode::func_decl(class_name, vec![], body)
     }
 
-    /// Extract arguments from the super() call in a constructor body.
-    /// Returns the transformed arguments and the NodeIndex of the super call statement
+    /// Extract arguments from the `super()` call in a constructor body.
+    /// Returns the transformed arguments and the `NodeIndex` of the super call statement
     /// (so it can be skipped when transforming the rest of the body).
     fn extract_super_call_args(&self, body_idx: NodeIndex) -> (Vec<IRNode>, Option<NodeIndex>) {
         let Some(body_node) = self.arena.get(body_idx) else {
@@ -929,7 +929,7 @@ pub struct ES5AsyncTransformer<'a> {
 }
 
 impl<'a> ES5AsyncTransformer<'a> {
-    pub fn new(arena: &'a NodeArena) -> Self {
+    pub const fn new(arena: &'a NodeArena) -> Self {
         Self {
             arena,
             label_counter: 0,
@@ -938,7 +938,7 @@ impl<'a> ES5AsyncTransformer<'a> {
         }
     }
 
-    pub fn set_this_capture(&mut self, capture: bool) {
+    pub const fn set_this_capture(&mut self, capture: bool) {
         self.use_this_capture = capture;
     }
 

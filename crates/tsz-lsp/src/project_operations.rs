@@ -580,7 +580,7 @@ impl Project {
     ///
     /// Returns true if the symbol is a PROPERTY, METHOD, or ACCESSOR that is NOT private.
     /// Private members are strictly local to the class and should not participate in heritage discovery.
-    fn is_heritage_member_symbol(_file: &ProjectFile, symbol: &tsz_binder::Symbol) -> bool {
+    const fn is_heritage_member_symbol(_file: &ProjectFile, symbol: &tsz_binder::Symbol) -> bool {
         use tsz_binder::symbol_flags;
 
         // Check if it's a member type
@@ -616,7 +616,7 @@ impl Project {
     /// * `member_name` - The member name (used for matching)
     ///
     /// # Returns
-    /// A set of (file_path, symbol_id) pairs representing all related members in the heritage chain
+    /// A set of (`file_path`, `symbol_id`) pairs representing all related members in the heritage chain
     fn find_all_heritage_members(
         &self,
         file: &ProjectFile,
@@ -689,7 +689,7 @@ impl Project {
     /// Find base class members by walking up the heritage chain.
     ///
     /// This searches for members with the same name in base classes/interfaces
-    /// that the parent class extends or implements, using the new sub_to_bases mapping.
+    /// that the parent class extends or implements, using the new `sub_to_bases` mapping.
     ///
     /// # Arguments
     /// * `file` - The file containing the derived class
@@ -697,7 +697,7 @@ impl Project {
     /// * `member_name` - The member name to search for
     ///
     /// # Returns
-    /// A set of (file_path, symbol_id) pairs representing base class members, or None if
+    /// A set of (`file_path`, `symbol_id`) pairs representing base class members, or None if
     /// no base members were found
     fn find_base_class_members(
         &self,
@@ -1133,7 +1133,7 @@ impl Project {
             let mut processed: FxHashSet<(String, String)> = FxHashSet::default();
 
             // Start with the initial target
-            queue.push_back((file_name.to_string(), initial_name.clone(), initial_kind));
+            queue.push_back((file_name.to_string(), initial_name, initial_kind));
 
             while let Some((curr_file, curr_name, curr_kind)) = queue.pop_front() {
                 // Skip if we've already processed this (file, name) pair
@@ -1549,7 +1549,7 @@ impl Project {
     ///
     /// # Arguments
     /// * `file_name` - The file containing the symbol being renamed
-    /// * `symbol_id` - The SymbolId of the member being renamed
+    /// * `symbol_id` - The `SymbolId` of the member being renamed
     /// * `local_name` - The current name of the member
     /// * `new_name` - The new name for the member
     /// * `start` - Instant for performance tracking
@@ -1739,7 +1739,7 @@ impl Project {
                 };
 
                 let kind_key = match &candidate.kind {
-                    ImportCandidateKind::Named { export_name } => format!("named:{}", export_name),
+                    ImportCandidateKind::Named { export_name } => format!("named:{export_name}"),
                     ImportCandidateKind::Default => "default".to_string(),
                     ImportCandidateKind::Namespace => "namespace".to_string(),
                 };
@@ -1804,7 +1804,7 @@ impl Project {
 
                     let kind_key = match &candidate.kind {
                         ImportCandidateKind::Named { export_name } => {
-                            format!("named:{}", export_name)
+                            format!("named:{export_name}")
                         }
                         ImportCandidateKind::Default => "default".to_string(),
                         ImportCandidateKind::Namespace => "namespace".to_string(),
@@ -2243,7 +2243,7 @@ impl Project {
             return None;
         }
         if !spec.starts_with('.') {
-            spec = format!("./{}", spec);
+            spec = format!("./{spec}");
         }
         Some(spec)
     }
@@ -2271,7 +2271,7 @@ impl Project {
             candidates.push(module_specifier.to_string());
             if Path::new(module_specifier).extension().is_none() {
                 for ext in TS_EXTENSION_CANDIDATES {
-                    candidates.push(format!("{}.{}", module_specifier, ext));
+                    candidates.push(format!("{module_specifier}.{ext}"));
                 }
             }
         }

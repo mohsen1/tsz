@@ -102,10 +102,7 @@ fn create_watcher(args: &CliArgs, tx: mpsc::Sender<notify::Result<Event>>) -> Re
             match RecommendedWatcher::new(tx.clone(), Config::default()) {
                 Ok(watcher) => Ok(WatcherImpl::Native(watcher)),
                 Err(e) => {
-                    println!(
-                        "Warning: Native file watcher failed ({}), falling back to polling",
-                        e
-                    );
+                    println!("Warning: Native file watcher failed ({e}), falling back to polling");
                     let config = Config::default().with_poll_interval(poll_interval);
                     let watcher = PollWatcher::new(tx, config)
                         .context("failed to initialize fallback poll watcher")?;
@@ -143,7 +140,7 @@ impl WatchState {
         let watch_roots = collect_watch_roots(&base_dir, explicit_files.as_ref());
         let ignore_dirs = compute_ignore_dirs(&base_dir, &resolved);
         let project_config = if args.project.is_some() {
-            tsconfig_path.clone()
+            tsconfig_path
         } else {
             None
         };
@@ -326,7 +323,7 @@ fn resolve_explicit_files(base_dir: &Path, files: &[PathBuf]) -> Option<FxHashSe
     Some(resolved)
 }
 
-fn is_relevant_event(kind: EventKind) -> bool {
+const fn is_relevant_event(kind: EventKind) -> bool {
     matches!(
         kind,
         EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_) | EventKind::Any

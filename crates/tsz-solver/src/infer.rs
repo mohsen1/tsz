@@ -29,7 +29,7 @@ use std::cell::RefCell;
 use tsz_common::interner::Atom;
 
 /// Helper function to extend a vector with deduplicated items.
-/// Uses a HashSet for O(1) lookups instead of O(n) contains checks.
+/// Uses a `HashSet` for O(1) lookups instead of O(n) contains checks.
 fn extend_dedup<T>(target: &mut Vec<T>, items: &[T])
 where
     T: Clone + Eq + std::hash::Hash,
@@ -71,7 +71,7 @@ pub struct InferenceInfo {
 }
 
 impl InferenceInfo {
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.candidates.is_empty() && self.upper_bounds.is_empty()
     }
 }
@@ -147,7 +147,7 @@ pub struct ConstraintSet {
 }
 
 impl ConstraintSet {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             lower_bounds: Vec::new(),
             upper_bounds: Vec::new(),
@@ -193,7 +193,7 @@ impl ConstraintSet {
     }
 
     /// Check if there are any constraints
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.lower_bounds.is_empty() && self.upper_bounds.is_empty()
     }
 
@@ -359,7 +359,7 @@ impl<'a> InferenceContext<'a> {
     /// Register an existing inference variable as representing a type parameter.
     ///
     /// This is useful when the caller needs to compute a unique placeholder name
-    /// (and corresponding placeholder TypeId) after allocating the inference variable.
+    /// (and corresponding placeholder `TypeId`) after allocating the inference variable.
     pub fn register_type_param(&mut self, name: Atom, var: InferenceVar, is_const: bool) {
         self.type_params.push((name, var, is_const));
     }
@@ -751,7 +751,7 @@ impl<'a> InferenceContext<'a> {
         };
 
         match key {
-            TypeData::TypeParameter(info) => info.name == target,
+            TypeData::TypeParameter(info) | TypeData::Infer(info) => info.name == target,
             TypeData::Array(elem) => self.type_contains_param(elem, target, visited),
             TypeData::Tuple(elements) => {
                 let elements = self.interner.tuple_list(elements);
@@ -884,7 +884,6 @@ impl<'a> InferenceContext<'a> {
                 // Recurse into the structural member type
                 self.type_contains_param(member_type, target, visited)
             }
-            TypeData::Infer(info) => info.name == target,
             TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Lazy(_)
@@ -924,7 +923,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Add a lower bound constraint: ty <: var
     /// Phase 7a Task 2: This is used when an argument type flows into a type parameter.
-    /// Updated to use NakedTypeVariable (highest priority) for direct argument inference.
+    /// Updated to use `NakedTypeVariable` (highest priority) for direct argument inference.
     pub fn add_lower_bound(&mut self, var: InferenceVar, ty: TypeId) {
         self.add_candidate(var, ty, InferencePriority::NakedTypeVariable);
     }
@@ -970,7 +969,7 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    /// Check if all inference candidates for a variable have ReturnType priority.
+    /// Check if all inference candidates for a variable have `ReturnType` priority.
     /// This indicates the type was inferred from callback return types (Round 2),
     /// not from direct arguments (Round 1).
     pub fn all_candidates_are_return_type(&mut self, var: InferenceVar) -> bool {
@@ -986,7 +985,7 @@ impl<'a> InferenceContext<'a> {
     /// Collect a constraint from an assignment: source flows into target
     /// If target is an inference variable, source becomes a lower bound.
     /// If source is an inference variable, target becomes an upper bound.
-    pub fn collect_constraint(&mut self, _source: TypeId, _target: TypeId) {
+    pub const fn collect_constraint(&mut self, _source: TypeId, _target: TypeId) {
         // Check if target is an inference variable (via TypeData lookup)
         // For now, we rely on the caller to call add_lower_bound/add_upper_bound directly
         // This is a placeholder for more sophisticated constraint collection
@@ -1299,7 +1298,6 @@ impl<'a> InferenceContext<'a> {
                     // Note the swapped arguments! This is the key to handling contravariance.
                     self.infer_from_types(target_param.type_id, source_param.type_id, priority)?;
                 }
-                (None, None) => break,
                 _ => break, // Mismatch in arity - stop here
             }
         }
@@ -1400,7 +1398,7 @@ impl<'a> InferenceContext<'a> {
         Ok(())
     }
 
-    /// Infer from TypeApplication (generic type instantiations)
+    /// Infer from `TypeApplication` (generic type instantiations)
     fn infer_applications(
         &mut self,
         source_app: TypeApplicationId,
@@ -1450,7 +1448,7 @@ impl<'a> InferenceContext<'a> {
     /// # Arguments
     ///
     /// * `source` - The source type being checked (e.g., `"user_123"`)
-    /// * `source_key` - The TypeData of the source (cached for efficiency)
+    /// * `source_key` - The `TypeData` of the source (cached for efficiency)
     /// * `target_template` - The template literal pattern to match against
     /// * `priority` - Inference priority for the extracted candidates
     fn infer_from_template_literal(
@@ -1507,14 +1505,12 @@ impl<'a> InferenceContext<'a> {
         Ok(())
     }
 
-    /// Extract a string literal value from a TypeId.
+    /// Extract a string literal value from a `TypeId`.
     ///
     /// Returns None if the type is not a literal string.
     fn extract_string_literal(&self, type_id: TypeId) -> Option<String> {
         match self.interner.lookup(type_id) {
-            Some(TypeData::Literal(LiteralValue::String(s))) => {
-                Some(self.interner.resolve_atom(s).to_string())
-            }
+            Some(TypeData::Literal(LiteralValue::String(s))) => Some(self.interner.resolve_atom(s)),
             _ => None,
         }
     }
@@ -1852,11 +1848,11 @@ impl<'a> InferenceContext<'a> {
         self.best_common_type(&widened)
     }
 
-    /// Phase 7a Task 2: Filter candidates by priority using NEW InferencePriority.
+    /// Phase 7a Task 2: Filter candidates by priority using NEW `InferencePriority`.
     ///
     /// CRITICAL FIX: In the new enum, LOWER values = HIGHER priority (processed earlier).
-    /// - NakedTypeVariable (1) is highest priority
-    /// - ReturnType (32) is lower priority
+    /// - `NakedTypeVariable` (1) is highest priority
+    /// - `ReturnType` (32) is lower priority
     ///
     /// Therefore we use `.min()` instead of `.max()` to find the highest priority candidate.
     fn filter_candidates_by_priority(
@@ -2132,7 +2128,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Get the extends clause (base class) for a class/interface type.
     ///
-    /// This uses the TypeResolver to bridge to the Binder's extends clause information.
+    /// This uses the `TypeResolver` to bridge to the Binder's extends clause information.
     /// For example, given Dog that extends Animal, this returns the Animal type.
     fn get_extends_clause(&self, ty: TypeId) -> Option<TypeId> {
         // If we have a resolver, use it to get the base type
@@ -2156,7 +2152,7 @@ impl<'a> InferenceContext<'a> {
     }
 
     /// Simple subtype check for bounds validation.
-    /// Uses a simplified check - for full checking, use SubtypeChecker.
+    /// Uses a simplified check - for full checking, use `SubtypeChecker`.
     fn is_subtype(&self, source: TypeId, target: TypeId) -> bool {
         let key = (source, target);
         if let Some(&cached) = self.subtype_cache.borrow().get(&key) {
@@ -3332,7 +3328,7 @@ impl<'a> InferenceContext<'a> {
     // =========================================================================
 
     /// Compute the variance of a type parameter within a type.
-    /// Returns (covariant_count, contravariant_count, invariant_count, bivariant_count)
+    /// Returns (`covariant_count`, `contravariant_count`, `invariant_count`, `bivariant_count`)
     pub fn compute_variance(&self, ty: TypeId, target_param: Atom) -> (u32, u32, u32, u32) {
         let mut covariant = 0u32;
         let mut contravariant = 0u32;
@@ -3673,7 +3669,7 @@ impl<'a> InferenceContext<'a> {
             }
 
             // Get candidates from the subtype (var)
-            let var_candidates = self.table.probe_value(var_root).candidates.clone();
+            let var_candidates = self.table.probe_value(var_root).candidates;
 
             // Add them to the supertype (upper)
             let mut changed = false;
@@ -3798,7 +3794,7 @@ impl<'a> InferenceContext<'a> {
 
     /// Get the current best substitution for all type parameters.
     ///
-    /// This returns a TypeSubstitution mapping each type parameter to its
+    /// This returns a `TypeSubstitution` mapping each type parameter to its
     /// current best type (either resolved or the best candidate so far).
     /// Used in Round 2 to provide contextual types to lambda arguments.
     pub fn get_current_substitution(&mut self) -> TypeSubstitution {

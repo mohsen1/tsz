@@ -42,8 +42,7 @@ const result2 = identity("string"); // TS2322: "string" doesn't satisfy "extends
         .count();
     assert!(
         ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {}",
-        ts2322_count
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }
 
@@ -136,8 +135,7 @@ const result4 = foo<number>([]); // TS2322: [] doesn't satisfy number
         .count();
     assert!(
         ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {}",
-        ts2322_count
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }
 
@@ -183,8 +181,7 @@ const c4 = new Container<number>({}); // TS2322: {} doesn't extend number
         .count();
     assert!(
         ts2322_count >= 2,
-        "Expected at least 2 TS2322 errors, got {}",
-        ts2322_count
+        "Expected at least 2 TS2322 errors, got {ts2322_count}"
     );
 }
 
@@ -281,8 +278,7 @@ const result3 = pair<number, number>(1, "hello"); // TS2322: "string" not assign
         .count();
     assert!(
         ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {}",
-        ts2322_count
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }
 
@@ -325,8 +321,7 @@ const result4 = identity<string>(42); // TS2322: 42 not assignable to string
         .count();
     assert!(
         ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {}",
-        ts2322_count
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }
 
@@ -369,7 +364,6 @@ const r4 = foo<number, boolean>(1, "hello"); // TS2322: string not assignable to
         .count();
     assert!(
         ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {}",
-        ts2322_count
+        "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }

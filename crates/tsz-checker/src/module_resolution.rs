@@ -44,7 +44,7 @@ fn relative_specifier(from_dir: &Path, to_path: &Path) -> Option<String> {
     if let Ok(rel) = to_path.strip_prefix(from_dir) {
         let rel_str = rel.to_string_lossy();
         let without_ext = strip_ts_extension(&rel_str);
-        return Some(format!("./{}", without_ext));
+        return Some(format!("./{without_ext}"));
     }
 
     // Walk up from from_dir to find a common ancestor
@@ -58,7 +58,7 @@ fn relative_specifier(from_dir: &Path, to_path: &Path) -> Option<String> {
                     let rel_str = rel.to_string_lossy();
                     let without_ext = strip_ts_extension(&rel_str);
                     let prefix = "../".repeat(up_count);
-                    return Some(format!("{}{}", prefix, without_ext));
+                    return Some(format!("{prefix}{without_ext}"));
                 }
                 ancestor = parent;
             }
@@ -70,7 +70,7 @@ fn relative_specifier(from_dir: &Path, to_path: &Path) -> Option<String> {
 /// Build module resolution maps from a list of file paths.
 ///
 /// Returns:
-/// - `resolved_module_paths`: Maps (source_file_idx, specifier) -> target_file_idx
+/// - `resolved_module_paths`: Maps (`source_file_idx`, specifier) -> `target_file_idx`
 /// - `resolved_modules`: Set of all valid module specifiers
 ///
 /// This handles relative imports between files in the same project.

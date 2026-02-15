@@ -1,6 +1,6 @@
 //! Error Handler Trait
 //!
-//! This module defines the ErrorHandler trait and its implementation
+//! This module defines the `ErrorHandler` trait and its implementation
 //! as part of Phase 3 architecture refactoring.
 //!
 //! The trait provides a consistent API for error reporting across the codebase,
@@ -225,7 +225,7 @@ pub struct DiagnosticBuilder<'a> {
 
 impl<'a> DiagnosticBuilder<'a> {
     /// Create a new diagnostic builder.
-    pub fn new(file_name: &'a str) -> Self {
+    pub const fn new(file_name: &'a str) -> Self {
         Self {
             file_name,
             start: 0,
@@ -236,7 +236,7 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 
     /// Set the position for the diagnostic.
-    pub fn position(mut self, start: u32, length: u32) -> Self {
+    pub const fn position(mut self, start: u32, length: u32) -> Self {
         self.start = start;
         self.length = length;
         self
@@ -249,7 +249,7 @@ impl<'a> DiagnosticBuilder<'a> {
     }
 
     /// Set the error code for the diagnostic.
-    pub fn code(mut self, code: u32) -> Self {
+    pub const fn code(mut self, code: u32) -> Self {
         self.code = code;
         self
     }

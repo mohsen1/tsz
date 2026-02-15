@@ -5,7 +5,7 @@
 //!
 //! - **Decoupling**: Solver is independent of Binder's symbol representation
 //! - **Testing**: Types can be created and tested without a full Binder
-//! - **Caching**: DefId provides a stable key for Salsa memoization
+//! - **Caching**: `DefId` provides a stable key for Salsa memoization
 //!
 //! ## Migration Path
 //!
@@ -15,7 +15,7 @@
 //! 2. New `TypeData::Lazy(DefId)` is added for migrated code
 //! 3. Eventually, `Ref(SymbolRef)` is removed entirely
 //!
-//! ## DefId Allocation Strategies
+//! ## `DefId` Allocation Strategies
 //!
 //! | Mode | Strategy | Use Case |
 //! |------|----------|----------|
@@ -29,8 +29,8 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use tracing::trace;
 use tsz_common::interner::Atom;
 
-/// Global counter for assigning unique instance IDs to DefinitionStore instances.
-/// Used for debugging DefId collision issues.
+/// Global counter for assigning unique instance IDs to `DefinitionStore` instances.
+/// Used for debugging `DefId` collision issues.
 static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 
 // =============================================================================
@@ -42,7 +42,7 @@ static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 /// Unlike `SymbolRef` which references Binder symbols, `DefId` is owned by
 /// the Solver and can be created without Binder context.
 ///
-/// ## Comparison with SymbolRef
+/// ## Comparison with `SymbolRef`
 ///
 /// | Aspect | SymbolRef | DefId |
 /// |--------|-----------|-------|
@@ -54,14 +54,14 @@ static NEXT_INSTANCE_ID: AtomicU64 = AtomicU64::new(1);
 pub struct DefId(pub u32);
 
 impl DefId {
-    /// Sentinel value for invalid DefId.
+    /// Sentinel value for invalid `DefId`.
     pub const INVALID: Self = Self(0);
 
-    /// First valid DefId.
+    /// First valid `DefId`.
     pub const FIRST_VALID: u32 = 1;
 
-    /// Check if this DefId is valid.
-    pub fn is_valid(self) -> bool {
+    /// Check if this `DefId` is valid.
+    pub const fn is_valid(self) -> bool {
         self.0 >= Self::FIRST_VALID
     }
 }
@@ -110,7 +110,7 @@ pub enum DefKind {
 
 /// Complete information about a type definition.
 ///
-/// This is stored in `DefinitionStore` and retrieved by DefId.
+/// This is stored in `DefinitionStore` and retrieved by `DefId`.
 #[derive(Clone, Debug)]
 pub struct DefinitionInfo {
     /// Kind of definition (affects evaluation strategy)
@@ -122,7 +122,7 @@ pub struct DefinitionInfo {
     /// Type parameters for generic definitions
     pub type_params: Vec<TypeParamInfo>,
 
-    /// The body TypeId (structural representation)
+    /// The body `TypeId` (structural representation)
     /// For lazy definitions, this may be computed on demand
     pub body: Option<TypeId>,
 
@@ -132,7 +132,7 @@ pub struct DefinitionInfo {
     /// For classes: the static type's structural shape
     pub static_shape: Option<Arc<ObjectShape>>,
 
-    /// For classes: parent class DefId (if extends)
+    /// For classes: parent class `DefId` (if extends)
     pub extends: Option<DefId>,
 
     /// For classes/interfaces: implemented interfaces
@@ -142,7 +142,7 @@ pub struct DefinitionInfo {
     pub enum_members: Vec<(Atom, EnumMemberValue)>,
 
     /// For namespaces/modules: exported members
-    /// Maps export name to the DefId of the exported type
+    /// Maps export name to the `DefId` of the exported type
     pub exports: Vec<(Atom, DefId)>,
 
     /// Optional file identifier for debugging
@@ -165,7 +165,7 @@ pub enum EnumMemberValue {
 
 impl DefinitionInfo {
     /// Create a new type alias definition.
-    pub fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
+    pub const fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
         Self {
             kind: DefKind::TypeAlias,
             name,
@@ -249,7 +249,7 @@ impl DefinitionInfo {
     }
 
     /// Create a new enum definition.
-    pub fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
+    pub const fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
         Self {
             kind: DefKind::Enum,
             name,
@@ -267,7 +267,7 @@ impl DefinitionInfo {
     }
 
     /// Create a new namespace definition.
-    pub fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
+    pub const fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
         Self {
             kind: DefKind::Namespace,
             name,
@@ -285,7 +285,7 @@ impl DefinitionInfo {
     }
 
     /// Set the extends parent for a class.
-    pub fn with_extends(mut self, parent: DefId) -> Self {
+    pub const fn with_extends(mut self, parent: DefId) -> Self {
         self.extends = Some(parent);
         self
     }
@@ -316,13 +316,13 @@ impl DefinitionInfo {
     }
 
     /// Set file ID for debugging.
-    pub fn with_file_id(mut self, file_id: u32) -> Self {
+    pub const fn with_file_id(mut self, file_id: u32) -> Self {
         self.file_id = Some(file_id);
         self
     }
 
     /// Set source span.
-    pub fn with_span(mut self, start: u32, end: u32) -> Self {
+    pub const fn with_span(mut self, start: u32, end: u32) -> Self {
         self.span = Some((start, end));
         self
     }
@@ -355,10 +355,10 @@ pub struct DefinitionStore {
     /// Unique instance ID for debugging (tracks which store instance this is)
     instance_id: u64,
 
-    /// DefId -> DefinitionInfo mapping
+    /// `DefId` -> `DefinitionInfo` mapping
     definitions: DashMap<DefId, DefinitionInfo>,
 
-    /// Next available DefId
+    /// Next available `DefId`
     next_id: AtomicU32,
 }
 
@@ -380,7 +380,7 @@ impl DefinitionStore {
         }
     }
 
-    /// Allocate a fresh DefId.
+    /// Allocate a fresh `DefId`.
     fn allocate(&self) -> DefId {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
         trace!(
@@ -392,7 +392,7 @@ impl DefinitionStore {
         DefId(id)
     }
 
-    /// Register a new definition and return its DefId.
+    /// Register a new definition and return its `DefId`.
     pub fn register(&self, info: DefinitionInfo) -> DefId {
         let id = self.allocate();
         trace!(
@@ -405,12 +405,12 @@ impl DefinitionStore {
         id
     }
 
-    /// Get definition info by DefId.
+    /// Get definition info by `DefId`.
     pub fn get(&self, id: DefId) -> Option<DefinitionInfo> {
         self.definitions.get(&id).map(|r| r.clone())
     }
 
-    /// Check if a DefId exists.
+    /// Check if a `DefId` exists.
     pub fn contains(&self, id: DefId) -> bool {
         self.definitions.contains_key(&id)
     }
@@ -425,7 +425,7 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.type_params.clone())
     }
 
-    /// Get the body TypeId for a definition.
+    /// Get the body `TypeId` for a definition.
     pub fn get_body(&self, id: DefId) -> Option<TypeId> {
         self.definitions.get(&id).and_then(|r| r.body)
     }
@@ -444,7 +444,7 @@ impl DefinitionStore {
             .and_then(|r| r.static_shape.clone())
     }
 
-    /// Get parent class DefId for a class.
+    /// Get parent class `DefId` for a class.
     pub fn get_extends(&self, id: DefId) -> Option<DefId> {
         self.definitions.get(&id).and_then(|r| r.extends)
     }
@@ -454,7 +454,7 @@ impl DefinitionStore {
         self.definitions.get(&id).map(|r| r.implements.clone())
     }
 
-    /// Update the body TypeId for a definition (for lazy evaluation).
+    /// Update the body `TypeId` for a definition (for lazy evaluation).
     pub fn set_body(&self, id: DefId, body: TypeId) {
         if let Some(mut entry) = self.definitions.get_mut(&id) {
             entry.body = Some(body);
@@ -477,12 +477,12 @@ impl DefinitionStore {
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
     }
 
-    /// Get exports for a namespace/module DefId.
+    /// Get exports for a namespace/module `DefId`.
     pub fn get_exports(&self, id: DefId) -> Option<Vec<(Atom, DefId)>> {
         self.definitions.get(&id).map(|r| r.exports.clone())
     }
 
-    /// Get enum members for an enum DefId.
+    /// Get enum members for an enum `DefId`.
     pub fn get_enum_members(&self, id: DefId) -> Option<Vec<(Atom, EnumMemberValue)>> {
         self.definitions.get(&id).map(|r| r.enum_members.clone())
     }
@@ -513,14 +513,14 @@ impl DefinitionStore {
         }
     }
 
-    /// Get all DefIds (for debugging/testing).
+    /// Get all `DefIds` (for debugging/testing).
     pub fn all_ids(&self) -> Vec<DefId> {
         self.definitions.iter().map(|r| *r.key()).collect()
     }
 
-    /// Find a DefId by its instance shape.
+    /// Find a `DefId` by its instance shape.
     ///
-    /// This is used by the TypeFormatter to preserve interface names in error messages.
+    /// This is used by the `TypeFormatter` to preserve interface names in error messages.
     /// When an Object type matches an interface's instance shape, we use the interface name
     /// instead of expanding the object literal.
     pub fn find_def_by_shape(&self, shape: &ObjectShape) -> Option<DefId> {
@@ -542,15 +542,15 @@ impl DefinitionStore {
 // Content-Addressed DefId (for LSP mode)
 // =============================================================================
 
-/// Content-addressed DefId generator for LSP mode.
+/// Content-addressed `DefId` generator for LSP mode.
 ///
-/// Uses a hash of (name, file_id, span) to generate stable DefIds
+/// Uses a hash of (name, `file_id`, span) to generate stable `DefIds`
 /// that survive file edits without changing unrelated definitions.
 pub struct ContentAddressedDefIds {
-    /// Hash -> DefId mapping for deduplication
+    /// Hash -> `DefId` mapping for deduplication
     hash_to_def: DashMap<u64, DefId>,
 
-    /// Next DefId for new hashes
+    /// Next `DefId` for new hashes
     next_id: AtomicU32,
 }
 
@@ -561,7 +561,7 @@ impl Default for ContentAddressedDefIds {
 }
 
 impl ContentAddressedDefIds {
-    /// Create a new content-addressed DefId generator.
+    /// Create a new content-addressed `DefId` generator.
     pub fn new() -> Self {
         Self {
             hash_to_def: DashMap::new(),
@@ -569,7 +569,7 @@ impl ContentAddressedDefIds {
         }
     }
 
-    /// Get or create a DefId for the given content hash.
+    /// Get or create a `DefId` for the given content hash.
     ///
     /// # Arguments
     /// - `name`: Definition name

@@ -73,7 +73,7 @@ pub struct SemanticTokensBuilder {
 
 impl SemanticTokensBuilder {
     /// Create a new semantic tokens builder.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             data: Vec::new(),
             prev_line: 0,
@@ -132,7 +132,7 @@ pub struct SemanticTokensProvider<'a> {
 
 impl<'a> SemanticTokensProvider<'a> {
     /// Create a new semantic tokens provider.
-    pub fn new(
+    pub const fn new(
         arena: &'a NodeArena,
         binder: &'a BinderState,
         line_map: &'a LineMap,
@@ -415,7 +415,7 @@ impl<'a> SemanticTokensProvider<'a> {
         false
     }
 
-    /// Check if an identifier is the name child of a TYPE_PARAMETER node.
+    /// Check if an identifier is the name child of a `TYPE_PARAMETER` node.
     fn is_type_parameter_name(&self, ident_idx: NodeIndex) -> bool {
         let Some(ext) = self.arena.get_extended(ident_idx) else {
             return false;
@@ -551,7 +551,7 @@ impl<'a> SemanticTokensProvider<'a> {
         self.emit_token_for_node(node_idx, token_type, modifiers);
     }
 
-    /// Visit all children of a node using the generic get_children traversal.
+    /// Visit all children of a node using the generic `get_children` traversal.
     fn visit_children(&mut self, node_idx: NodeIndex) {
         let children = self.arena.get_children(node_idx);
         for child in children {

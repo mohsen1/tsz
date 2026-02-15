@@ -7,7 +7,7 @@
 //! - Statement fall-through analysis
 //! - Switch/try/loop fall-through
 //!
-//! This module extends CheckerState with reachability-related methods as part of
+//! This module extends `CheckerState` with reachability-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -169,7 +169,6 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::WHILE_STATEMENT
             | syntax_kind_ext::DO_STATEMENT
             | syntax_kind_ext::FOR_STATEMENT => self.loop_falls_through(node),
-            syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => true,
             syntax_kind_ext::LABELED_STATEMENT => self
                 .ctx
                 .arena
@@ -301,7 +300,6 @@ impl<'a> CheckerState<'a> {
                                 && self.contains_break_statement(if_data.else_statement))
                     })
             }
-            syntax_kind_ext::SWITCH_STATEMENT => false,
             syntax_kind_ext::TRY_STATEMENT => {
                 self.ctx.arena.get_try(node).is_some_and(|try_data| {
                     self.contains_break_statement(try_data.try_block)
@@ -311,11 +309,6 @@ impl<'a> CheckerState<'a> {
                             && self.contains_break_statement(try_data.finally_block))
                 })
             }
-            syntax_kind_ext::WHILE_STATEMENT
-            | syntax_kind_ext::DO_STATEMENT
-            | syntax_kind_ext::FOR_STATEMENT
-            | syntax_kind_ext::FOR_IN_STATEMENT
-            | syntax_kind_ext::FOR_OF_STATEMENT => false,
             syntax_kind_ext::LABELED_STATEMENT => self
                 .ctx
                 .arena

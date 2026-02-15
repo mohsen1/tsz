@@ -142,8 +142,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Type Constructs Evaluated:
     /// - **Application** (`Map<string, number>`): Generic type instantiation
-    /// - **IndexAccess** (`Type["key"]`): Indexed access types
-    /// - **KeyOf** (`keyof Type`): Keyof operator types
+    /// - **`IndexAccess`** (`Type["key"]`): Indexed access types
+    /// - **`KeyOf`** (`keyof Type`): Keyof operator types
     /// - **Mapped** (`{ [K in Keys]: V }`): Mapped types
     /// - **Conditional** (`T extends U ? X : Y`): Conditional types
     ///
@@ -398,8 +398,9 @@ impl<'a> CheckerState<'a> {
                 let evaluated = self.evaluate_type_with_resolution(operand);
                 self.get_keyof_type(evaluated)
             }
-            query::MappedConstraintKind::Resolved => constraint,
-            query::MappedConstraintKind::Other => constraint,
+            query::MappedConstraintKind::Resolved | query::MappedConstraintKind::Other => {
+                constraint
+            }
         }
     }
 
@@ -764,8 +765,8 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get keyof a type - extract the keys of an object type.
-    /// Ensure all symbols referenced in Application types are resolved in the type_env.
-    /// This walks the type structure and calls get_type_of_symbol for any Application base symbols.
+    /// Ensure all symbols referenced in Application types are resolved in the `type_env`.
+    /// This walks the type structure and calls `get_type_of_symbol` for any Application base symbols.
     pub(crate) fn ensure_application_symbols_resolved(&mut self, type_id: TypeId) {
         use rustc_hash::FxHashSet;
 
@@ -863,7 +864,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a `DefId` to a concrete type and insert a DefId mapping into the type environment.
+    /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
     ///
     /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
     /// is unknown to the checker. For `ANY`/`ERROR`, we intentionally skip env insertion.
@@ -1011,7 +1012,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Create a TypeEnvironment populated with resolved symbol types.
+    /// Create a `TypeEnvironment` populated with resolved symbol types.
     ///
     /// This can be passed to `is_assignable_to_with_env` for type checking
     /// that needs to resolve type references.
@@ -1097,13 +1098,13 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Cross-Arena Resolution:
     /// - Handles symbols defined in other arenas (e.g., imported symbols)
-    /// - Creates a temporary CheckerState for the other arena
+    /// - Creates a temporary `CheckerState` for the other arena
     /// - Delegates type parameter extraction to the temporary checker
     ///
     /// ## Type Parameter Information:
     /// - Returns Vec<TypeParamInfo> with parameter names and constraints
     /// - Includes default type arguments if present
-    /// - Used by TypeEnvironment for generic type expansion
+    /// - Used by `TypeEnvironment` for generic type expansion
     ///
     /// ## TypeScript Examples:
     /// ```typescript
@@ -1388,25 +1389,25 @@ impl<'a> CheckerState<'a> {
 
     /// Get type from a type node.
     ///
-    /// Uses compile-time constant TypeIds for intrinsic types (O(1) lookup).
+    /// Uses compile-time constant `TypeIds` for intrinsic types (O(1) lookup).
     /// Get the type representation of a type annotation node.
     ///
     /// This is the main entry point for converting type annotation AST nodes into
-    /// TypeId representations. Handles all TypeScript type syntax.
+    /// `TypeId` representations. Handles all TypeScript type syntax.
     ///
     /// ## Special Node Handling:
-    /// - **TypeReference**: Validates existence before lowering (catches missing types)
-    /// - **TypeQuery** (`typeof X`): Resolves via binder for proper symbol resolution
-    /// - **UnionType**: Handles specially for nested typeof expression resolution
-    /// - **TypeLiteral**: Uses checker resolution for type parameter support
-    /// - **Other nodes**: Delegated to TypeLowering
+    /// - **`TypeReference`**: Validates existence before lowering (catches missing types)
+    /// - **`TypeQuery`** (`typeof X`): Resolves via binder for proper symbol resolution
+    /// - **`UnionType`**: Handles specially for nested typeof expression resolution
+    /// - **`TypeLiteral`**: Uses checker resolution for type parameter support
+    /// - **Other nodes**: Delegated to `TypeLowering`
     ///
     /// ## Type Parameter Bindings:
     /// - Uses current type parameter bindings from scope
     /// - Allows type parameters to resolve correctly in generic contexts
     ///
     /// ## Symbol Resolvers:
-    /// - Provides type/value symbol resolvers to TypeLowering
+    /// - Provides type/value symbol resolvers to `TypeLowering`
     /// - Resolves type references and value references (for typeof)
     ///
     /// ## Error Reporting:
@@ -1718,12 +1719,12 @@ impl<'a> CheckerState<'a> {
 
     /// Format a type as a human-readable string for error messages and diagnostics.
     ///
-    /// This is the main entry point for converting TypeId representations into
+    /// This is the main entry point for converting `TypeId` representations into
     /// human-readable type strings. Used throughout the type checker for error
     /// messages, quick info, and IDE features.
     ///
     /// ## Formatting Strategy:
-    /// - Delegates to the solver's TypeFormatter
+    /// - Delegates to the solver's `TypeFormatter`
     /// - Provides symbol table for resolving symbol names
     /// - Handles all type constructs (primitives, generics, unions, etc.)
     ///
@@ -1737,7 +1738,7 @@ impl<'a> CheckerState<'a> {
     /// - Functions: Display as (args) => return
     /// - Objects: Display as { prop: Type; ... }
     /// - Type Parameters: Display as T, U, V (short names)
-    /// - Type References: Display as RefName<Args>
+    /// - Type References: Display as `RefName`<Args>
     ///
     /// ## Use Cases:
     /// - Error messages: "Type X is not assignable to Y"

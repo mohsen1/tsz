@@ -1,8 +1,8 @@
 //! Type Checking Utilities Module
 //!
 //! This module contains parameter type utilities, type construction, and
-//! type resolution methods for CheckerState.
-//! Split from type_checking.rs for maintainability.
+//! type resolution methods for `CheckerState`.
+//! Split from `type_checking.rs` for maintainability.
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};
@@ -649,8 +649,9 @@ impl<'a> CheckerState<'a> {
                 }
                 // IsUnknown: Return None to signal that property access on unknown failed
                 // The caller has node context and will report TS2571 error
-                PropertyAccessResult::IsUnknown => return None,
-                PropertyAccessResult::PropertyNotFound { .. } => return None,
+                PropertyAccessResult::IsUnknown | PropertyAccessResult::PropertyNotFound { .. } => {
+                    return None;
+                }
             }
         }
 
@@ -739,8 +740,7 @@ impl<'a> CheckerState<'a> {
         }
 
         match query::classify_array_like(self.ctx.types, object_type) {
-            query::ArrayLikeKind::Array(_) => true,
-            query::ArrayLikeKind::Tuple => true,
+            query::ArrayLikeKind::Array(_) | query::ArrayLikeKind::Tuple => true,
             query::ArrayLikeKind::Readonly(inner) => self.is_array_like_type(inner),
             query::ArrayLikeKind::Union(members) => members
                 .iter()
@@ -814,7 +814,7 @@ impl<'a> CheckerState<'a> {
     /// Determine what kind of index key a type represents.
     ///
     /// This function analyzes a type to determine if it can be used for string
-    /// or numeric indexing. Returns a tuple of (wants_string, wants_number).
+    /// or numeric indexing. Returns a tuple of (`wants_string`, `wants_number`).
     ///
     /// ## Returns:
     /// - `Some((true, false))`: String index (e.g., `"foo"`, `string`)
@@ -883,7 +883,9 @@ impl<'a> CheckerState<'a> {
         wants_number: bool,
     ) -> bool {
         match query::classify_element_indexable(self.ctx.types, object_type) {
-            query::ElementIndexableKind::Array | query::ElementIndexableKind::Tuple => wants_number,
+            query::ElementIndexableKind::Array
+            | query::ElementIndexableKind::Tuple
+            | query::ElementIndexableKind::StringLike => wants_number,
             query::ElementIndexableKind::ObjectWithIndex {
                 has_string,
                 has_number,
@@ -894,7 +896,6 @@ impl<'a> CheckerState<'a> {
             query::ElementIndexableKind::Intersection(members) => members
                 .iter()
                 .any(|&member| self.is_element_indexable(member, wants_string, wants_number)),
-            query::ElementIndexableKind::StringLike => wants_number,
             query::ElementIndexableKind::Other => false,
         }
     }
@@ -1560,7 +1561,7 @@ impl<'a> CheckerState<'a> {
     /// type applications (generics).
     ///
     /// ## Parameters:
-    /// - `type_id`: The type to resolve (may be a TypeQuery or Application)
+    /// - `type_id`: The type to resolve (may be a `TypeQuery` or Application)
     ///
     /// ## Returns:
     /// - The resolved type if `type_id` is a typeof query
@@ -1630,18 +1631,18 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get JSDoc type annotation for a node.
+    /// Get `JSDoc` type annotation for a node.
     ///
-    /// This function extracts and parses JSDoc `@type` annotations for a given node.
-    /// It searches for the enclosing source file, extracts JSDoc comments,
+    /// This function extracts and parses `JSDoc` `@type` annotations for a given node.
+    /// It searches for the enclosing source file, extracts `JSDoc` comments,
     /// and parses the type annotation.
     ///
     /// ## Parameters:
-    /// - `idx`: The node to get JSDoc type annotation for
+    /// - `idx`: The node to get `JSDoc` type annotation for
     ///
     /// ## Returns:
-    /// - `Some(TypeId)`: The parsed type from JSDoc
-    /// - `None`: If no JSDoc type annotation exists
+    /// - `Some(TypeId)`: The parsed type from `JSDoc`
+    /// - `None`: If no `JSDoc` type annotation exists
     ///
     /// ## Example:
     /// ```typescript
@@ -1822,7 +1823,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Resolve a typedef referenced by a JSDoc type annotation (e.g., `Foo`) from
+    /// Resolve a typedef referenced by a `JSDoc` type annotation (e.g., `Foo`) from
     /// preceding `@typedef` declarations in the same file.
     fn resolve_jsdoc_typedef_type(
         &mut self,
@@ -2082,13 +2083,13 @@ impl<'a> CheckerState<'a> {
     // JSDoc Helpers for Implicit Any Suppression
     // =========================================================================
 
-    /// Get the JSDoc comment content for a function node.
+    /// Get the `JSDoc` comment content for a function node.
     ///
-    /// Walks up the parent chain from the function node to find the JSDoc
+    /// Walks up the parent chain from the function node to find the `JSDoc`
     /// comment. For variable-assigned functions (e.g., `const f = () => {}`),
-    /// the JSDoc is on the variable statement, not the function itself.
+    /// the `JSDoc` is on the variable statement, not the function itself.
     ///
-    /// Returns the raw JSDoc content (without `/**` and `*/` delimiters).
+    /// Returns the raw `JSDoc` content (without `/**` and `*/` delimiters).
     pub(crate) fn get_jsdoc_for_function(&self, func_idx: NodeIndex) -> Option<String> {
         let is_js_file = self.ctx.file_name.ends_with(".js")
             || self.ctx.file_name.ends_with(".jsx")
@@ -2145,7 +2146,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Try to find a leading JSDoc comment before a given position.
+    /// Try to find a leading `JSDoc` comment before a given position.
     fn try_leading_jsdoc(
         &self,
         comments: &[tsz_common::comments::CommentRange],
@@ -2172,11 +2173,11 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Check if a parameter node has an inline `/** @type {T} */` JSDoc annotation.
+    /// Check if a parameter node has an inline `/** @type {T} */` `JSDoc` annotation.
     ///
-    /// In TypeScript, parameters can have inline JSDoc type annotations like:
+    /// In TypeScript, parameters can have inline `JSDoc` type annotations like:
     ///   `function foo(/** @type {string} */ msg, /** @type {number} */ count)`
-    /// These annotations suppress TS7006 because the parameter type is provided via JSDoc.
+    /// These annotations suppress TS7006 because the parameter type is provided via `JSDoc`.
     pub(crate) fn param_has_inline_jsdoc_type(&self, param_idx: NodeIndex) -> bool {
         let sf = match self.ctx.arena.source_files.first() {
             Some(sf) => sf,
@@ -2199,9 +2200,9 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a JSDoc comment has a `@param {type}` annotation for the given parameter name.
+    /// Check if a `JSDoc` comment has a `@param {type}` annotation for the given parameter name.
     ///
-    /// Returns true if the JSDoc contains `@param {someType} paramName`.
+    /// Returns true if the `JSDoc` contains `@param {someType} paramName`.
     pub(crate) fn jsdoc_has_param_type(jsdoc: &str, param_name: &str) -> bool {
         // JSDoc @param may span multiple lines. Collect all text after each @param
         // and process them. We also need to handle nested braces in types like
@@ -2244,7 +2245,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Skip leading backtick-quoted sections in a JSDoc line.
+    /// Skip leading backtick-quoted sections in a `JSDoc` line.
     ///
     /// Lines like `` `@param` @param {string} z `` contain backtick-quoted text
     /// before the real `@param` tag. This function strips those leading quoted
@@ -2308,12 +2309,12 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a JSDoc comment has any type annotations (`@param {type}`, `@returns {type}`,
+    /// Check if a `JSDoc` comment has any type annotations (`@param {type}`, `@returns {type}`,
     /// `@type {type}`, or `@template`).
     ///
-    /// In tsc, when a function has JSDoc type annotations, implicit any errors (TS7010/TS7011)
+    /// In tsc, when a function has `JSDoc` type annotations, implicit any errors (TS7010/TS7011)
     /// are suppressed even without explicit `@returns`, because the developer is providing
-    /// type information through JSDoc.
+    /// type information through `JSDoc`.
     pub(crate) fn jsdoc_has_type_annotations(jsdoc: &str) -> bool {
         for line in jsdoc.lines() {
             let trimmed = line.trim();
@@ -2345,7 +2346,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a JSDoc comment has a `@type {expr}` tag.
+    /// Check if a `JSDoc` comment has a `@type {expr}` tag.
     ///
     /// When `@type` declares a full function type (e.g., `@type {function((string)): string}`),
     /// all parameters are typed and TS7006 should be suppressed.
@@ -2361,7 +2362,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Extract `@template` type parameter names from a JSDoc comment.
+    /// Extract `@template` type parameter names from a `JSDoc` comment.
     ///
     /// Supports simple forms like:
     /// - `@template T`
@@ -2550,7 +2551,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check whether a class requires a super() call in its constructor.
+    /// Check whether a class requires a `super()` call in its constructor.
     pub(crate) fn class_requires_super_call(
         &self,
         class: &tsz_parser::parser::node::ClassData,
@@ -2558,7 +2559,7 @@ impl<'a> CheckerState<'a> {
         self.class_has_base(class) && !self.class_extends_null(class)
     }
 
-    /// Check whether a class has features that require strict super() placement checks.
+    /// Check whether a class has features that require strict `super()` placement checks.
     ///
     /// Matches TypeScript diagnostics TS2376/TS2401 trigger conditions:
     /// initialized instance properties, constructor parameter properties,
@@ -2629,7 +2630,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a type includes undefined (directly or in a union).
     ///
-    /// Returns true if type_id is UNDEFINED or a union containing UNDEFINED.
+    /// Returns true if `type_id` is UNDEFINED or a union containing UNDEFINED.
     pub(crate) fn type_includes_undefined(&self, type_id: TypeId) -> bool {
         if type_id == TypeId::UNDEFINED {
             return true;
@@ -2641,7 +2642,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a union type contains a specific type.
     ///
-    /// Returns true if type_id is a union and contains target_type.
+    /// Returns true if `type_id` is a union and contains `target_type`.
     pub(crate) fn union_contains(&self, type_id: TypeId, target_type: TypeId) -> bool {
         if let Some(members) = query::union_members(self.ctx.types, type_id) {
             members.contains(&target_type)
@@ -2741,7 +2742,7 @@ impl<'a> CheckerState<'a> {
     /// Get the literal type of an enum member from its initializer.
     ///
     /// Returns the literal type (e.g., Literal(0), Literal("a")) of the enum member.
-    /// This is used to create TypeData::Enum(member_def_id, literal_type) for nominal typing.
+    /// This is used to create `TypeData::Enum(member_def_id`, `literal_type`) for nominal typing.
     pub(crate) fn enum_member_type_from_decl(&self, member_decl: NodeIndex) -> TypeId {
         let factory = self.ctx.types.factory();
         // Get the member node
@@ -2942,7 +2943,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the access level of a class constructor.
     ///
-    /// Returns Some(MemberAccessLevel::Private) or Some(MemberAccessLevel::Protected) if restricted.
+    /// Returns `Some(MemberAccessLevel::Private)` or `Some(MemberAccessLevel::Protected)` if restricted.
     /// Returns None if public (the default) or if the symbol is not a class.
     ///
     /// Note: If a class has no explicit constructor, it inherits the access level
@@ -3198,9 +3199,13 @@ impl<'a> CheckerState<'a> {
 
     /// Refine variable declaration type based on assignment.
     ///
-    /// Returns the more specific type when prev_type is ANY and current_type is concrete.
+    /// Returns the more specific type when `prev_type` is ANY and `current_type` is concrete.
     /// This implements type refinement for multiple assignments.
-    pub(crate) fn refine_var_decl_type(&self, prev_type: TypeId, current_type: TypeId) -> TypeId {
+    pub(crate) const fn refine_var_decl_type(
+        &self,
+        prev_type: TypeId,
+        current_type: TypeId,
+    ) -> TypeId {
         if matches!(prev_type, TypeId::ANY | TypeId::ERROR)
             && !matches!(current_type, TypeId::ANY | TypeId::ERROR)
         {
@@ -3328,9 +3333,9 @@ impl<'a> CheckerState<'a> {
     /// Check if a property of a type is readonly.
     ///
     /// Delegates to the solver's comprehensive implementation which handles:
-    /// - ReadonlyType wrappers (readonly arrays/tuples)
+    /// - `ReadonlyType` wrappers (readonly arrays/tuples)
     /// - Object types with readonly properties
-    /// - ObjectWithIndex types (readonly index signatures)
+    /// - `ObjectWithIndex` types (readonly index signatures)
     /// - Union types (readonly if ANY member has readonly property)
     /// - Intersection types (readonly ONLY if ALL members have readonly property)
     pub(crate) fn is_property_readonly(&self, type_id: TypeId, prop_name: &str) -> bool {

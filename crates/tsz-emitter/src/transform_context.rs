@@ -20,7 +20,7 @@
 //!
 //! - ✅ AST remains read-only (DOD compliance)
 //! - ✅ Transforms are testable independently from printing
-//! - ✅ No intermediate allocations (just a HashMap of directives)
+//! - ✅ No intermediate allocations (just a `HashMap` of directives)
 //! - ✅ Composable transforms via `Chain` directive
 //! - ✅ Clear separation of concerns
 
@@ -80,7 +80,7 @@ pub enum TransformDirective {
         enum_node: NodeIndex,
     },
 
-    /// CommonJS Export: Wrap declaration with exports assignment
+    /// `CommonJS` Export: Wrap declaration with exports assignment
     ///
     /// ```typescript
     /// export class Foo {}
@@ -101,7 +101,7 @@ pub enum TransformDirective {
         inner: Box<Self>,
     },
 
-    /// CommonJS default export for anonymous class/function declarations.
+    /// `CommonJS` default export for anonymous class/function declarations.
     ///
     /// ```typescript
     /// export default function () {}
@@ -114,7 +114,7 @@ pub enum TransformDirective {
     /// ```
     CommonJSExportDefaultExpr,
 
-    /// CommonJS default export for anonymous class declarations in ES5.
+    /// `CommonJS` default export for anonymous class declarations in ES5.
     ///
     /// ```typescript
     /// export default class { method() {} }
@@ -198,7 +198,7 @@ pub enum TransformDirective {
         array_literal: NodeIndex,
     },
 
-    /// ES5 Call Expression with Spread: Transform spread arguments to .apply() with __spreadArray.
+    /// ES5 Call Expression with Spread: Transform spread arguments to .`apply()` with __spreadArray.
     ///
     /// ```typescript
     /// foo(...arr, 1, 2);
@@ -256,7 +256,7 @@ pub enum TransformDirective {
     /// }
     /// ```
     SubstituteThis {
-        /// The capture variable name to substitute with (e.g., "_this" or "_this_1")
+        /// The capture variable name to substitute with (e.g., "_this" or "_`this_1`")
         capture_name: Arc<str>,
     },
 
@@ -329,7 +329,7 @@ pub enum ModuleFormat {
 /// Transform context maps node indices to their transform directives
 #[derive(Clone)]
 pub struct TransformContext {
-    /// Map of NodeIndex -> TransformDirective
+    /// Map of `NodeIndex` -> `TransformDirective`
     /// Only contains entries for nodes that need transformation
     directives: FxHashMap<NodeIndex, TransformDirective>,
     /// Helper usage derived during lowering (optional).
@@ -338,7 +338,7 @@ pub struct TransformContext {
     /// Function body block nodes that need `var _this = this;` at the start.
     /// When an arrow function captures `this`, the enclosing non-arrow function's
     /// body block is added here so the emitter knows to inject the capture statement.
-    /// The value is the capture variable name (e.g., "_this" or "_this_1" on collision).
+    /// The value is the capture variable name (e.g., "_this" or "_`this_1`" on collision).
     this_capture_scopes: FxHashMap<NodeIndex, Arc<str>>,
 }
 
@@ -364,23 +364,23 @@ impl TransformContext {
     }
 
     /// Access helper usage recorded during lowering.
-    pub fn helpers(&self) -> &HelpersNeeded {
+    pub const fn helpers(&self) -> &HelpersNeeded {
         &self.helpers
     }
 
     /// Mutate helper usage, marking it as populated.
-    pub fn helpers_mut(&mut self) -> &mut HelpersNeeded {
+    pub const fn helpers_mut(&mut self) -> &mut HelpersNeeded {
         self.helpers_populated = true;
         &mut self.helpers
     }
 
     /// Check if helper usage has been populated by a lowering pass.
-    pub fn helpers_populated(&self) -> bool {
+    pub const fn helpers_populated(&self) -> bool {
         self.helpers_populated
     }
 
     /// Mark helper usage as populated without changing flags.
-    pub fn mark_helpers_populated(&mut self) {
+    pub const fn mark_helpers_populated(&mut self) {
         self.helpers_populated = true;
     }
 
@@ -390,7 +390,7 @@ impl TransformContext {
     }
 
     /// Mark a function body block as needing `var _this = this;` at the start.
-    /// `capture_name` is the variable name to use (e.g., "_this" or "_this_1" on collision).
+    /// `capture_name` is the variable name to use (e.g., "_this" or "_`this_1`" on collision).
     pub fn mark_this_capture_scope(&mut self, body_idx: NodeIndex, capture_name: Arc<str>) {
         self.this_capture_scopes.insert(body_idx, capture_name);
     }

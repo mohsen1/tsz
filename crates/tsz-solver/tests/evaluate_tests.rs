@@ -9605,7 +9605,7 @@ fn test_index_access_type_param_no_constraint_deferred() {
             assert_eq!(obj, type_param);
             assert_eq!(idx, key_x);
         }
-        other => panic!("Expected deferred IndexAccess, got {:?}", other),
+        other => panic!("Expected deferred IndexAccess, got {other:?}"),
     }
 }
 
@@ -9752,7 +9752,7 @@ fn test_index_access_array_string_index() {
             assert!(members.contains(&includes_type));
             assert!(!members.contains(&TypeId::STRING));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -9774,7 +9774,7 @@ fn test_index_access_array_string_index_with_no_unchecked_indexed_access() {
             let members = interner.type_list(members);
             assert!(members.contains(&TypeId::UNDEFINED));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -9804,7 +9804,7 @@ fn test_index_access_array_string_literal_method() {
             assert_eq!(func.params.len(), 1);
             assert!(func.params[0].rest);
         }
-        other => panic!("Expected function type, got {:?}", other),
+        other => panic!("Expected function type, got {other:?}"),
     }
 }
 
@@ -10092,7 +10092,7 @@ fn test_index_access_tuple_string_index() {
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&map_type));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10127,7 +10127,7 @@ fn test_index_access_tuple_string_index_with_no_unchecked_indexed_access() {
             let members = interner.type_list(members);
             assert!(members.contains(&TypeId::UNDEFINED));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10263,7 +10263,7 @@ fn test_index_access_string_literal_member() {
             assert_eq!(func.params.len(), 1);
             assert!(func.params[0].rest);
         }
-        other => panic!("Expected function type, got {:?}", other),
+        other => panic!("Expected function type, got {other:?}"),
     }
 }
 
@@ -10306,7 +10306,7 @@ fn test_keyof_readonly_array() {
             assert!(members.contains(&length));
             assert!(members.contains(&map));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10348,7 +10348,7 @@ fn test_keyof_readonly_tuple() {
             assert!(members.contains(&length));
             assert!(members.contains(&map));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10415,7 +10415,7 @@ fn test_keyof_type_param_no_constraint_deferred() {
     let result = evaluate_keyof(&interner, type_param);
     match interner.lookup(result) {
         Some(TypeData::KeyOf(inner)) => assert_eq!(inner, type_param),
-        other => panic!("Expected deferred KeyOf, got {:?}", other),
+        other => panic!("Expected deferred KeyOf, got {other:?}"),
     }
 }
 
@@ -10790,7 +10790,7 @@ fn test_keyof_array() {
             assert!(members.contains(&length));
             assert!(members.contains(&map));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10833,7 +10833,7 @@ fn test_keyof_tuple() {
             assert!(members.contains(&length));
             assert!(members.contains(&map));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10889,7 +10889,7 @@ fn test_keyof_tuple_with_rest_tuple() {
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&length));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10952,7 +10952,7 @@ fn test_object_trifecta_keyof_object_interface() {
             assert!(members.contains(&to_string));
             assert!(members.contains(&value_of));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -10993,7 +10993,7 @@ fn test_keyof_string_apparent_members() {
             assert!(members.contains(&to_string));
             assert!(members.contains(&TypeId::NUMBER));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -11014,7 +11014,7 @@ fn test_apparent_number_keyof_members() {
             assert!(members.contains(&to_fixed));
             assert!(members.contains(&value_of));
         }
-        other => panic!("Expected union, got {:?}", other),
+        other => panic!("Expected union, got {other:?}"),
     }
 }
 
@@ -11218,7 +11218,7 @@ fn test_keyof_mapped_type_basic() {
 
 /// Test keyof with mapped type with remapped keys.
 ///
-/// keyof { [K in "a" | "b" as `${K}_key`]: string } = "a_key" | "b_key"
+/// keyof { [K in "a" | "b" as `${K}_key`]: string } = "`a_key`" | "`b_key`"
 #[test]
 fn test_keyof_mapped_type_remapped_keys() {
     let interner = TypeInterner::new();
@@ -11627,9 +11627,8 @@ fn test_keyof_intersection_with_index_signature() {
     // Simplified: should contain string
     let key = interner.lookup(result);
     match key {
-        Some(TypeData::Intrinsic(IntrinsicKind::String)) => (),
-        Some(TypeData::Union(_)) => (),
-        _ => panic!("Expected string or union type, got {:?}", key),
+        Some(TypeData::Intrinsic(IntrinsicKind::String)) | Some(TypeData::Union(_)) => (),
+        _ => panic!("Expected string or union type, got {key:?}"),
     }
 }
 
@@ -11795,7 +11794,7 @@ fn test_mapped_type_over_string_keys() {
             assert_eq!(number_index.key_type, TypeId::NUMBER);
             assert_eq!(number_index.value_type, TypeId::BOOLEAN);
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -11850,7 +11849,7 @@ fn test_mapped_type_over_number_keys() {
             assert!(saw_value_of, "missing valueOf property");
             assert!(saw_has_own, "missing hasOwnProperty property");
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -11891,7 +11890,7 @@ fn test_mapped_type_over_number_keys_evaluate_type() {
 
             assert!(saw_to_fixed, "missing toFixed property");
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -11946,7 +11945,7 @@ fn test_mapped_type_over_boolean_keys() {
             assert!(saw_value_of, "missing valueOf property");
             assert!(saw_has_own, "missing hasOwnProperty property");
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -12001,7 +12000,7 @@ fn test_mapped_type_over_symbol_keys() {
             assert!(saw_to_string, "missing toString property");
             assert!(saw_value_of, "missing valueOf property");
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -12056,7 +12055,7 @@ fn test_mapped_type_over_bigint_keys() {
             assert!(saw_value_of, "missing valueOf property");
             assert!(saw_has_own, "missing hasOwnProperty property");
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -12096,7 +12095,7 @@ fn test_mapped_type_string_index_signature() {
             assert_eq!(string_index.value_type, expected_value);
             assert!(string_index.readonly);
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -12135,7 +12134,7 @@ fn test_mapped_type_number_index_signature() {
             assert_eq!(number_index.value_type, TypeId::STRING);
             assert!(!number_index.readonly);
         }
-        other => panic!("Expected object type, got {:?}", other),
+        other => panic!("Expected object type, got {other:?}"),
     }
 }
 
@@ -12283,7 +12282,7 @@ fn test_mapped_type_key_remap_filters_keys() {
 
     let prop_a = PropertyInfo::new(interner.intern_string("a"), TypeId::STRING);
     let prop_b = PropertyInfo::new(interner.intern_string("b"), TypeId::NUMBER);
-    let obj = interner.object(vec![prop_a.clone(), prop_b.clone()]);
+    let obj = interner.object(vec![prop_a, prop_b.clone()]);
 
     let key_a = interner.literal_string("a");
     let key_b = interner.literal_string("b");
@@ -12885,7 +12884,7 @@ fn test_mapped_type_key_remap_uppercase() {
 
 /// Test key remapping with prefix using as clause.
 ///
-/// { [K in "name" | "age" as `get_${K}`]: string } should produce { get_name: string; get_age: string }.
+/// { [K in "name" | "age" as `get_${K}`]: string } should produce { `get_name`: string; `get_age`: string }.
 #[test]
 fn test_mapped_type_key_remap_with_prefix() {
     let interner = TypeInterner::new();
@@ -13118,7 +13117,7 @@ fn test_mapped_type_preserves_source_types() {
 
 /// Test basic as clause with simple key transformation.
 ///
-/// { [K in "a" | "b" as `${K}_key`]: string } should produce { a_key: string; b_key: string }.
+/// { [K in "a" | "b" as `${K}_key`]: string } should produce { `a_key`: string; `b_key`: string }.
 #[test]
 fn test_mapped_type_basic_as_clause() {
     let interner = TypeInterner::new();
@@ -13308,7 +13307,7 @@ fn test_mapped_type_as_template_literal() {
 /// Test as clause with conditional key transformation based on type.
 ///
 /// { [K in "id" | "name" as K extends "id" ? `${K}_number` : `${K}_string`]: K }
-/// should produce { id_number: "id"; name_string: "name" }
+/// should produce { `id_number`: "id"; `name_string`: "name" }
 #[test]
 fn test_mapped_type_as_conditional_transformation() {
     let interner = TypeInterner::new();
@@ -13499,7 +13498,7 @@ fn test_mapped_type_as_never_all_keys() {
 
 /// Test as clause with single key produces single property.
 ///
-/// { [K in "only" as `prefix_${K}`]: K } should produce { prefix_only: "only" }
+/// { [K in "only" as `prefix_${K}`]: K } should produce { `prefix_only`: "only" }
 #[test]
 fn test_mapped_type_as_single_key() {
     let interner = TypeInterner::new();
@@ -14379,11 +14378,7 @@ fn test_application_ref_expansion_with_defaults() {
 
     // Set up resolver with type parameters (including defaults)
     let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(
-        DefId(1),
-        optional_body,
-        vec![t_param.clone(), d_param.clone()],
-    );
+    env.insert_def_with_params(DefId(1), optional_body, vec![t_param, d_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
@@ -14447,7 +14442,7 @@ fn test_application_ref_expansion_with_constraints() {
 
     // Set up resolver with type parameters
     let mut env = TypeEnvironment::new();
-    env.insert_def_with_params(DefId(1), numeric_box_body, vec![t_param.clone()]);
+    env.insert_def_with_params(DefId(1), numeric_box_body, vec![t_param]);
 
     let mut evaluator = TypeEvaluator::with_resolver(&interner, &env);
 
@@ -18601,7 +18596,7 @@ fn test_module_augmentation_namespace_merge() {
                 "merged namespace should include both props"
             );
         }
-        other => panic!("unexpected merged namespace representation: {:?}", other),
+        other => panic!("unexpected merged namespace representation: {other:?}"),
     }
 }
 
@@ -18951,8 +18946,8 @@ fn test_array_covariance_non_array() {
 // ReturnType, Parameters, and ConstructorParameters Utility Type Edge Cases
 // =============================================================================
 
-/// Test ReturnType<T> with a generic function: <T>(x: T) => T
-/// TypeScript's ReturnType extracts the return type, which for generic functions
+/// Test `ReturnType`<T> with a generic function: <T>(x: T) => T
+/// TypeScript's `ReturnType` extracts the return type, which for generic functions
 /// is the type parameter T itself (unsubstituted).
 #[test]
 fn test_return_type_generic_function() {
@@ -19024,8 +19019,8 @@ fn test_return_type_generic_function() {
     assert_eq!(result, u_param);
 }
 
-/// Test ReturnType<T> with an overloaded function (Callable type with multiple signatures).
-/// TypeScript's ReturnType extracts from the last overload signature.
+/// Test `ReturnType`<T> with an overloaded function (Callable type with multiple signatures).
+/// TypeScript's `ReturnType` extracts from the last overload signature.
 #[test]
 fn test_return_type_overloaded_function() {
     let interner = TypeInterner::new();
@@ -19105,8 +19100,8 @@ fn test_return_type_overloaded_function() {
     assert_eq!(result, TypeId::BOOLEAN);
 }
 
-/// Test ReturnType<T> with a function that has a type predicate.
-/// The return type of a type guard function is `boolean` for ReturnType purposes.
+/// Test `ReturnType`<T> with a function that has a type predicate.
+/// The return type of a type guard function is `boolean` for `ReturnType` purposes.
 #[test]
 fn test_return_type_type_predicate_function() {
     let interner = TypeInterner::new();
@@ -19303,8 +19298,8 @@ fn test_parameters_optional_and_rest_combination() {
     assert_eq!(result, TypeId::NEVER);
 }
 
-/// Test ConstructorParameters<T> with a class constructor.
-/// ConstructorParameters extracts params from a constructor signature.
+/// Test `ConstructorParameters`<T> with a class constructor.
+/// `ConstructorParameters` extracts params from a constructor signature.
 #[test]
 fn test_constructor_parameters_basic() {
     let interner = TypeInterner::new();
@@ -19373,7 +19368,7 @@ fn test_constructor_parameters_basic() {
     assert_eq!(result, TypeId::NEVER);
 }
 
-/// Test ConstructorParameters<T> with a Callable type having construct signatures.
+/// Test `ConstructorParameters`<T> with a Callable type having construct signatures.
 #[test]
 fn test_constructor_parameters_callable_construct_signature() {
     let interner = TypeInterner::new();
@@ -19442,12 +19437,12 @@ fn test_constructor_parameters_callable_construct_signature() {
             assert_eq!(elems.len(), 1);
             assert_eq!(elems[0].type_id, TypeId::STRING);
         }
-        _ => panic!("Expected tuple, got {:?}", result),
+        _ => panic!("Expected tuple, got {result:?}"),
     }
 }
 
-/// Test ReturnType with union of function types (distributive).
-/// ReturnType<(() => string) | (() => number)> should be string | number
+/// Test `ReturnType` with union of function types (distributive).
+/// `ReturnType`<(() => string) | (() => number)> should be string | number
 #[test]
 fn test_return_type_union_distributive() {
     let interner = TypeInterner::new();
@@ -20649,10 +20644,10 @@ fn test_tuple_spread_push_pattern() {
 // NonNullable Utility Type Tests
 // =============================================================================
 
-/// Test NonNullable<T> pattern structure with simple union containing null.
-/// NonNullable<string | null> = string
+/// Test `NonNullable`<T> pattern structure with simple union containing null.
+/// `NonNullable`<string | null> = string
 /// Note: The actual filtering requires the distributive conditional to use T
-/// (the type parameter) in false_type, not the union directly.
+/// (the type parameter) in `false_type`, not the union directly.
 #[test]
 fn test_nonnullable_removes_null() {
     let interner = TypeInterner::new();
@@ -20682,8 +20677,8 @@ fn test_nonnullable_removes_null() {
     );
 }
 
-/// Test NonNullable<T> with union containing undefined.
-/// NonNullable<number | undefined> = number
+/// Test `NonNullable`<T> with union containing undefined.
+/// `NonNullable`<number | undefined> = number
 #[test]
 fn test_nonnullable_removes_undefined() {
     let interner = TypeInterner::new();
@@ -20712,8 +20707,8 @@ fn test_nonnullable_removes_undefined() {
     );
 }
 
-/// Test NonNullable<T> with union containing both null and undefined.
-/// NonNullable<string | null | undefined> = string
+/// Test `NonNullable`<T> with union containing both null and undefined.
+/// `NonNullable`<string | null | undefined> = string
 #[test]
 fn test_nonnullable_removes_null_and_undefined() {
     let interner = TypeInterner::new();
@@ -20742,8 +20737,8 @@ fn test_nonnullable_removes_null_and_undefined() {
     );
 }
 
-/// Test NonNullable<T> with complex union.
-/// NonNullable<string | number | null | undefined> = string | number
+/// Test `NonNullable`<T> with complex union.
+/// `NonNullable`<string | number | null | undefined> = string | number
 #[test]
 fn test_nonnullable_preserves_non_nullable_members() {
     let interner = TypeInterner::new();
@@ -20777,8 +20772,8 @@ fn test_nonnullable_preserves_non_nullable_members() {
     );
 }
 
-/// Test NonNullable<T> with only nullable types.
-/// NonNullable<null | undefined> = never
+/// Test `NonNullable`<T> with only nullable types.
+/// `NonNullable`<null | undefined> = never
 #[test]
 fn test_nonnullable_all_nullable_becomes_never() {
     let interner = TypeInterner::new();
@@ -20942,8 +20937,8 @@ fn test_readonly_multiple_properties_nested() {
 // DeepReadonly Recursive Pattern Tests
 // =============================================================================
 
-/// Test DeepReadonly pattern structure.
-/// DeepReadonly<T> = { readonly [K in keyof T]: DeepReadonly<T[K]> }
+/// Test `DeepReadonly` pattern structure.
+/// `DeepReadonly`<T> = { readonly [K in keyof T]: `DeepReadonly`<T[K]> }
 /// This tests that we can construct the recursive type structure.
 #[test]
 fn test_deep_readonly_pattern_structure() {
@@ -20997,8 +20992,8 @@ fn test_deep_readonly_pattern_structure() {
     }
 }
 
-/// Test simulating DeepReadonly by manually applying Readonly to nested object.
-/// This demonstrates the expected behavior when DeepReadonly is fully evaluated.
+/// Test simulating `DeepReadonly` by manually applying Readonly to nested object.
+/// This demonstrates the expected behavior when `DeepReadonly` is fully evaluated.
 #[test]
 fn test_deep_readonly_manual_nested_application() {
     let interner = TypeInterner::new();
@@ -21093,8 +21088,8 @@ fn test_deep_readonly_manual_nested_application() {
     }
 }
 
-/// Test DeepReadonly with array property.
-/// DeepReadonly<{ items: string[] }> should make items readonly.
+/// Test `DeepReadonly` with array property.
+/// `DeepReadonly`<{ items: string[] }> should make items readonly.
 #[test]
 fn test_deep_readonly_with_array_property() {
     let interner = TypeInterner::new();
@@ -22617,7 +22612,7 @@ fn test_noinfer_with_union_type() {
     let evaluated = evaluate_type(&interner, noinfer_union);
     match interner.lookup(evaluated) {
         Some(TypeData::Union(_)) => {} // Correct - still a union
-        other => panic!("Expected Union type, got {:?}", other),
+        other => panic!("Expected Union type, got {other:?}"),
     }
 }
 
@@ -22774,7 +22769,7 @@ fn test_noinfer_with_object_property() {
             let evaluated_prop = evaluate_type(&interner, shape.properties[0].type_id);
             assert_eq!(evaluated_prop, t_param);
         }
-        other => panic!("Expected Object type, got {:?}", other),
+        other => panic!("Expected Object type, got {other:?}"),
     }
 }
 
@@ -24970,7 +24965,7 @@ fn test_distributive_large_union_10_members() {
 
     // Create 10-member union of string literals
     let members: Vec<TypeId> = (0..10)
-        .map(|i| interner.literal_string(&format!("item{}", i)))
+        .map(|i| interner.literal_string(&format!("item{i}")))
         .collect();
     let large_union = interner.union(members);
 
@@ -24994,7 +24989,7 @@ fn test_distributive_large_union_15_members() {
 
     // Create 15-member union of number literals
     let members: Vec<TypeId> = (0..15).map(|i| interner.literal_number(i as f64)).collect();
-    let large_union = interner.union(members.clone());
+    let large_union = interner.union(members);
 
     // Type parameter T for check type
     let t_name = interner.intern_string("T");
@@ -25029,7 +25024,7 @@ fn test_distributive_large_union_mixed_types() {
     // Create mixed union: 6 strings + 6 numbers
     let mut members: Vec<TypeId> = Vec::new();
     for i in 0..6 {
-        members.push(interner.literal_string(&format!("str{}", i)));
+        members.push(interner.literal_string(&format!("str{i}")));
     }
     for i in 0..6 {
         members.push(interner.literal_number(i as f64));
@@ -25058,7 +25053,7 @@ fn test_distributive_large_union_20_members() {
 
     // Create 20-member union
     let members: Vec<TypeId> = (0..20)
-        .map(|i| interner.literal_string(&format!("value{}", i)))
+        .map(|i| interner.literal_string(&format!("value{i}")))
         .collect();
     let large_union = interner.union(members);
 
@@ -27920,7 +27915,7 @@ fn test_typeof_in_union() {
             // At minimum verify we get a union with 2 members
         }
         // If not a Union, it might have been flattened or handled differently
-        Some(key) => panic!("Expected Union type, got {:?}", key),
+        Some(key) => panic!("Expected Union type, got {key:?}"),
         None => panic!("Expected a valid type"),
     }
 }
@@ -28401,7 +28396,7 @@ fn test_string_template_infer_no_match_pattern() {
     assert_eq!(result, TypeId::NEVER);
 }
 
-/// Extract two parts: `${infer A}_${infer B}` matches "first_second"
+/// Extract two parts: `${infer A}_${infer B}` matches "`first_second`"
 #[test]
 fn test_template_infer_two_parts() {
     let interner = TypeInterner::new();
@@ -28996,7 +28991,7 @@ fn test_satisfies_literal_widening_preserved_string() {
     // The type is still the literal, not widened
     match interner.lookup(hello) {
         Some(TypeData::Literal(LiteralValue::String(_))) => {} // Expected - literal preserved
-        other => panic!("Expected Literal(String), got {:?}", other),
+        other => panic!("Expected Literal(String), got {other:?}"),
     }
 }
 
@@ -29013,7 +29008,7 @@ fn test_satisfies_literal_widening_preserved_number() {
     assert!(checker.is_subtype_of(forty_two, TypeId::NUMBER));
     match interner.lookup(forty_two) {
         Some(TypeData::Literal(LiteralValue::Number(_))) => {} // Expected - literal preserved
-        other => panic!("Expected Literal(Number), got {:?}", other),
+        other => panic!("Expected Literal(Number), got {other:?}"),
     }
 }
 
@@ -29030,7 +29025,7 @@ fn test_satisfies_literal_widening_preserved_boolean() {
     assert!(checker.is_subtype_of(lit_true, TypeId::BOOLEAN));
     match interner.lookup(lit_true) {
         Some(TypeData::Literal(LiteralValue::Boolean(true))) => {} // Expected - literal preserved
-        other => panic!("Expected Literal(Boolean(true)), got {:?}", other),
+        other => panic!("Expected Literal(Boolean(true)), got {other:?}"),
     }
 }
 
@@ -29347,7 +29342,7 @@ fn test_satisfies_preserves_narrower_type() {
     // But the type itself remains the literal
     match interner.lookup(hello_lit) {
         Some(TypeData::Literal(LiteralValue::String(_))) => {} // Expected
-        other => panic!("Expected Literal(String), got {:?}", other),
+        other => panic!("Expected Literal(String), got {other:?}"),
     }
 }
 
@@ -29436,7 +29431,7 @@ fn test_noinfer_in_union_distribution() {
     let evaluated = evaluate_type(&interner, noinfer_union);
     match interner.lookup(evaluated) {
         Some(TypeData::Union(_)) => {} // Union preserved
-        other => panic!("Expected Union, got {:?}", other),
+        other => panic!("Expected Union, got {other:?}"),
     }
 }
 
@@ -29455,7 +29450,7 @@ fn test_noinfer_with_array_elements() {
         Some(TypeData::Array(elem)) => {
             assert_eq!(elem, TypeId::STRING);
         }
-        other => panic!("Expected Array, got {:?}", other),
+        other => panic!("Expected Array, got {other:?}"),
     }
 }
 
@@ -29546,7 +29541,7 @@ fn test_noinfer_contains_type_param() {
 // Intrinsic Type Tests - BigInt, Symbol, Number/String Literals
 // ============================================================================
 
-/// BigInt literal type creation and comparison
+/// `BigInt` literal type creation and comparison
 #[test]
 fn test_bigint_literal_creation() {
     let interner = TypeInterner::new();
@@ -29562,7 +29557,7 @@ fn test_bigint_literal_creation() {
     assert_ne!(bigint_42, bigint_100);
 }
 
-/// BigInt literal extends bigint base type
+/// `BigInt` literal extends bigint base type
 #[test]
 fn test_bigint_literal_extends_bigint() {
     let interner = TypeInterner::new();
@@ -29582,7 +29577,7 @@ fn test_bigint_literal_extends_bigint() {
     assert_eq!(result, interner.literal_boolean(true));
 }
 
-/// BigInt doesn't extend number
+/// `BigInt` doesn't extend number
 #[test]
 fn test_bigint_not_extends_number() {
     let interner = TypeInterner::new();
@@ -29602,7 +29597,7 @@ fn test_bigint_not_extends_number() {
     assert_eq!(result, interner.literal_boolean(false));
 }
 
-/// BigInt literal union
+/// `BigInt` literal union
 #[test]
 fn test_bigint_literal_union() {
     let interner = TypeInterner::new();
@@ -29622,7 +29617,7 @@ fn test_bigint_literal_union() {
     }
 }
 
-/// BigInt with negative value
+/// `BigInt` with negative value
 #[test]
 fn test_bigint_negative_literal() {
     let interner = TypeInterner::new();
@@ -30229,7 +30224,7 @@ fn test_const_object_literal_readonly_properties() {
                 assert!(prop.readonly);
             }
         }
-        other => panic!("Expected Object type, got {:?}", other),
+        other => panic!("Expected Object type, got {other:?}"),
     }
 }
 
@@ -30265,10 +30260,10 @@ fn test_const_object_literal_nested() {
                     let inner_shape = interner.object_shape(inner_shape_id);
                     assert!(inner_shape.properties[0].readonly);
                 }
-                other => panic!("Expected inner Object, got {:?}", other),
+                other => panic!("Expected inner Object, got {other:?}"),
             }
         }
-        other => panic!("Expected Object type, got {:?}", other),
+        other => panic!("Expected Object type, got {other:?}"),
     }
 }
 
@@ -30347,10 +30342,10 @@ fn test_const_array_literal_tuple() {
                     let elements = interner.tuple_list(list_id);
                     assert_eq!(elements.len(), 3);
                 }
-                other => panic!("Expected Tuple, got {:?}", other),
+                other => panic!("Expected Tuple, got {other:?}"),
             }
         }
-        other => panic!("Expected ReadonlyType, got {:?}", other),
+        other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
 
@@ -30396,9 +30391,9 @@ fn test_const_array_mixed_types() {
                 assert_eq!(elements[1].type_id, two_str);
                 assert_eq!(elements[2].type_id, lit_true);
             }
-            other => panic!("Expected Tuple, got {:?}", other),
+            other => panic!("Expected Tuple, got {other:?}"),
         },
-        other => panic!("Expected ReadonlyType, got {:?}", other),
+        other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
 
@@ -30471,14 +30466,14 @@ fn test_const_array_nested() {
                     for elem in elements.iter() {
                         match interner.lookup(elem.type_id) {
                             Some(TypeData::ReadonlyType(_)) => {}
-                            other => panic!("Expected nested ReadonlyType, got {:?}", other),
+                            other => panic!("Expected nested ReadonlyType, got {other:?}"),
                         }
                     }
                 }
-                other => panic!("Expected Tuple, got {:?}", other),
+                other => panic!("Expected Tuple, got {other:?}"),
             }
         }
-        other => panic!("Expected ReadonlyType, got {:?}", other),
+        other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
 
@@ -30535,7 +30530,7 @@ fn test_readonly_type_wrapper() {
         Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, arr);
         }
-        other => panic!("Expected ReadonlyType, got {:?}", other),
+        other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
 
@@ -30556,7 +30551,7 @@ fn test_readonly_inference_object() {
         Some(TypeData::ReadonlyType(inner)) => {
             assert_eq!(inner, obj);
         }
-        other => panic!("Expected ReadonlyType, got {:?}", other),
+        other => panic!("Expected ReadonlyType, got {other:?}"),
     }
 }
 
@@ -30598,7 +30593,7 @@ fn test_readonly_keyof() {
     // At minimum, verify it returns a union containing the indices
     match interner.lookup(result) {
         Some(TypeData::Union(_)) => {} // Expected - union of keys
-        other => panic!("Expected Union from keyof readonly tuple, got {:?}", other),
+        other => panic!("Expected Union from keyof readonly tuple, got {other:?}"),
     }
 }
 
@@ -30613,7 +30608,7 @@ fn test_template_literal_const_basic() {
     // A simple template literal `hello` with as const is just "hello"
     match interner.lookup(hello) {
         Some(TypeData::Literal(LiteralValue::String(_))) => {}
-        other => panic!("Expected LiteralString, got {:?}", other),
+        other => panic!("Expected LiteralString, got {other:?}"),
     }
 }
 
@@ -30631,7 +30626,7 @@ fn test_template_literal_const_interpolation() {
         Some(TypeData::Literal(LiteralValue::String(atom))) => {
             assert_eq!(interner.resolve_atom(atom), "hello world");
         }
-        other => panic!("Expected LiteralString, got {:?}", other),
+        other => panic!("Expected LiteralString, got {other:?}"),
     }
 }
 
@@ -30666,7 +30661,7 @@ fn test_template_literal_type_structure() {
                 _ => panic!("Expected Text span"),
             }
         }
-        other => panic!("Expected TemplateLiteral, got {:?}", other),
+        other => panic!("Expected TemplateLiteral, got {other:?}"),
     }
 }
 
@@ -30722,7 +30717,7 @@ fn test_const_enum_like_object() {
                 assert!(checker.is_subtype_of(*member, TypeId::STRING));
             }
         }
-        other => panic!("Expected Union, got {:?}", other),
+        other => panic!("Expected Union, got {other:?}"),
     }
 }
 
@@ -31775,7 +31770,7 @@ fn test_conditional_chain_fallthrough() {
 // -----------------------------------------------------------------------------
 
 /// Test short-circuit: true branch never evaluated when outer is false
-/// T extends never ? (complex_inner) : "short-circuited"
+/// T extends never ? (`complex_inner`) : "short-circuited"
 #[test]
 fn test_short_circuit_false_branch_taken() {
     let interner = TypeInterner::new();
@@ -32125,7 +32120,7 @@ fn test_distributive_large_union_basic() {
     let members: Vec<TypeId> = (0..10)
         .map(|i| {
             if i < 5 {
-                interner.literal_string(&format!("str{}", i))
+                interner.literal_string(&format!("str{i}"))
             } else {
                 interner.literal_number(i as f64)
             }
@@ -32168,7 +32163,7 @@ fn test_distributive_large_union_all_match() {
 
     // Create a union of 20 string literals
     let members: Vec<TypeId> = (0..20)
-        .map(|i| interner.literal_string(&format!("str{}", i)))
+        .map(|i| interner.literal_string(&format!("str{i}")))
         .collect();
     let input_union = interner.union(members.clone());
     subst.insert(t_name, input_union);
@@ -33329,7 +33324,7 @@ fn test_distributive_very_large_union() {
     let members: Vec<TypeId> = (0..50)
         .map(|i| {
             if i < 25 {
-                interner.literal_string(&format!("str{}", i))
+                interner.literal_string(&format!("str{i}"))
             } else {
                 interner.literal_number(i as f64)
             }
@@ -33835,7 +33830,7 @@ fn test_distributive_hundred_member_union() {
     let members: Vec<TypeId> = (0..100)
         .map(|i| {
             if i < 50 {
-                interner.literal_string(&format!("s{}", i))
+                interner.literal_string(&format!("s{i}"))
             } else {
                 interner.literal_number(i as f64)
             }
@@ -37398,11 +37393,11 @@ fn test_template_literal_with_boolean_type() {
             for member in members.iter() {
                 match interner.lookup(*member) {
                     Some(TypeData::Literal(LiteralValue::String(_))) => (),
-                    other => panic!("Expected string literal in union, got {:?}", other),
+                    other => panic!("Expected string literal in union, got {other:?}"),
                 }
             }
         }
-        other => panic!("Expected Union type for `is_${{boolean}}`, got {:?}", other),
+        other => panic!("Expected Union type for `is_${{boolean}}`, got {other:?}"),
     }
 }
 
@@ -40770,7 +40765,7 @@ fn test_keyof_object_with_template_literal_computed_keys() {
 }
 
 /// Test empty template literal
-/// `` (empty template) should be handled
+/// `(empty template)` should be handled
 #[test]
 fn test_empty_template_literal() {
     let interner = TypeInterner::new();
@@ -40935,8 +40930,7 @@ fn test_non_distributive_conditional_template_union() {
     // Result could be the inferred union, never, or string depending on implementation
     assert!(
         result == TypeId::NEVER || result == TypeId::STRING || result == expected_union,
-        "Expected never, string, or \"a\" | \"b\", got {:?}",
-        result
+        "Expected never, string, or \"a\" | \"b\", got {result:?}"
     );
 }
 
@@ -40957,10 +40951,7 @@ fn test_template_literal_with_boolean_interpolation() {
             let members = interner.type_list(list_id);
             assert_eq!(members.len(), 2, "Expected 2 members for boolean expansion");
         }
-        other => panic!(
-            "Expected Union type for `flag${{boolean}}`, got {:?}",
-            other
-        ),
+        other => panic!("Expected Union type for `flag${{boolean}}`, got {other:?}"),
     }
 }
 
@@ -41239,8 +41230,8 @@ fn test_template_literal_conditional_same_pattern() {
 /// Test tail-recursion elimination for conditional types.
 ///
 /// This test verifies that tail-recursive conditional types can recurse
-/// up to MAX_TAIL_RECURSION_DEPTH (1000) instead of being limited by
-/// MAX_EVALUATE_DEPTH (50).
+/// up to `MAX_TAIL_RECURSION_DEPTH` (1000) instead of being limited by
+/// `MAX_EVALUATE_DEPTH` (50).
 #[test]
 fn test_tail_recursive_conditional() {
     let interner = TypeInterner::new();

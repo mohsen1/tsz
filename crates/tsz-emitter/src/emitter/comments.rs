@@ -17,12 +17,12 @@ pub enum CommentKind {
 }
 
 /// Check if a character is a line break.
-fn is_line_break(ch: char) -> bool {
+const fn is_line_break(ch: char) -> bool {
     ch == '\n' || ch == '\r' || ch == '\u{2028}' || ch == '\u{2029}'
 }
 
 /// Check if a character is whitespace (but not a line break).
-fn is_whitespace_single_line(ch: char) -> bool {
+const fn is_whitespace_single_line(ch: char) -> bool {
     ch == ' ' || ch == '\t' || ch == '\u{000B}' || ch == '\u{000C}'
 }
 

@@ -4,7 +4,7 @@
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! infer types, then use the solver to explain any failures.
 //!
-//! ## Integration with CheckerState
+//! ## Integration with `CheckerState`
 //!
 //! `ExpressionChecker` serves as the primary dispatcher for expression types.
 //! Simple expressions are handled directly here, while complex expressions
@@ -18,7 +18,7 @@
 //! - Postfix unary (++/-- always return number)
 //! - Parenthesized expressions (pass through)
 //!
-//! ### Expressions delegated to CheckerState:
+//! ### Expressions delegated to `CheckerState`:
 //! - Literals with contextual typing (numeric, string, boolean, template)
 //! - Identifiers, this, super (need symbol resolution)
 //! - Binary expressions (need operator overloading, narrowing)
@@ -51,7 +51,7 @@ pub struct ExpressionChecker<'a, 'ctx> {
 
 impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// Create a new expression checker with a mutable context reference.
-    pub fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
+    pub const fn new(ctx: &'a mut CheckerContext<'ctx>) -> Self {
         Self {
             ctx,
             depth: DepthCounter::with_profile(RecursionProfile::ExpressionCheck),
@@ -77,7 +77,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     ///
     /// When `context_type` is `Some`, the cache is **bypassed** to avoid
     /// incorrect results. The same expression can have different types
-    /// depending on the context, so caching by NodeIndex alone is unsound.
+    /// depending on the context, so caching by `NodeIndex` alone is unsound.
     pub fn check_with_context(&mut self, idx: NodeIndex, context_type: Option<TypeId>) -> TypeId {
         // Stack overflow protection
         if !self.depth.enter() {
@@ -112,7 +112,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// full `CheckerState` context for proper type resolution.
     ///
     /// Simple expressions that don't need contextual typing or symbol resolution
-    /// are handled directly here. Complex expressions delegate to CheckerState.
+    /// are handled directly here. Complex expressions delegate to `CheckerState`.
     pub fn compute_type_uncached(&mut self, idx: NodeIndex) -> TypeId {
         self.compute_type_impl(idx, None)
     }
@@ -133,7 +133,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
 
     /// Core implementation for computing expression types.
     ///
-    /// Returns `TypeId::DELEGATE` for complex expressions that need CheckerState.
+    /// Returns `TypeId::DELEGATE` for complex expressions that need `CheckerState`.
     ///
     /// # Parameters
     /// - `idx`: The node index to check
@@ -282,7 +282,7 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     }
 
     /// Get the context reference (for read-only access).
-    pub fn context(&self) -> &CheckerContext<'ctx> {
+    pub const fn context(&self) -> &CheckerContext<'ctx> {
         self.ctx
     }
 }

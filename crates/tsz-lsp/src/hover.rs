@@ -5,7 +5,7 @@
 //! - `display_string`: The raw signature (e.g. `const x: number`, `function foo(): void`)
 //! - `kind`: The symbol kind (e.g. `const`, `function`, `class`)
 //! - `kind_modifiers`: Comma-separated modifier list (e.g. `export,declare`)
-//! - `documentation`: Extracted JSDoc content
+//! - `documentation`: Extracted `JSDoc` content
 
 use crate::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
@@ -14,7 +14,7 @@ use tsz_checker::state::CheckerState;
 use tsz_common::position::{Position, Range};
 use tsz_parser::NodeIndex;
 
-/// A single JSDoc tag (e.g. `@param`, `@returns`, `@deprecated`).
+/// A single `JSDoc` tag (e.g. `@param`, `@returns`, `@deprecated`).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
 pub struct JsDocTag {
     /// The tag name (e.g. "param", "returns", "deprecated")
@@ -36,9 +36,9 @@ pub struct HoverInfo {
     pub kind: String,
     /// Comma-separated kind modifiers for tsserver (e.g. `export,declare`)
     pub kind_modifiers: String,
-    /// The documentation text extracted from JSDoc
+    /// The documentation text extracted from `JSDoc`
     pub documentation: String,
-    /// JSDoc tags (e.g. @param, @returns, @deprecated)
+    /// `JSDoc` tags (e.g. @param, @returns, @deprecated)
     pub tags: Vec<JsDocTag>,
 }
 
@@ -171,7 +171,7 @@ impl<'a> HoverProvider<'a> {
         let mut contents = Vec::new();
 
         // Code block for the signature
-        contents.push(format!("```typescript\n{}\n```", display_string));
+        contents.push(format!("```typescript\n{display_string}\n```"));
 
         // Documentation paragraph
         if let Some(doc) = formatted_doc {
@@ -302,7 +302,7 @@ impl<'a> HoverProvider<'a> {
             if let Some(arrow_pos) = after.find(" => ") {
                 let before = &type_string[..close_idx + 1];
                 let ret = &after[arrow_pos + 4..];
-                return format!("{}: {}", before, ret);
+                return format!("{before}: {ret}");
             }
         }
         type_string.to_string()
@@ -552,7 +552,7 @@ impl<'a> HoverProvider<'a> {
         None
     }
 
-    /// Extract plain documentation text from JSDoc (without markdown formatting).
+    /// Extract plain documentation text from `JSDoc` (without markdown formatting).
     fn extract_plain_documentation(&self, doc: &str) -> String {
         if doc.is_empty() {
             return String::new();
@@ -590,9 +590,9 @@ impl<'a> HoverProvider<'a> {
             for name in names {
                 let desc = parsed.params.get(name).map_or("", |s| s.as_str());
                 if desc.is_empty() {
-                    lines.push(format!("- `{}`", name));
+                    lines.push(format!("- `{name}`"));
                 } else {
-                    lines.push(format!("- `{}` {}", name, desc));
+                    lines.push(format!("- `{name}` {desc}"));
                 }
             }
             sections.push(lines.join("\n"));

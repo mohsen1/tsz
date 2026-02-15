@@ -227,8 +227,7 @@ fn test_call_hierarchy_item_serialization() {
     // SymbolKind::Function serializes as "Function" (serde default for enums)
     assert!(
         json.contains("\"kind\":\"Function\"") || json.contains("\"kind\":12"),
-        "kind should serialize correctly, got: {}",
-        json
+        "kind should serialize correctly, got: {json}"
     );
 
     let deserialized: CallHierarchyItem = serde_json::from_str(&json).unwrap();

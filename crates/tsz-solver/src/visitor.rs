@@ -1,6 +1,6 @@
 //! Type Visitor Pattern
 //!
-//! This module implements the Visitor pattern for TypeData operations,
+//! This module implements the Visitor pattern for `TypeData` operations,
 //! providing a clean alternative to repetitive match statements.
 //!
 //! # Benefits
@@ -52,11 +52,11 @@ use tsz_common::interner::Atom;
 // Type Visitor Trait
 // =============================================================================
 
-/// Visitor pattern for TypeData traversal and transformation.
+/// Visitor pattern for `TypeData` traversal and transformation.
 ///
 /// Implement this trait to perform custom operations on types without
 /// writing repetitive match statements. Each method corresponds to a
-/// TypeData variant and receives the relevant data for that type.
+/// `TypeData` variant and receives the relevant data for that type.
 pub trait TypeVisitor: Sized {
     /// The output type produced by visiting.
     type Output;
@@ -139,7 +139,7 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
-    /// Visit a lazy type reference using DefId.
+    /// Visit a lazy type reference using `DefId`.
     fn visit_lazy(&mut self, _def_id: u32) -> Self::Output {
         Self::default_output()
     }
@@ -221,8 +221,8 @@ pub trait TypeVisitor: Sized {
         Self::default_output()
     }
 
-    /// Visit a NoInfer<T> type (TypeScript 5.4+).
-    /// Traverses the inner type (NoInfer is transparent for traversal).
+    /// Visit a `NoInfer`<T> type (TypeScript 5.4+).
+    /// Traverses the inner type (`NoInfer` is transparent for traversal).
     fn visit_no_infer(&mut self, _inner: TypeId) -> Self::Output {
         Self::default_output()
     }
@@ -249,7 +249,7 @@ pub trait TypeVisitor: Sized {
         }
     }
 
-    /// Visit a TypeData by dispatching to the appropriate method.
+    /// Visit a `TypeData` by dispatching to the appropriate method.
     fn visit_type_key(&mut self, _types: &dyn TypeDatabase, type_key: &TypeData) -> Self::Output {
         match type_key {
             TypeData::Intrinsic(kind) => self.visit_intrinsic(*kind),
@@ -292,7 +292,7 @@ pub trait TypeVisitor: Sized {
 // Type Traversal Helpers
 // =============================================================================
 
-/// Invoke a function on each immediate child TypeId of a TypeData.
+/// Invoke a function on each immediate child `TypeId` of a `TypeData`.
 ///
 /// This function provides a simple way to traverse the type graph without
 /// requiring the full Visitor pattern. It's useful for operations like:
@@ -303,8 +303,8 @@ pub trait TypeVisitor: Sized {
 /// # Parameters
 ///
 /// * `db` - The type database to look up type structures
-/// * `key` - The TypeData whose children should be visited
-/// * `f` - Function to call for each child TypeId
+/// * `key` - The `TypeData` whose children should be visited
+/// * `f` - Function to call for each child `TypeId`
 ///
 /// # Examples
 ///
@@ -316,16 +316,16 @@ pub trait TypeVisitor: Sized {
 /// });
 /// ```
 ///
-/// # TypeData Variants Handled
+/// # `TypeData` Variants Handled
 ///
-/// This function handles ALL TypeData variants to ensure complete traversal:
-/// - **Single nested types**: Array, ReadonlyType, KeyOf, etc.
+/// This function handles ALL `TypeData` variants to ensure complete traversal:
+/// - **Single nested types**: Array, `ReadonlyType`, `KeyOf`, etc.
 /// - **Multiple members**: Union, Intersection
 /// - **Structured types**: Object, Tuple, Function, Callable
-/// - **Complex types**: Application, Conditional, Mapped, IndexAccess
+/// - **Complex types**: Application, Conditional, Mapped, `IndexAccess`
 /// - **Template literals**: Iterates over template spans
 /// - **String intrinsics**: Visits type argument
-/// - **Leaf types**: Intrinsic, Literal, Lazy, TypeQuery, etc. (no children)
+/// - **Leaf types**: Intrinsic, Literal, Lazy, `TypeQuery`, etc. (no children)
 pub fn for_each_child<F>(db: &dyn TypeDatabase, key: &TypeData, mut f: F)
 where
     F: FnMut(TypeId),
@@ -563,7 +563,7 @@ where
     }
 }
 
-/// Collect all unique lazy DefIds reachable from `root`.
+/// Collect all unique lazy `DefIds` reachable from `root`.
 pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
@@ -579,7 +579,7 @@ pub fn collect_lazy_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId
     out
 }
 
-/// Collect all unique enum DefIds reachable from `root`.
+/// Collect all unique enum `DefIds` reachable from `root`.
 pub fn collect_enum_def_ids(types: &dyn TypeDatabase, root: TypeId) -> Vec<DefId> {
     let mut out = Vec::new();
     let mut seen = FxHashSet::default();
@@ -648,7 +648,7 @@ pub enum TypeKind {
     TemplateLiteral,
     /// Type query (typeof expr)
     TypeQuery,
-    /// KeyOf types (keyof T)
+    /// `KeyOf` types (keyof T)
     KeyOf,
     /// Named type references (interfaces, type aliases)
     Reference,
@@ -658,24 +658,29 @@ pub enum TypeKind {
     Other,
 }
 
-/// Visitor that checks if a type is a specific TypeKind.
+/// Visitor that checks if a type is a specific `TypeKind`.
 pub struct TypeKindVisitor {
     /// The kind to check for.
     pub target_kind: TypeKind,
 }
 
 impl TypeKindVisitor {
-    /// Create a new TypeKindVisitor.
-    pub fn new(target_kind: TypeKind) -> Self {
+    /// Create a new `TypeKindVisitor`.
+    pub const fn new(target_kind: TypeKind) -> Self {
         Self { target_kind }
     }
 
-    /// Get the kind of a type from its TypeData.
-    pub fn get_kind(type_key: &TypeData) -> TypeKind {
+    /// Get the kind of a type from its `TypeData`.
+    pub const fn get_kind(type_key: &TypeData) -> TypeKind {
         match type_key {
-            TypeData::Intrinsic(_) => TypeKind::Primitive,
+            TypeData::Intrinsic(_)
+            | TypeData::Enum(_, _)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::StringIntrinsic { .. } => TypeKind::Primitive,
             TypeData::Literal(_) => TypeKind::Literal,
-            TypeData::Object(_) | TypeData::ObjectWithIndex(_) => TypeKind::Object,
+            TypeData::Object(_) | TypeData::ObjectWithIndex(_) | TypeData::ModuleNamespace(_) => {
+                TypeKind::Object
+            }
             TypeData::Array(_) => TypeKind::Array,
             TypeData::Tuple(_) => TypeKind::Tuple,
             TypeData::Union(_) => TypeKind::Union,
@@ -687,7 +692,6 @@ impl TypeKindVisitor {
             }
             TypeData::Conditional(_) => TypeKind::Conditional,
             TypeData::Lazy(_) | TypeData::Recursive(_) => TypeKind::Reference,
-            TypeData::Enum(_, _) => TypeKind::Primitive, // enums behave like primitives
             TypeData::Mapped(_) => TypeKind::Mapped,
             TypeData::IndexAccess(_, _) => TypeKind::IndexAccess,
             TypeData::TemplateLiteral(_) => TypeKind::TemplateLiteral,
@@ -703,15 +707,12 @@ impl TypeKindVisitor {
                 // NoInfer doesn't change the kind - look through it
                 TypeKind::Other
             }
-            TypeData::UniqueSymbol(_) => TypeKind::Primitive, // unique symbol is a primitive
-            TypeData::ThisType => TypeKind::TypeParameter,    // this is type-parameter-like
-            TypeData::StringIntrinsic { .. } => TypeKind::Primitive, // string intrinsics produce strings
-            TypeData::ModuleNamespace(_) => TypeKind::Object, // module namespace is object-like
+            TypeData::ThisType => TypeKind::TypeParameter, // this is type-parameter-like
             TypeData::Error => TypeKind::Error,
         }
     }
 
-    /// Get the kind of a type by TypeId.
+    /// Get the kind of a type by `TypeId`.
     pub fn get_kind_of(types: &dyn TypeDatabase, type_id: TypeId) -> TypeKind {
         match types.lookup(type_id) {
             Some(ref type_key) => Self::get_kind(type_key),
@@ -740,7 +741,7 @@ impl TypeVisitor for TypeKindVisitor {
     }
 }
 
-/// Visitor that collects all TypeIds referenced by a type.
+/// Visitor that collects all `TypeIds` referenced by a type.
 ///
 /// Useful for finding dependencies or tracking type usage.
 pub struct TypeCollectorVisitor {
@@ -751,7 +752,7 @@ pub struct TypeCollectorVisitor {
 }
 
 impl TypeCollectorVisitor {
-    /// Create a new TypeCollectorVisitor.
+    /// Create a new `TypeCollectorVisitor`.
     pub fn new() -> Self {
         Self {
             types: FxHashSet::default(),
@@ -759,7 +760,7 @@ impl TypeCollectorVisitor {
         }
     }
 
-    /// Create a new TypeCollectorVisitor with custom max depth.
+    /// Create a new `TypeCollectorVisitor` with custom max depth.
     pub fn with_max_depth(max_depth: usize) -> Self {
         Self {
             types: FxHashSet::default(),
@@ -834,7 +835,7 @@ pub struct TypePredicateVisitor<F>
 where
     F: Fn(&TypeData) -> bool,
 {
-    /// Predicate function to test against TypeData.
+    /// Predicate function to test against `TypeData`.
     pub predicate: F,
 }
 
@@ -842,8 +843,8 @@ impl<F> TypePredicateVisitor<F>
 where
     F: Fn(&TypeData) -> bool,
 {
-    /// Create a new TypePredicateVisitor.
-    pub fn new(predicate: F) -> Self {
+    /// Create a new `TypePredicateVisitor`.
+    pub const fn new(predicate: F) -> Self {
         Self { predicate }
     }
 }
@@ -875,7 +876,7 @@ where
 // Convenience Functions
 // =============================================================================
 
-/// Check if a type is a specific kind using the TypeKindVisitor.
+/// Check if a type is a specific kind using the `TypeKindVisitor`.
 ///
 /// # Example
 ///
@@ -936,7 +937,7 @@ impl<F, T> TypeDataDataVisitor<F, T>
 where
     F: Fn(&TypeData) -> Option<T>,
 {
-    fn new(extractor: F) -> Self {
+    const fn new(extractor: F) -> Self {
         Self { extractor }
     }
 }
@@ -1084,7 +1085,7 @@ pub fn ref_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef
     })
 }
 
-/// Extract the lazy DefId if this is a Lazy type.
+/// Extract the lazy `DefId` if this is a Lazy type.
 pub fn lazy_def_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<DefId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::Lazy(def_id) => Some(*def_id),
@@ -1113,7 +1114,7 @@ pub fn is_enum_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Enum(_, _)))
 }
 
-/// Extract the enum components (DefId and member type) if this is an Enum type.
+/// Extract the enum components (`DefId` and member type) if this is an Enum type.
 ///
 /// Returns `Some((def_id, member_type))` where:
 /// - `def_id` is the unique identity of the enum for nominal checking
@@ -1157,7 +1158,7 @@ pub fn index_access_parts(types: &dyn TypeDatabase, type_id: TypeId) -> Option<(
     })
 }
 
-/// Extract the type query symbol if this is a TypeQuery.
+/// Extract the type query symbol if this is a `TypeQuery`.
 pub fn type_query_symbol(types: &dyn TypeDatabase, type_id: TypeId) -> Option<SymbolRef> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::TypeQuery(sym_ref) => Some(*sym_ref),
@@ -1181,7 +1182,7 @@ pub fn readonly_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<
     })
 }
 
-/// Extract the inner type if this is a NoInfer type.
+/// Extract the inner type if this is a `NoInfer` type.
 pub fn no_infer_inner_type(types: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     extract_type_data(types, type_id, |key| match key {
         TypeData::NoInfer(inner) => Some(*inner),
@@ -1256,14 +1257,14 @@ pub fn callable_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Ca
 
 /// Check if a type is a literal type.
 ///
-/// Matches: TypeData::Literal(_)
+/// Matches: `TypeData::Literal`(_)
 pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
 /// Check if a type is a module namespace type (import * as ns).
 ///
-/// Matches: TypeData::ModuleNamespace(_)
+/// Matches: `TypeData::ModuleNamespace`(_)
 pub fn is_module_namespace_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
 }
@@ -1290,7 +1291,7 @@ fn is_function_type_impl(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 /// Check if a type is an object-like type (suitable for typeof "object").
 ///
-/// Returns true for: Object, ObjectWithIndex, Array, Tuple, Mapped, ReadonlyType (of object)
+/// Returns true for: Object, `ObjectWithIndex`, Array, Tuple, Mapped, `ReadonlyType` (of object)
 pub fn is_object_like_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_object_like_type_impl(types, type_id)
 }
@@ -1419,13 +1420,13 @@ pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool
 ///
 /// Unit types include:
 /// - Literal types (string, number, boolean, bigint literals)
-/// - Enum members (TypeData::Enum)
+/// - Enum members (`TypeData::Enum`)
 /// - Unique symbols
 /// - null, undefined, void
 /// - Tuples where ALL elements are unit types (and no rest elements)
 ///
-/// NOTE: This does NOT handle ReadonlyType - readonly tuples must be checked separately
-/// because `["a"]` is a subtype of `readonly ["a"]` even though they have different TypeIds.
+/// NOTE: This does NOT handle `ReadonlyType` - readonly tuples must be checked separately
+/// because `["a"]` is a subtype of `readonly ["a"]` even though they have different `TypeIds`.
 pub fn is_unit_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_unit_type_impl(types, type_id, 0)
 }
@@ -1448,14 +1449,10 @@ fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> b
     }
 
     match types.lookup(type_id) {
-        // Literal types are unit types
-        Some(TypeData::Literal(_)) => true,
-
-        // Enum members are unit types (nominal)
-        Some(TypeData::Enum(_, _)) => true,
-
-        // Unique symbols are unit types
-        Some(TypeData::UniqueSymbol(_)) => true,
+        // Unit-like scalar types are handled together.
+        Some(TypeData::Literal(_))
+        | Some(TypeData::Enum(_, _))
+        | Some(TypeData::UniqueSymbol(_)) => true,
 
         // Tuples are unit types if ALL elements are unit types (no rest elements)
         Some(TypeData::Tuple(list_id)) => {
@@ -1470,11 +1467,9 @@ fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> b
                 .all(|e| is_unit_type_impl(types, e.type_id, depth + 1))
         }
 
-        // ReadonlyType of a unit tuple is NOT considered a unit type for optimization purposes
-        // because ["a"] <: readonly ["a"] but they have different TypeIds
-        Some(TypeData::ReadonlyType(_)) => false,
-
         // Everything else is not a unit type
+        // ReadonlyType of a unit tuple is NOT considered a unit type for optimization purposes
+        // because ["a"] <: readonly ["a"] but they have different TypeIds.
         _ => false,
     }
 }
@@ -1484,7 +1479,7 @@ fn is_unit_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> b
 // =============================================================================
 
 /// A visitor that recursively collects all types referenced by a root type.
-/// Unlike TypeCollectorVisitor, this properly traverses into nested structures.
+/// Unlike `TypeCollectorVisitor`, this properly traverses into nested structures.
 pub struct RecursiveTypeCollector<'a> {
     types: &'a dyn TypeDatabase,
     collected: FxHashSet<TypeId>,
@@ -1543,7 +1538,12 @@ impl<'a> RecursiveTypeCollector<'a> {
             | TypeData::Literal(_)
             | TypeData::Error
             | TypeData::ThisType
-            | TypeData::BoundParameter(_) => {
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_) => {
                 // Leaf types - nothing to traverse
             }
             TypeData::NoInfer(inner) => {
@@ -1669,13 +1669,6 @@ impl<'a> RecursiveTypeCollector<'a> {
                 if let Some(default) = info.default {
                     self.visit(default);
                 }
-            }
-            TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => {
-                // Symbol/DefId references - don't traverse (would need resolver)
             }
             TypeData::Application(app_id) => {
                 let app = self.types.type_application(*app_id);
@@ -1831,7 +1824,12 @@ where
             | TypeData::Literal(_)
             | TypeData::Error
             | TypeData::ThisType
-            | TypeData::BoundParameter(_) => false,
+            | TypeData::BoundParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Recursive(_)
+            | TypeData::TypeQuery(_)
+            | TypeData::UniqueSymbol(_)
+            | TypeData::ModuleNamespace(_) => false,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.types.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
@@ -1871,11 +1869,6 @@ where
                 info.constraint.is_some_and(|c| self.check(c))
                     || info.default.is_some_and(|d| self.check(d))
             }
-            TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::TypeQuery(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_) => false,
             TypeData::Application(app_id) => {
                 let app = self.types.type_application(*app_id);
                 self.check(app.base) || app.args.iter().any(|&a| self.check(a))
@@ -1919,27 +1912,27 @@ where
 // TypeDatabase-based convenience functions
 // =============================================================================
 
-/// Check if a type is a literal type (TypeDatabase version).
+/// Check if a type is a literal type (`TypeDatabase` version).
 pub fn is_literal_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     LiteralTypeChecker::check(types, type_id)
 }
 
-/// Check if a type is a module namespace type (TypeDatabase version).
+/// Check if a type is a module namespace type (`TypeDatabase` version).
 pub fn is_module_namespace_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::ModuleNamespace(_)))
 }
 
-/// Check if a type is a function type (TypeDatabase version).
+/// Check if a type is a function type (`TypeDatabase` version).
 pub fn is_function_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     FunctionTypeChecker::check(types, type_id)
 }
 
-/// Check if a type is object-like (TypeDatabase version).
+/// Check if a type is object-like (`TypeDatabase` version).
 pub fn is_object_like_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     ObjectTypeChecker::check(types, type_id)
 }
 
-/// Check if a type is an empty object type (TypeDatabase version).
+/// Check if a type is an empty object type (`TypeDatabase` version).
 pub fn is_empty_object_type_db(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let checker = EmptyObjectChecker::new(types);
     checker.check(type_id)
@@ -2091,7 +2084,7 @@ pub struct ConstAssertionVisitor<'a> {
 }
 
 impl<'a> ConstAssertionVisitor<'a> {
-    /// Create a new ConstAssertionVisitor.
+    /// Create a new `ConstAssertionVisitor`.
     pub fn new(db: &'a dyn TypeDatabase) -> Self {
         Self {
             db,
@@ -2110,9 +2103,6 @@ impl<'a> ConstAssertionVisitor<'a> {
         }
 
         let result = match self.db.lookup(type_id) {
-            // Literals: preserved as-is
-            Some(TypeData::Literal(_)) => type_id,
-
             // Arrays: Convert to readonly tuple
             Some(TypeData::Array(element_type)) => {
                 let const_element = self.apply_const_assertion(element_type);

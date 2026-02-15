@@ -39,7 +39,7 @@ impl ExportSignature {
     /// - Module augmentations: `declare module 'x' { ... }`
     ///
     /// The signature is deterministic (sorted keys) and position-independent
-    /// (no NodeIndex, SymbolId, or byte offsets).
+    /// (no `NodeIndex`, `SymbolId`, or byte offsets).
     pub fn compute(binder: &BinderState, file_name: &str) -> Self {
         let mut hasher = FxHasher::default();
 

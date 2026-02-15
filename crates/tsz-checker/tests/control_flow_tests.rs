@@ -93,7 +93,7 @@ fn get_block_expression(arena: &NodeArena, block_idx: NodeIndex, stmt_index: usi
 ///
 /// NOTE: Currently ignored - switch clause fallthrough narrowing is not fully
 /// implemented. The flow graph records fallthrough antecedents, but the
-/// SWITCH_CLAUSE handler in `check_flow` doesn't correctly union types from
+/// `SWITCH_CLAUSE` handler in `check_flow` doesn't correctly union types from
 /// fallthrough paths.
 #[test]
 fn test_switch_fallthrough_and_default_narrowing() {
@@ -909,7 +909,7 @@ x;
 
 /// Test that loop labels correctly union types from back edges.
 ///
-/// NOTE: Currently ignored - the LOOP_LABEL finalization logic in `check_flow`
+/// NOTE: Currently ignored - the `LOOP_LABEL` finalization logic in `check_flow`
 /// doesn't correctly union types from all antecedents including back edges.
 /// The flow graph is built correctly with back edges recorded, but the
 /// finalization step needs to properly union all antecedent types.
@@ -2706,7 +2706,7 @@ function test() {
 /// Test that && creates intermediate flow condition nodes for the right operand.
 ///
 /// For `typeof x === 'object' && x`, the `x` on the right side of `&&` should
-/// have a TRUE_CONDITION flow node so that it sees the typeof narrowing.
+/// have a `TRUE_CONDITION` flow node so that it sees the typeof narrowing.
 #[test]
 fn test_and_expression_creates_intermediate_flow_nodes() {
     use tsz_binder::{BinderState, flow_flags};
@@ -2802,7 +2802,7 @@ if (typeof x === "string" && x) {
     assert_eq!(narrowed_then, TypeId::STRING);
 }
 
-/// Test that || creates intermediate FALSE_CONDITION flow nodes for the right operand.
+/// Test that || creates intermediate `FALSE_CONDITION` flow nodes for the right operand.
 #[test]
 fn test_or_expression_creates_intermediate_flow_nodes() {
     use tsz_binder::{BinderState, flow_flags};

@@ -63,7 +63,7 @@ pub enum CodeLensKind {
 
 impl CodeLens {
     /// Create a new code lens without a command (requires resolution).
-    pub fn new(range: Range, data: CodeLensData) -> Self {
+    pub const fn new(range: Range, data: CodeLensData) -> Self {
         Self {
             range,
             command: None,
@@ -72,7 +72,7 @@ impl CodeLens {
     }
 
     /// Create a resolved code lens with a command.
-    pub fn resolved(range: Range, command: CodeLensCommand) -> Self {
+    pub const fn resolved(range: Range, command: CodeLensCommand) -> Self {
         Self {
             range,
             command: Some(command),
@@ -225,7 +225,7 @@ impl<'a> CodeLensProvider<'a> {
         let title = if ref_count == 1 {
             "1 reference".to_string()
         } else {
-            format!("{} references", ref_count)
+            format!("{ref_count} references")
         };
 
         let command = CodeLensCommand {

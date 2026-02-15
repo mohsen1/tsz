@@ -41,7 +41,7 @@ fn test_lower_literal_string_type() {
         TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "hello");
         }
-        _ => panic!("Expected string literal type, got {:?}", key),
+        _ => panic!("Expected string literal type, got {key:?}"),
     }
 }
 
@@ -57,7 +57,7 @@ fn test_lower_literal_number_type() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 42.0);
         }
-        _ => panic!("Expected number literal type, got {:?}", key),
+        _ => panic!("Expected number literal type, got {key:?}"),
     }
 }
 
@@ -73,7 +73,7 @@ fn test_lower_literal_hex_number_type() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 255.0);
         }
-        _ => panic!("Expected hex literal type, got {:?}", key),
+        _ => panic!("Expected hex literal type, got {key:?}"),
     }
 }
 
@@ -89,7 +89,7 @@ fn test_lower_literal_binary_number_type() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 10.0);
         }
-        _ => panic!("Expected binary literal type, got {:?}", key),
+        _ => panic!("Expected binary literal type, got {key:?}"),
     }
 }
 
@@ -105,7 +105,7 @@ fn test_lower_literal_octal_number_type() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 63.0);
         }
-        _ => panic!("Expected octal literal type, got {:?}", key),
+        _ => panic!("Expected octal literal type, got {key:?}"),
     }
 }
 
@@ -121,7 +121,7 @@ fn test_lower_literal_number_with_separators() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 1_234_567.0);
         }
-        _ => panic!("Expected number literal type, got {:?}", key),
+        _ => panic!("Expected number literal type, got {key:?}"),
     }
 }
 
@@ -137,7 +137,7 @@ fn test_lower_literal_hex_number_with_separators() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 65_535.0);
         }
-        _ => panic!("Expected hex literal type, got {:?}", key),
+        _ => panic!("Expected hex literal type, got {key:?}"),
     }
 }
 
@@ -153,7 +153,7 @@ fn test_lower_literal_binary_number_with_separators() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 165.0);
         }
-        _ => panic!("Expected binary literal type, got {:?}", key),
+        _ => panic!("Expected binary literal type, got {key:?}"),
     }
 }
 
@@ -169,7 +169,7 @@ fn test_lower_literal_octal_number_with_separators() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, 668.0);
         }
-        _ => panic!("Expected octal literal type, got {:?}", key),
+        _ => panic!("Expected octal literal type, got {key:?}"),
     }
 }
 
@@ -185,7 +185,7 @@ fn test_lower_literal_bigint_type() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "123");
         }
-        _ => panic!("Expected bigint literal type, got {:?}", key),
+        _ => panic!("Expected bigint literal type, got {key:?}"),
     }
 }
 
@@ -201,7 +201,7 @@ fn test_lower_literal_hex_bigint_type() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "255");
         }
-        _ => panic!("Expected hex bigint literal type, got {:?}", key),
+        _ => panic!("Expected hex bigint literal type, got {key:?}"),
     }
 }
 
@@ -217,7 +217,7 @@ fn test_lower_literal_binary_bigint_type() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "10");
         }
-        _ => panic!("Expected binary bigint literal type, got {:?}", key),
+        _ => panic!("Expected binary bigint literal type, got {key:?}"),
     }
 }
 
@@ -233,7 +233,7 @@ fn test_lower_literal_octal_bigint_type() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "63");
         }
-        _ => panic!("Expected octal bigint literal type, got {:?}", key),
+        _ => panic!("Expected octal bigint literal type, got {key:?}"),
     }
 }
 
@@ -249,7 +249,7 @@ fn test_lower_literal_bigint_with_separators() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "1000");
         }
-        _ => panic!("Expected bigint literal type, got {:?}", key),
+        _ => panic!("Expected bigint literal type, got {key:?}"),
     }
 }
 
@@ -265,7 +265,7 @@ fn test_lower_literal_hex_bigint_with_separators() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "65535");
         }
-        _ => panic!("Expected hex bigint literal type, got {:?}", key),
+        _ => panic!("Expected hex bigint literal type, got {key:?}"),
     }
 }
 
@@ -281,7 +281,7 @@ fn test_lower_literal_binary_bigint_with_separators() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "165");
         }
-        _ => panic!("Expected binary bigint literal type, got {:?}", key),
+        _ => panic!("Expected binary bigint literal type, got {key:?}"),
     }
 }
 
@@ -297,7 +297,7 @@ fn test_lower_literal_octal_bigint_with_separators() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "668");
         }
-        _ => panic!("Expected octal bigint literal type, got {:?}", key),
+        _ => panic!("Expected octal bigint literal type, got {key:?}"),
     }
 }
 
@@ -313,7 +313,7 @@ fn test_lower_literal_negative_number_type() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, -42.0);
         }
-        _ => panic!("Expected negative number literal type, got {:?}", key),
+        _ => panic!("Expected negative number literal type, got {key:?}"),
     }
 }
 
@@ -329,7 +329,7 @@ fn test_lower_literal_negative_hex_number_type() {
         TypeData::Literal(LiteralValue::Number(num)) => {
             assert_eq!(num.0, -42.0);
         }
-        _ => panic!("Expected negative hex literal type, got {:?}", key),
+        _ => panic!("Expected negative hex literal type, got {key:?}"),
     }
 }
 
@@ -345,7 +345,7 @@ fn test_lower_literal_negative_bigint_type() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "-123");
         }
-        _ => panic!("Expected negative bigint literal type, got {:?}", key),
+        _ => panic!("Expected negative bigint literal type, got {key:?}"),
     }
 }
 
@@ -361,7 +361,7 @@ fn test_lower_literal_negative_hex_bigint_type() {
         TypeData::Literal(LiteralValue::BigInt(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "-42");
         }
-        _ => panic!("Expected negative hex bigint literal type, got {:?}", key),
+        _ => panic!("Expected negative hex bigint literal type, got {key:?}"),
     }
 }
 
@@ -375,7 +375,7 @@ fn test_lower_literal_boolean_type() {
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
         TypeData::Literal(LiteralValue::Boolean(true)) => {}
-        _ => panic!("Expected boolean literal type, got {:?}", key),
+        _ => panic!("Expected boolean literal type, got {key:?}"),
     }
 }
 
@@ -389,7 +389,7 @@ fn test_lower_unique_symbol_type() {
     let key = interner.lookup(type_id).expect("Type should exist");
     match key {
         TypeData::UniqueSymbol(_) => {}
-        _ => panic!("Expected unique symbol type, got {:?}", key),
+        _ => panic!("Expected unique symbol type, got {key:?}"),
     }
 }
 
@@ -405,7 +405,7 @@ fn test_lower_keyof_type_operator() {
         TypeData::KeyOf(inner) => {
             assert_eq!(inner, TypeId::STRING);
         }
-        _ => panic!("Expected keyof type, got {:?}", key),
+        _ => panic!("Expected keyof type, got {key:?}"),
     }
 }
 
@@ -424,10 +424,10 @@ fn test_lower_readonly_type_operator() {
                 TypeData::Array(element) => {
                     assert_eq!(element, TypeId::STRING);
                 }
-                _ => panic!("Expected readonly array type, got {:?}", inner_key),
+                _ => panic!("Expected readonly array type, got {inner_key:?}"),
             }
         }
-        _ => panic!("Expected readonly type, got {:?}", key),
+        _ => panic!("Expected readonly type, got {key:?}"),
     }
 }
 
@@ -443,7 +443,7 @@ fn test_lower_array_type_reference() {
         TypeData::Array(element) => {
             assert_eq!(element, TypeId::STRING);
         }
-        _ => panic!("Expected array type, got {:?}", key),
+        _ => panic!("Expected array type, got {key:?}"),
     }
 }
 
@@ -462,10 +462,10 @@ fn test_lower_readonly_array_type_reference() {
                 TypeData::Array(element) => {
                     assert_eq!(element, TypeId::STRING);
                 }
-                _ => panic!("Expected readonly array type, got {:?}", inner_key),
+                _ => panic!("Expected readonly array type, got {inner_key:?}"),
             }
         }
-        _ => panic!("Expected readonly type, got {:?}", key),
+        _ => panic!("Expected readonly type, got {key:?}"),
     }
 }
 
@@ -508,10 +508,10 @@ fn test_lower_array_type_reference_respects_resolver() {
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
                 Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
-                other => panic!("Expected Lazy base type, got {:?}", other),
+                other => panic!("Expected Lazy base type, got {other:?}"),
             }
         }
-        _ => panic!("Expected Application type, got {:?}", key),
+        _ => panic!("Expected Application type, got {key:?}"),
     }
 }
 
@@ -554,10 +554,10 @@ fn test_lower_readonly_array_type_reference_respects_resolver() {
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
                 Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
-                other => panic!("Expected Lazy base type, got {:?}", other),
+                other => panic!("Expected Lazy base type, got {other:?}"),
             }
         }
-        _ => panic!("Expected Application type, got {:?}", key),
+        _ => panic!("Expected Application type, got {key:?}"),
     }
 }
 
@@ -581,10 +581,10 @@ fn test_lower_conditional_type_with_infer() {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                     assert!(info.constraint.is_none());
                 }
-                other => panic!("Expected infer type in extends, got {:?}", other),
+                other => panic!("Expected infer type in extends, got {other:?}"),
             }
         }
-        _ => panic!("Expected Conditional type, got {:?}", key),
+        _ => panic!("Expected Conditional type, got {key:?}"),
     }
 }
 
@@ -606,10 +606,10 @@ fn test_lower_infer_type_with_constraint() {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                     assert_eq!(info.constraint, Some(TypeId::STRING));
                 }
-                other => panic!("Expected infer type in extends, got {:?}", other),
+                other => panic!("Expected infer type in extends, got {other:?}"),
             }
         }
-        _ => panic!("Expected Conditional type, got {:?}", key),
+        _ => panic!("Expected Conditional type, got {key:?}"),
     }
 }
 
@@ -630,10 +630,10 @@ fn test_lower_conditional_infer_binding() {
                 Some(TypeData::Infer(info)) => {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                 }
-                other => panic!("Expected infer type in true branch, got {:?}", other),
+                other => panic!("Expected infer type in true branch, got {other:?}"),
             }
         }
-        _ => panic!("Expected Conditional type, got {:?}", key),
+        _ => panic!("Expected Conditional type, got {key:?}"),
     }
 }
 
@@ -655,10 +655,10 @@ fn test_lower_conditional_infer_binding_false_branch() {
                 Some(TypeData::Infer(info)) => {
                     assert_eq!(interner.resolve_atom(info.name), "R");
                 }
-                other => panic!("Expected infer type in false branch, got {:?}", other),
+                other => panic!("Expected infer type in false branch, got {other:?}"),
             }
         }
-        _ => panic!("Expected Conditional type, got {:?}", key),
+        _ => panic!("Expected Conditional type, got {key:?}"),
     }
 }
 
@@ -679,10 +679,10 @@ fn test_lower_conditional_distributive_flag() {
                     let cond = interner.conditional_type(cond_id);
                     assert!(cond.is_distributive);
                 }
-                other => panic!("Expected conditional return type, got {:?}", other),
+                other => panic!("Expected conditional return type, got {other:?}"),
             }
         }
-        _ => panic!("Expected function type, got {:?}", key),
+        _ => panic!("Expected function type, got {key:?}"),
     }
 }
 
@@ -703,10 +703,10 @@ fn test_lower_conditional_non_distributive_flag() {
                     let cond = interner.conditional_type(cond_id);
                     assert!(!cond.is_distributive);
                 }
-                other => panic!("Expected conditional return type, got {:?}", other),
+                other => panic!("Expected conditional return type, got {other:?}"),
             }
         }
-        _ => panic!("Expected function type, got {:?}", key),
+        _ => panic!("Expected function type, got {key:?}"),
     }
 }
 
@@ -936,8 +936,7 @@ fn parse_interface_declarations(source: &str, name: &str) -> (NodeArena, Vec<Nod
 
     assert!(
         !declarations.is_empty(),
-        "Could not find interface '{}'",
-        name
+        "Could not find interface '{name}'"
     );
     (arena, declarations)
 }
@@ -972,7 +971,7 @@ fn test_lower_function_type_with_type_parameter() {
                 "T should have no default"
             );
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1001,7 +1000,7 @@ fn test_lower_function_type_with_type_predicate_return() {
             }
             assert_eq!(predicate.type_id, Some(TypeId::STRING));
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1028,7 +1027,7 @@ fn test_lower_function_type_with_this_predicate_return() {
             }
             assert_eq!(predicate.type_id, Some(TypeId::STRING));
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1057,7 +1056,7 @@ fn test_lower_function_type_with_asserts_predicate_return() {
             }
             assert_eq!(predicate.type_id, Some(TypeId::STRING));
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1085,7 +1084,7 @@ fn test_lower_function_type_with_asserts_this_predicate_return() {
             }
             assert_eq!(predicate.type_id, Some(TypeId::STRING));
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1112,7 +1111,7 @@ fn test_lower_function_type_with_asserts_this_predicate_without_is() {
             }
             assert_eq!(predicate.type_id, None);
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1141,7 +1140,7 @@ fn test_lower_function_type_with_asserts_predicate_without_is() {
             }
             assert_eq!(predicate.type_id, None);
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1162,7 +1161,7 @@ fn test_lower_function_type_with_this_param_separate() {
             let name = shape.params[0].name.expect("Expected parameter name");
             assert_eq!(interner.resolve_atom(name).as_str(), "x");
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1187,10 +1186,10 @@ fn test_lower_function_type_parameter_usage() {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(interner.resolve_atom(info.name), "T");
                 }
-                _ => panic!("Expected type parameter type, got {:?}", param_key),
+                _ => panic!("Expected type parameter type, got {param_key:?}"),
             }
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1221,7 +1220,7 @@ fn test_lower_function_type_with_constrained_type_parameter() {
             let constraint = shape.type_params[0].constraint.unwrap();
             assert_eq!(constraint, TypeId::STRING, "Constraint should be string");
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1243,10 +1242,10 @@ fn test_lower_constrained_type_parameter_usage() {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(info.constraint, Some(TypeId::STRING));
                 }
-                _ => panic!("Expected type parameter type, got {:?}", param_key),
+                _ => panic!("Expected type parameter type, got {param_key:?}"),
             }
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1278,7 +1277,7 @@ fn test_lower_function_type_with_default_type_parameter() {
             let default = shape.type_params[0].default.unwrap();
             assert_eq!(default, TypeId::STRING, "Default should be string");
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1310,7 +1309,7 @@ fn test_lower_function_type_with_multiple_type_parameters() {
                 "V"
             );
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1343,7 +1342,7 @@ fn test_lower_function_type_with_constraint_and_default() {
                 "T should have default"
             );
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1363,7 +1362,7 @@ fn test_lower_function_type_no_type_parameters() {
             let shape = interner.function_shape(shape_id);
             assert_eq!(shape.type_params.len(), 0, "Expected no type parameters");
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1402,10 +1401,10 @@ fn test_lower_tuple_type_metadata() {
             assert!(third.rest);
             match interner.lookup(third.type_id) {
                 Some(TypeData::Array(elem)) => assert_eq!(elem, TypeId::NUMBER),
-                other => panic!("Expected array type for rest element, got {:?}", other),
+                other => panic!("Expected array type for rest element, got {other:?}"),
             }
         }
-        _ => panic!("Expected Tuple type, got {:?}", key),
+        _ => panic!("Expected Tuple type, got {key:?}"),
     }
 }
 
@@ -1422,7 +1421,7 @@ fn test_lower_union_type_normalization() {
             let members = interner.type_list(members);
             assert_eq!(members.as_ref(), [TypeId::NUMBER, TypeId::STRING]);
         }
-        _ => panic!("Expected Union type, got {:?}", key),
+        _ => panic!("Expected Union type, got {key:?}"),
     }
 }
 
@@ -1466,7 +1465,7 @@ fn test_lower_function_parameter_names() {
 
             assert_eq!(shape.return_type, TypeId::VOID);
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1497,10 +1496,10 @@ fn test_lower_function_rest_parameter() {
                 TypeData::Array(element) => {
                     assert_eq!(element, TypeId::STRING);
                 }
-                _ => panic!("Expected rest param to be array type, got {:?}", param_key),
+                _ => panic!("Expected rest param to be array type, got {param_key:?}"),
             }
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1548,7 +1547,7 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
                     let base_key = interner.lookup(app.base).expect("Type should exist");
                     match base_key {
                         TypeData::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
-                        _ => panic!("Expected lazy base type, got {:?}", base_key),
+                        _ => panic!("Expected lazy base type, got {base_key:?}"),
                     }
 
                     assert_eq!(app.args.len(), 1);
@@ -1557,13 +1556,13 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
                         TypeData::TypeParameter(info) => {
                             assert_eq!(interner.resolve_atom(info.name), "T");
                         }
-                        _ => panic!("Expected type parameter argument, got {:?}", arg_key),
+                        _ => panic!("Expected type parameter argument, got {arg_key:?}"),
                     }
                 }
-                _ => panic!("Expected application type, got {:?}", return_key),
+                _ => panic!("Expected application type, got {return_key:?}"),
             }
         }
-        _ => panic!("Expected Function type, got {:?}", key),
+        _ => panic!("Expected Function type, got {key:?}"),
     }
 }
 
@@ -1605,10 +1604,10 @@ fn test_lower_type_reference_with_arguments() {
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
                 Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
-                other => panic!("Expected Lazy base type, got {:?}", other),
+                other => panic!("Expected Lazy base type, got {other:?}"),
             }
         }
-        _ => panic!("Expected Application type, got {:?}", key),
+        _ => panic!("Expected Application type, got {key:?}"),
     }
 }
 
@@ -1650,13 +1649,13 @@ fn test_lower_type_query_uses_value_resolver() {
                         assert_eq!(sym_id, 2);
                         saw_query = true;
                     }
-                    other => panic!("Unexpected union member {:?}", other),
+                    other => panic!("Unexpected union member {other:?}"),
                 }
             }
             assert!(saw_lazy, "Expected union to include lazy type reference");
             assert!(saw_query, "Expected union to include typeof query");
         }
-        _ => panic!("Expected Union type, got {:?}", key),
+        _ => panic!("Expected Union type, got {key:?}"),
     }
 }
 
@@ -1688,10 +1687,10 @@ fn test_lower_type_query_with_type_arguments() {
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
                 Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, 2),
-                other => panic!("Expected TypeQuery base type, got {:?}", other),
+                other => panic!("Expected TypeQuery base type, got {other:?}"),
             }
         }
-        _ => panic!("Expected Application type, got {:?}", key),
+        _ => panic!("Expected Application type, got {key:?}"),
     }
 }
 
@@ -1721,7 +1720,7 @@ fn test_lower_template_literal_type_spans() {
                 _ => panic!("Expected tail text span"),
             }
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -1742,7 +1741,7 @@ fn test_lower_mapped_type_modifiers_and_constraint() {
             assert_eq!(mapped.readonly_modifier, Some(MappedModifier::Add));
             assert_eq!(mapped.optional_modifier, Some(MappedModifier::Add));
         }
-        _ => panic!("Expected Mapped type, got {:?}", key),
+        _ => panic!("Expected Mapped type, got {key:?}"),
     }
 }
 
@@ -1760,7 +1759,7 @@ fn test_lower_mapped_type_remove_modifiers() {
             assert_eq!(mapped.readonly_modifier, Some(MappedModifier::Remove));
             assert_eq!(mapped.optional_modifier, Some(MappedModifier::Remove));
         }
-        _ => panic!("Expected Mapped type, got {:?}", key),
+        _ => panic!("Expected Mapped type, got {key:?}"),
     }
 }
 
@@ -1794,7 +1793,7 @@ fn test_lower_type_literal_object_properties() {
             assert!(!bar.optional);
             assert!(!bar.readonly);
         }
-        _ => panic!("Expected Object type, got {:?}", key),
+        _ => panic!("Expected Object type, got {key:?}"),
     }
 }
 
@@ -1835,10 +1834,10 @@ fn test_lower_type_literal_nested_object() {
                     assert_eq!(retries.type_id, TypeId::NUMBER);
                     assert!(retries.optional);
                 }
-                other => panic!("Expected nested Object type, got {:?}", other),
+                other => panic!("Expected nested Object type, got {other:?}"),
             }
         }
-        _ => panic!("Expected Object type, got {:?}", key),
+        _ => panic!("Expected Object type, got {key:?}"),
     }
 }
 
@@ -1860,7 +1859,7 @@ fn test_lower_type_literal_call_signature() {
             assert_eq!(interner.resolve_atom(callable.properties[0].name), "foo");
             assert_eq!(callable.properties[0].type_id, TypeId::STRING);
         }
-        _ => panic!("Expected Callable type, got {:?}", key),
+        _ => panic!("Expected Callable type, got {key:?}"),
     }
 }
 
@@ -1881,7 +1880,7 @@ fn test_lower_type_literal_call_signature_this_param() {
             assert_eq!(sig.params.len(), 1);
             assert_eq!(sig.params[0].type_id, TypeId::STRING);
         }
-        _ => panic!("Expected Callable type, got {:?}", key),
+        _ => panic!("Expected Callable type, got {key:?}"),
     }
 }
 
@@ -1912,7 +1911,7 @@ fn test_lower_type_literal_call_signature_type_predicate() {
             }
             assert_eq!(predicate.type_id, Some(TypeId::STRING));
         }
-        _ => panic!("Expected Callable type, got {:?}", key),
+        _ => panic!("Expected Callable type, got {key:?}"),
     }
 }
 
@@ -1943,7 +1942,7 @@ fn test_lower_type_literal_call_signature_asserts_predicate_without_is() {
             }
             assert_eq!(predicate.type_id, None);
         }
-        _ => panic!("Expected Callable type, got {:?}", key),
+        _ => panic!("Expected Callable type, got {key:?}"),
     }
 }
 
@@ -1971,7 +1970,7 @@ fn test_lower_type_literal_overloaded_call_signatures() {
             assert_eq!(second.params[0].type_id, TypeId::NUMBER);
             assert_eq!(second.return_type, TypeId::STRING);
         }
-        _ => panic!("Expected Callable type, got {:?}", key),
+        _ => panic!("Expected Callable type, got {key:?}"),
     }
 }
 
@@ -1989,7 +1988,7 @@ fn test_lower_type_literal_construct_signature() {
             assert_eq!(callable.call_signatures.len(), 0);
             assert_eq!(callable.construct_signatures.len(), 1);
         }
-        _ => panic!("Expected Callable type, got {:?}", key),
+        _ => panic!("Expected Callable type, got {key:?}"),
     }
 }
 
@@ -2014,7 +2013,7 @@ fn test_lower_type_literal_index_signature() {
             assert_eq!(string_index.key_type, TypeId::STRING);
             assert_eq!(string_index.value_type, TypeId::NUMBER);
         }
-        _ => panic!("Expected ObjectWithIndex type, got {:?}", key),
+        _ => panic!("Expected ObjectWithIndex type, got {key:?}"),
     }
 }
 
@@ -2067,7 +2066,7 @@ fn test_lower_interface_single_with_two_properties() {
                 match name.as_str() {
                     "x" => found_x = Some(prop),
                     "y" => found_y = Some(prop),
-                    other => panic!("Unexpected property name: {}", other),
+                    other => panic!("Unexpected property name: {other}"),
                 }
             }
 
@@ -2076,7 +2075,7 @@ fn test_lower_interface_single_with_two_properties() {
             assert_eq!(x.type_id, TypeId::NUMBER, "Expected x to be number");
             assert_eq!(y.type_id, TypeId::NUMBER, "Expected y to be number");
         }
-        _ => panic!("Expected Object type, got {:?}", key),
+        _ => panic!("Expected Object type, got {key:?}"),
     }
 }
 
@@ -2109,7 +2108,7 @@ fn test_lower_interface_merges_properties() {
             assert_eq!(b.type_id, TypeId::NUMBER);
             assert!(b.optional);
         }
-        _ => panic!("Expected Object type, got {:?}", key),
+        _ => panic!("Expected Object type, got {key:?}"),
     }
 }
 
@@ -2132,7 +2131,7 @@ fn test_lower_interface_conflicting_property_types() {
                 .expect("Expected property a");
             assert_eq!(prop.type_id, TypeId::ERROR);
         }
-        _ => panic!("Expected Object type, got {:?}", key),
+        _ => panic!("Expected Object type, got {key:?}"),
     }
 }
 
@@ -2173,10 +2172,10 @@ fn test_lower_interface_method_overload_accumulates() {
                         ]
                     );
                 }
-                _ => panic!("Expected Callable type, got {:?}", prop_key),
+                _ => panic!("Expected Callable type, got {prop_key:?}"),
             }
         }
-        _ => panic!("Expected Object type, got {:?}", key),
+        _ => panic!("Expected Object type, got {key:?}"),
     }
 }
 
@@ -2197,7 +2196,7 @@ fn test_template_literal_empty_string() {
         TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "");
         }
-        _ => panic!("Expected empty string Literal type, got {:?}", key),
+        _ => panic!("Expected empty string Literal type, got {key:?}"),
     }
 }
 
@@ -2214,7 +2213,7 @@ fn test_template_literal_single_text_span() {
         TypeData::Literal(LiteralValue::String(atom)) => {
             assert_eq!(interner.resolve_atom(atom), "hello");
         }
-        _ => panic!("Expected string Literal type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {key:?}"),
     }
 }
 
@@ -2246,7 +2245,7 @@ fn test_template_literal_multiple_interpolations() {
             }
             assert!(matches!(spans[4], TemplateSpan::Type(TypeId::BOOLEAN)));
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -2282,7 +2281,7 @@ fn test_template_literal_consecutive_text_normalization() {
                 panic!("Expected text span");
             }
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -2300,7 +2299,7 @@ fn test_template_literal_only_interpolation() {
             assert_eq!(spans.len(), 1);
             assert!(matches!(spans[0], TemplateSpan::Type(TypeId::STRING)));
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -2323,7 +2322,7 @@ fn test_template_literal_trailing_text() {
                 panic!("Expected text span");
             }
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -2346,7 +2345,7 @@ fn test_template_literal_leading_text() {
             }
             assert!(matches!(spans[1], TemplateSpan::Type(TypeId::STRING)));
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -2365,7 +2364,7 @@ fn test_template_literal_escape_sequences() {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "hello\nworld");
         }
-        _ => panic!("Expected string Literal type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {key:?}"),
     }
 }
 
@@ -2384,7 +2383,7 @@ fn test_template_literal_escape_dollar_brace() {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "hello${string}");
         }
-        _ => panic!("Expected string Literal type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {key:?}"),
     }
 }
 
@@ -2404,7 +2403,7 @@ fn test_template_literal_with_union() {
             // Should have expanded to "prefix-a-suffix" | "prefix-b-suffix"
             assert_eq!(members.len(), 2);
         }
-        _ => panic!("Expected Union type, got {:?}", key),
+        _ => panic!("Expected Union type, got {key:?}"),
     }
 }
 
@@ -2448,7 +2447,7 @@ fn test_template_literal_with_multiple_unions() {
             strings.sort();
             assert_eq!(strings, vec!["a-x", "a-y", "b-x", "b-y"]);
         }
-        _ => panic!("Expected Union type, got {:?}", key),
+        _ => panic!("Expected Union type, got {key:?}"),
     }
 }
 
@@ -2471,7 +2470,7 @@ fn test_template_literal_single_string_literal() {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "prefix-hello-suffix");
         }
-        _ => panic!("Expected Literal type, got {:?}", key),
+        _ => panic!("Expected Literal type, got {key:?}"),
     }
 }
 
@@ -2493,7 +2492,7 @@ fn test_template_literal_only_texts_becomes_literal() {
             let text = interner.resolve_atom(atom);
             assert_eq!(text, "hello world");
         }
-        _ => panic!("Expected Literal type, got {:?}", key),
+        _ => panic!("Expected Literal type, got {key:?}"),
     }
 }
 
@@ -2514,7 +2513,7 @@ fn test_template_literal_with_non_string_literal_stays_template() {
         TypeData::TemplateLiteral(_) => {
             // Expected: remains as template literal type
         }
-        _ => panic!("Expected TemplateLiteral type, got {:?}", key),
+        _ => panic!("Expected TemplateLiteral type, got {key:?}"),
     }
 }
 
@@ -2537,7 +2536,7 @@ fn test_template_literal_normalization_merges_consecutive_texts() {
             // After normalization and expansion, text-only becomes string literal
             assert_eq!(interner.resolve_atom(atom), "hello world");
         }
-        _ => panic!("Expected string Literal type, got {:?}", key),
+        _ => panic!("Expected string Literal type, got {key:?}"),
     }
 }
 

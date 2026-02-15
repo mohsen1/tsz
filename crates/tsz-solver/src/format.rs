@@ -1,5 +1,5 @@
 //! Type formatting for the solver.
-//! Centralizes logic for converting TypeIds and TypeDatas to human-readable strings.
+//! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
 use crate::TypeDatabase;
 use crate::def::DefinitionStore;
@@ -23,7 +23,7 @@ pub struct TypeFormatter<'a> {
     interner: &'a dyn TypeDatabase,
     /// Symbol arena for looking up symbol names (optional)
     symbol_arena: Option<&'a tsz_binder::SymbolArena>,
-    /// Definition store for looking up DefId names (optional)
+    /// Definition store for looking up `DefId` names (optional)
     def_store: Option<&'a DefinitionStore>,
     /// Maximum depth for nested type printing
     max_depth: u32,
@@ -63,13 +63,13 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
-    /// Add access to definition store for DefId name resolution (Phase 4.2.1).
-    pub fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
+    /// Add access to definition store for `DefId` name resolution (Phase 4.2.1).
+    pub const fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
         self.def_store = Some(def_store);
         self
     }
 
-    pub fn with_limits(mut self, max_depth: u32, max_union_members: usize) -> Self {
+    pub const fn with_limits(mut self, max_depth: u32, max_union_members: usize) -> Self {
         self.max_depth = max_depth;
         self.max_union_members = max_union_members;
         self
@@ -127,7 +127,7 @@ impl<'a> TypeFormatter<'a> {
         let mut result = template.to_string();
 
         for (i, arg) in args.iter().enumerate() {
-            let placeholder = format!("{{{}}}", i);
+            let placeholder = format!("{{{i}}}");
             if !template.contains(&placeholder) {
                 continue;
             }
@@ -276,10 +276,10 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::Recursive(idx) => {
-                format!("Recursive({})", idx)
+                format!("Recursive({idx})")
             }
             TypeData::BoundParameter(idx) => {
-                format!("BoundParameter({})", idx)
+                format!("BoundParameter({idx})")
             }
             TypeData::Application(app) => {
                 let app = self.interner.type_application(*app);
@@ -353,7 +353,7 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     format!("Ref({})", sym.0)
                 };
-                format!("typeof {}", name)
+                format!("typeof {name}")
             }
             TypeData::KeyOf(operand) => format!("keyof {}", self.format(*operand)),
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
@@ -368,7 +368,7 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     format!("symbol({})", sym.0)
                 };
-                format!("unique symbol {}", name)
+                format!("unique symbol {name}")
             }
             TypeData::Infer(info) => format!("infer {}", self.atom(info.name)),
             TypeData::ThisType => "this".to_string(),
@@ -404,7 +404,7 @@ impl<'a> TypeFormatter<'a> {
                 } else {
                     format!("module({})", sym.0)
                 };
-                format!("typeof import(\"{}\")", name)
+                format!("typeof import(\"{name}\")")
             }
             TypeData::Error => "error".to_string(),
         }
@@ -468,7 +468,7 @@ impl<'a> TypeFormatter<'a> {
         let readonly = if prop.readonly { "readonly " } else { "" };
         let type_str = self.format(prop.type_id);
         let name = self.atom(prop.name);
-        format!("{}{}{}: {}", readonly, name, optional, type_str)
+        format!("{readonly}{name}{optional}: {type_str}")
     }
 
     fn format_type_params(&mut self, type_params: &[TypeParamInfo]) -> String {
@@ -511,7 +511,7 @@ impl<'a> TypeFormatter<'a> {
             let optional = if p.optional { "?" } else { "" };
             let rest = if p.rest { "..." } else { "" };
             let type_str = self.format(p.type_id);
-            rendered.push(format!("{}{}{}: {}", rest, name, optional, type_str));
+            rendered.push(format!("{rest}{name}{optional}: {type_str}"));
         }
 
         rendered
@@ -591,9 +591,9 @@ impl<'a> TypeFormatter<'a> {
                 let type_str = self.format(e.type_id);
                 if let Some(name_atom) = e.name {
                     let name = self.atom(name_atom);
-                    format!("{}{}: {}{}", name, optional, rest, type_str)
+                    format!("{name}{optional}: {rest}{type_str}")
                 } else {
-                    format!("{}{}{}", rest, type_str, optional)
+                    format!("{rest}{type_str}{optional}")
                 }
             })
             .collect();

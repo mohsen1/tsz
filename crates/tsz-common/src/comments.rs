@@ -22,7 +22,7 @@ pub struct CommentRange {
 impl CommentRange {
     /// Create a new comment range.
     #[must_use]
-    pub fn new(pos: u32, end: u32, is_multi_line: bool, has_trailing_new_line: bool) -> Self {
+    pub const fn new(pos: u32, end: u32, is_multi_line: bool, has_trailing_new_line: bool) -> Self {
         Self {
             pos,
             end,

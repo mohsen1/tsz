@@ -169,7 +169,7 @@ impl<'a> TypeDefinitionProvider<'a> {
     }
 
     /// Check if a node kind represents a type.
-    fn is_type_node(&self, kind: u16) -> bool {
+    const fn is_type_node(&self, kind: u16) -> bool {
         matches!(
             kind,
             TYPE_REFERENCE
@@ -222,7 +222,7 @@ impl<'a> TypeDefinitionProvider<'a> {
         None
     }
 
-    /// Resolve a TypeReference node to its definition.
+    /// Resolve a `TypeReference` node to its definition.
     fn resolve_type_reference(
         &self,
         root: NodeIndex,
@@ -289,7 +289,7 @@ impl<'a> TypeDefinitionProvider<'a> {
     }
 
     /// Check if a node kind represents a type declaration.
-    fn is_type_declaration(&self, kind: u16) -> bool {
+    const fn is_type_declaration(&self, kind: u16) -> bool {
         matches!(
             kind,
             INTERFACE_DECLARATION | TYPE_ALIAS_DECLARATION | CLASS_DECLARATION | ENUM_DECLARATION

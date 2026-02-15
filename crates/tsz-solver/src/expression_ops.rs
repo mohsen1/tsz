@@ -3,7 +3,7 @@
 //! This module implements AST-agnostic type computation for expressions,
 //! migrated from the Checker as part of the Solver-First architecture refactor.
 //!
-//! These functions operate purely on TypeIds and maintain no AST dependencies.
+//! These functions operate purely on `TypeIds` and maintain no AST dependencies.
 
 use crate::TypeDatabase;
 use crate::TypeResolver;
@@ -16,8 +16,8 @@ use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
 /// # Arguments
 /// * `interner` - The type database/interner
 /// * `condition` - Type of the condition expression
-/// * `true_type` - Type of the true branch (when_true)
-/// * `false_type` - Type of the false branch (when_false)
+/// * `true_type` - Type of the true branch (`when_true`)
+/// * `false_type` - Type of the false branch (`when_false`)
 ///
 /// # Returns
 /// * If condition is definitely truthy: returns `true_type`
@@ -101,7 +101,7 @@ pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[T
 /// # Arguments
 /// * `interner` - The type database/interner
 /// * `types` - Slice of type IDs to find the best common type of
-/// * `resolver` - Optional TypeResolver for nominal hierarchy lookups (class inheritance)
+/// * `resolver` - Optional `TypeResolver` for nominal hierarchy lookups (class inheritance)
 ///
 /// # Returns
 /// * Empty slice: Returns `TypeId::NEVER`
@@ -112,7 +112,7 @@ pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[T
 /// # Note
 /// When `resolver` is provided, this implements the full TypeScript BCT algorithm:
 /// - Find the first candidate that is a supertype of all others
-/// - Handle literal widening (via TypeChecker's pre-widening)
+/// - Handle literal widening (via `TypeChecker`'s pre-widening)
 /// - Handle base class relationships (Dog + Cat -> Animal)
 pub fn compute_best_common_type<R: TypeResolver>(
     interner: &dyn TypeDatabase,
@@ -336,12 +336,12 @@ fn common_parent_enum_type<R: TypeResolver>(
 /// Checks if a type is definitely truthy.
 fn is_definitely_truthy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match interner.lookup(type_id) {
-        Some(TypeData::Literal(LiteralValue::Boolean(true))) => true,
-        Some(TypeData::Literal(LiteralValue::String(s))) if !s.is_none() => true,
+        Some(TypeData::Literal(LiteralValue::Boolean(true)))
+        | Some(TypeData::Object(_))
+        | Some(TypeData::Function(_)) => true,
+        Some(TypeData::Literal(LiteralValue::String(s))) => !s.is_none(),
         // Non-zero, non-NaN numbers are truthy
         Some(TypeData::Literal(LiteralValue::Number(n))) => n.0 != 0.0 && !n.0.is_nan(),
-        Some(TypeData::Object(_)) => true,
-        Some(TypeData::Function(_)) => true,
         _ => false,
     }
 }
@@ -349,13 +349,13 @@ fn is_definitely_truthy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Checks if a type is definitely falsy.
 fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
     match interner.lookup(type_id) {
-        Some(TypeData::Literal(LiteralValue::Boolean(false))) => true,
-        Some(TypeData::Literal(LiteralValue::String(s))) if s.is_none() => true,
+        Some(TypeData::Literal(LiteralValue::Boolean(false)))
+        | Some(TypeData::Intrinsic(IntrinsicKind::Null))
+        | Some(TypeData::Intrinsic(IntrinsicKind::Undefined))
+        | Some(TypeData::Intrinsic(IntrinsicKind::Void)) => true,
+        Some(TypeData::Literal(LiteralValue::String(s))) => s.is_none(),
         // 0, -0, and NaN are falsy
         Some(TypeData::Literal(LiteralValue::Number(n))) => n.0 == 0.0 || n.0.is_nan(),
-        Some(TypeData::Intrinsic(IntrinsicKind::Null)) => true,
-        Some(TypeData::Intrinsic(IntrinsicKind::Undefined)) => true,
-        Some(TypeData::Intrinsic(IntrinsicKind::Void)) => true,
         _ => false,
     }
 }

@@ -1,6 +1,6 @@
 //! Tests for structural type identity (Task #32: Graph Isomorphism)
 //!
-//! Tests the Canonicalizer and are_types_structurally_identical function.
+//! Tests the Canonicalizer and `are_types_structurally_identical` function.
 
 use crate::intern::TypeInterner;
 use crate::subtype::{TypeEnvironment, are_types_structurally_identical};

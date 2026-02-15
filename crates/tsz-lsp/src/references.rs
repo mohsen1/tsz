@@ -33,8 +33,8 @@ pub struct ReferenceInfo {
 }
 
 impl ReferenceInfo {
-    /// Create a new ReferenceInfo.
-    pub fn new(
+    /// Create a new `ReferenceInfo`.
+    pub const fn new(
         location: Location,
         is_write_access: bool,
         is_definition: bool,
@@ -114,7 +114,7 @@ impl<'a> FindReferences<'a> {
 
         // 5. Also include the declarations
         let symbol = self.binder.symbols.get(symbol_id)?;
-        let mut all_nodes = ref_nodes.clone();
+        let mut all_nodes = ref_nodes;
         all_nodes.extend(symbol.declarations.iter().copied());
 
         // Remove duplicates (a declaration might also be a reference)
@@ -134,7 +134,7 @@ impl<'a> FindReferences<'a> {
         }
     }
 
-    /// Find references for a specific node (by NodeIndex).
+    /// Find references for a specific node (by `NodeIndex`).
     ///
     /// This is useful when you already have the node index from another operation.
     pub fn find_references_for_node(
@@ -206,7 +206,7 @@ impl<'a> FindReferences<'a> {
 
         // Also include the declarations
         let symbol = self.binder.symbols.get(symbol_id)?;
-        let mut all_nodes = ref_nodes.clone();
+        let mut all_nodes = ref_nodes;
         all_nodes.extend(symbol.declarations.iter().copied());
 
         // Remove duplicates
@@ -330,7 +330,7 @@ impl<'a> FindReferences<'a> {
     }
 
     /// Find references with resolved symbol info for the full references protocol.
-    /// Returns the resolved SymbolId along with detailed reference info,
+    /// Returns the resolved `SymbolId` along with detailed reference info,
     /// which allows the caller to build definition metadata.
     pub fn find_references_with_symbol(
         &self,
@@ -400,7 +400,7 @@ impl<'a> FindReferences<'a> {
     /// Find rename locations for the symbol at the given position.
     ///
     /// Returns all locations where the symbol name appears and should be renamed.
-    /// This is similar to find_references but returns `RenameLocation` entries
+    /// This is similar to `find_references` but returns `RenameLocation` entries
     /// suitable for the `findRenameLocations` protocol.
     pub fn find_rename_locations(
         &self,

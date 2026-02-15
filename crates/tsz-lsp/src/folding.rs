@@ -25,7 +25,7 @@ pub struct FoldingRange {
 
 impl FoldingRange {
     /// Create a new folding range.
-    pub fn new(start_line: u32, end_line: u32, start_offset: u32, end_offset: u32) -> Self {
+    pub const fn new(start_line: u32, end_line: u32, start_offset: u32, end_offset: u32) -> Self {
         Self {
             start_line,
             end_line,
@@ -583,7 +583,7 @@ impl<'a> FoldingRangeProvider<'a> {
     }
 
     /// Get the line range and byte offsets for a node.
-    /// Returns (start_line, end_line, start_offset, end_offset).
+    /// Returns (`start_line`, `end_line`, `start_offset`, `end_offset`).
     fn get_line_range(&self, node_idx: NodeIndex) -> (u32, u32, u32, u32) {
         let Some(node) = self.arena.get(node_idx) else {
             return (0, 0, 0, 0);
@@ -600,7 +600,7 @@ impl<'a> FoldingRangeProvider<'a> {
     /// Find the brace range for a declaration node (class, interface, enum, module).
     /// Scans the source text within the node's range to find `{` and uses that position
     /// (including leading whitespace, matching TypeScript's trivia handling) as the start.
-    /// Returns (start_line, end_line, start_offset, end_offset).
+    /// Returns (`start_line`, `end_line`, `start_offset`, `end_offset`).
     fn find_brace_range(
         &self,
         node: &tsz_parser::parser::node::Node,

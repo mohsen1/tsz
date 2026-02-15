@@ -8,7 +8,7 @@
 //! - Re-export chain cycle detection
 //! - Module body validation
 //!
-//! This module extends CheckerState with import/export methods as part of
+//! This module extends `CheckerState` with import/export methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::state::CheckerState;
@@ -557,9 +557,9 @@ impl<'a> CheckerState<'a> {
     /// Check if a symbol exists locally in the target module and whether it's
     /// exported under a different name.
     ///
-    /// Returns (exists_locally, exported_as) where:
-    /// - exists_locally: true if the symbol is declared in the module's scope
-    /// - exported_as: Some(name) if the symbol is exported under a different name,
+    /// Returns (`exists_locally`, `exported_as`) where:
+    /// - `exists_locally`: true if the symbol is declared in the module's scope
+    /// - `exported_as`: Some(name) if the symbol is exported under a different name,
     ///                None if not exported or exported with the same name
     #[tracing::instrument(level = "debug", skip(self), fields(module = %module_name, import = %import_name))]
     fn check_local_symbol_and_renamed_export(
@@ -643,8 +643,8 @@ impl<'a> CheckerState<'a> {
         let module_keys = [
             module_name,
             normalized,
-            &format!("\"{}\"", normalized),
-            &format!("'{}'", normalized),
+            &format!("\"{normalized}\""),
+            &format!("'{normalized}'"),
         ];
 
         // Also try to get the target file's name if available
@@ -1145,7 +1145,7 @@ impl<'a> CheckerState<'a> {
                     // Report error on the alias name (import_clause)
                     self.error_at_node(
                         import_decl.import_clause,
-                        &format!("Duplicate identifier '{}'.", alias_name),
+                        &format!("Duplicate identifier '{alias_name}'."),
                         diagnostic_codes::DUPLICATE_IDENTIFIER,
                     );
                 }
@@ -1536,9 +1536,7 @@ impl<'a> CheckerState<'a> {
                 error_message = fallback_message;
             }
             if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-                self.ctx
-                    .modules_with_ts2307_emitted
-                    .insert(module_key.clone());
+                self.ctx.modules_with_ts2307_emitted.insert(module_key);
                 self.error_at_position(spec_start, spec_length, &error_message, error_code);
             }
             return;
@@ -1554,9 +1552,7 @@ impl<'a> CheckerState<'a> {
         // Use TS2792 when module resolution is "classic" (system/amd/umd modules),
         // suggesting the user switch to nodenext or configure paths.
         let (message, code) = self.module_not_found_diagnostic(module_name);
-        self.ctx
-            .modules_with_ts2307_emitted
-            .insert(module_key.clone());
+        self.ctx.modules_with_ts2307_emitted.insert(module_key);
         self.error_at_position(spec_start, spec_length, &message, code);
     }
 
@@ -1698,7 +1694,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Get the leftmost identifier name from a node (handles nested QualifiedNames).
+    /// Get the leftmost identifier name from a node (handles nested `QualifiedNames`).
     fn get_leftmost_identifier_name(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
@@ -1712,7 +1708,7 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Resolve the leftmost identifier in a potentially nested QualifiedName.
+    /// Resolve the leftmost identifier in a potentially nested `QualifiedName`.
     fn resolve_leftmost_qualified_name(&self, idx: NodeIndex) -> Option<tsz_binder::SymbolId> {
         let node = self.ctx.arena.get(idx)?;
         if node.kind == SyntaxKind::Identifier as u16 {
@@ -1892,7 +1888,7 @@ impl<'a> CheckerState<'a> {
                 .chain(std::iter::once(module_name.as_str()))
                 .collect();
             let cycle_str = cycle_path.join(" -> ");
-            let message = format!("Circular import detected: {}", cycle_str);
+            let message = format!("Circular import detected: {cycle_str}");
 
             // Check if we've already emitted TS2307 for this module (prevents duplicate emissions)
             let module_key = module_name.to_string();
@@ -2101,9 +2097,7 @@ impl<'a> CheckerState<'a> {
         // Fallback: Emit module-not-found error if no specific error was found
         // Check if we've already emitted for this module (prevents duplicate emissions)
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
-            self.ctx
-                .modules_with_ts2307_emitted
-                .insert(module_key.clone());
+            self.ctx.modules_with_ts2307_emitted.insert(module_key);
             let (message, code) = self.module_not_found_diagnostic(module_name);
             // Use pre-extracted position instead of error_at_node to avoid
             // silent failures when get_node_span returns None

@@ -39,17 +39,17 @@ pub enum EnumValue {
 
 impl EnumValue {
     /// Check if this is a numeric value
-    pub fn is_number(&self) -> bool {
+    pub const fn is_number(&self) -> bool {
         matches!(self, Self::Number(_))
     }
 
     /// Check if this is a string value
-    pub fn is_string(&self) -> bool {
+    pub const fn is_string(&self) -> bool {
         matches!(self, Self::String(_))
     }
 
     /// Get the numeric value if available
-    pub fn as_number(&self) -> Option<i64> {
+    pub const fn as_number(&self) -> Option<i64> {
         match self {
             Self::Number(n) => Some(*n),
             _ => None,
@@ -361,7 +361,7 @@ impl<'a> EnumEvaluator<'a> {
             }
             // String concatenation
             (EnumValue::String(l), EnumValue::String(r)) if op == SyntaxKind::PlusToken as u16 => {
-                EnumValue::String(format!("{}{}", l, r))
+                EnumValue::String(format!("{l}{r}"))
             }
             _ => EnumValue::Computed,
         }

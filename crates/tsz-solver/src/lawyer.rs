@@ -8,7 +8,7 @@
 //!
 //! - **Judge (SubtypeChecker):** Implements strict, sound set theory semantics.
 //!   It knows nothing about TypeScript legacy behavior.
-//! - **Lawyer (AnyPropagationRules + CompatChecker):** Applies TypeScript-specific
+//! - **Lawyer (`AnyPropagationRules` + CompatChecker):** Applies TypeScript-specific
 //!   rules and delegates to the Judge with appropriate configuration.
 //!
 //! ## TypeScript Quirks Handled
@@ -25,7 +25,7 @@
 //! ### C. Freshness (Excess Property Checking)
 //! Object literals are "fresh" and trigger excess property checking.
 //! Once assigned to a variable, they lose freshness and allow width subtyping.
-//! Freshness is tracked on the TypeId via ObjectFlags, with object literals
+//! Freshness is tracked on the `TypeId` via `ObjectFlags`, with object literals
 //! interning to fresh shapes and widening removing the fresh flag. Sound Mode's
 //! binding-level tracking lives in the Checker.
 //!
@@ -122,11 +122,11 @@
 //!
 //! ### Why These Override The Judge
 //!
-//! The **Judge** (SubtypeChecker) implements sound, structural set theory semantics.
+//! The **Judge** (`SubtypeChecker`) implements sound, structural set theory semantics.
 //! It would correctly determine that `class A { private x }` and `class B { private x }`
 //! have the same shape and are structurally compatible.
 //!
-//! The **Lawyer** (CompatChecker) steps in and says "Wait, TypeScript says these
+//! The **Lawyer** (`CompatChecker`) steps in and says "Wait, TypeScript says these
 //! are incompatible because of the private brand." This is TypeScript-specific
 //! legacy behavior that violates soundness principles for practical/ergonomic reasons.
 //!
@@ -158,7 +158,7 @@ impl AnyPropagationRules {
     ///
     /// By default, `any` suppression is enabled for backward compatibility
     /// with existing TypeScript behavior.
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             allow_any_suppression: true,
         }
@@ -169,19 +169,19 @@ impl AnyPropagationRules {
     ///
     /// In strict mode, even when `any` is involved, the type checker will
     /// perform structural checking and report mismatches.
-    pub fn strict() -> Self {
+    pub const fn strict() -> Self {
         Self {
             allow_any_suppression: false,
         }
     }
 
     /// Set whether `any` is allowed to suppress structural mismatches.
-    pub fn set_allow_any_suppression(&mut self, allow: bool) {
+    pub const fn set_allow_any_suppression(&mut self, allow: bool) {
         self.allow_any_suppression = allow;
     }
 
     /// Return the propagation mode for `any` handling in the subtype engine.
-    pub fn any_propagation_mode(&self) -> AnyPropagationMode {
+    pub const fn any_propagation_mode(&self) -> AnyPropagationMode {
         if self.allow_any_suppression {
             AnyPropagationMode::All
         } else {

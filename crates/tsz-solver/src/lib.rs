@@ -4,11 +4,11 @@
 //! It uses:
 //!
 //! - **Ena**: For unification (Union-Find) in generic type inference
-//! - **Custom TypeData**: Structural type representation with interning
+//! - **Custom `TypeData`**: Structural type representation with interning
 //! - **Cycle Detection**: Coinductive semantics for recursive types
 //!
 //! Key benefits:
-//! - O(1) type equality via interning (TypeId comparison)
+//! - O(1) type equality via interning (`TypeId` comparison)
 //! - Automatic cycle handling via coinductive semantics
 //! - Lazy evaluation - only compute types that are queried
 mod apparent;
