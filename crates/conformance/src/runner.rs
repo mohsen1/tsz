@@ -125,11 +125,11 @@ impl Runner {
 
         stream::iter(test_files)
             .for_each_concurrent(Some(concurrency_limit), |path| {
-                let permit = semaphore.clone();
-                let cache = self.cache.clone();
-                let stats = self.stats.clone();
-                let error_freq = self.error_freq.clone();
-                let problems = self.problems.clone();
+                let permit = std::sync::Arc::clone(&semaphore);
+                let cache = std::sync::Arc::clone(&self.cache);
+                let stats = std::sync::Arc::clone(&self.stats);
+                let error_freq = std::sync::Arc::clone(&self.error_freq);
+                let problems = std::sync::Arc::clone(&self.problems);
                 let tsz_binary = self.tsz_binary.clone();
                 let verbose = self.args.is_verbose();
                 let print_test = self.args.print_test;

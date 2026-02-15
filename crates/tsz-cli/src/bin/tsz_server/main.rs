@@ -3765,8 +3765,8 @@ impl Server {
         let lib_contexts: Vec<LibContext> = lib_files
             .iter()
             .map(|lib| LibContext {
-                arena: lib.arena.clone(),
-                binder: lib.binder.clone(),
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
             })
             .collect();
 
@@ -3778,11 +3778,12 @@ impl Server {
         binder.bind_source_file(&arena, root);
         let binder = Arc::new(binder);
 
-        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(vec![arena.clone()]);
-        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(vec![binder.clone()]);
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(vec![std::sync::Arc::clone(&arena)]);
+        let all_binders: Arc<Vec<Arc<BinderState>>> =
+            Arc::new(vec![std::sync::Arc::clone(&binder)]);
         let user_file_contexts: Vec<LibContext> = vec![LibContext {
-            arena: arena.clone(),
-            binder: binder.clone(),
+            arena: std::sync::Arc::clone(&arena),
+            binder: std::sync::Arc::clone(&binder),
         }];
 
         let mut all_contexts = lib_contexts;
@@ -3907,8 +3908,8 @@ impl Server {
         let lib_contexts: Vec<LibContext> = lib_files
             .iter()
             .map(|lib| LibContext {
-                arena: lib.arena.clone(),
-                binder: lib.binder.clone(),
+                arena: std::sync::Arc::clone(&lib.arena),
+                binder: std::sync::Arc::clone(&lib.binder),
             })
             .collect();
 
@@ -3931,7 +3932,8 @@ impl Server {
         // Solution: Reserve SymbolIds 0..N in user's arena BEFORE binding.
         // This forces new allocations to start at N, preventing collisions.
         // Lib symbols are accessed via lib_binders fallback OR via reserved slots.
-        let unified_lib_binder = (!lib_files.is_empty()).then(|| lib_files[0].binder.clone());
+        let unified_lib_binder =
+            (!lib_files.is_empty()).then(|| std::sync::Arc::clone(&lib_files[0].binder));
 
         // Count lib symbols to set base offset in user binders
         let lib_symbol_count = unified_lib_binder
@@ -3996,15 +3998,23 @@ impl Server {
 
         // PHASE 3: Build cross-file resolution context
         // Wrap in Arc to avoid expensive cloning in the loop below
-        let all_arenas: Arc<Vec<Arc<NodeArena>>> =
-            Arc::new(bound_files.iter().map(|f| f.arena.clone()).collect());
-        let all_binders: Arc<Vec<Arc<BinderState>>> =
-            Arc::new(bound_files.iter().map(|f| f.binder.clone()).collect());
+        let all_arenas: Arc<Vec<Arc<NodeArena>>> = Arc::new(
+            bound_files
+                .iter()
+                .map(|f| std::sync::Arc::clone(&f.arena))
+                .collect(),
+        );
+        let all_binders: Arc<Vec<Arc<BinderState>>> = Arc::new(
+            bound_files
+                .iter()
+                .map(|f| std::sync::Arc::clone(&f.binder))
+                .collect(),
+        );
         let user_file_contexts: Vec<LibContext> = bound_files
             .iter()
             .map(|f| LibContext {
-                arena: f.arena.clone(),
-                binder: f.binder.clone(),
+                arena: std::sync::Arc::clone(&f.arena),
+                binder: std::sync::Arc::clone(&f.binder),
             })
             .collect();
 
@@ -4096,7 +4106,7 @@ impl Server {
         // Check cache first
         if let Some((cached_names, cached_lib)) = &self.unified_lib_cache {
             if *cached_names == lib_names {
-                return Ok(vec![cached_lib.clone()]);
+                return Ok(vec![std::sync::Arc::clone(cached_lib)]);
             }
         }
 
@@ -4142,7 +4152,7 @@ impl Server {
         ));
 
         // Cache the result
-        self.unified_lib_cache = Some((lib_names, unified_lib.clone()));
+        self.unified_lib_cache = Some((lib_names, std::sync::Arc::clone(&unified_lib)));
 
         Ok(vec![unified_lib])
     }
@@ -4199,7 +4209,7 @@ impl Server {
         loaded.insert(normalized.clone());
 
         if let Some((lib, references)) = self.lib_cache.get(&normalized) {
-            let lib_clone = lib.clone();
+            let lib_clone = std::sync::Arc::clone(lib);
             let refs = references.clone();
             for ref_lib in &refs {
                 self.load_lib_recursive(ref_lib, result, loaded)?;
@@ -4247,8 +4257,10 @@ impl Server {
                     self.unified_lib_cache = None;
                 }
 
-                self.lib_cache
-                    .insert(normalized, (lib.clone(), references.clone()));
+                self.lib_cache.insert(
+                    normalized,
+                    (std::sync::Arc::clone(&lib), references.clone()),
+                );
                 result.push(lib);
                 return Ok(());
             }
