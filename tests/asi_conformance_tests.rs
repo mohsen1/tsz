@@ -6,9 +6,9 @@
 use crate::checker::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
 
-/// Test that throw with line break reports TS1109
+/// Test that throw with line break reports TS1142 (Line break not permitted here)
 #[test]
-fn test_asi_throw_line_break_reports_ts1109() {
+fn test_asi_throw_line_break_reports_ts1142() {
     let source = r#"
 function f() {
     throw
@@ -21,8 +21,8 @@ function f() {
     let codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
 
     assert!(
-        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "Should emit TS1109 for line break after throw, got: {:?}",
+        codes.contains(&diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE),
+        "Should emit TS1142 for line break after throw, got: {:?}",
         codes
     );
 }

@@ -3780,9 +3780,9 @@ fn test_parser_function_keyword_in_class_recovers() {
 }
 
 #[test]
-fn test_parser_throw_statement_line_break_reports_ts1109() {
+fn test_parser_throw_statement_line_break_reports_ts1142() {
     // Critical ASI bug fix: throw must have expression on same line
-    // Line break between throw and expression should report TS1109 (EXPRESSION_EXPECTED)
+    // Line break between throw and expression should report TS1142 (LINE_BREAK_NOT_PERMITTED_HERE)
     let source = r#"
 function f() {
     throw
@@ -3792,15 +3792,15 @@ function f() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
 
-    // Should report TS1109 (EXPRESSION_EXPECTED) for the line break
+    // Should report TS1142 (LINE_BREAK_NOT_PERMITTED_HERE) for the line break
     let codes: Vec<u32> = parser
         .get_diagnostics()
         .iter()
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "Should emit TS1109 for line break after throw, got: {:?}",
+        codes.contains(&diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE),
+        "Should emit TS1142 for line break after throw, got: {:?}",
         parser.get_diagnostics()
     );
 }
