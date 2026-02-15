@@ -22,6 +22,10 @@ use tsz_solver::{QueryDatabase, SubtypeChecker, TypeDatabase, TypeResolver};
 /// Maximum number of type lowering operations to prevent infinite loops
 pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 
+type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
+type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
+type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
+
 /// Type lowering context.
 /// Converts AST type nodes into interned TypeIds.
 pub struct TypeLowering<'a> {
@@ -29,12 +33,12 @@ pub struct TypeLowering<'a> {
     interner: &'a dyn TypeDatabase,
     /// Optional type resolver - resolves identifier nodes to SymbolIds.
     /// If provided, this enables correct abstract class detection.
-    type_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
+    type_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
     /// Optional DefId resolver - resolves identifier nodes to DefIds.
     /// Phase 1 migration path from SymbolRef to DefId for type identity.
-    def_id_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<DefId>>,
+    def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
     /// Optional value resolver for typeof queries.
-    value_resolver: Option<&'a dyn Fn(NodeIndex) -> Option<u32>>,
+    value_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
     /// Optional name-based DefId resolver — fallback for cross-arena resolution.
     ///
     /// NodeIndex values are arena-specific: the same index means different things
@@ -43,9 +47,9 @@ pub struct TypeLowering<'a> {
     /// its closure captured arenas from the ORIGINAL context. This name-based
     /// resolver bypasses that problem by resolving directly from the identifier
     /// text (which `lower_identifier_type` already extracts from `self.arena`).
-    name_def_id_resolver: Option<&'a dyn Fn(&str) -> Option<DefId>>,
+    name_def_id_resolver: Option<&'a TypeIdResolver<'a>>,
     /// Type parameter scopes - wrapped in Rc for sharing across arena contexts
-    type_param_scopes: Rc<RefCell<Vec<Vec<(Atom, TypeId)>>>>,
+    type_param_scopes: Rc<TypeParamScopeStack>,
     /// Operation counter to prevent infinite loops
     operations: Rc<RefCell<u32>>,
     /// Whether the operation limit has been exceeded
@@ -2939,14 +2943,14 @@ impl<'a> TypeLowering<'a> {
         if let Some(data) = self.arena.get_template_literal_type(node) {
             let mut spans: Vec<TemplateSpan> = Vec::new();
 
-            // Add the head text if present, processing escape sequences
+            // Add the head text if present.
             if let Some(head_node) = self.arena.get(data.head)
                 && let Some(head_lit) = self.arena.get_literal(head_node)
                 && !head_lit.text.is_empty()
             {
-                let processed =
-                    tsz_solver::types::process_template_escape_sequences(&head_lit.text);
-                spans.push(TemplateSpan::Text(self.interner.intern_string(&processed)));
+                spans.push(TemplateSpan::Text(
+                    self.interner.intern_string(&head_lit.text),
+                ));
             }
 
             // Add template spans (type + text pairs)
@@ -2963,10 +2967,9 @@ impl<'a> TypeLowering<'a> {
                         && let Some(lit_data) = self.arena.get_literal(lit_node)
                         && !lit_data.text.is_empty()
                     {
-                        // Process escape sequences in the text part
-                        let processed =
-                            tsz_solver::types::process_template_escape_sequences(&lit_data.text);
-                        spans.push(TemplateSpan::Text(self.interner.intern_string(&processed)));
+                        spans.push(TemplateSpan::Text(
+                            self.interner.intern_string(&lit_data.text),
+                        ));
                     }
                 }
             }

@@ -3,9 +3,9 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use tsz::interner::Atom;
 use tsz::solver::{
-    CompatChecker, ConditionalType, FunctionShape, ObjectShapeId, ParamInfo, PropertyInfo, TypeId,
-    TypeInterner, TypeKey, TypeParamInfo, Visibility, evaluate_type, infer_generic_function,
-    is_subtype_of,
+    CompatChecker, ConditionalType, FunctionShape, ObjectShapeId, ParamInfo, PropertyInfo,
+    TypeData, TypeId, TypeInterner, TypeParamInfo, Visibility, evaluate_type,
+    infer_generic_function, is_subtype_of,
 };
 
 fn build_subtype_fixtures(interner: &TypeInterner) -> (TypeId, TypeId, TypeId) {
@@ -124,8 +124,8 @@ fn build_infer_fixture(interner: &TypeInterner) -> (FunctionShape, [TypeId; 1]) 
         default: Some(TypeId::STRING),
         is_const: false,
     };
-    let t_type = interner.intern(TypeKey::TypeParameter(t_param.clone()));
-    let u_type = interner.intern(TypeKey::TypeParameter(u_param.clone()));
+    let t_type = interner.type_param(t_param.clone());
+    let u_type = interner.type_param(u_param.clone());
     let array_t = interner.array(t_type);
 
     let func = FunctionShape {
@@ -165,7 +165,7 @@ fn build_property_lookup_fixture(interner: &TypeInterner) -> (ObjectShapeId, Ato
 
     let obj = interner.object(props);
     let shape_id = match interner.lookup(obj) {
-        Some(TypeKey::Object(shape_id)) => shape_id,
+        Some(TypeData::Object(shape_id)) => shape_id,
         other => panic!("expected object shape, got {:?}", other),
     };
 
