@@ -51,6 +51,8 @@ pub struct ES5DestructuringTransformer<'a> {
     arena: &'a NodeArena,
     /// Counter for temporary variable names (_a, _b, etc.)
     temp_var_counter: u32,
+    /// Whether `this` references should lower to `_this`.
+    capture_this: bool,
 }
 
 impl<'a> ES5DestructuringTransformer<'a> {
@@ -58,6 +60,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
         Self {
             arena,
             temp_var_counter: 0,
+            capture_this: false,
         }
     }
 
@@ -66,11 +69,28 @@ impl<'a> ES5DestructuringTransformer<'a> {
         self.temp_var_counter = 0;
     }
 
+    /// Set the temp variable counter start value.
+    pub const fn with_temp_counter(mut self, start: u32) -> Self {
+        self.temp_var_counter = start;
+        self
+    }
+
+    /// Set whether `this` references should lower to `_this`.
+    pub const fn with_this_captured(mut self, capture_this: bool) -> Self {
+        self.capture_this = capture_this;
+        self
+    }
+
     /// Get next temporary variable name (_a, _b, _c, ...)
     fn next_temp_var(&mut self) -> String {
         let name = format!("_{}", (b'a' + (self.temp_var_counter % 26) as u8) as char);
         self.temp_var_counter += 1;
         name
+    }
+
+    /// Get the current temp variable counter value.
+    pub const fn temp_var_counter(&self) -> u32 {
+        self.temp_var_counter
     }
 
     /// Transform a destructuring variable declaration to IR
@@ -99,11 +119,12 @@ impl<'a> ES5DestructuringTransformer<'a> {
     }
 
     /// Transform a destructuring assignment expression to IR
-    /// Returns an expression that performs the destructuring and returns the RHS value
+    /// Returns an expression that performs the destructuring.
     pub fn transform_destructuring_assignment(
         &mut self,
         pattern_idx: NodeIndex,
         value_idx: NodeIndex,
+        keep_result: bool,
     ) -> IRNode {
         let temp_var = self.next_temp_var();
 
@@ -118,8 +139,10 @@ impl<'a> ES5DestructuringTransformer<'a> {
         // Generate destructuring assignments as expressions
         self.emit_destructuring_assignments(&temp_var, pattern_idx, &mut exprs);
 
-        // Return the temp (so the assignment expression has the correct value)
-        exprs.push(IRNode::id(&temp_var));
+        if keep_result {
+            // Preserve expression value when needed by returning the RHS temp.
+            exprs.push(IRNode::id(&temp_var));
+        }
 
         if exprs.len() == 1 {
             exprs
@@ -164,8 +187,14 @@ impl<'a> ES5DestructuringTransformer<'a> {
         };
 
         match node.kind {
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                self.emit_array_destructuring_expr(source, pattern_idx, result);
+            }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 self.emit_array_destructuring_expr(source, pattern_idx, result);
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                self.emit_object_destructuring_expr(source, pattern_idx, result);
             }
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.emit_object_destructuring_expr(source, pattern_idx, result);
@@ -414,11 +443,19 @@ impl<'a> ES5DestructuringTransformer<'a> {
             return;
         };
 
-        let Some(literal) = self.arena.get_literal_expr(pattern_node) else {
+        let elements = if let Some(binding) = self.arena.get_binding_pattern(pattern_node) {
+            Some(&binding.elements.nodes)
+        } else if let Some(literal) = self.arena.get_literal_expr(pattern_node) {
+            Some(&literal.elements.nodes)
+        } else {
             return;
         };
 
-        for (index, &element_idx) in literal.elements.nodes.iter().enumerate() {
+        let Some(elements) = elements else {
+            return;
+        };
+
+        for (index, &element_idx) in elements.iter().enumerate() {
             if element_idx.is_none() {
                 continue;
             }
@@ -471,13 +508,21 @@ impl<'a> ES5DestructuringTransformer<'a> {
             return;
         };
 
-        let Some(literal) = self.arena.get_literal_expr(pattern_node) else {
+        let elements = if let Some(binding) = self.arena.get_binding_pattern(pattern_node) {
+            Some(&binding.elements.nodes)
+        } else if let Some(literal) = self.arena.get_literal_expr(pattern_node) {
+            Some(&literal.elements.nodes)
+        } else {
+            return;
+        };
+
+        let Some(elements) = elements else {
             return;
         };
 
         let mut rest_excluded: Vec<String> = Vec::new();
 
-        for &element_idx in &literal.elements.nodes {
+        for &element_idx in elements {
             let Some(element_node) = self.arena.get(element_idx) else {
                 continue;
             };
@@ -513,7 +558,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
                         // Check for nested destructuring
                         if let Some(init_node) = self.arena.get(prop.initializer)
-                            && (init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && (init_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || init_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
                         {
                             let nested_temp = self.next_temp_var();
@@ -523,6 +570,11 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                 } else {
                                     IRNode::prop(IRNode::id(source), &prop_name)
                                 }
+                            } else if let Some(prop_name_node) = self.arena.get(prop.name)
+                                && prop_name_node.kind == SyntaxKind::StringLiteral as u16
+                                && let Some(str_lit) = self.arena.get_literal(prop_name_node)
+                            {
+                                IRNode::elem(IRNode::id(source), IRNode::string(&str_lit.text))
                             } else {
                                 IRNode::prop(IRNode::id(source), &prop_name)
                             };
@@ -542,6 +594,11 @@ impl<'a> ES5DestructuringTransformer<'a> {
                                 } else {
                                     IRNode::prop(IRNode::id(source), &prop_name)
                                 }
+                            } else if let Some(prop_name_node) = self.arena.get(prop.name)
+                                && prop_name_node.kind == SyntaxKind::StringLiteral as u16
+                                && let Some(str_lit) = self.arena.get_literal(prop_name_node)
+                            {
+                                IRNode::elem(IRNode::id(source), IRNode::string(&str_lit.text))
                             } else {
                                 IRNode::prop(IRNode::id(source), &prop_name)
                             };
@@ -586,6 +643,8 @@ impl<'a> ES5DestructuringTransformer<'a> {
             node.kind,
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
                 || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         )
     }
 
@@ -614,7 +673,9 @@ impl<'a> ES5DestructuringTransformer<'a> {
 
         matches!(
             left_node.kind,
-            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         )
     }
@@ -668,7 +729,13 @@ impl<'a> ES5DestructuringTransformer<'a> {
             k if k == SyntaxKind::TrueKeyword as u16 => Some(IRNode::BooleanLiteral(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(IRNode::BooleanLiteral(false)),
             k if k == SyntaxKind::NullKeyword as u16 => Some(IRNode::NullLiteral),
-            k if k == SyntaxKind::ThisKeyword as u16 => Some(IRNode::this()),
+            k if k == SyntaxKind::ThisKeyword as u16 => {
+                if self.capture_this {
+                    Some(IRNode::id("_this"))
+                } else {
+                    Some(IRNode::this())
+                }
+            }
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 let access = self.arena.get_access_expr(node)?;
                 let object = self.transform_expression(access.expression)?;

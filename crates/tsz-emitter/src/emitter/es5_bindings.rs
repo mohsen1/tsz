@@ -1,4 +1,4 @@
-use super::{ParamTransformPlan, Printer};
+use super::{ParamTransformPlan, Printer, is_valid_identifier_name};
 use tracing::debug;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{BindingElementData, BindingPatternData, ForInOfData, Node};
@@ -3282,7 +3282,7 @@ impl<'a> Printer<'a> {
                         let elem_count = lit.elements.nodes.len();
                         if elem_count > 1 {
                             // Multi-element: need temp
-                            let temp = self.make_unique_name_hoisted();
+                            let temp = self.make_unique_name_hoisted_assignment();
                             self.write(&temp);
                             self.write(" = ");
                             self.write(&element_expr);
@@ -3309,7 +3309,7 @@ impl<'a> Printer<'a> {
                     if let Some(lit) = self.arena.get_literal_expr(init_node) {
                         let elem_count = lit.elements.nodes.len();
                         if elem_count > 1 {
-                            let temp = self.make_unique_name_hoisted();
+                            let temp = self.make_unique_name_hoisted_assignment();
                             self.write(&temp);
                             self.write(" = ");
                             self.write(&element_expr);
@@ -3378,6 +3378,14 @@ impl<'a> Printer<'a> {
                         2 // fallback: assume needs temp
                     }
                 }
+                k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                    if let Some(pattern) = self.arena.get_binding_pattern(left_node) {
+                        self.count_array_destructuring_elements(&pattern.elements.nodes)
+                    } else {
+                        2
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => 2,
                 _ => 2, // object patterns always need temp for now
             }
         };
@@ -3390,7 +3398,7 @@ impl<'a> Printer<'a> {
         let source_name = if is_simple {
             self.get_identifier_text(right_idx)
         } else if needs_temp {
-            let temp = self.make_unique_name_hoisted();
+            let temp = self.make_unique_name_hoisted_assignment();
             self.write(&temp);
             self.write(" = ");
             self.emit(right_idx);
@@ -3415,13 +3423,33 @@ impl<'a> Printer<'a> {
                     );
                 }
             }
-            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(left_node) {
-                    self.emit_assignment_object_destructuring(
-                        &lit.elements.nodes,
-                        &source_name,
-                        &mut first,
-                    );
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>
+            {
+                if let Some(elements) = self.get_binding_or_literal_elements(left_node) {
+                    match left_node.kind {
+                        k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                            self.emit_assignment_array_destructuring(
+                                &elements,
+                                &source_name,
+                                &mut first,
+                                use_inline_source.then_some(right_idx),
+                            );
+                        }
+                        k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION =>
+                        {
+                            self.emit_assignment_object_destructuring(
+                                &elements,
+                                &source_name,
+                                &mut first,
+                            );
+                        }
+                        _ => {}
+                    }
+                } else {
+                    self.emit_node_default(left_node, right_idx);
                 }
             }
             _ => {
@@ -3460,9 +3488,11 @@ impl<'a> Printer<'a> {
                     if let Some(tn) = target_node {
                         if tn.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                             || tn.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                            || tn.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || tn.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         {
                             // Nested destructuring on rest
-                            let temp = self.make_unique_name_hoisted();
+                            let temp = self.make_unique_name_hoisted_assignment();
                             self.write(&temp);
                             self.write(" = ");
                             if let Some(inline_src) = inline_source {
@@ -3505,11 +3535,13 @@ impl<'a> Printer<'a> {
                 let is_nested = target_node.is_some_and(|n| {
                     n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                         || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 });
 
                 if is_nested {
-                    let extract_temp = self.make_unique_name_hoisted();
-                    let default_temp = self.make_unique_name_hoisted();
+                    let extract_temp = self.make_unique_name_hoisted_assignment();
+                    let default_temp = self.make_unique_name_hoisted_assignment();
                     self.emit_assignment_separator(first);
                     self.write(&extract_temp);
                     self.write(" = ");
@@ -3530,7 +3562,7 @@ impl<'a> Printer<'a> {
                     self.write(&extract_temp);
                     self.emit_assignment_nested_destructuring(bin.left, &default_temp, first);
                 } else {
-                    let temp = self.make_unique_name_hoisted();
+                    let temp = self.make_unique_name_hoisted_assignment();
                     self.emit_assignment_separator(first);
                     self.write(&temp);
                     self.write(" = ");
@@ -3556,8 +3588,10 @@ impl<'a> Printer<'a> {
             // Check for nested array/object destructuring
             if elem_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || elem_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || elem_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                || elem_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
             {
-                let temp = self.make_unique_name_hoisted();
+                let temp = self.make_unique_name_hoisted_assignment();
                 self.emit_assignment_separator(first);
                 self.write(&temp);
                 self.write(" = ");
@@ -3616,16 +3650,16 @@ impl<'a> Printer<'a> {
                         let is_nested = value_node.is_some_and(|n| {
                             n.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                                 || n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                         });
 
                         if is_nested {
-                            let temp = self.make_unique_name_hoisted();
+                            let temp = self.make_unique_name_hoisted_assignment();
                             self.emit_assignment_separator(first);
                             self.write(&temp);
                             self.write(" = ");
-                            self.write(source);
-                            self.write(".");
-                            self.write(&key);
+                            self.emit_object_key_access(source, &key);
                             self.emit_assignment_nested_destructuring(
                                 prop.initializer,
                                 &temp,
@@ -3643,13 +3677,11 @@ impl<'a> Printer<'a> {
                             if let Some(bin) = value_bin
                                 && bin.operator_token == SyntaxKind::EqualsToken as u16
                             {
-                                let temp = self.make_unique_name_hoisted();
+                                let temp = self.make_unique_name_hoisted_assignment();
                                 self.emit_assignment_separator(first);
                                 self.write(&temp);
                                 self.write(" = ");
-                                self.write(source);
-                                self.write(".");
-                                self.write(&key);
+                                self.emit_object_key_access(source, &key);
                                 self.write(", ");
                                 self.emit(bin.left);
                                 self.write(" = ");
@@ -3663,9 +3695,7 @@ impl<'a> Printer<'a> {
                             self.emit_assignment_separator(first);
                             self.emit(prop.initializer);
                             self.write(" = ");
-                            self.write(source);
-                            self.write(".");
-                            self.write(&key);
+                            self.emit_object_key_access(source, &key);
                         }
                     }
                 }
@@ -3676,9 +3706,7 @@ impl<'a> Printer<'a> {
                         self.emit_assignment_separator(first);
                         self.write(&name);
                         self.write(" = ");
-                        self.write(source);
-                        self.write(".");
-                        self.write(&name);
+                        self.emit_object_key_access(source, &name);
                     }
                 }
                 k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
@@ -3753,8 +3781,51 @@ impl<'a> Printer<'a> {
                     self.emit_assignment_object_destructuring(&lit.elements.nodes, source, first);
                 }
             }
+            k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    self.emit_assignment_array_destructuring(
+                        &pattern.elements.nodes,
+                        source,
+                        first,
+                        None,
+                    );
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    self.emit_assignment_object_destructuring(
+                        &pattern.elements.nodes,
+                        source,
+                        first,
+                    );
+                }
+            }
             _ => {}
         }
+    }
+
+    fn emit_object_key_access(&mut self, source: &str, key: &str) {
+        if is_valid_identifier_name(key) {
+            self.write(source);
+            self.write(".");
+            self.write(key);
+        } else {
+            self.write(source);
+            self.write("[\"");
+            self.write(&key.replace('\\', "\\\\").replace('\"', "\\\""));
+            self.write("\"]");
+        }
+    }
+
+    fn get_binding_or_literal_elements(&self, node: &Node) -> Option<Vec<NodeIndex>> {
+        self.arena
+            .get_literal_expr(node)
+            .map(|lit| lit.elements.nodes.to_vec())
+            .or_else(|| {
+                self.arena
+                    .get_binding_pattern(node)
+                    .map(|pattern| pattern.elements.nodes.to_vec())
+            })
     }
 
     /// Emit separator for assignment destructuring (`, ` between parts).

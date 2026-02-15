@@ -52,8 +52,9 @@ pub struct IRPrinter<'a> {
     transforms: Option<TransformContext>,
     /// Avoid duplicate trailing comments when a sequence explicitly carries one.
     suppress_function_trailing_extraction: bool,
-    /// Forces empty function bodies to emit in multi-line style.
-    force_multiline_empty_function_body: bool,
+    /// Name of the current ES5 class IIFE constructor, used to force constructor
+    /// empty-body formatting without affecting nested function declarations.
+    current_class_iife_name: Option<String>,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -180,7 +181,7 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
-            force_multiline_empty_function_body: false,
+            current_class_iife_name: None,
         }
     }
 
@@ -194,7 +195,7 @@ impl<'a> IRPrinter<'a> {
             source_text: None,
             transforms: None,
             suppress_function_trailing_extraction: false,
-            force_multiline_empty_function_body: false,
+            current_class_iife_name: None,
         }
     }
 
@@ -208,7 +209,7 @@ impl<'a> IRPrinter<'a> {
             source_text: Some(source_text),
             transforms: None,
             suppress_function_trailing_extraction: false,
-            force_multiline_empty_function_body: false,
+            current_class_iife_name: None,
         }
     }
 
@@ -474,7 +475,13 @@ impl<'a> IRPrinter<'a> {
                     self.write("; }");
                     return;
                 }
-                self.emit_function_body_with_defaults(parameters, body, *body_source_range);
+                let force_multiline_empty = matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(n.as_str()));
+                self.emit_function_body_with_defaults(
+                    parameters,
+                    body,
+                    *body_source_range,
+                    force_multiline_empty,
+                );
             }
             IRNode::LogicalOr { left, right } => {
                 self.emit_node(left);
@@ -677,7 +684,14 @@ impl<'a> IRPrinter<'a> {
                 self.write("(");
                 self.emit_parameters(parameters);
                 self.write(") ");
-                self.emit_function_body_with_defaults(parameters, body, *body_source_range);
+                let force_multiline_empty =
+                    self.current_class_iife_name.as_deref() == Some(name.as_str());
+                self.emit_function_body_with_defaults(
+                    parameters,
+                    body,
+                    *body_source_range,
+                    force_multiline_empty,
+                );
                 if !self.suppress_function_trailing_extraction
                     && let Some(comment) = self.extract_trailing_comment_from_function(node)
                 {
@@ -713,18 +727,15 @@ impl<'a> IRPrinter<'a> {
                 self.write_line();
                 self.increase_indent();
 
+                let prev_iife_name = self.current_class_iife_name.replace(name.clone());
+
                 // Emit body
                 for stmt in body {
-                    let prev_force_multiline = self.force_multiline_empty_function_body;
-                    self.force_multiline_empty_function_body = matches!(
-                        stmt,
-                        IRNode::FunctionDecl { name: fn_name, .. } if fn_name == name
-                    );
                     self.write_indent();
                     self.emit_node(stmt);
                     self.write_line();
-                    self.force_multiline_empty_function_body = prev_force_multiline;
                 }
+                self.current_class_iife_name = prev_iife_name;
 
                 self.decrease_indent();
                 self.write_indent();
@@ -1642,6 +1653,7 @@ impl<'a> IRPrinter<'a> {
         params: &[IRParam],
         body: &[IRNode],
         body_source_range: Option<(u32, u32)>,
+        force_multiline_empty_body: bool,
     ) {
         // Check if any params have defaults
         let has_defaults = params.iter().any(|p| p.default_value.is_some());
@@ -1651,7 +1663,7 @@ impl<'a> IRPrinter<'a> {
 
         // Empty body with no defaults: emit as single-line { } if source was single-line
         if !has_defaults && body.is_empty() {
-            if !self.force_multiline_empty_function_body {
+            if !force_multiline_empty_body {
                 self.write("{ }");
             } else {
                 self.write("{");
@@ -1667,7 +1679,7 @@ impl<'a> IRPrinter<'a> {
         if !has_defaults
             && body.len() == 1
             && is_body_source_single_line
-            && !self.force_multiline_empty_function_body
+            && !force_multiline_empty_body
         {
             self.write("{ ");
             self.emit_node(&body[0]);
