@@ -60,15 +60,15 @@ rust_2024_compatibility = { level = "warn", priority = -1 }
 # Correctness - these are errors
 correctness = { level = "deny", priority = -1 }
 # Style - useful warnings
-style = { level = "warn", priority = -1 }
-dbg_macro = "warn"
-print_stderr = "warn"
+style = { level = "deny", priority = -1 }
+dbg_macro = "deny"
+print_stderr = "deny"
 empty_structs_with_brackets = "warn"
-get_unwrap = "warn"
+get_unwrap = "deny"
 # Performance
-perf = { level = "warn", priority = -1 }
+perf = { level = "deny", priority = -1 }
 # Complexity
-complexity = { level = "warn", priority = -1 }
+complexity = { level = "deny", priority = -1 }
 # Allow some that may be too noisy for this codebase
 
 [package]
