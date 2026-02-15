@@ -676,19 +676,21 @@ pub(crate) fn resolve_module_specifier(
             package_type,
         ));
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
-        if let Some(paths) = options.paths.as_ref()
-            && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
-        {
-            path_mapping_attempted = true;
-            let base = options.base_url.as_deref().unwrap_or(from_dir);
-            for target in &mapping.targets {
-                let substituted = substitute_path_target(target, &wildcard);
-                let path = if Path::new(&substituted).is_absolute() {
-                    PathBuf::from(substituted)
-                } else {
-                    base.join(substituted)
-                };
-                candidates.extend(expand_module_path_candidates(&path, options, package_type));
+        if options.base_url.is_some() {
+            if let Some(paths) = options.paths.as_ref()
+                && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
+            {
+                path_mapping_attempted = true;
+                let base = options.base_url.as_ref().expect("baseUrl present");
+                for target in &mapping.targets {
+                    let substituted = substitute_path_target(target, &wildcard);
+                    let path = if Path::new(&substituted).is_absolute() {
+                        PathBuf::from(substituted)
+                    } else {
+                        base.join(substituted)
+                    };
+                    candidates.extend(expand_module_path_candidates(&path, options, package_type));
+                }
             }
         }
 

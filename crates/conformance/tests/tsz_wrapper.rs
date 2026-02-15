@@ -383,6 +383,53 @@ fn test_prepare_test_dir_preserves_tsconfig() {
 }
 
 #[test]
+fn test_prepare_test_dir_wraps_nested_tsconfig_with_extends() {
+    let filenames = vec![
+        (
+            "/other/tsconfig.base.json".to_string(),
+            r#"{
+                "compilerOptions": {
+                  "paths": {
+                    "p1": ["./lib/p1"]
+                  }
+                }
+            }"#
+            .to_string(),
+        ),
+        (
+            "/project/tsconfig.json".to_string(),
+            r#"{
+                "extends": "../other/tsconfig.base.json",
+                "compilerOptions": {
+                  "module": "commonjs"
+                }
+            }"#
+            .to_string(),
+        ),
+        (
+            "/other/lib/p1/index.ts".to_string(),
+            "export const p1 = 0;".to_string(),
+        ),
+        (
+            "/project/index.ts".to_string(),
+            "import { p1 } from \"p1\";".to_string(),
+        ),
+    ];
+    let options = [("target".to_string(), "es2015".to_string())]
+        .into_iter()
+        .collect::<HashMap<_, _>>();
+
+    let prepared = prepare_test_dir("", &filenames, &options, None).unwrap();
+    let root_tsconfig = prepared.temp_dir.path().join("tsconfig.json");
+    let tsconfig_contents = std::fs::read_to_string(root_tsconfig).unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&tsconfig_contents).unwrap();
+
+    assert_eq!(parsed["extends"], "project/tsconfig.json");
+    assert_eq!(parsed["compilerOptions"]["target"], "es2015");
+    assert!(parsed.get("compilerOptions").is_some());
+}
+
+#[test]
 fn test_normalize_diagnostic_path_strips_project_root() {
     let root = std::path::Path::new("/tmp/tsz-test");
     let raw = "/tmp/tsz-test/test.ts";

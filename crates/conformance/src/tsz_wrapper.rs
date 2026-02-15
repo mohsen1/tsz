@@ -656,53 +656,71 @@ fn copy_tsconfig_to_root_if_needed(
     options: &HashMap<String, String>,
 ) -> anyhow::Result<()> {
     let root_tsconfig = dir_path.join("tsconfig.json");
-    // If the tsconfig was already written (e.g. at the root via @filename), read and merge
-    let base_content = if root_tsconfig.is_file() {
-        std::fs::read_to_string(&root_tsconfig)?
-    } else {
-        // Find the tsconfig.json from filenames
-        let content = filenames
-            .iter()
-            .find(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"))
-            .map(|(_, content)| content.clone());
-        match content {
-            Some(c) => c,
-            None => return Ok(()),
-        }
+    let tsconfig_source = filenames
+        .iter()
+        .find(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
+    let Some((filename, base_content)) = tsconfig_source else {
+        return Ok(());
     };
 
-    // If there are no test directives, preserve the authored tsconfig as-is.
-    // This avoids reparsing JSONC tsconfig content (comments/trailing commas)
-    // through strict serde_json, which can drop compiler options like allowJs.
-    if options.is_empty() {
+    let sanitized_source = filename
+        .replace("..", "_")
+        .trim_start_matches('/')
+        .to_string();
+    let is_root_tsconfig = sanitized_source == "tsconfig.json";
+    let directive_opts = convert_options_to_tsconfig(options);
+    let has_directive_opts = if let serde_json::Value::Object(ref opts) = directive_opts {
+        !opts.is_empty()
+    } else {
+        false
+    };
+
+    // Keep authored root tsconfig as-is when no directive overrides are needed.
+    if is_root_tsconfig && !has_directive_opts {
         if !root_tsconfig.is_file() {
             std::fs::write(&root_tsconfig, base_content)?;
         }
         return Ok(());
     }
 
-    // Merge directive options into the tsconfig's compilerOptions
-    let directive_opts = convert_options_to_tsconfig(options);
-    if let serde_json::Value::Object(ref directive_map) = directive_opts {
-        if !directive_map.is_empty() {
-            let mut tsconfig: serde_json::Value =
-                serde_json::from_str(&base_content).unwrap_or_else(|_| serde_json::json!({}));
-            if let serde_json::Value::Object(ref mut root) = tsconfig {
-                let compiler_options = root
-                    .entry("compilerOptions")
-                    .or_insert_with(|| serde_json::json!({}));
-                if let serde_json::Value::Object(ref mut opts) = compiler_options {
+    if !is_root_tsconfig {
+        // Preserve relative `extends` semantics by keeping the authored tsconfig at its
+        // original location and writing a small wrapper at the virtual project root.
+        let mut wrapper = serde_json::Map::new();
+        wrapper.insert(
+            "extends".to_string(),
+            serde_json::Value::String(sanitized_source),
+        );
+        if has_directive_opts {
+            wrapper.insert("compilerOptions".to_string(), directive_opts);
+        }
+        std::fs::write(
+            &root_tsconfig,
+            serde_json::to_string_pretty(&serde_json::Value::Object(wrapper))?,
+        )?;
+        return Ok(());
+    }
+
+    // Merge directive options into a root tsconfig's compilerOptions
+    if has_directive_opts {
+        let mut tsconfig: serde_json::Value =
+            serde_json::from_str(base_content).unwrap_or_else(|_| serde_json::json!({}));
+        if let serde_json::Value::Object(ref mut root) = tsconfig {
+            let compiler_options = root
+                .entry("compilerOptions")
+                .or_insert_with(|| serde_json::json!({}));
+            if let serde_json::Value::Object(ref mut opts) = compiler_options {
+                if let serde_json::Value::Object(ref directive_map) = directive_opts {
                     for (key, value) in directive_map {
                         opts.insert(key.clone(), value.clone());
                     }
                 }
             }
-            std::fs::write(&root_tsconfig, serde_json::to_string_pretty(&tsconfig)?)?;
-            return Ok(());
         }
+        std::fs::write(&root_tsconfig, serde_json::to_string_pretty(&tsconfig)?)?;
+        return Ok(());
     }
 
-    // No directive options to merge, just write the original content
     if !root_tsconfig.is_file() {
         std::fs::write(&root_tsconfig, base_content)?;
     }

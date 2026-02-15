@@ -228,7 +228,7 @@ fn resolve_compiler_options_rejects_unsupported_jsx() {
 }
 
 #[test]
-fn resolve_compiler_options_rejects_paths_without_base_url() {
+fn resolve_compiler_options_allows_paths_without_base_url() {
     let config = parse_tsconfig(
         r#"{
           "compilerOptions": {
@@ -240,10 +240,10 @@ fn resolve_compiler_options_rejects_paths_without_base_url() {
     )
     .expect("should parse config");
 
-    let err = resolve_compiler_options(config.compiler_options.as_ref())
-        .expect_err("paths without baseUrl should error");
-    let message = err.to_string();
-    assert!(message.contains("compilerOptions.paths"), "{message}");
+    let resolved = resolve_compiler_options(config.compiler_options.as_ref())
+        .expect("paths without baseUrl should resolve to non-fatal config");
+    assert!(resolved.base_url.is_none());
+    assert_eq!(resolved.paths.as_ref().map(|v| v.len()), Some(1));
 }
 
 #[test]

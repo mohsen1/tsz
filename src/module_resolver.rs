@@ -827,8 +827,10 @@ impl ModuleResolver {
             );
         }
 
-        // Step 2: Try path mappings first (if configured)
-        if !self.path_mappings.is_empty() {
+        // Step 2: Try path mappings first (if configured and baseUrl is available).
+        // TypeScript treats `paths` mappings as requiring `baseUrl` to avoid surprising
+        // absolute lookups that behave like relative resolution.
+        if self.base_url.is_some() && !self.path_mappings.is_empty() {
             let attempt = self.try_path_mappings(specifier, containing_dir);
             if let Some(resolved) = attempt.resolved {
                 return Ok(resolved);
@@ -1063,7 +1065,7 @@ impl ModuleResolver {
     }
 
     /// Try resolving through path mappings
-    fn try_path_mappings(&self, specifier: &str, containing_dir: &Path) -> PathMappingAttempt {
+    fn try_path_mappings(&self, specifier: &str, _containing_dir: &Path) -> PathMappingAttempt {
         // Sort path mappings by specificity (most specific first)
         let mut sorted_mappings: Vec<_> = self.path_mappings.iter().collect();
         sorted_mappings.sort_by_key(|b| std::cmp::Reverse(b.specificity()));
@@ -1080,8 +1082,10 @@ impl ModuleResolver {
                         target.clone()
                     };
 
-                    // Resolve relative to baseUrl or containing directory
-                    let base = self.base_url.as_deref().unwrap_or(containing_dir);
+                    let base = self
+                        .base_url
+                        .as_deref()
+                        .expect("path mappings require baseUrl for attempted resolution");
                     let candidate = base.join(&substituted);
 
                     if let Some(resolved) = self.try_file_or_directory(&candidate) {
