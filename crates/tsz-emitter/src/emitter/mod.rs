@@ -29,7 +29,7 @@ use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{debug, warn};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -710,7 +710,6 @@ impl<'a> Printer<'a> {
         };
 
         let directive = Self::emit_directive_from_transform(directive);
-        let debug_emit = std::env::var_os("TSZ_DEBUG_EMIT").is_some();
 
         match directive {
             EmitDirective::Identity => {
@@ -719,12 +718,10 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::ES5Class { class_node } => {
-                if debug_emit {
-                    println!(
-                        "TSZ_DEBUG_EMIT: Printer ES5Class start (idx={}, class_node={})",
-                        idx.0, class_node.0
-                    );
-                }
+                debug!(
+                    "Printer ES5Class start (idx={}, class_node={})",
+                    idx.0, class_node.0
+                );
                 // Delegate to existing ClassES5Emitter
                 let mut es5_emitter = ClassES5Emitter::new(self.arena);
                 es5_emitter.set_indent_level(self.writer.indent_level());
@@ -738,14 +735,12 @@ impl<'a> Printer<'a> {
                     }
                 }
                 let es5_output = es5_emitter.emit_class(class_node);
-                if debug_emit {
-                    println!(
-                        "TSZ_DEBUG_EMIT: Printer ES5Class end (idx={}, class_node={}, output_len={})",
-                        idx.0,
-                        class_node.0,
-                        es5_output.len()
-                    );
-                }
+                debug!(
+                    "Printer ES5Class end (idx={}, class_node={}, output_len={})",
+                    idx.0,
+                    class_node.0,
+                    es5_output.len()
+                );
                 let es5_mappings = es5_emitter.take_mappings();
                 if !es5_mappings.is_empty() && self.writer.has_source_map() {
                     self.writer.write("");
