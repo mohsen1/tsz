@@ -6,7 +6,7 @@
 use crate::common::{ModuleKind, ScriptTarget};
 
 /// Compiler options for type checking.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct CheckerOptions {
     pub strict: bool,
     pub no_implicit_any: bool,
@@ -80,6 +80,41 @@ pub struct CheckerOptions {
     pub check_js: bool,
     /// When true, disable dependency expansion from imports and triple-slash references.
     pub no_resolve: bool,
+}
+
+impl Default for CheckerOptions {
+    fn default() -> Self {
+        Self {
+            strict: true,
+            no_implicit_any: true,
+            no_implicit_returns: false,
+            strict_null_checks: true,
+            strict_function_types: true,
+            strict_property_initialization: true,
+            no_implicit_this: true,
+            use_unknown_in_catch_variables: true,
+            isolated_modules: false,
+            no_unchecked_indexed_access: false,
+            strict_bind_call_apply: true,
+            exact_optional_property_types: false,
+            no_lib: false,
+            no_types_and_symbols: false,
+            target: ScriptTarget::default(),
+            module: ModuleKind::default(),
+            es_module_interop: false,
+            allow_synthetic_default_imports: false,
+            allow_unreachable_code: None,
+            no_property_access_from_index_signature: false,
+            sound_mode: false,
+            experimental_decorators: false,
+            no_unused_locals: false,
+            no_unused_parameters: false,
+            always_strict: true,
+            resolve_json_module: false,
+            check_js: false,
+            no_resolve: false,
+        }
+    }
 }
 
 impl CheckerOptions {

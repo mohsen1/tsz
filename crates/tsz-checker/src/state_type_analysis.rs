@@ -497,25 +497,37 @@ impl<'a> CheckerState<'a> {
                     }
                     syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.ctx.arena.get_variable(clause_node) {
-                            for &decl_idx in &var_stmt.declarations.nodes {
-                                let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                            // VariableStatement holds VariableDeclarationList nodes.
+                            // Walk list -> declaration to recover exported namespace vars.
+                            for &list_idx in &var_stmt.declarations.nodes {
+                                let Some(list_node) = self.ctx.arena.get(list_idx) else {
                                     continue;
                                 };
-                                let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                                else {
+                                let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
                                     continue;
                                 };
-                                let Some(name_node) = self.ctx.arena.get(decl.name) else {
-                                    continue;
-                                };
-                                let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-                                    continue;
-                                };
-                                if ident.escaped_text == member_name
-                                    && let Some(&sym_id) =
-                                        self.ctx.binder.node_symbols.get(&decl_idx.0)
-                                {
-                                    return Some(sym_id);
+                                for &decl_idx in &decl_list.declarations.nodes {
+                                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                        continue;
+                                    };
+                                    let Some(decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    else {
+                                        continue;
+                                    };
+                                    let Some(name_node) = self.ctx.arena.get(decl.name) else {
+                                        continue;
+                                    };
+                                    let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                    else {
+                                        continue;
+                                    };
+                                    if ident.escaped_text == member_name
+                                        && let Some(&sym_id) =
+                                            self.ctx.binder.node_symbols.get(&decl_idx.0)
+                                    {
+                                        return Some(sym_id);
+                                    }
                                 }
                             }
                         }
@@ -2016,6 +2028,61 @@ impl<'a> CheckerState<'a> {
         (factory.lazy(def_id), Vec::new())
     }
 
+    fn resolve_export_value_wrapper_target_symbol(
+        &self,
+        value_decl: NodeIndex,
+        escaped_name: &str,
+    ) -> Option<SymbolId> {
+        if value_decl.is_none() {
+            return None;
+        }
+        let node = self.ctx.arena.get(value_decl)?;
+        if node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+            return None;
+        }
+        let export_decl = self.ctx.arena.get_export_decl(node)?;
+        if export_decl.export_clause.is_none() {
+            return None;
+        }
+
+        let clause_idx = export_decl.export_clause;
+        let clause_node = self.ctx.arena.get(clause_idx)?;
+
+        if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = self.ctx.arena.get_variable(clause_node)
+        {
+            for &list_idx in &var_stmt.declarations.nodes {
+                let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
+                        continue;
+                    };
+                    let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                        continue;
+                    };
+                    if ident.escaped_text == escaped_name
+                        && let Some(&sym_id) = self.ctx.binder.node_symbols.get(&decl_idx.0)
+                    {
+                        return Some(sym_id);
+                    }
+                }
+            }
+        }
+
+        self.ctx.binder.node_symbols.get(&clause_idx.0).copied()
+    }
+
     /// Compute type of a symbol (internal, not cached).
     ///
     /// Uses `TypeLowering` to bridge symbol declarations to solver types.
@@ -2056,15 +2123,26 @@ impl<'a> CheckerState<'a> {
             };
 
         tracing::trace!(
-            sym_id = sym_id.0,
-            flags = format!("{flags:#x}").as_str(),
-            name = escaped_name.as_str(),
-            import_module = ?import_module,
-            import_name = ?import_name,
-            value_decl = value_decl.0,
-            file = self.ctx.file_name.as_str(),
-            "compute_type_of_symbol: resolved symbol"
+        sym_id = sym_id.0,
+        flags = format!("{flags:#x}").as_str(),
+        name = escaped_name.as_str(),
+        import_module = ?import_module,
+        import_name = ?import_name,
+        value_decl = value_decl.0,
+        file = self.ctx.file_name.as_str(),
+        "compute_type_of_symbol: resolved symbol"
         );
+
+        // Export-value wrapper symbols should delegate to their wrapped declaration symbol.
+        // This preserves the actual value type for `export var` / `export function` members
+        // instead of falling back to implicit `any`.
+        if flags & symbol_flags::EXPORT_VALUE != 0
+            && let Some(target_sym_id) =
+                self.resolve_export_value_wrapper_target_symbol(value_decl, &escaped_name)
+            && target_sym_id != sym_id
+        {
+            return (self.get_type_of_symbol(target_sym_id), Vec::new());
+        }
 
         // Class - return class constructor type (merging namespace exports when present)
         // Also compute and cache instance type for TYPE position resolution
@@ -2488,8 +2566,80 @@ impl<'a> CheckerState<'a> {
         if flags & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
             != 0
         {
-            if !value_decl.is_none()
-                && let Some(node) = self.ctx.arena.get(value_decl)
+            let mut resolved_value_decl = value_decl;
+
+            // Symbols can point at wrappers (export declarations, variable statements, or
+            // declaration lists). Normalize to the concrete VariableDeclaration node.
+            if !resolved_value_decl.is_none() {
+                if let Some(node) = self.ctx.arena.get(resolved_value_decl)
+                    && node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export_decl) = self.ctx.arena.get_export_decl(node)
+                    && !export_decl.export_clause.is_none()
+                {
+                    resolved_value_decl = export_decl.export_clause;
+                }
+
+                if let Some(node) = self.ctx.arena.get(resolved_value_decl) {
+                    if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        if let Some(var_stmt) = self.ctx.arena.get_variable(node) {
+                            'find_decl_in_stmt: for &list_idx in &var_stmt.declarations.nodes {
+                                let Some(list_node) = self.ctx.arena.get(list_idx) else {
+                                    continue;
+                                };
+                                let Some(decl_list) = self.ctx.arena.get_variable(list_node) else {
+                                    continue;
+                                };
+                                for &decl_idx in &decl_list.declarations.nodes {
+                                    let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                        continue;
+                                    };
+                                    let Some(var_decl) =
+                                        self.ctx.arena.get_variable_declaration(decl_node)
+                                    else {
+                                        continue;
+                                    };
+                                    let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
+                                        continue;
+                                    };
+                                    let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                                    else {
+                                        continue;
+                                    };
+                                    if ident.escaped_text == escaped_name {
+                                        resolved_value_decl = decl_idx;
+                                        break 'find_decl_in_stmt;
+                                    }
+                                }
+                            }
+                        }
+                    } else if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                        && let Some(decl_list) = self.ctx.arena.get_variable(node)
+                    {
+                        for &decl_idx in &decl_list.declarations.nodes {
+                            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                                continue;
+                            };
+                            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
+                            else {
+                                continue;
+                            };
+                            let Some(name_node) = self.ctx.arena.get(var_decl.name) else {
+                                continue;
+                            };
+                            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                                continue;
+                            };
+                            if ident.escaped_text == escaped_name {
+                                resolved_value_decl = decl_idx;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !resolved_value_decl.is_none()
+                && let Some(node) = self.ctx.arena.get(resolved_value_decl)
             {
                 // Check if this is a variable declaration
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
@@ -2500,11 +2650,13 @@ impl<'a> CheckerState<'a> {
                             Vec::new(),
                         );
                     }
-                    if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
+                    if let Some(jsdoc_type) =
+                        self.jsdoc_type_annotation_for_node(resolved_value_decl)
+                    {
                         return (jsdoc_type, Vec::new());
                     }
                     if !var_decl.initializer.is_none()
-                        && self.is_const_variable_declaration(value_decl)
+                        && self.is_const_variable_declaration(resolved_value_decl)
                         && let Some(literal_type) =
                             self.literal_type_from_initializer(var_decl.initializer)
                     {
@@ -2516,7 +2668,7 @@ impl<'a> CheckerState<'a> {
                         // FIX: Widen literal types for non-const variables (let/var)
                         // TypeScript widens "hello" -> string, 42 -> number for mutable variables
                         // but preserves literal types for const variables
-                        if !self.is_const_variable_declaration(value_decl) {
+                        if !self.is_const_variable_declaration(resolved_value_decl) {
                             let widened_type =
                                 self.widen_initializer_type_for_mutable_binding(inferred_type);
                             // When strictNullChecks is off, undefined and null widen to any
@@ -2549,7 +2701,9 @@ impl<'a> CheckerState<'a> {
                         return (type_id, Vec::new());
                     }
                     // Check for JSDoc type
-                    if let Some(jsdoc_type) = self.jsdoc_type_annotation_for_node(value_decl) {
+                    if let Some(jsdoc_type) =
+                        self.jsdoc_type_annotation_for_node(resolved_value_decl)
+                    {
                         return (jsdoc_type, Vec::new());
                     }
                     // Fall back to inferring from initializer (default value)

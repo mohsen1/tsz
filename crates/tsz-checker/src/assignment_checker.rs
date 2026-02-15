@@ -393,7 +393,26 @@ impl<'a> CheckerState<'a> {
         }
         let left_target = self.get_type_of_assignment_target(left_idx);
         self.ctx.in_destructuring_target = prev_destructuring;
-        let left_type = self.resolve_type_query_type(left_target);
+        let mut left_type = self.resolve_type_query_type(left_target);
+
+        // In JS/checkJs mode, allow JSDoc `@type` on assignment statements to
+        // provide the contextual target type for the LHS.
+        //
+        // Example:
+        //   /** @type {string} */
+        //   C.prototype = 12;
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if is_js_file
+            && self.ctx.compiler_options.check_js
+            && let Some(jsdoc_left_type) = self
+                .jsdoc_type_annotation_for_node_direct(expr_idx)
+                .or_else(|| self.jsdoc_type_annotation_for_node_direct(left_idx))
+        {
+            left_type = jsdoc_left_type;
+        }
 
         let prev_context = self.ctx.contextual_type;
         let left_is_element_access = self

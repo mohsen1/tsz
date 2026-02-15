@@ -2184,9 +2184,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // from TypeEvaluator during simplification (evaluation has already been done).
         if !self.bypass_evaluation
             && let Some(db) = self.query_db
-            && db.canonical_id(source) == db.canonical_id(target)
         {
-            return SubtypeResult::True;
+            let source_canon = db.canonical_id(source);
+            let target_canon = db.canonical_id(target);
+            if source_canon == target_canon {
+                return SubtypeResult::True;
+            }
         }
 
         // Any is assignable to anything (when allowed)
@@ -2715,7 +2718,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - `object` (lowercase) includes callable values.
         // - `Object` (capitalized interface) should follow TS structural rules and
         //   exclude bare callable types from primitive-style object assignability.
-        let mut is_global_object_target = self
+        let is_global_object_target = self
             .resolver
             .get_boxed_type(IntrinsicKind::Object)
             .is_some_and(|boxed| boxed == target || self.evaluate_type(boxed) == target)
@@ -2724,13 +2727,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .is_some_and(|def_id| self.resolver.is_boxed_def_id(def_id, IntrinsicKind::Object))
             || lazy_def_id(self.interner, target)
                 .is_some_and(|t_def| self.resolver.is_boxed_def_id(t_def, IntrinsicKind::Object));
-        if !is_global_object_target
-            && let Some(boxed) = self.resolver.get_boxed_type(IntrinsicKind::Object)
-        {
-            let boxed_eval = self.evaluate_type(boxed);
-            is_global_object_target = self.check_subtype(target, boxed_eval).is_true()
-                && self.check_subtype(boxed_eval, target).is_true();
-        }
         if is_global_object_target {
             let source_eval = self.evaluate_type(source);
             if self.is_global_object_interface_type(source_eval) {

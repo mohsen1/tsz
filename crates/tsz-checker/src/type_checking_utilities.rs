@@ -1721,6 +1721,64 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Resolve a direct leading JSDoc `@type` annotation for a node (no parent fallback).
+    ///
+    /// Unlike `jsdoc_type_annotation_for_node`, this only considers comments attached
+    /// to `idx` itself and never climbs ancestors. Use this in sites where parent
+    /// fallback can incorrectly pull unrelated JSDoc.
+    pub(crate) fn jsdoc_type_annotation_for_node_direct(
+        &mut self,
+        idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if is_js_file && !self.ctx.compiler_options.check_js {
+            return None;
+        }
+
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = self.ctx.arena.get(idx)?;
+        let jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text)?;
+        let type_expr = Self::extract_jsdoc_type_expression(&jsdoc)?;
+        let type_expr = type_expr.trim();
+
+        self.jsdoc_type_from_expression(type_expr).or_else(|| {
+            self.resolve_jsdoc_typedef_type(type_expr, idx, node.pos, comments, source_text)
+                .or_else(|| {
+                    if let Some((module_specifier, member_name)) =
+                        Self::parse_jsdoc_import_type(type_expr)
+                        && let Some(sym_id) =
+                            self.resolve_cross_file_export(&module_specifier, &member_name)
+                    {
+                        let resolved = self.type_reference_symbol_type(sym_id);
+                        if resolved != TypeId::ERROR {
+                            return Some(resolved);
+                        }
+                    }
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
+                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                        if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
+                            || (symbol.flags & symbol_flags::CLASS) != 0
+                            || (symbol.flags & symbol_flags::INTERFACE) != 0
+                            || (symbol.flags & symbol_flags::TYPE_PARAMETER) != 0
+                            || (symbol.flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0
+                            || (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0
+                        {
+                            let t = self.type_reference_symbol_type(sym_id);
+                            if t != TypeId::ERROR {
+                                return Some(t);
+                            }
+                        }
+                    }
+                    None
+                })
+        })
+    }
+
     fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, String)> {
         let expr = type_expr.trim();
         let rest = expr.strip_prefix("import(")?;

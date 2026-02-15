@@ -875,6 +875,39 @@ fn test_ts2322_check_js_true_does_not_relabel_with_unrelated_diagnostics() {
 }
 
 #[test]
+fn test_ts2322_namespace_export_assignment_optional_to_required() {
+    let source = r#"
+        // @target: es2015
+        namespace __test1__ {
+            export interface interfaceWithPublicAndOptional<T,U> { one: T; two?: U; };  var obj4: interfaceWithPublicAndOptional<number,string> = { one: 1 };;
+            export var __val__obj4 = obj4;
+        }
+        namespace __test2__ {
+            export var obj = {two: 1};
+            export var __val__obj = obj;
+        }
+        __test2__.__val__obj = __test1__.__val__obj4
+    "#;
+
+    let diagnostics = compile_with_options(
+        source,
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    let has_2322 = diagnostics
+        .iter()
+        .any(|(code, _)| *code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(
+        has_2322,
+        "Expected TS2322 for assigning optional property type to required property target, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_ts2322_no_error_for_any_to_number_assignment() {
     let source = r"
         let inferredAny: any;
