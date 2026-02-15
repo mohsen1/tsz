@@ -245,6 +245,21 @@ pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::UniqueSymbol(_)))
 }
 
+/// Check if a type is usable as a property name (TS1166/TS1165/TS1169).
+///
+/// Returns true for string literals, number literals, and unique symbol types.
+/// This corresponds to TypeScript's `isTypeUsableAsPropertyName` check.
+pub fn is_type_usable_as_property_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Literal(crate::LiteralValue::String(_))
+                | TypeData::Literal(crate::LiteralValue::Number(_))
+                | TypeData::UniqueSymbol(_)
+        )
+    )
+}
+
 /// Check if a type is the this type.
 ///
 /// Returns true for `TypeData::ThisType`.
