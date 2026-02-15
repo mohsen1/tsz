@@ -408,9 +408,10 @@ impl<'a> CheckerState<'a> {
             self.check_index_signature_parameter_type(member_idx);
             // TS1169: Computed property in interface must have literal/unique symbol type
             if let Some(member_node) = self.ctx.arena.get(member_idx)
-                && let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    self.check_interface_computed_property_name(sig.name);
-                }
+                && let Some(sig) = self.ctx.arena.get_signature(member_node)
+            {
+                self.check_interface_computed_property_name(sig.name);
+            }
         }
 
         // Check for duplicate member names (TS2300)
