@@ -50,7 +50,7 @@ fn test_concurrent_type_interning() {
             1 => interner.literal_string(&format!("str_{}", i)),
             2 => interner.union(vec![TypeId::STRING, TypeId::NUMBER]),
             3 => interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]),
-            _ => unreachable!(),
+            _ => panic!("internal error: unexpected concurrent partition index"),
         })
         .collect();
 
@@ -333,7 +333,7 @@ fn test_concurrent_array_creation() {
                 1 => TypeId::NUMBER,
                 2 => TypeId::BOOLEAN,
                 3 => interner.literal_number(i as f64),
-                _ => unreachable!(),
+                _ => panic!("internal error: unexpected concurrent array type selector"),
             };
             interner.array(element_type)
         })

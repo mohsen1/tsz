@@ -1145,7 +1145,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             if let InferenceError::BoundsViolation { lower, .. } = &e {
                                 *lower
                             } else {
-                                unreachable!()
+                                panic!(
+                                    "invariant violation: expected bounds violation when using inferred fallback"
+                                )
                             }
                         } else if let Some(default) = tp.default {
                             instantiate_type(self.interner, default, &final_subst)

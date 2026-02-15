@@ -11,6 +11,12 @@ cognitive-complexity-threshold = 24
 disallowed-methods = [
     "std::mem::transmute",
 ]
+disallowed-macros = [
+    "std::dbg",
+    "std::todo",
+    "std::unimplemented",
+    "std::unreachable",
+]
 
 # Avoiding hidden convenience that masks missing boundary discipline.
 allow-unwrap-in-tests = false

@@ -4065,7 +4065,9 @@ impl<'a> CheckerState<'a> {
                     "&" => "&&",
                     "|" => "||",
                     "^" => "!==",
-                    _ => unreachable!(),
+                    _ => panic!(
+                        "invariant violation: boolean bitwise suggestion requested for unexpected operator"
+                    ),
                 };
                 if let Some(loc) = self.get_source_location(node_idx) {
                     let message = format!(

@@ -117,7 +117,7 @@ const DEFAULT_CONFIG_{i}: {{ status: Status{i}; retries: number }} = {{
 "#
                 ));
             }
-            _ => unreachable!(),
+            _ => panic!("internal error: unsupported source segment kind"),
         }
     }
     src
