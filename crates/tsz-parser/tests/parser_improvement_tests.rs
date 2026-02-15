@@ -985,3 +985,49 @@ fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
         "Expected no TS1134 variable declaration cascade, got diagnostics: {diagnostics:?}"
     );
 }
+
+#[test]
+fn test_class_method_string_names_use_string_literal_nodes() {
+    let source = r#"
+class C {
+    "foo"();
+    "bar"() { }
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    let kinds: Vec<_> = class_data
+        .members
+        .nodes
+        .iter()
+        .filter_map(|&member_idx| {
+            let member_node = parser.get_arena().get(member_idx)?;
+            (member_node.kind == crate::parser::syntax_kind_ext::METHOD_DECLARATION).then_some({
+                let method = parser.get_arena().get_method_decl(member_node)?;
+                let name_node = parser.get_arena().get(method.name)?;
+                (
+                    method.name,
+                    name_node.kind,
+                    parser
+                        .get_arena()
+                        .get_literal(name_node)
+                        .map(|lit| lit.text.clone()),
+                )
+            })
+        })
+        .collect();
+
+    assert_eq!(kinds.len(), 2);
+    for (_name_idx, kind, text) in kinds {
+        assert_eq!(
+            kind,
+            tsz_scanner::SyntaxKind::StringLiteral as u16,
+            "expected string literal name node"
+        );
+        assert!(text.is_some());
+    }
+}

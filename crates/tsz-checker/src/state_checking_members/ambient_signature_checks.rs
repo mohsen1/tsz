@@ -100,9 +100,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1248: A class member cannot have the 'const' keyword
-        if let Some(const_mod) = self.get_const_modifier(&prop.modifiers) {
+        if let Some(_const_mod) = self.get_const_modifier(&prop.modifiers) {
             self.error_at_node(
-                const_mod,
+                prop.name,
                 "A class member cannot have the 'const' keyword.",
                 diagnostic_codes::A_CLASS_MEMBER_CANNOT_HAVE_THE_KEYWORD,
             );
@@ -200,9 +200,9 @@ impl<'a> CheckerState<'a> {
         };
 
         // Error 1248: A class member cannot have the 'const' keyword
-        if let Some(const_mod) = self.get_const_modifier(&method.modifiers) {
+        if let Some(_const_mod) = self.get_const_modifier(&method.modifiers) {
             self.error_at_node(
-                const_mod,
+                method.name,
                 "A class member cannot have the 'const' keyword.",
                 diagnostic_codes::A_CLASS_MEMBER_CANNOT_HAVE_THE_KEYWORD,
             );

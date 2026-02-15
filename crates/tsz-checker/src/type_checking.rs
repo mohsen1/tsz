@@ -15,6 +15,7 @@
 use crate::query_boundaries::type_checking as query;
 use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, PropertyKey};
 use rustc_hash::FxHashSet;
+use tsz_binder::SymbolId;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1418,10 +1419,7 @@ impl<'a> CheckerState<'a> {
 
     // 18. AST Context Checking (4 functions)
 
-    /// Get the name of a method declaration.
-    ///
-    /// Handles both identifier names and numeric literal names
-    /// (for methods like 0(), 1(), etc.).
+    /// Get the name of a method declaration for symbol/key comparisons.
     ///
     /// ## Parameters
     /// - `member_idx`: The class member node index
@@ -1431,16 +1429,266 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(member_idx)?;
 
         if let Some(method) = self.ctx.arena.get_method_decl(node) {
+            if let Some(name_node) = self.ctx.arena.get(method.name)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    return self.get_method_name_from_computed_property(name_node, method.name);
+                }
+
+            return self.get_property_name(method.name);
+        }
+        None
+    }
+
+    /// Get method name for computed method signatures.
+    ///
+    /// Computed identifiers are only overload-matchable when they are backed by
+    /// `unique symbol` declarations, matching TypeScript's method implementation
+    /// matching behavior.
+    pub(crate) fn get_method_name_from_computed_property(
+        &self,
+        name_node: &tsz_parser::parser::node::Node,
+        _name_idx: NodeIndex,
+    ) -> Option<String> {
+        let computed = self.ctx.arena.get_computed_property(name_node)?;
+
+        if let Some(symbol_name) = self.get_symbol_property_name_from_expr(computed.expression) {
+            return Some(symbol_name);
+        }
+
+        if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
+            if expr_node.kind == SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+                    if self.identifier_refers_to_unique_symbol(computed.expression) {
+                        return Some(ident.escaped_text.clone());
+                    }
+
+                    if self.identifier_refers_to_plain_symbol(computed.expression) {
+                        return None;
+                    }
+
+                    return Some(ident.escaped_text.clone());
+                }
+
+            if matches!(
+                expr_node.kind,
+                k if k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || k == SyntaxKind::NumericLiteral as u16
+            )
+                && let Some(lit) = self.ctx.arena.get_literal(expr_node) {
+                    if expr_node.kind == SyntaxKind::NumericLiteral as u16 {
+                        return tsz_solver::utils::canonicalize_numeric_name(&lit.text);
+                    }
+
+                    return Some(lit.text.clone());
+                }
+        }
+
+        None
+    }
+
+    fn identifier_refers_to_unique_symbol(&self, name_node: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_symbol_id_from_identifier_node(name_node) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().any(|decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(*decl_idx) else {
+                return false;
+            };
+
+            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                return false;
+            }
+
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+
+            if var_decl.type_annotation.is_none() {
+                return false;
+            }
+
+            self.is_unique_symbol_type_annotation(var_decl.type_annotation)
+        })
+    }
+
+    fn identifier_refers_to_plain_symbol(&self, name_node: NodeIndex) -> bool {
+        let Some(sym_id) = self.resolve_symbol_id_from_identifier_node(name_node) else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        symbol.declarations.iter().any(|decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(*decl_idx) else {
+                return false;
+            };
+
+            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+                return false;
+            }
+
+            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                return false;
+            };
+
+            if var_decl.type_annotation.is_none() {
+                return false;
+            }
+
+            self.is_symbol_type_annotation(var_decl.type_annotation)
+        })
+    }
+
+    fn resolve_symbol_id_from_identifier_node(&self, name_node: NodeIndex) -> Option<SymbolId> {
+        if let Some(sym_id) = self.ctx.binder.get_node_symbol(name_node) {
+            return Some(sym_id);
+        }
+
+        let ident = self.ctx.arena.get(name_node)?;
+        let ident = self.ctx.arena.get_identifier(ident)?;
+
+        self.ctx.binder.file_locals.get(&ident.escaped_text)
+    }
+
+    fn is_unique_symbol_type_annotation(&self, type_annotation: NodeIndex) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_OPERATOR => self
+                .ctx
+                .arena
+                .get_type_operator(type_node)
+                .is_some_and(|op| {
+                    op.operator == SyntaxKind::UniqueKeyword as u16
+                        && self.is_symbol_type_node(op.type_node)
+                }),
+            _ => false,
+        }
+    }
+
+    fn is_symbol_type_annotation(&self, type_annotation: NodeIndex) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return false;
+        };
+
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
+    }
+
+    fn is_symbol_type_node(&self, type_annotation: NodeIndex) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_annotation) else {
+            return false;
+        };
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+
+        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
+            return false;
+        };
+
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+
+        self.ctx
+            .arena
+            .get_identifier(name_node)
+            .is_some_and(|ident| ident.escaped_text == "symbol")
+    }
+
+    /// Get a method declaration name for diagnostics.
+    ///
+    /// This is display-oriented and preserves syntax details for computed/property
+    /// names in error messages (e.g. `"foo"`, `["bar"]`).
+    pub(crate) fn get_method_name_for_diagnostic(&self, member_idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(member_idx)?;
+
+        if let Some(method) = self.ctx.arena.get_method_decl(node) {
             let name_node = self.ctx.arena.get(method.name)?;
-            // Try identifier first
+
             if let Some(id) = self.ctx.arena.get_identifier(name_node) {
                 return Some(id.escaped_text.clone());
             }
-            // Try numeric literal (for methods like 0(), 1(), etc.)
+
             if let Some(lit) = self.ctx.arena.get_literal(name_node) {
-                return Some(lit.text.clone());
+                return Some(match name_node.kind {
+                    k if k == SyntaxKind::StringLiteral as u16
+                        || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                    {
+                        format!("\"{}\"", lit.text.clone())
+                    }
+                    k if k == SyntaxKind::NumericLiteral as u16 => {
+                        if let Some(canonical) =
+                            tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+                        {
+                            canonical
+                        } else {
+                            lit.text.clone()
+                        }
+                    }
+                    _ => lit.text.clone(),
+                });
+            }
+
+            if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+            {
+                if let Some(symbol_name) =
+                    self.get_symbol_property_name_from_expr(computed.expression)
+                {
+                    return Some(format!("[{}]", symbol_name));
+                }
+
+                if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
+                    if let Some(id) = self.ctx.arena.get_identifier(expr_node) {
+                        return Some(format!("[{}]", id.escaped_text));
+                    }
+
+                    if let Some(lit) = self.ctx.arena.get_literal(expr_node) {
+                        return Some(match expr_node.kind {
+                            kind if kind == SyntaxKind::StringLiteral as u16
+                                || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+                            {
+                                format!("[\"{}\"]", lit.text)
+                            }
+                            kind if kind == SyntaxKind::NumericLiteral as u16 => {
+                                if let Some(canonical) =
+                                    tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+                                {
+                                    format!("[{}]", canonical)
+                                } else {
+                                    format!("[{}]", lit.text)
+                                }
+                            }
+                            _ => format!("[{}]", lit.text),
+                        });
+                    }
+                }
             }
         }
+
         None
     }
 

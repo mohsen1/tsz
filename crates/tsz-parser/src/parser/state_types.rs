@@ -464,7 +464,7 @@ impl ParserState {
         start_pos: u32,
         base_type: NodeIndex,
     ) -> NodeIndex {
-        if self.is_token(SyntaxKind::OpenBracketToken) {
+        if self.is_token(SyntaxKind::OpenBracketToken) && !self.scanner.has_preceding_line_break() {
             self.parse_array_type(start_pos, base_type)
         } else {
             base_type
