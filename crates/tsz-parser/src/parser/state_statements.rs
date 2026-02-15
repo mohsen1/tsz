@@ -1,8 +1,8 @@
 //! Parser state - statement and declaration parsing methods
 use super::state::{
-    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS,
-    CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT, CONTEXT_FLAG_STATIC_BLOCK,
-    IncrementalParseResult, ParserState,
+    CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME,
+    CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_PARAMETER_DEFAULT,
+    CONTEXT_FLAG_STATIC_BLOCK, IncrementalParseResult, ParserState,
 };
 use crate::parser::{
     NodeIndex, NodeList,
@@ -3576,13 +3576,23 @@ impl ParserState {
         let asterisk_token = self.parse_optional(SyntaxKind::AsteriskToken);
 
         // Handle get accessor: get foo() { }
-        if self.is_token(SyntaxKind::GetKeyword) && self.look_ahead_is_accessor() {
-            return self.parse_get_accessor_with_modifiers(modifiers, start_pos);
+        if !asterisk_token && self.is_token(SyntaxKind::GetKeyword) && self.look_ahead_is_accessor()
+        {
+            let saved_member_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
+            let accessor = self.parse_get_accessor_with_modifiers(modifiers, start_pos);
+            self.context_flags = saved_member_flags;
+            return accessor;
         }
 
         // Handle set accessor: set foo(value) { }
-        if self.is_token(SyntaxKind::SetKeyword) && self.look_ahead_is_accessor() {
-            return self.parse_set_accessor_with_modifiers(modifiers, start_pos);
+        if !asterisk_token && self.is_token(SyntaxKind::SetKeyword) && self.look_ahead_is_accessor()
+        {
+            let saved_member_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
+            let accessor = self.parse_set_accessor_with_modifiers(modifiers, start_pos);
+            self.context_flags = saved_member_flags;
+            return accessor;
         }
 
         // Handle index signatures: [key: Type]: ValueType
@@ -3648,9 +3658,27 @@ impl ParserState {
             }
         }
 
+        // Whether this is an async method; needed while parsing parameters.
+        let is_async = modifiers.as_ref().is_some_and(|mods| {
+            mods.nodes.iter().any(|&idx| {
+                self.arena
+                    .nodes
+                    .get(idx.0 as usize)
+                    .is_some_and(|node| node.kind == SyntaxKind::AsyncKeyword as u16)
+            })
+        });
+
         // Handle methods and properties
         // For now, just parse name and check for ( for methods
         // Note: Many reserved keywords can be used as property names (const, class, etc.)
+        let name_saved_flags = self.context_flags;
+        self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
+        if is_async {
+            self.context_flags |= CONTEXT_FLAG_ASYNC;
+        }
+        if asterisk_token {
+            self.context_flags |= CONTEXT_FLAG_GENERATOR;
+        }
         let name = if self.is_property_name() {
             self.parse_property_name()
         } else {
@@ -3665,9 +3693,11 @@ impl ParserState {
                     diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
                 );
             }
+            self.context_flags = name_saved_flags;
             self.next_token();
             return NodeIndex::NONE;
         };
+        self.context_flags = name_saved_flags;
 
         // TS18012: '#constructor' is a reserved word
         if let Some(name_node) = self.arena.get(name)
@@ -3724,7 +3754,7 @@ impl ParserState {
                 })
             });
 
-            // Set context flags for async/generator method body
+            // Set context flags for async/generator method signature and body.
             let saved_flags = self.context_flags;
             if is_async {
                 self.context_flags |= CONTEXT_FLAG_ASYNC;

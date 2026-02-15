@@ -3367,6 +3367,12 @@ impl ParserState {
                 let start_pos = self.token_pos();
                 self.next_token();
 
+                // In class member computed property names, keywords such as `public`
+                // and `yield` should emit TS1213.
+                if self.in_class_member_name() {
+                    self.check_illegal_binding_identifier();
+                }
+
                 // Note: await in computed property name is NOT a parser error
                 // The type checker will emit TS2304 if 'await' is not in scope
                 // Example: { [await]: foo } should only emit TS2304, not TS1109
