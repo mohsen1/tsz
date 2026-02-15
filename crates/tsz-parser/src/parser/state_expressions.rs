@@ -1,7 +1,5 @@
 //! Parser state - expression parsing methods
 
-#![allow(clippy::too_many_lines)]
-
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN,
     CONTEXT_FLAG_GENERATOR, CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
@@ -599,6 +597,7 @@ impl ParserState {
     }
 
     /// Parse binary expression with precedence climbing
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_binary_expression(&mut self, min_precedence: u8) -> NodeIndex {
         // Check recursion limit for deeply nested expressions
         if !self.enter_recursion() {
@@ -794,6 +793,7 @@ impl ParserState {
     }
 
     /// Parse unary expression
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_unary_expression(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::PlusToken
@@ -1135,6 +1135,7 @@ impl ParserState {
     }
 
     /// Parse left-hand side expression (member access, call, etc.)
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_left_hand_side_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut expr = self.parse_primary_expression();
@@ -1769,6 +1770,7 @@ impl ParserState {
     }
 
     /// Parse object binding pattern: { x, y: z, ...rest }
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_object_binding_pattern(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
@@ -2010,6 +2012,7 @@ impl ParserState {
 
     /// Parse numeric literal
     /// Uses zero-copy accessor for parsing, clones only when storing
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_numeric_literal(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
@@ -2440,6 +2443,7 @@ impl ParserState {
     }
 
     /// Parse template expression: `hello ${name}!`
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_template_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -2769,6 +2773,7 @@ impl ParserState {
     }
 
     /// Parse property assignment, method, getter, setter, or spread element
+    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_property_assignment(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
