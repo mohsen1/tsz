@@ -515,12 +515,20 @@ impl<'a> CheckerState<'a> {
             let is_promise_executor = self.is_promise_executor_function(idx);
             let is_accessor_node = node.kind == syntax_kind_ext::GET_ACCESSOR
                 || node.kind == syntax_kind_ext::SET_ACCESSOR;
+            // For closures (function expressions / arrow functions), defer TS7010/TS7011
+            // during the build_type_environment phase.  During that phase, contextual
+            // types are not yet available (they're set during check_variable_declaration).
+            // The closure will be re-evaluated with contextual types during the checking
+            // phase, at which point TS7010/TS7011 can fire if still warranted.
+            let skip_implicit_any_return =
+                is_closure && !self.ctx.is_checking_statements && !has_contextual_return;
             if !is_function_declaration
                 && !is_accessor_node
                 && !is_async
                 && !has_contextual_return
                 && !has_jsdoc_return
                 && !is_promise_executor
+                && !skip_implicit_any_return
             {
                 self.maybe_report_implicit_any_return(
                     name_for_error,
