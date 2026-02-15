@@ -7,11 +7,11 @@ fn test_index_signature_with_modifier_emits_ts1071() {
     // Index signature with public modifier should emit TS1071, not TS1184
     // TS1071: '{0}' modifier cannot appear on an index signature.
     // TS1184: Modifiers cannot appear here. (too generic)
-    let source = r#"
+    let source = r"
 interface I {
   public [a: string]: number;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -21,16 +21,14 @@ interface I {
     let ts1071_count = diagnostics.iter().filter(|d| d.code == 1071).count();
     assert_eq!(
         ts1071_count, 1,
-        "Expected 1 TS1071 error for modifier on index signature, got {}",
-        ts1071_count
+        "Expected 1 TS1071 error for modifier on index signature, got {ts1071_count}",
     );
 
     // Should NOT emit the generic TS1184
     let ts1184_count = diagnostics.iter().filter(|d| d.code == 1184).count();
     assert_eq!(
         ts1184_count, 0,
-        "Expected no TS1184 errors (should be TS1071 instead), got {}",
-        ts1184_count
+        "Expected no TS1184 errors (should be TS1071 instead), got {ts1184_count}",
     );
 }
 
@@ -38,10 +36,10 @@ interface I {
 fn test_arrow_function_with_line_break_no_false_positive() {
     // Arrow function where => is missing but there's a line break
     // Should be more permissive to avoid false positives
-    let source = r#"
+    let source = r"
 const fn = (a: number, b: string)
 => a + b;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -53,8 +51,7 @@ const fn = (a: number, b: string)
         .count();
     assert!(
         ts1005_count <= 1,
-        "Expected at most 1 TS1005 error, got {}",
-        ts1005_count
+        "Expected at most 1 TS1005 error, got {ts1005_count}",
     );
 }
 
@@ -62,14 +59,14 @@ const fn = (a: number, b: string)
 fn test_parameters_with_line_break_no_comma() {
     // Function parameters without comma but with line break
     // Should be more permissive to avoid false positives
-    let source = r#"
+    let source = r"
 function foo(
     a: number
     b: string
 ) {
     return a + b;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -81,22 +78,21 @@ function foo(
         .count();
     assert!(
         ts1005_count <= 1,
-        "Expected at most 1 TS1005 error, got {}",
-        ts1005_count
+        "Expected at most 1 TS1005 error, got {ts1005_count}",
     );
 }
 
 #[test]
 fn test_interface_merging_no_duplicate() {
     // Interface merging should not emit TS2300
-    let source = r#"
+    let source = r"
 interface Foo {
     a: number;
 }
 interface Foo {
     b: string;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -108,21 +104,20 @@ interface Foo {
         .count();
     assert_eq!(
         ts2300_count, 0,
-        "Expected no TS2300 errors for interface merging, got {}",
-        ts2300_count
+        "Expected no TS2300 errors for interface merging, got {ts2300_count}",
     );
 }
 
 #[test]
 fn test_function_overloads_no_duplicate() {
     // Function overloads should not emit TS2300
-    let source = r#"
+    let source = r"
 function foo(x: number): void;
 function foo(x: string): void;
 function foo(x: number | string): void {
     console.log(x);
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -134,8 +129,7 @@ function foo(x: number | string): void {
         .count();
     assert_eq!(
         ts2300_count, 0,
-        "Expected no TS2300 errors for function overloads, got {}",
-        ts2300_count
+        "Expected no TS2300 errors for function overloads, got {ts2300_count}",
     );
 }
 
@@ -163,20 +157,19 @@ function Utils() {
         .count();
     assert_eq!(
         ts2300_count, 0,
-        "Expected no TS2300 errors for namespace+function merging, got {}",
-        ts2300_count
+        "Expected no TS2300 errors for namespace+function merging, got {ts2300_count}",
     );
 }
 
 #[test]
 fn test_asi_after_return() {
     // ASI (automatic semicolon insertion) should work after return
-    let source = r#"
+    let source = r"
 function foo() {
     return
     42;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -188,20 +181,19 @@ function foo() {
         .count();
     assert_eq!(
         ts1005_count, 0,
-        "Expected no TS1005 errors for ASI after return, got {}",
-        ts1005_count
+        "Expected no TS1005 errors for ASI after return, got {ts1005_count}",
     );
 }
 
 #[test]
 fn test_trailing_comma_in_object_literal() {
     // Trailing commas should be allowed in object literals
-    let source = r#"
+    let source = r"
 const obj = {
     a: 1,
     b: 2,
 };
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -216,13 +208,13 @@ const obj = {
 #[test]
 fn test_trailing_comma_in_array_literal() {
     // Trailing commas should be allowed in array literals
-    let source = r#"
+    let source = r"
 const arr = [
     1,
     2,
     3,
 ];
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -237,14 +229,14 @@ const arr = [
 #[test]
 fn test_trailing_comma_in_parameters() {
     // Trailing commas should be allowed in function parameters
-    let source = r#"
+    let source = r"
 function foo(
     a: number,
     b: string,
 ) {
     return a + b;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -258,11 +250,11 @@ function foo(
 
 #[test]
 fn test_interface_property_initializer_emits_ts1246() {
-    let source = r#"
+    let source = r"
 interface I {
     x: number = 1;
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -273,18 +265,17 @@ interface I {
         .count();
     assert_eq!(
         ts1246_count, 1,
-        "Expected 1 TS1246 error for interface property initializer, got {}",
-        ts1246_count
+        "Expected 1 TS1246 error for interface property initializer, got {ts1246_count}",
     );
 }
 
 #[test]
 fn test_type_literal_property_initializer_emits_ts1247() {
-    let source = r#"
+    let source = r"
 type T = {
     x: number = 1;
 };
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -295,8 +286,7 @@ type T = {
         .count();
     assert_eq!(
         ts1247_count, 1,
-        "Expected 1 TS1247 error for type literal property initializer, got {}",
-        ts1247_count
+        "Expected 1 TS1247 error for type literal property initializer, got {ts1247_count}",
     );
 }
 
@@ -307,9 +297,9 @@ type T = {
 #[test]
 fn test_void_return_type() {
     // void return type should be parsed correctly without TS1110/TS1109 errors
-    let source = r#"
+    let source = r"
 declare function fn(arg0: boolean): void;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -324,7 +314,7 @@ declare function fn(arg0: boolean): void;
 #[test]
 fn test_primitive_type_keywords() {
     // All primitive type keywords should be parsed correctly
-    let source = r#"
+    let source = r"
 declare function fn1(): void;
 declare function fn2(): string;
 declare function fn3(): number;
@@ -337,7 +327,7 @@ declare function fn9(): never;
 declare function fn10(): null;
 declare function fn11(): undefined;
 declare function fn12(): object;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -352,7 +342,7 @@ declare function fn12(): object;
 #[test]
 fn test_primitive_types_in_type_aliases() {
     // Primitive type keywords should work in type aliases
-    let source = r#"
+    let source = r"
 type T1 = void;
 type T2 = string;
 type T3 = number;
@@ -360,7 +350,7 @@ type T4 = boolean;
 type T5 = any;
 type T6 = unknown;
 type T7 = never;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -375,9 +365,9 @@ type T7 = never;
 #[test]
 fn test_primitive_types_in_parameters() {
     // Primitive type keywords should work in parameter types
-    let source = r#"
+    let source = r"
 declare function fn(a: void, b: string, c: number): boolean;
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -414,17 +404,20 @@ const arrow2: (x: number) => string = (x) => "";
 #[test]
 fn test_incremental_parse_from_middle_of_file() {
     // Test parsing from an offset in the middle of a source file
-    let source = r#"const a = 1;
+    let source = r"const a = 1;
 const b = 2;
 function foo() {
     return a + b;
 }
-const c = 3;"#;
+const c = 3;";
 
     // Parse from the start of "function foo()"
-    let offset = source
-        .find("function")
-        .expect("pattern should exist in source") as u32;
+    let offset = u32::try_from(
+        source
+            .find("function")
+            .expect("pattern should exist in source"),
+    )
+    .expect("function offset should fit in u32");
 
     let mut parser = ParserState::new("test.ts".to_string(), String::new());
     let result = parser.parse_source_file_statements_from_offset(
@@ -434,10 +427,10 @@ const c = 3;"#;
     );
 
     // Should have parsed the remaining statements (function and const c)
+    let statement_count = result.statements.len();
     assert!(
-        result.statements.len() >= 2,
-        "Expected at least 2 statements from offset, got {}",
-        result.statements.len()
+        statement_count >= 2,
+        "Expected at least 2 statements from offset, got {statement_count}",
     );
 
     // Should not produce errors for valid code
@@ -462,11 +455,10 @@ let y = "hello";"#;
     );
 
     // Should have parsed both statements
+    let statement_count = result.statements.len();
     assert_eq!(
-        result.statements.len(),
-        2,
-        "Expected 2 statements, got {}",
-        result.statements.len()
+        statement_count, 2,
+        "Expected 2 statements, got {statement_count}",
     );
 
     // reparse_start should be 0
@@ -513,24 +505,27 @@ fn test_incremental_parse_records_reparse_start() {
     );
 
     // reparse_start should match the offset we provided
+    let reparse_start = result.reparse_start;
     assert_eq!(
-        result.reparse_start, offset,
-        "Expected reparse_start to be {}, got {}",
-        offset, result.reparse_start
+        reparse_start, offset,
+        "Expected reparse_start to be {offset}, got {reparse_start}",
     );
 }
 
 #[test]
 fn test_incremental_parse_with_syntax_error() {
     // Test incremental parsing recovers from syntax errors
-    let source = r#"const a = 1;
+    let source = r"const a = 1;
 const b = ;
-const c = 3;"#;
+const c = 3;";
 
     // Parse from start of "const b = ;" (syntax error)
-    let offset = source
-        .find("const b")
-        .expect("pattern should exist in source") as u32;
+    let offset = u32::try_from(
+        source
+            .find("const b")
+            .expect("pattern should exist in source"),
+    )
+    .expect("const b offset should fit in u32");
 
     let mut parser = ParserState::new("test.ts".to_string(), String::new());
     let result = parser.parse_source_file_statements_from_offset(
@@ -540,10 +535,10 @@ const c = 3;"#;
     );
 
     // Should still parse statements (with recovery)
+    let statement_count = result.statements.len();
     assert!(
         !result.statements.is_empty(),
-        "Expected at least 1 statement after recovery, got {}",
-        result.statements.len()
+        "Expected at least 1 statement after recovery, got {statement_count}",
     );
 
     // Should produce an error for the syntax issue
@@ -561,20 +556,19 @@ const c = 3;"#;
 fn test_interface_extends_property_with_asi() {
     // 'extends' as a property name in interface with ASI (no semicolons)
     // Should NOT parse as conditional type
-    let source = r#"
+    let source = r"
 interface JSONSchema4 {
   a?: number
   extends?: string | string[]
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
     let diags = parser.get_diagnostics();
     assert!(
         diags.is_empty(),
-        "Expected no parser errors for 'extends' property with ASI, got {:?}",
-        diags
+        "Expected no parser errors for 'extends' property with ASI, got {diags:?}",
     );
 }
 
@@ -585,8 +579,8 @@ interface JSONSchema4 {
 #[test]
 fn test_incomplete_binary_expression_recovery() {
     // Test recovery from incomplete binary expression: a +
-    let source = r#"const result = a +;
-const next = 1;"#;
+    let source = r"const result = a +;
+const next = 1;";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -600,16 +594,15 @@ const next = 1;"#;
     let error_count = parser.get_diagnostics().len();
     assert!(
         error_count <= 2,
-        "Expected at most 2 errors for recovery, got {}",
-        error_count
+        "Expected at most 2 errors for recovery, got {error_count}",
     );
 }
 
 #[test]
 fn test_incomplete_assignment_recovery() {
     // Test recovery from incomplete assignment: x =
-    let source = r#"let x =;
-let y = 2;"#;
+    let source = r"let x =;
+let y = 2;";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -624,16 +617,15 @@ let y = 2;"#;
     let error_count = parser.get_diagnostics().len();
     assert!(
         error_count <= 2,
-        "Expected at most 2 errors after recovery, got {}",
-        error_count
+        "Expected at most 2 errors after recovery, got {error_count}",
     );
 }
 
 #[test]
 fn test_incomplete_conditional_expression_recovery() {
     // Test recovery from incomplete conditional: a ? b :
-    let source = r#"const result = a ? b :;
-const next = 1;"#;
+    let source = r"const result = a ? b :;
+const next = 1;";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -648,8 +640,8 @@ const next = 1;"#;
 #[test]
 fn test_expression_recovery_at_statement_boundary() {
     // Test that parser properly recovers at statement boundaries
-    let source = r#"const a = 1 +
-const b = 2;"#;
+    let source = r"const a = 1 +
+const b = 2;";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -664,10 +656,10 @@ const b = 2;"#;
 #[test]
 fn test_expression_recovery_preserves_valid_code() {
     // Test that valid code after error is still parsed correctly
-    let source = r#"const bad = ;
+    let source = r"const bad = ;
 function validFunction() {
     return 42;
-}"#;
+}";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -682,8 +674,7 @@ function validFunction() {
     let error_count = parser.get_diagnostics().len();
     assert!(
         error_count <= 2,
-        "Expected limited errors with recovery, got {}",
-        error_count
+        "Expected limited errors with recovery, got {error_count}",
     );
 }
 
@@ -709,8 +700,7 @@ export const foo: typeof import("./a").A.foo;
         .count();
     assert_eq!(
         ts1005_count, 0,
-        "Expected no TS1005 errors for typeof import with member access, got {}",
-        ts1005_count
+        "Expected no TS1005 errors for typeof import with member access, got {ts1005_count}",
     );
 
     // Should have no errors at all
@@ -783,18 +773,15 @@ export const a: import("./test1").T = null as any;
 
     assert_eq!(
         ts1005_count, 0,
-        "Expected no TS1005 errors for import type, got {}",
-        ts1005_count
+        "Expected no TS1005 errors for import type, got {ts1005_count}",
     );
     assert_eq!(
         ts1109_count, 0,
-        "Expected no TS1109 errors for import type, got {}",
-        ts1109_count
+        "Expected no TS1109 errors for import type, got {ts1109_count}",
     );
     assert_eq!(
         ts1359_count, 0,
-        "Expected no TS1359 errors for import type, got {}",
-        ts1359_count
+        "Expected no TS1359 errors for import type, got {ts1359_count}",
     );
 }
 
@@ -845,10 +832,10 @@ export const a: import("./test1").T<typeof import("./test2").theme> = null as an
 #[test]
 fn test_optional_tuple_element() {
     // [T?] should parse correctly without TS1005/TS1110
-    let source = r#"
+    let source = r"
 interface Buzz { id: number; }
 type T = [Buzz?];
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -866,23 +853,21 @@ type T = [Buzz?];
 
     assert_eq!(
         ts1005_count, 0,
-        "Expected no TS1005 errors for optional tuple element, got {}",
-        ts1005_count
+        "Expected no TS1005 errors for optional tuple element, got {ts1005_count}",
     );
     assert_eq!(
         ts1110_count, 0,
-        "Expected no TS1110 errors for optional tuple element, got {}",
-        ts1110_count
+        "Expected no TS1110 errors for optional tuple element, got {ts1110_count}",
     );
 }
 
 #[test]
 fn test_readonly_optional_tuple_element() {
     // readonly [T?] should parse correctly
-    let source = r#"
+    let source = r"
 interface Buzz { id: number; }
 type T = readonly [Buzz?];
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -897,9 +882,9 @@ type T = readonly [Buzz?];
 #[test]
 fn test_named_tuple_element_still_works() {
     // name?: T should still parse as a named tuple element
-    let source = r#"
+    let source = r"
 type T = [name?: string];
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -914,11 +899,11 @@ type T = [name?: string];
 #[test]
 fn test_mixed_tuple_elements() {
     // Mix of optional, named, and rest elements should work
-    let source = r#"
+    let source = r"
 interface A { a: number; }
 interface B { b: string; }
 type T = [A?, name: B, ...rest: string[]];
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -932,12 +917,12 @@ type T = [A?, name: B, ...rest: string[]];
 
 #[test]
 fn test_argument_list_recovery_on_return_keyword() {
-    let source = r#"
+    let source = r"
 const x = fn(
   return
 );
 const y = 1;
-"#;
+";
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
@@ -952,14 +937,13 @@ const y = 1;
     );
     assert!(
         ts1005_count <= 2,
-        "Expected limited TS1005 cascade for malformed argument list, got {} diagnostics: {diagnostics:?}",
-        ts1005_count
+        "Expected limited TS1005 cascade for malformed argument list, got {ts1005_count} diagnostics: {diagnostics:?}",
     );
 }
 
 #[test]
 fn test_invalid_unicode_escape_in_var_no_extra_semicolon_error() {
-    let source = r#"var arg\uxxxx"#;
+    let source = r"var arg\uxxxx";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 
@@ -979,7 +963,7 @@ fn test_invalid_unicode_escape_in_var_no_extra_semicolon_error() {
 
 #[test]
 fn test_invalid_unicode_escape_as_variable_name_no_var_decl_cascade() {
-    let source = r#"var \u0031a;"#;
+    let source = r"var \u0031a;";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let _root = parser.parse_source_file();
 

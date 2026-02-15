@@ -3,12 +3,12 @@ use tsz_parser::parser::ParserState;
 
 #[test]
 fn test_namespace_exports_exclude_non_exported_members() {
-    let source = r#"
+    let source = r"
 namespace M {
     export class A {}
     class B {}
 }
-"#;
+";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
