@@ -388,9 +388,10 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       : directives.module ? parseModule(String(directives.module))
       : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
 
+    // TS6: alwaysStrict defaults to true unless explicitly set to false
     const alwaysStrict = variant.alwaysstrict !== undefined
       ? variant.alwaysstrict === 'true'
-      : (directives.strict === true || directives.alwaysstrict === true);
+      : directives.alwaysstrict !== false;
     const sourceMap = directives.sourcemap === true || directives.inlinesourcemap === true;
     const inlineSourceMap = directives.inlinesourcemap === true;
     const downlevelIteration = directives.downleveliteration === true;
