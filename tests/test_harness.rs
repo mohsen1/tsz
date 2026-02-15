@@ -456,6 +456,57 @@ mod tests {
         assert_eq!(report.failed, 1);
         assert!(!report.all_passed());
     }
+
+    #[test]
+    fn test_public_harness_helpers_are_accessed() {
+        assert_eq!(DEFAULT_TEST_TIMEOUT, Duration::from_secs(300));
+        assert!(default_test_timeout() >= Duration::from_secs(1));
+        assert_eq!(parser_test_timeout(), Duration::from_secs(120));
+        assert_eq!(checker_test_timeout(), Duration::from_secs(180));
+
+        let result = run_result_with_timeout(Duration::from_millis(10), || Ok::<(), &'static str>(()));
+        assert!(matches!(result, TestResult::Passed { .. }));
+        assert!(result.duration().is_some());
+        assert!(!result.is_failed());
+
+        let fixture = ParserTestFixture::with_file_name("const x = 1;", "custom.ts");
+        assert_eq!(fixture.source(), "const x = 1;");
+        assert_eq!(fixture.file_name(), "custom.ts");
+        let _ = fixture.parse_and_bind();
+
+        let failed = TestResult::Failed {
+            message: "x".into(),
+            duration: Duration::from_secs(1),
+        };
+        match failed {
+            TestResult::Failed { message, duration } => {
+                assert_eq!(message, "x");
+                assert_eq!(duration.as_secs(), 1);
+            }
+            _ => panic!("expected failed"),
+        }
+
+        let panicked = TestResult::Panicked {
+            message: "y".into(),
+            duration: Duration::from_secs(2),
+        };
+        match panicked {
+            TestResult::Panicked { message, .. } => assert_eq!(message, "y"),
+            _ => panic!("expected panicked"),
+        }
+
+        let timed_out = TestResult::TimedOut {
+            timeout: Duration::from_secs(3),
+        };
+        match timed_out {
+            TestResult::TimedOut { timeout } => assert_eq!(timeout.as_secs(), 3),
+            _ => panic!("expected timed out"),
+        }
+
+        let mut report = TestReport::default();
+        report.add("missing", TestResult::Passed { duration: Duration::from_millis(1) });
+        report.print_summary();
+    }
 }
 
 // =============================================================================
