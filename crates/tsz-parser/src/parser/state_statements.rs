@@ -2672,13 +2672,22 @@ impl ParserState {
 
     /// Parse left-hand expression for heritage clauses: Foo, Foo.Bar, or Mixin(Parent)
     /// This is a subset of member expression that allows identifiers, dots, and call expressions
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_heritage_left_hand_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
+        let mut expr = self.parse_heritage_left_hand_expression_base();
 
-        // Start with identifier or inline class expression
-        let mut expr = if self.is_token(SyntaxKind::ClassKeyword) {
-            // Inline class expression in extends clause: class extends class Expr {} {...}
+        while let Some(next_expr) = self.parse_heritage_left_hand_expression_chain(start_pos, expr)
+        {
+            expr = next_expr;
+        }
+
+        expr
+    }
+
+    fn parse_heritage_left_hand_expression_base(&mut self) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if self.is_token(SyntaxKind::ClassKeyword) {
             self.parse_class_expression()
         } else if self.is_token(SyntaxKind::ThisKeyword) {
             self.parse_this_expression()
@@ -2698,38 +2707,37 @@ impl ParserState {
                 | SyntaxKind::NoSubstitutionTemplateLiteral
                 | SyntaxKind::TemplateHead
         ) {
-            // Parse literals as valid expressions - the checker will emit TS2507
-            // "Type 'X' is not a constructor function type" for invalid extends clauses
             self.parse_primary_expression()
         } else if self.is_identifier_or_keyword() {
             self.parse_identifier_name()
         } else {
-            // Invalid token in heritage clause - emit more specific error
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Class name or type expression expected",
                 diagnostic_codes::EXPRESSION_EXPECTED,
             );
-            // Create unknown token and continue
             let start_pos = self.token_pos();
             let end_pos = self.token_end();
             self.next_token();
             self.arena
                 .add_token(SyntaxKind::Unknown as u16, start_pos, end_pos)
-        };
+        }
+    }
 
-        // Handle property access chain and call expressions: Foo.Bar.Baz or Mixin(Parent)
-        loop {
-            if self.is_token(SyntaxKind::DotToken) {
+    fn parse_heritage_left_hand_expression_chain(
+        &mut self,
+        start_pos: u32,
+        expr: NodeIndex,
+    ) -> Option<NodeIndex> {
+        match self.token() {
+            SyntaxKind::DotToken => {
                 self.next_token();
                 let name = if self.is_identifier_or_keyword() {
                     self.parse_identifier_name()
                 } else {
                     self.parse_identifier()
                 };
-
                 let end_pos = self.token_end();
-                expr = self.arena.add_access_expr(
+                Some(self.arena.add_access_expr(
                     syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
                     start_pos,
                     end_pos,
@@ -2738,19 +2746,17 @@ impl ParserState {
                         name_or_argument: name,
                         question_dot_token: false,
                     },
-                );
-            } else if self.is_token(SyntaxKind::QuestionDotToken) {
-                // Optional chaining in heritage clause: A?.B
-                // TypeScript allows optional chaining in extends/implements clauses
+                ))
+            }
+            SyntaxKind::QuestionDotToken => {
                 self.next_token();
                 let name = if self.is_identifier_or_keyword() {
                     self.parse_identifier_name()
                 } else {
                     self.parse_identifier()
                 };
-
                 let end_pos = self.token_end();
-                expr = self.arena.add_access_expr(
+                Some(self.arena.add_access_expr(
                     syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
                     start_pos,
                     end_pos,
@@ -2759,93 +2765,76 @@ impl ParserState {
                         name_or_argument: name,
                         question_dot_token: true,
                     },
-                );
-            } else if self.is_token(SyntaxKind::LessThanToken) {
-                // Generic call expression: base<T>() or base<T, U>()
-                // Parse type arguments then check for call
+                ))
+            }
+            SyntaxKind::LessThanToken => {
                 self.next_token();
                 let mut type_args = Vec::new();
                 while !self.is_token(SyntaxKind::GreaterThanToken)
                     && !self.is_token(SyntaxKind::EndOfFileToken)
                 {
-                    let type_arg = self.parse_type();
-                    type_args.push(type_arg);
+                    type_args.push(self.parse_type());
                     if !self.parse_optional(SyntaxKind::CommaToken) {
                         break;
                     }
                 }
                 self.parse_expected(SyntaxKind::GreaterThanToken);
-
-                // Now check for call expression after type arguments
                 if self.is_token(SyntaxKind::OpenParenToken) {
                     self.next_token();
-                    let mut args = Vec::new();
-                    while !self.is_token(SyntaxKind::CloseParenToken)
-                        && !self.is_token(SyntaxKind::EndOfFileToken)
-                    {
-                        let arg = self.parse_assignment_expression();
-                        args.push(arg);
-                        if !self.parse_optional(SyntaxKind::CommaToken) {
-                            break;
-                        }
-                    }
-                    let end_pos = self.token_end();
-                    self.parse_expected(SyntaxKind::CloseParenToken);
-                    expr = self.arena.add_call_expr(
+                    let (end_pos, args) = self.parse_heritage_call_arguments();
+                    Some(self.arena.add_call_expr(
                         syntax_kind_ext::CALL_EXPRESSION,
                         start_pos,
                         end_pos,
                         crate::parser::node::CallExprData {
                             expression: expr,
                             type_arguments: Some(self.make_node_list(type_args)),
-                            arguments: Some(self.make_node_list(args)),
+                            arguments: Some(args),
                         },
-                    );
+                    ))
                 } else {
-                    // Just type arguments, no call - create expression with type arguments
-                    let end_pos = self.token_end();
-                    expr = self.arena.add_expr_with_type_args(
+                    Some(self.arena.add_expr_with_type_args(
                         syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS,
                         start_pos,
-                        end_pos,
+                        self.token_end(),
                         crate::parser::node::ExprWithTypeArgsData {
                             expression: expr,
                             type_arguments: Some(self.make_node_list(type_args)),
                         },
-                    );
-                    // Don't break here - continue the loop for potential chaining
+                    ))
                 }
-            } else if self.is_token(SyntaxKind::OpenParenToken) {
-                // Call expression without type args: Mixin(Parent)
+            }
+            SyntaxKind::OpenParenToken => {
                 self.next_token();
-                let mut args = Vec::new();
-                while !self.is_token(SyntaxKind::CloseParenToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
-                    let arg = self.parse_assignment_expression();
-                    args.push(arg);
-                    if !self.parse_optional(SyntaxKind::CommaToken) {
-                        break;
-                    }
-                }
-                let end_pos = self.token_end();
-                self.parse_expected(SyntaxKind::CloseParenToken);
-                expr = self.arena.add_call_expr(
+                let (end_pos, args) = self.parse_heritage_call_arguments();
+                Some(self.arena.add_call_expr(
                     syntax_kind_ext::CALL_EXPRESSION,
                     start_pos,
                     end_pos,
                     crate::parser::node::CallExprData {
                         expression: expr,
                         type_arguments: None,
-                        arguments: Some(self.make_node_list(args)),
+                        arguments: Some(args),
                     },
-                );
-            } else {
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    fn parse_heritage_call_arguments(&mut self) -> (u32, NodeList) {
+        let mut args = Vec::new();
+        while !self.is_token(SyntaxKind::CloseParenToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            args.push(self.parse_assignment_expression());
+            if !self.parse_optional(SyntaxKind::CommaToken) {
                 break;
             }
         }
-
-        expr
+        let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::CloseParenToken);
+        (end_pos, self.make_node_list(args))
     }
 
     /// Parse class member modifiers (static, public, private, protected, readonly, abstract, override)
