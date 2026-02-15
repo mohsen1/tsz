@@ -548,6 +548,16 @@ impl<'a> FlowAnalyzer<'a> {
             return Some(self.interner.reference(tsz_solver::SymbolRef(sym_id.0)));
         }
 
+        // Global constructor variables (e.g., `declare var Array: ArrayConstructor`)
+        // have both INTERFACE and VARIABLE flags. The interface type IS the instance type
+        // since interfaces describe instances, not constructors.
+        // This handles `x instanceof Array`, `x instanceof Date`, etc.
+        if (symbol.flags & symbol_flags::INTERFACE) != 0
+            && (symbol.flags & symbol_flags::VARIABLE) != 0
+        {
+            return Some(self.interner.reference(tsz_solver::SymbolRef(sym_id.0)));
+        }
+
         None
     }
 
