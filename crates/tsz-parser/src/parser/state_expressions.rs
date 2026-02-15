@@ -3072,44 +3072,31 @@ impl ParserState {
             );
         }
 
-        // NOTE: public/private/protected are contextual keywords in object literals.
-        // When followed by get/set/async, they're parsed as modifiers and TS1042 is reported.
-        // Otherwise, they're parsed as property names (contextual keywords).
+        // NOTE: public/private/protected/abstract are contextual keywords in object literals.
+        // When used as a modifier (followed by another property name), TS1042 is reported.
+        // When used as a property name (followed by `:`, `,`, `}`, etc.), they're treated as identifiers.
         if matches!(
             self.token(),
-            SyntaxKind::PrivateKeyword | SyntaxKind::ProtectedKeyword | SyntaxKind::PublicKeyword
-        ) {
-            // Look ahead to check if this is followed by an accessor or method
-            let snapshot = self.scanner.save_state();
-            let current = self.current_token;
-            self.next_token(); // skip public/private/protected
-
-            // Check if followed by get/set/async (accessor or method modifier)
-            let is_accessor_or_method = matches!(
-                self.token(),
-                SyntaxKind::GetKeyword | SyntaxKind::SetKeyword | SyntaxKind::AsyncKeyword
+            SyntaxKind::PrivateKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::AbstractKeyword
+        ) && !self.look_ahead_is_property_name_after_keyword()
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            let modifier_name = match self.token() {
+                SyntaxKind::PublicKeyword => "'public'",
+                SyntaxKind::PrivateKeyword => "'private'",
+                SyntaxKind::ProtectedKeyword => "'protected'",
+                SyntaxKind::AbstractKeyword => "'abstract'",
+                _ => "modifier",
+            };
+            self.parse_error_at_current_token(
+                &format!("{modifier_name} modifier cannot be used here."),
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
             );
-
-            self.scanner.restore_state(snapshot);
-            self.current_token = current;
-
-            if is_accessor_or_method {
-                use tsz_common::diagnostics::diagnostic_codes;
-                // Report TS1042 for the specific modifier
-                let modifier_name = match self.token() {
-                    SyntaxKind::PublicKeyword => "'public'",
-                    SyntaxKind::PrivateKeyword => "'private'",
-                    SyntaxKind::ProtectedKeyword => "'protected'",
-                    _ => "modifier",
-                };
-                self.parse_error_at_current_token(
-                    &format!("{modifier_name} modifier cannot be used here."),
-                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE, // TS1042
-                );
-                self.next_token(); // consume the modifier
-                // Continue parsing - the next token should be get/set/async
-            }
-            // If not followed by accessor/method, treat as property name (fall through)
+            self.next_token(); // consume the modifier
+            // Continue parsing the actual property/method
         }
 
         // Handle get accessor: get foo() { }
