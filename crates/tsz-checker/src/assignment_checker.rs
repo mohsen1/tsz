@@ -261,6 +261,25 @@ impl<'a> CheckerState<'a> {
         };
         let name = &id_data.escaped_text;
 
+        // `undefined` is not a variable — it's a global constant that cannot be assigned to.
+        // TypeScript emits TS2539 for `undefined = ...` or `undefined++` etc.
+        if name == "undefined" {
+            let message = format_message(
+                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
+                &[name],
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                file: self.ctx.file_name.clone(),
+                start: node.pos,
+                length: node.end.saturating_sub(node.pos),
+                message_text: message,
+                category: DiagnosticCategory::Error,
+                code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
+                related_information: Vec::new(),
+            });
+            return true;
+        }
+
         // Check for built-in global functions that always error with TS2630
         // Note: `arguments` is NOT included here because inside function bodies,
         // `arguments` is an IArguments object (handled by type_computation_complex.rs).
