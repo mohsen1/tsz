@@ -492,6 +492,15 @@ check_submodule_clean() {
     # This catches accidental `cd TypeScript && git checkout <other>` or detached HEAD drift.
     local expected_sha
     expected_sha=$(cd "$REPO_ROOT" && git ls-tree HEAD TypeScript 2>/dev/null | awk '{print $3}')
+
+    # Prefer repository pinned TypeScript SHA so local workflow can proceed with
+    # the intended submodule version tracked in scripts/typescript-versions.json
+    # even before the superproject commit is updated.
+    local pinned_sha
+    pinned_sha=$(node -e "const fs = require('fs'); const p = 'scripts/typescript-versions.json'; try { const v = JSON.parse(fs.readFileSync(p, 'utf8')); process.stdout.write(v.current || ''); } catch {}" | tr -d '\n')
+    if [ -n "$pinned_sha" ]; then
+        expected_sha="$pinned_sha"
+    fi
     local actual_sha
     actual_sha=$(cd "$ts_dir" && git rev-parse HEAD 2>/dev/null)
 
