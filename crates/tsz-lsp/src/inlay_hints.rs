@@ -60,7 +60,7 @@ pub struct InlayHint {
 impl InlayHint {
     /// Create a new inlay hint.
     pub fn new(position: Position, label: String, kind: InlayHintKind) -> Self {
-        InlayHint {
+        Self {
             position,
             label,
             kind,
@@ -70,7 +70,7 @@ impl InlayHint {
 
     /// Create a parameter name hint.
     pub fn parameter(position: Position, param_name: String) -> Self {
-        InlayHint::new(
+        Self::new(
             position,
             format!(": {}", param_name),
             InlayHintKind::Parameter,
@@ -79,7 +79,7 @@ impl InlayHint {
 
     /// Create a type hint.
     pub fn type_hint(position: Position, type_name: String) -> Self {
-        InlayHint::new(position, format!(": {}", type_name), InlayHintKind::Type)
+        Self::new(position, format!(": {}", type_name), InlayHintKind::Type)
     }
 
     /// Convert to LSP range (for compatibility with other LSP features).

@@ -159,7 +159,7 @@ impl AnyPropagationRules {
     /// By default, `any` suppression is enabled for backward compatibility
     /// with existing TypeScript behavior.
     pub fn new() -> Self {
-        AnyPropagationRules {
+        Self {
             allow_any_suppression: true,
         }
     }
@@ -170,7 +170,7 @@ impl AnyPropagationRules {
     /// In strict mode, even when `any` is involved, the type checker will
     /// perform structural checking and report mismatches.
     pub fn strict() -> Self {
-        AnyPropagationRules {
+        Self {
             allow_any_suppression: false,
         }
     }

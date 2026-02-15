@@ -138,7 +138,7 @@ impl ExportSignature {
             }
         }
 
-        ExportSignature(hasher.finish())
+        Self(hasher.finish())
     }
 }
 

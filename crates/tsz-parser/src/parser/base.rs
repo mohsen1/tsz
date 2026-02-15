@@ -38,8 +38,8 @@ impl<'de> serde::Deserialize<'de> for TextRange {
 impl TextRange {
     #[wasm_bindgen(constructor)]
     #[must_use]
-    pub fn new(pos: u32, end: u32) -> TextRange {
-        TextRange { pos, end }
+    pub fn new(pos: u32, end: u32) -> Self {
+        Self { pos, end }
     }
 }
 
@@ -49,7 +49,7 @@ impl TextRange {
 pub struct NodeIndex(pub u32);
 
 impl NodeIndex {
-    pub const NONE: NodeIndex = NodeIndex(u32::MAX);
+    pub const NONE: Self = Self(u32::MAX);
 
     #[inline]
     #[must_use]
@@ -75,8 +75,8 @@ pub struct NodeList {
 
 impl NodeList {
     #[must_use]
-    pub fn new() -> NodeList {
-        NodeList {
+    pub fn new() -> Self {
+        Self {
             nodes: Vec::new(),
             pos: 0,
             end: 0,
@@ -85,8 +85,8 @@ impl NodeList {
     }
 
     #[must_use]
-    pub fn with_capacity(capacity: usize) -> NodeList {
-        NodeList {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
             nodes: Vec::with_capacity(capacity),
             pos: 0,
             end: 0,

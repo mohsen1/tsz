@@ -210,7 +210,7 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
 impl<'a> CompatChecker<'a, NoopResolver> {
     /// Create a new compatibility checker without a resolver.
     /// Note: Callers should configure strict_function_types explicitly via set_strict_function_types()
-    pub fn new(interner: &'a dyn TypeDatabase) -> CompatChecker<'a, NoopResolver> {
+    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         CompatChecker {
             interner,
             query_db: None,

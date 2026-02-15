@@ -310,13 +310,10 @@ impl<'a> CommonJsTransformContext<'a> {
 
         if is_exported {
             let func_name = get_identifier_text(self.arena, func_data.name)?;
-            let mut result = Vec::new();
-
-            // The function declaration
-            result.push(IRNode::ASTRef(func_idx));
-
-            // Export assignment
-            result.push(IRNode::ExportAssignment { name: func_name });
+            let result = vec![
+                IRNode::ASTRef(func_idx),
+                IRNode::ExportAssignment { name: func_name },
+            ];
 
             Some(IRNode::Block(result))
         } else {
@@ -332,13 +329,10 @@ impl<'a> CommonJsTransformContext<'a> {
 
         if is_exported {
             let class_name = get_identifier_text(self.arena, class_data.name)?;
-            let mut result = Vec::new();
-
-            // The class declaration
-            result.push(IRNode::ASTRef(class_idx));
-
-            // Export assignment
-            result.push(IRNode::ExportAssignment { name: class_name });
+            let result = vec![
+                IRNode::ASTRef(class_idx),
+                IRNode::ExportAssignment { name: class_name },
+            ];
 
             Some(IRNode::Block(result))
         } else {
@@ -354,13 +348,10 @@ impl<'a> CommonJsTransformContext<'a> {
 
         if is_exported {
             let enum_name = get_identifier_text(self.arena, enum_data.name)?;
-            let mut result = Vec::new();
-
-            // The enum declaration
-            result.push(IRNode::ASTRef(enum_idx));
-
-            // Export assignment
-            result.push(IRNode::ExportAssignment { name: enum_name });
+            let result = vec![
+                IRNode::ASTRef(enum_idx),
+                IRNode::ExportAssignment { name: enum_name },
+            ];
 
             Some(IRNode::Block(result))
         } else {
@@ -376,13 +367,10 @@ impl<'a> CommonJsTransformContext<'a> {
 
         if is_exported {
             let ns_name = get_identifier_text(self.arena, ns_data.name)?;
-            let mut result = Vec::new();
-
-            // The namespace declaration
-            result.push(IRNode::ASTRef(ns_idx));
-
-            // Export assignment
-            result.push(IRNode::ExportAssignment { name: ns_name });
+            let result = vec![
+                IRNode::ASTRef(ns_idx),
+                IRNode::ExportAssignment { name: ns_name },
+            ];
 
             Some(IRNode::Block(result))
         } else {

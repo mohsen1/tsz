@@ -26,7 +26,7 @@ pub struct StickyFreshnessTracker {
 impl StickyFreshnessTracker {
     /// Create a new tracker.
     pub fn new() -> Self {
-        StickyFreshnessTracker {
+        Self {
             fresh_bindings: FxHashMap::default(),
             fresh_property_accesses: FxHashSet::default(),
         }

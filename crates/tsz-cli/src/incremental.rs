@@ -165,7 +165,7 @@ impl BuildInfo {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read build info: {}", path.display()))?;
 
-        let build_info: BuildInfo = serde_json::from_str(&content)
+        let build_info: Self = serde_json::from_str(&content)
             .with_context(|| format!("failed to parse build info: {}", path.display()))?;
 
         // Validate version compatibility (Format version)

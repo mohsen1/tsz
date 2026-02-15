@@ -61,31 +61,31 @@ impl PropertyAccessResult {
     /// Returns true if this is a successful property access.
     #[inline]
     pub fn is_success(&self) -> bool {
-        matches!(self, PropertyAccessResult::Success { .. })
+        matches!(self, Self::Success { .. })
     }
 
     /// Returns true if the property was not found.
     #[inline]
     pub fn is_not_found(&self) -> bool {
-        matches!(self, PropertyAccessResult::PropertyNotFound { .. })
+        matches!(self, Self::PropertyNotFound { .. })
     }
 
     /// Returns true if the type is possibly null or undefined.
     #[inline]
     pub fn is_possibly_null_or_undefined(&self) -> bool {
-        matches!(self, PropertyAccessResult::PossiblyNullOrUndefined { .. })
+        matches!(self, Self::PossiblyNullOrUndefined { .. })
     }
 
     /// Returns true if the type is unknown.
     #[inline]
     pub fn is_unknown(&self) -> bool {
-        matches!(self, PropertyAccessResult::IsUnknown)
+        matches!(self, Self::IsUnknown)
     }
 
     /// Extracts the type_id from a Success result, or None otherwise.
     pub fn success_type(&self) -> Option<TypeId> {
         match self {
-            PropertyAccessResult::Success { type_id, .. } => Some(*type_id),
+            Self::Success { type_id, .. } => Some(*type_id),
             _ => None,
         }
     }
@@ -93,7 +93,7 @@ impl PropertyAccessResult {
     /// Extracts both type_id and from_index_signature from a Success result.
     pub fn success_info(&self) -> Option<(TypeId, bool)> {
         match self {
-            PropertyAccessResult::Success {
+            Self::Success {
                 type_id,
                 from_index_signature,
                 ..
@@ -108,11 +108,11 @@ impl PropertyAccessResult {
         F: FnOnce(TypeId) -> TypeId,
     {
         match self {
-            PropertyAccessResult::Success {
+            Self::Success {
                 type_id,
                 write_type,
                 from_index_signature,
-            } => PropertyAccessResult::Success {
+            } => Self::Success {
                 type_id: f(type_id),
                 write_type,
                 from_index_signature,
@@ -129,7 +129,7 @@ impl PropertyAccessResult {
     /// Extracts the property_type from a PossiblyNullOrUndefined result.
     pub fn nullable_property_type(&self) -> Option<TypeId> {
         match self {
-            PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => *property_type,
+            Self::PossiblyNullOrUndefined { property_type, .. } => *property_type,
             _ => None,
         }
     }

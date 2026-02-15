@@ -61,16 +61,16 @@ pub enum TypeofKind {
 impl TypeofKind {
     /// Parse a typeof result string into a TypeofKind.
     /// Returns None for non-standard typeof strings (which don't narrow).
-    pub fn parse(s: &str) -> Option<TypeofKind> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "string" => Some(TypeofKind::String),
-            "number" => Some(TypeofKind::Number),
-            "boolean" => Some(TypeofKind::Boolean),
-            "bigint" => Some(TypeofKind::BigInt),
-            "symbol" => Some(TypeofKind::Symbol),
-            "undefined" => Some(TypeofKind::Undefined),
-            "object" => Some(TypeofKind::Object),
-            "function" => Some(TypeofKind::Function),
+            "string" => Some(Self::String),
+            "number" => Some(Self::Number),
+            "boolean" => Some(Self::Boolean),
+            "bigint" => Some(Self::BigInt),
+            "symbol" => Some(Self::Symbol),
+            "undefined" => Some(Self::Undefined),
+            "object" => Some(Self::Object),
+            "function" => Some(Self::Function),
             _ => None,
         }
     }
@@ -78,14 +78,14 @@ impl TypeofKind {
     /// Get the string representation of this typeof kind.
     pub fn as_str(&self) -> &'static str {
         match self {
-            TypeofKind::String => "string",
-            TypeofKind::Number => "number",
-            TypeofKind::Boolean => "boolean",
-            TypeofKind::BigInt => "bigint",
-            TypeofKind::Symbol => "symbol",
-            TypeofKind::Undefined => "undefined",
-            TypeofKind::Object => "object",
-            TypeofKind::Function => "function",
+            Self::String => "string",
+            Self::Number => "number",
+            Self::Boolean => "boolean",
+            Self::BigInt => "bigint",
+            Self::Symbol => "symbol",
+            Self::Undefined => "undefined",
+            Self::Object => "object",
+            Self::Function => "function",
         }
     }
 }

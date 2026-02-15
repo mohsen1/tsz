@@ -306,7 +306,7 @@ impl<'a> CheckerState<'a> {
         types: &'a dyn QueryDatabase,
         file_name: String,
         compiler_options: CheckerOptions,
-        parent: &CheckerState<'a>,
+        parent: &Self,
     ) -> Self {
         CheckerState {
             ctx: CheckerContext::with_parent_cache(

@@ -77,7 +77,7 @@ impl UnifyKey for InferenceVar {
     }
 
     fn from_index(u: u32) -> Self {
-        InferenceVar(u)
+        Self(u)
     }
 
     fn tag() -> &'static str {
@@ -141,7 +141,7 @@ pub struct ConstraintSet {
 
 impl ConstraintSet {
     pub fn new() -> Self {
-        ConstraintSet {
+        Self {
             lower_bounds: Vec::new(),
             upper_bounds: Vec::new(),
         }
@@ -165,7 +165,7 @@ impl ConstraintSet {
             }
         }
 
-        ConstraintSet {
+        Self {
             lower_bounds,
             upper_bounds,
         }
@@ -190,7 +190,7 @@ impl ConstraintSet {
         self.lower_bounds.is_empty() && self.upper_bounds.is_empty()
     }
 
-    pub fn merge_from(&mut self, other: ConstraintSet) {
+    pub fn merge_from(&mut self, other: Self) {
         for ty in other.lower_bounds {
             self.add_lower_bound(ty);
         }

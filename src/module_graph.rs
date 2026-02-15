@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 pub struct ModuleId(pub u32);
 
 impl ModuleId {
-    pub const NONE: ModuleId = ModuleId(u32::MAX);
+    pub const NONE: Self = Self(u32::MAX);
 
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX

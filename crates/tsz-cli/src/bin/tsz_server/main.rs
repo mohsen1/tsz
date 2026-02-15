@@ -430,7 +430,7 @@ pub(crate) enum LogLevel {
 
 impl LogConfig {
     fn from_env_and_args(args: &ServerArgs) -> Self {
-        let mut config = LogConfig {
+        let mut config = Self {
             level: LogLevel::Off,
             file: None,
             trace_to_console: false,

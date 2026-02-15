@@ -82,69 +82,69 @@ pub struct TypeId(pub u32);
 
 impl TypeId {
     /// Internal placeholder - no valid type.
-    pub const NONE: TypeId = TypeId(0);
+    pub const NONE: Self = Self(0);
 
     /// Error sentinel - type resolution failed.
     /// Propagates through operations to prevent cascading errors.
     /// See struct-level docs for detailed semantics.
-    pub const ERROR: TypeId = TypeId(1);
+    pub const ERROR: Self = Self(1);
 
     /// The bottom type - represents values that can never exist.
     /// Used for exhaustive checks and functions that never return.
-    pub const NEVER: TypeId = TypeId(2);
+    pub const NEVER: Self = Self(2);
 
     /// TypeScript's `unknown` type - type-safe top type.
     /// Requires type narrowing before use. See struct-level docs.
-    pub const UNKNOWN: TypeId = TypeId(3);
+    pub const UNKNOWN: Self = Self(3);
 
     /// TypeScript's `any` type - opts out of type checking.
     /// All operations succeed, returning `any`. See struct-level docs.
-    pub const ANY: TypeId = TypeId(4);
+    pub const ANY: Self = Self(4);
 
     /// The `void` type - used for functions with no meaningful return.
-    pub const VOID: TypeId = TypeId(5);
+    pub const VOID: Self = Self(5);
 
     /// The `undefined` type - represents the undefined value.
-    pub const UNDEFINED: TypeId = TypeId(6);
+    pub const UNDEFINED: Self = Self(6);
 
     /// The `null` type - represents the null value.
-    pub const NULL: TypeId = TypeId(7);
+    pub const NULL: Self = Self(7);
 
     /// The `boolean` type - union of true | false.
-    pub const BOOLEAN: TypeId = TypeId(8);
+    pub const BOOLEAN: Self = Self(8);
 
     /// The `number` type - all numeric values.
-    pub const NUMBER: TypeId = TypeId(9);
+    pub const NUMBER: Self = Self(9);
 
     /// The `string` type - all string values.
-    pub const STRING: TypeId = TypeId(10);
+    pub const STRING: Self = Self(10);
 
     /// The `bigint` type - arbitrary precision integers.
-    pub const BIGINT: TypeId = TypeId(11);
+    pub const BIGINT: Self = Self(11);
 
     /// The `symbol` type - unique symbol values.
-    pub const SYMBOL: TypeId = TypeId(12);
+    pub const SYMBOL: Self = Self(12);
 
     /// The `object` type - any non-primitive value.
-    pub const OBJECT: TypeId = TypeId(13);
+    pub const OBJECT: Self = Self(13);
 
     /// The literal type `true`.
-    pub const BOOLEAN_TRUE: TypeId = TypeId(14);
+    pub const BOOLEAN_TRUE: Self = Self(14);
 
     /// The literal type `false`.
-    pub const BOOLEAN_FALSE: TypeId = TypeId(15);
+    pub const BOOLEAN_FALSE: Self = Self(15);
 
     /// The `Function` type - any callable.
-    pub const FUNCTION: TypeId = TypeId(16);
+    pub const FUNCTION: Self = Self(16);
 
     /// Synthetic Promise base type for Promise<T> when Promise symbol is not resolved.
     /// Used to allow promise_like_return_type_argument to extract T from await expressions.
-    pub const PROMISE_BASE: TypeId = TypeId(17);
+    pub const PROMISE_BASE: Self = Self(17);
 
     /// Internal sentinel indicating that expression checking should be delegated
     /// to CheckerState for complex cases that need full checker context.
     /// This is NOT a real type and should never escape ExpressionChecker/CheckerState.
-    pub const DELEGATE: TypeId = TypeId(18);
+    pub const DELEGATE: Self = Self(18);
 
     /// First user-defined type ID (after built-in intrinsics)
     pub const FIRST_USER: u32 = 100;
@@ -375,32 +375,30 @@ impl InferencePriority {
     /// Multi-pass inference processes constraints in increasing priority order.
     /// Returns true if this priority matches or is lower than the current pass level.
     pub fn should_process_in_pass(&self, current_pass: Self) -> bool {
-        *self >= current_pass && *self != InferencePriority::Circular
+        *self >= current_pass && *self != Self::Circular
     }
 
     /// Get the next priority level for multi-pass inference.
     pub fn next_level(&self) -> Option<Self> {
         match self {
-            InferencePriority::NakedTypeVariable => Some(InferencePriority::HomomorphicMappedType),
-            InferencePriority::HomomorphicMappedType => {
-                Some(InferencePriority::PartialHomomorphicMappedType)
-            }
-            InferencePriority::PartialHomomorphicMappedType => Some(InferencePriority::MappedType),
-            InferencePriority::MappedType => Some(InferencePriority::ContravariantConditional),
-            InferencePriority::ContravariantConditional => Some(InferencePriority::ReturnType),
-            InferencePriority::ReturnType => Some(InferencePriority::LowPriority),
-            InferencePriority::LowPriority | InferencePriority::Circular => None,
+            Self::NakedTypeVariable => Some(Self::HomomorphicMappedType),
+            Self::HomomorphicMappedType => Some(Self::PartialHomomorphicMappedType),
+            Self::PartialHomomorphicMappedType => Some(Self::MappedType),
+            Self::MappedType => Some(Self::ContravariantConditional),
+            Self::ContravariantConditional => Some(Self::ReturnType),
+            Self::ReturnType => Some(Self::LowPriority),
+            Self::LowPriority | Self::Circular => None,
         }
     }
 
     /// Default priority for normal constraint collection.
-    pub const NORMAL: Self = InferencePriority::ReturnType;
+    pub const NORMAL: Self = Self::ReturnType;
 
     /// Highest priority for explicit type annotations.
-    pub const HIGHEST: Self = InferencePriority::NakedTypeVariable;
+    pub const HIGHEST: Self = Self::NakedTypeVariable;
 
     /// Lowest priority for fallback inference.
-    pub const LOWEST: Self = InferencePriority::LowPriority;
+    pub const LOWEST: Self = Self::LowPriority;
 }
 
 /// Interned list of TypeId values (e.g., unions/intersections).
@@ -480,21 +478,21 @@ impl WellKnownSymbolKey {
     /// This follows the convention of using `"[Symbol.iterator]"` etc. as property names.
     pub fn as_property_name(&self) -> &'static str {
         match self {
-            WellKnownSymbolKey::Iterator => "[Symbol.iterator]",
-            WellKnownSymbolKey::AsyncIterator => "[Symbol.asyncIterator]",
-            WellKnownSymbolKey::HasInstance => "[Symbol.hasInstance]",
-            WellKnownSymbolKey::IsConcatSpreadable => "[Symbol.isConcatSpreadable]",
-            WellKnownSymbolKey::Match => "[Symbol.match]",
-            WellKnownSymbolKey::MatchAll => "[Symbol.matchAll]",
-            WellKnownSymbolKey::Replace => "[Symbol.replace]",
-            WellKnownSymbolKey::Search => "[Symbol.search]",
-            WellKnownSymbolKey::Split => "[Symbol.split]",
-            WellKnownSymbolKey::Species => "[Symbol.species]",
-            WellKnownSymbolKey::ToPrimitive => "[Symbol.toPrimitive]",
-            WellKnownSymbolKey::ToStringTag => "[Symbol.toStringTag]",
-            WellKnownSymbolKey::Unscopables => "[Symbol.unscopables]",
-            WellKnownSymbolKey::Dispose => "[Symbol.dispose]",
-            WellKnownSymbolKey::AsyncDispose => "[Symbol.asyncDispose]",
+            Self::Iterator => "[Symbol.iterator]",
+            Self::AsyncIterator => "[Symbol.asyncIterator]",
+            Self::HasInstance => "[Symbol.hasInstance]",
+            Self::IsConcatSpreadable => "[Symbol.isConcatSpreadable]",
+            Self::Match => "[Symbol.match]",
+            Self::MatchAll => "[Symbol.matchAll]",
+            Self::Replace => "[Symbol.replace]",
+            Self::Search => "[Symbol.search]",
+            Self::Split => "[Symbol.split]",
+            Self::Species => "[Symbol.species]",
+            Self::ToPrimitive => "[Symbol.toPrimitive]",
+            Self::ToStringTag => "[Symbol.toStringTag]",
+            Self::Unscopables => "[Symbol.unscopables]",
+            Self::Dispose => "[Symbol.dispose]",
+            Self::AsyncDispose => "[Symbol.asyncDispose]",
         }
     }
 
@@ -502,21 +500,21 @@ impl WellKnownSymbolKey {
     /// Returns `None` if the string is not a well-known symbol property name.
     pub fn from_property_name(name: &str) -> Option<Self> {
         match name {
-            "[Symbol.iterator]" => Some(WellKnownSymbolKey::Iterator),
-            "[Symbol.asyncIterator]" => Some(WellKnownSymbolKey::AsyncIterator),
-            "[Symbol.hasInstance]" => Some(WellKnownSymbolKey::HasInstance),
-            "[Symbol.isConcatSpreadable]" => Some(WellKnownSymbolKey::IsConcatSpreadable),
-            "[Symbol.match]" => Some(WellKnownSymbolKey::Match),
-            "[Symbol.matchAll]" => Some(WellKnownSymbolKey::MatchAll),
-            "[Symbol.replace]" => Some(WellKnownSymbolKey::Replace),
-            "[Symbol.search]" => Some(WellKnownSymbolKey::Search),
-            "[Symbol.split]" => Some(WellKnownSymbolKey::Split),
-            "[Symbol.species]" => Some(WellKnownSymbolKey::Species),
-            "[Symbol.toPrimitive]" => Some(WellKnownSymbolKey::ToPrimitive),
-            "[Symbol.toStringTag]" => Some(WellKnownSymbolKey::ToStringTag),
-            "[Symbol.unscopables]" => Some(WellKnownSymbolKey::Unscopables),
-            "[Symbol.dispose]" => Some(WellKnownSymbolKey::Dispose),
-            "[Symbol.asyncDispose]" => Some(WellKnownSymbolKey::AsyncDispose),
+            "[Symbol.iterator]" => Some(Self::Iterator),
+            "[Symbol.asyncIterator]" => Some(Self::AsyncIterator),
+            "[Symbol.hasInstance]" => Some(Self::HasInstance),
+            "[Symbol.isConcatSpreadable]" => Some(Self::IsConcatSpreadable),
+            "[Symbol.match]" => Some(Self::Match),
+            "[Symbol.matchAll]" => Some(Self::MatchAll),
+            "[Symbol.replace]" => Some(Self::Replace),
+            "[Symbol.search]" => Some(Self::Search),
+            "[Symbol.split]" => Some(Self::Split),
+            "[Symbol.species]" => Some(Self::Species),
+            "[Symbol.toPrimitive]" => Some(Self::ToPrimitive),
+            "[Symbol.toStringTag]" => Some(Self::ToStringTag),
+            "[Symbol.unscopables]" => Some(Self::Unscopables),
+            "[Symbol.dispose]" => Some(Self::Dispose),
+            "[Symbol.asyncDispose]" => Some(Self::AsyncDispose),
             _ => None,
         }
     }
@@ -742,19 +740,19 @@ pub enum StringIntrinsicKind {
 impl IntrinsicKind {
     pub fn to_type_id(self) -> TypeId {
         match self {
-            IntrinsicKind::Any => TypeId::ANY,
-            IntrinsicKind::Unknown => TypeId::UNKNOWN,
-            IntrinsicKind::Never => TypeId::NEVER,
-            IntrinsicKind::Void => TypeId::VOID,
-            IntrinsicKind::Null => TypeId::NULL,
-            IntrinsicKind::Undefined => TypeId::UNDEFINED,
-            IntrinsicKind::Boolean => TypeId::BOOLEAN,
-            IntrinsicKind::Number => TypeId::NUMBER,
-            IntrinsicKind::String => TypeId::STRING,
-            IntrinsicKind::Bigint => TypeId::BIGINT,
-            IntrinsicKind::Symbol => TypeId::SYMBOL,
-            IntrinsicKind::Object => TypeId::OBJECT,
-            IntrinsicKind::Function => TypeId::FUNCTION,
+            Self::Any => TypeId::ANY,
+            Self::Unknown => TypeId::UNKNOWN,
+            Self::Never => TypeId::NEVER,
+            Self::Void => TypeId::VOID,
+            Self::Null => TypeId::NULL,
+            Self::Undefined => TypeId::UNDEFINED,
+            Self::Boolean => TypeId::BOOLEAN,
+            Self::Number => TypeId::NUMBER,
+            Self::String => TypeId::STRING,
+            Self::Bigint => TypeId::BIGINT,
+            Self::Symbol => TypeId::SYMBOL,
+            Self::Object => TypeId::OBJECT,
+            Self::Function => TypeId::FUNCTION,
         }
     }
 }
@@ -1185,18 +1183,18 @@ pub enum TemplateSpan {
 impl TemplateSpan {
     /// Check if this span is a text span
     pub fn is_text(&self) -> bool {
-        matches!(self, TemplateSpan::Text(_))
+        matches!(self, Self::Text(_))
     }
 
     /// Check if this span is a type interpolation
     pub fn is_type(&self) -> bool {
-        matches!(self, TemplateSpan::Type(_))
+        matches!(self, Self::Type(_))
     }
 
     /// Get the text content if this is a text span
     pub fn as_text(&self) -> Option<Atom> {
         match self {
-            TemplateSpan::Text(atom) => Some(*atom),
+            Self::Text(atom) => Some(*atom),
             _ => None,
         }
     }
@@ -1204,14 +1202,14 @@ impl TemplateSpan {
     /// Get the type ID if this is a type span
     pub fn as_type(&self) -> Option<TypeId> {
         match self {
-            TemplateSpan::Type(type_id) => Some(*type_id),
+            Self::Type(type_id) => Some(*type_id),
             _ => None,
         }
     }
 
     /// Create a type span
     pub fn type_from_id(type_id: TypeId) -> Self {
-        TemplateSpan::Type(type_id)
+        Self::Type(type_id)
     }
 }
 
@@ -1416,24 +1414,24 @@ impl Variance {
     /// - Contravariant × Covariant = Contravariant
     /// - Contravariant × Contravariant = Covariant
     /// - Invariant × anything = Invariant
-    pub fn compose(&self, other: Variance) -> Variance {
+    pub fn compose(&self, other: Self) -> Self {
         if self.is_invariant() || other.is_invariant() {
-            return Variance::COVARIANT | Variance::CONTRAVARIANT;
+            return Self::COVARIANT | Self::CONTRAVARIANT;
         }
         if self.is_independent() || other.is_independent() {
-            return Variance::empty();
+            return Self::empty();
         }
 
         // XOR for covariance composition
         let is_covariant = self.is_covariant() == other.is_covariant();
         let is_contravariant = !is_covariant;
 
-        let mut result = Variance::empty();
+        let mut result = Self::empty();
         if is_covariant {
-            result |= Variance::COVARIANT;
+            result |= Self::COVARIANT;
         }
         if is_contravariant {
-            result |= Variance::CONTRAVARIANT;
+            result |= Self::CONTRAVARIANT;
         }
         result
     }

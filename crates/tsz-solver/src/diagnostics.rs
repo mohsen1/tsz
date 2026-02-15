@@ -224,7 +224,7 @@ pub enum SubtypeFailureReason {
         property_name: Atom,
         source_property_type: TypeId,
         target_property_type: TypeId,
-        nested_reason: Option<Box<SubtypeFailureReason>>,
+        nested_reason: Option<Box<Self>>,
     },
     /// Optional property cannot satisfy required property.
     OptionalPropertyRequired { property_name: Atom },
@@ -242,7 +242,7 @@ pub enum SubtypeFailureReason {
     ReturnTypeMismatch {
         source_return: TypeId,
         target_return: TypeId,
-        nested_reason: Option<Box<SubtypeFailureReason>>,
+        nested_reason: Option<Box<Self>>,
     },
     /// Parameter types are incompatible.
     ParameterTypeMismatch {
@@ -399,7 +399,7 @@ pub struct PendingDiagnostic {
     /// Severity level
     pub severity: DiagnosticSeverity,
     /// Related information (additional locations)
-    pub related: Vec<PendingDiagnostic>,
+    pub related: Vec<Self>,
 }
 
 impl PendingDiagnostic {
@@ -421,7 +421,7 @@ impl PendingDiagnostic {
     }
 
     /// Add related information.
-    pub fn with_related(mut self, related: PendingDiagnostic) -> Self {
+    pub fn with_related(mut self, related: Self) -> Self {
         self.related.push(related);
         self
     }
@@ -440,7 +440,7 @@ pub struct SourceSpan {
 
 impl SourceSpan {
     pub fn new(file: impl Into<Arc<str>>, start: u32, length: u32) -> Self {
-        SourceSpan {
+        Self {
             start,
             length,
             file: file.into(),
@@ -473,7 +473,7 @@ pub struct TypeDiagnostic {
 impl TypeDiagnostic {
     /// Create a new error diagnostic.
     pub fn error(message: impl Into<String>, code: u32) -> Self {
-        TypeDiagnostic {
+        Self {
             message: message.into(),
             code,
             severity: DiagnosticSeverity::Error,
@@ -916,34 +916,30 @@ impl SubtypeFailureReason {
     /// `render_failure_reason` should use this to stay in sync.
     pub fn diagnostic_code(&self) -> u32 {
         match self {
-            SubtypeFailureReason::MissingProperty { .. } => codes::PROPERTY_MISSING,
-            SubtypeFailureReason::MissingProperties { .. } => codes::MISSING_PROPERTIES,
-            SubtypeFailureReason::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
-            SubtypeFailureReason::OptionalPropertyRequired { .. } => codes::PROPERTY_MISSING,
-            SubtypeFailureReason::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
-            SubtypeFailureReason::PropertyVisibilityMismatch { .. } => {
-                codes::PROPERTY_VISIBILITY_MISMATCH
-            }
-            SubtypeFailureReason::PropertyNominalMismatch { .. } => {
-                codes::PROPERTY_NOMINAL_MISMATCH
-            }
-            SubtypeFailureReason::ReturnTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::ParameterTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::TooManyParameters { .. } => codes::ARG_COUNT_MISMATCH,
-            SubtypeFailureReason::TupleElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::TupleElementTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::ArrayElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::IndexSignatureMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::NoUnionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::NoIntersectionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
-            SubtypeFailureReason::TypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::IntrinsicTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::LiteralTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::ErrorType { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::RecursionLimitExceeded => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::ParameterCountMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
-            SubtypeFailureReason::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
+            Self::MissingProperty { .. } => codes::PROPERTY_MISSING,
+            Self::MissingProperties { .. } => codes::MISSING_PROPERTIES,
+            Self::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
+            Self::OptionalPropertyRequired { .. } => codes::PROPERTY_MISSING,
+            Self::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
+            Self::PropertyVisibilityMismatch { .. } => codes::PROPERTY_VISIBILITY_MISMATCH,
+            Self::PropertyNominalMismatch { .. } => codes::PROPERTY_NOMINAL_MISMATCH,
+            Self::ReturnTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::ParameterTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::TooManyParameters { .. } => codes::ARG_COUNT_MISMATCH,
+            Self::TupleElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::TupleElementTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::ArrayElementMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::IndexSignatureMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::NoUnionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::NoIntersectionMemberMatches { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
+            Self::TypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::IntrinsicTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::LiteralTypeMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::ErrorType { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::RecursionLimitExceeded => codes::TYPE_NOT_ASSIGNABLE,
+            Self::ParameterCountMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
         }
     }
 
@@ -953,7 +949,7 @@ impl SubtypeFailureReason {
     /// an error and want a detailed message about why the type check failed.
     pub fn to_diagnostic(&self, source: TypeId, target: TypeId) -> PendingDiagnostic {
         match self {
-            SubtypeFailureReason::MissingProperty {
+            Self::MissingProperty {
                 property_name,
                 source_type,
                 target_type,
@@ -966,7 +962,7 @@ impl SubtypeFailureReason {
                 ],
             ),
 
-            SubtypeFailureReason::MissingProperties {
+            Self::MissingProperties {
                 property_names: _,
                 source_type,
                 target_type,
@@ -975,7 +971,7 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             ),
 
-            SubtypeFailureReason::PropertyTypeMismatch {
+            Self::PropertyTypeMismatch {
                 property_name,
                 source_property_type,
                 target_property_type,
@@ -1004,7 +1000,7 @@ impl SubtypeFailureReason {
                 diag
             }
 
-            SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+            Self::OptionalPropertyRequired { property_name } => {
                 // This is a specific case of type not assignable
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
@@ -1016,18 +1012,16 @@ impl SubtypeFailureReason {
                 ))
             }
 
-            SubtypeFailureReason::ReadonlyPropertyMismatch { property_name } => {
-                PendingDiagnostic::error(
-                    codes::TYPE_NOT_ASSIGNABLE,
-                    vec![source.into(), target.into()],
-                )
-                .with_related(PendingDiagnostic::error(
-                    codes::READONLY_PROPERTY,
-                    vec![(*property_name).into()],
-                ))
-            }
+            Self::ReadonlyPropertyMismatch { property_name } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![source.into(), target.into()],
+            )
+            .with_related(PendingDiagnostic::error(
+                codes::READONLY_PROPERTY,
+                vec![(*property_name).into()],
+            )),
 
-            SubtypeFailureReason::PropertyVisibilityMismatch {
+            Self::PropertyVisibilityMismatch {
                 property_name,
                 source_visibility,
                 target_visibility,
@@ -1047,7 +1041,7 @@ impl SubtypeFailureReason {
                 ))
             }
 
-            SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+            Self::PropertyNominalMismatch { property_name } => {
                 // TS2446: Types have separate declarations of a private property 'x'
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
@@ -1059,7 +1053,7 @@ impl SubtypeFailureReason {
                 ))
             }
 
-            SubtypeFailureReason::ReturnTypeMismatch {
+            Self::ReturnTypeMismatch {
                 source_return,
                 target_return,
                 nested_reason,
@@ -1084,7 +1078,7 @@ impl SubtypeFailureReason {
                 diag
             }
 
-            SubtypeFailureReason::ParameterTypeMismatch {
+            Self::ParameterTypeMismatch {
                 param_index: _,
                 source_param,
                 target_param,
@@ -1097,7 +1091,7 @@ impl SubtypeFailureReason {
                 vec![(*source_param).into(), (*target_param).into()],
             )),
 
-            SubtypeFailureReason::TooManyParameters {
+            Self::TooManyParameters {
                 source_count,
                 target_count,
             } => PendingDiagnostic::error(
@@ -1105,7 +1099,7 @@ impl SubtypeFailureReason {
                 vec![(*target_count).into(), (*source_count).into()],
             ),
 
-            SubtypeFailureReason::TupleElementMismatch {
+            Self::TupleElementMismatch {
                 source_count,
                 target_count,
             } => PendingDiagnostic::error(
@@ -1117,7 +1111,7 @@ impl SubtypeFailureReason {
                 vec![(*target_count).into(), (*source_count).into()],
             )),
 
-            SubtypeFailureReason::TupleElementTypeMismatch {
+            Self::TupleElementTypeMismatch {
                 index: _,
                 source_element,
                 target_element,
@@ -1130,7 +1124,7 @@ impl SubtypeFailureReason {
                 vec![(*source_element).into(), (*target_element).into()],
             )),
 
-            SubtypeFailureReason::ArrayElementMismatch {
+            Self::ArrayElementMismatch {
                 source_element,
                 target_element,
             } => PendingDiagnostic::error(
@@ -1142,7 +1136,7 @@ impl SubtypeFailureReason {
                 vec![(*source_element).into(), (*target_element).into()],
             )),
 
-            SubtypeFailureReason::IndexSignatureMismatch {
+            Self::IndexSignatureMismatch {
                 index_kind: _,
                 source_value_type,
                 target_value_type,
@@ -1155,7 +1149,7 @@ impl SubtypeFailureReason {
                 vec![(*source_value_type).into(), (*target_value_type).into()],
             )),
 
-            SubtypeFailureReason::NoUnionMemberMatches {
+            Self::NoUnionMemberMatches {
                 source_type,
                 target_union_members,
             } => {
@@ -1176,7 +1170,7 @@ impl SubtypeFailureReason {
                 diag
             }
 
-            SubtypeFailureReason::NoIntersectionMemberMatches {
+            Self::NoIntersectionMemberMatches {
                 source_type,
                 target_type,
             } => PendingDiagnostic::error(
@@ -1184,7 +1178,7 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             ),
 
-            SubtypeFailureReason::NoCommonProperties {
+            Self::NoCommonProperties {
                 source_type,
                 target_type,
             } => PendingDiagnostic::error(
@@ -1192,7 +1186,7 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             ),
 
-            SubtypeFailureReason::TypeMismatch {
+            Self::TypeMismatch {
                 source_type,
                 target_type,
             } => PendingDiagnostic::error(
@@ -1200,7 +1194,7 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             ),
 
-            SubtypeFailureReason::IntrinsicTypeMismatch {
+            Self::IntrinsicTypeMismatch {
                 source_type,
                 target_type,
             } => PendingDiagnostic::error(
@@ -1208,7 +1202,7 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             ),
 
-            SubtypeFailureReason::LiteralTypeMismatch {
+            Self::LiteralTypeMismatch {
                 source_type,
                 target_type,
             } => PendingDiagnostic::error(
@@ -1216,7 +1210,7 @@ impl SubtypeFailureReason {
                 vec![(*source_type).into(), (*target_type).into()],
             ),
 
-            SubtypeFailureReason::ErrorType {
+            Self::ErrorType {
                 source_type,
                 target_type,
             } => {
@@ -1227,7 +1221,7 @@ impl SubtypeFailureReason {
                 )
             }
 
-            SubtypeFailureReason::RecursionLimitExceeded => {
+            Self::RecursionLimitExceeded => {
                 // Recursion limit - use the source/target from the call site
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
@@ -1235,7 +1229,7 @@ impl SubtypeFailureReason {
                 )
             }
 
-            SubtypeFailureReason::ParameterCountMismatch {
+            Self::ParameterCountMismatch {
                 source_count: _,
                 target_count: _,
             } => {
@@ -1246,7 +1240,7 @@ impl SubtypeFailureReason {
                 )
             }
 
-            SubtypeFailureReason::ExcessProperty {
+            Self::ExcessProperty {
                 property_name,
                 target_type,
             } => {
@@ -1579,7 +1573,7 @@ pub struct SourceLocation {
 
 impl SourceLocation {
     pub fn new(file: impl Into<Arc<str>>, start: u32, end: u32) -> Self {
-        SourceLocation {
+        Self {
             file: file.into(),
             start,
             end,

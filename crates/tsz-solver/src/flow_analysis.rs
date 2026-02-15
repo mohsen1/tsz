@@ -73,8 +73,8 @@ impl FlowFacts {
     /// - Keep only narrowings that are present in both branches (intersection)
     /// - Keep only definite assignments that are present in both branches
     /// - Keep only TDZ violations that are present in both branches (intersection)
-    pub fn merge(&self, other: &FlowFacts) -> FlowFacts {
-        let mut result = FlowFacts::new();
+    pub fn merge(&self, other: &Self) -> Self {
+        let mut result = Self::new();
 
         // Intersection for type narrowings (must be narrowed in all paths)
         for (var, ty) in &self.type_narrowings {

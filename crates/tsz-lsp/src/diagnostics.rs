@@ -39,15 +39,15 @@ pub enum DiagnosticSeverity {
 }
 
 impl From<DiagnosticSeverity> for u8 {
-    fn from(severity: DiagnosticSeverity) -> u8 {
-        severity as u8
+    fn from(severity: DiagnosticSeverity) -> Self {
+        severity as Self
     }
 }
 
 impl TryFrom<u8> for DiagnosticSeverity {
     type Error = &'static str;
 
-    fn try_from(value: u8) -> Result<Self, <DiagnosticSeverity as TryFrom<u8>>::Error> {
+    fn try_from(value: u8) -> Result<Self, <Self as TryFrom<u8>>::Error> {
         match value {
             1 => Ok(Self::Error),
             2 => Ok(Self::Warning),

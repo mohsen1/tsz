@@ -68,18 +68,18 @@ pub enum FileInclusionReason {
 impl std::fmt::Display for FileInclusionReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            FileInclusionReason::RootFile => write!(f, "Root file specified"),
-            FileInclusionReason::IncludePattern(pattern) => {
+            Self::RootFile => write!(f, "Root file specified"),
+            Self::IncludePattern(pattern) => {
                 write!(f, "Matched by include pattern '{}'", pattern)
             }
-            FileInclusionReason::ImportedFrom(path) => {
+            Self::ImportedFrom(path) => {
                 write!(f, "Imported from '{}'", path.display())
             }
-            FileInclusionReason::LibFile => write!(f, "Library file"),
-            FileInclusionReason::TypeReference(path) => {
+            Self::LibFile => write!(f, "Library file"),
+            Self::TypeReference(path) => {
                 write!(f, "Type reference from '{}'", path.display())
             }
-            FileInclusionReason::TripleSlashReference(path) => {
+            Self::TripleSlashReference(path) => {
                 write!(f, "Referenced from '{}'", path.display())
             }
         }

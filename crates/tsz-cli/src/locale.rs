@@ -52,7 +52,7 @@ impl LocaleMessages {
         let json_content = get_locale_content(normalized)?;
         let messages = parse_locale_json(json_content)?;
 
-        Some(LocaleMessages {
+        Some(Self {
             messages,
             locale_id: normalized.to_string(),
         })
