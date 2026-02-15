@@ -1812,6 +1812,7 @@ impl ParserState {
         let mut modifiers = Vec::new();
         let mut seen_readonly = false;
         let mut seen_accessibility = false;
+        let mut reported_accessibility_duplicate = false;
 
         while self.is_parameter_modifier() {
             let mod_start = self.token_pos();
@@ -1849,12 +1850,13 @@ impl ParserState {
                     | SyntaxKind::PrivateKeyword
                     | SyntaxKind::ProtectedKeyword
             ) {
-                if seen_accessibility {
+                if seen_accessibility && !reported_accessibility_duplicate {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Accessibility modifier already seen.",
                         diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
                     );
+                    reported_accessibility_duplicate = true;
                 }
                 // TS1029: Accessibility modifier must come before readonly
                 if seen_readonly {
@@ -2948,6 +2950,7 @@ impl ParserState {
 
         // State tracking for TS1028 (duplicates) and TS1029 (ordering)
         let mut seen_accessibility = false;
+        let mut reported_accessibility_duplicate = false;
         let mut seen_static = false;
         let mut seen_abstract = false;
         let mut seen_readonly = false;
@@ -2970,12 +2973,13 @@ impl ParserState {
                     | SyntaxKind::PrivateKeyword
                     | SyntaxKind::ProtectedKeyword
             ) {
-                if seen_accessibility {
+                if seen_accessibility && !reported_accessibility_duplicate {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "Accessibility modifier already seen.",
                         diagnostic_codes::ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
                     );
+                    reported_accessibility_duplicate = true;
                 }
                 // TS1029: accessibility must come after certain modifiers
                 if seen_static
