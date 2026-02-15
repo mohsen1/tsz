@@ -124,7 +124,8 @@ impl ParserState {
                 if self.in_async_context() && self.is_token(SyntaxKind::AwaitKeyword) {
                     return false;
                 }
-                self.is_identifier_or_keyword() && self.look_ahead_is_simple_arrow_function()
+                self.is_identifier_or_keyword()
+                    && self.look_ahead_is_simple_arrow_function()
             }
         }
     }
@@ -259,23 +260,42 @@ impl ParserState {
             // by `=>` are unambiguously arrow function params even with line breaks.
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 || self.is_token(SyntaxKind::OpenBraceToken)
-        } else if self.is_token(SyntaxKind::ColonToken)
-            && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
-        {
+        } else if self.is_token(SyntaxKind::ColonToken) {
             // When we see `:` after `)`, it could be either:
             // 1. A return type annotation for an arrow function: (x): T => body
             // 2. The else separator of a conditional: a ? (x) : y
-            // In a conditional's true branch, `:` belongs to the ternary, so we must
-            // not try to parse it as a return type annotation (matching tsc behavior of
-            // disallowReturnTypeInArrowFunction inside conditionals).
+            // Disambiguate by checking for `=>` after a return type.
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
 
             self.next_token();
             let _ = self.parse_return_type();
-            let result = !self.scanner.has_preceding_line_break()
+            let mut result = !self.scanner.has_preceding_line_break()
                 && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
                     || self.is_token(SyntaxKind::OpenBraceToken));
+
+            // In the true branch of a conditional expression, only accept
+            // `(x): T => ...` as an arrow function when the simulated body
+            // leaves a `:` token. This matches TypeScript's disambiguation.
+            if result
+                && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0
+                && self.is_token(SyntaxKind::EqualsGreaterThanToken)
+            {
+                let body_snapshot = self.scanner.save_state();
+                let body_token = self.current_token;
+                let body_arena_len = self.arena.nodes.len();
+                let body_diagnostics_len = self.parse_diagnostics.len();
+
+                self.next_token();
+                let _ = self.parse_assignment_expression();
+                result = self.is_token(SyntaxKind::ColonToken)
+                    && !self.scanner.has_preceding_line_break();
+
+                self.arena.nodes.truncate(body_arena_len);
+                self.parse_diagnostics.truncate(body_diagnostics_len);
+                self.scanner.restore_state(body_snapshot);
+                self.current_token = body_token;
+            }
 
             self.arena.nodes.truncate(saved_arena_len);
             self.parse_diagnostics.truncate(saved_diagnostics_len);
@@ -312,8 +332,6 @@ impl ParserState {
             && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
         {
             // Support single-parameter typed arrows in lookahead: `x: T => expr`.
-            // Avoid this branch inside a conditional true arm to prevent stealing the
-            // `:` that commonly belongs to the surrounding conditional expression.
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
 
@@ -588,11 +606,11 @@ impl ParserState {
 
     /// Parse binary expression with precedence climbing
     pub(crate) fn parse_binary_expression(&mut self, min_precedence: u8) -> NodeIndex {
+        let start_pos = self.token_pos();
         if !self.enter_recursion() {
             return NodeIndex::NONE;
         }
 
-        let start_pos = self.token_pos();
         let left = self.parse_binary_expression_chain(min_precedence, start_pos);
         self.exit_recursion();
         left
@@ -637,7 +655,11 @@ impl ParserState {
             return self.parse_conditional_expression(left, start_pos);
         }
 
-        let right = self.parse_binary_expression_rhs(left, op, precedence);
+        let right = self.parse_binary_expression_rhs(
+            left,
+            op,
+            precedence,
+        );
         let end_pos = self.token_end();
         let final_right = if right.is_none() { left } else { right };
 
@@ -654,13 +676,12 @@ impl ParserState {
     }
 
     fn parse_conditional_expression(&mut self, condition: NodeIndex, start_pos: u32) -> NodeIndex {
-        // Set flag to indicate we're parsing the 'true' branch of a conditional
-        // This prevents arrow function lookahead from stealing the ':' that belongs to this conditional
         let saved_flags = self.context_flags;
-        self.context_flags |= crate::parser::state::CONTEXT_FLAG_IN_CONDITIONAL_TRUE;
+        self.context_flags |= CONTEXT_FLAG_IN_CONDITIONAL_TRUE;
 
         let mut when_true = self.parse_assignment_expression();
         self.context_flags = saved_flags;
+
         if when_true.is_none() {
             self.error_expression_expected();
             when_true = self.create_missing_expression();
@@ -668,6 +689,7 @@ impl ParserState {
 
         self.parse_expected(SyntaxKind::ColonToken);
         let mut when_false = self.parse_assignment_expression();
+        self.context_flags = saved_flags;
         if when_false.is_none() {
             self.error_expression_expected();
             when_false = self.create_missing_expression();
@@ -686,12 +708,7 @@ impl ParserState {
         )
     }
 
-    fn parse_binary_expression_rhs(
-        &mut self,
-        left: NodeIndex,
-        op: SyntaxKind,
-        precedence: u8,
-    ) -> NodeIndex {
+    fn parse_binary_expression_rhs(&mut self, left: NodeIndex, op: SyntaxKind, precedence: u8) -> NodeIndex {
         let is_assignment = matches!(
             op,
             SyntaxKind::EqualsToken
@@ -711,15 +728,14 @@ impl ParserState {
                 | SyntaxKind::AmpersandAmpersandEqualsToken
                 | SyntaxKind::QuestionQuestionEqualsToken
         );
-
-        let right = if is_assignment {
-            self.parse_assignment_expression()
-        } else {
-            let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
+        let next_min = if op == SyntaxKind::AsteriskAsteriskToken {
                 precedence
             } else {
                 precedence + 1
             };
+        let right = if is_assignment {
+            self.parse_assignment_expression()
+        } else {
             self.parse_binary_expression(next_min)
         };
 
@@ -1634,6 +1650,9 @@ impl ParserState {
                 // without losing `case`/`default` tokens.
                 // ColonToken is a structural delimiter (case clauses, labels, type annotations)
                 // and must not be consumed as an error token.
+                if self.is_binary_operator() {
+                    return NodeIndex::NONE;
+                }
                 if self.is_at_expression_end()
                     || self.is_token(SyntaxKind::CaseKeyword)
                     || self.is_token(SyntaxKind::DefaultKeyword)
