@@ -120,24 +120,15 @@ y: string = "hello";  // Should NOT report (has initializer)
         let mut checker = DeclarationChecker::new(&mut ctx);
         checker.check(stmt_idx);
 
-        // Should have one TS2564 error for property 'x'
+        // DeclarationChecker no longer owns TS2564; canonical CheckerState path emits it.
         let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
         assert_eq!(
             ts2564_errors.len(),
-            1,
-            "Expected 1 TS2564 error, got {}",
+            0,
+            "Expected 0 TS2564 errors from DeclarationChecker delegation path, got {}",
             ts2564_errors.len()
         );
-
-        // Verify the error message contains 'x'
-        if let Some(err) = ts2564_errors.first() {
-            assert!(
-                err.message_text.contains("x"),
-                "Error message should contain 'x', got: {}",
-                err.message_text
-            );
-        }
     }
 }
 
@@ -422,13 +413,13 @@ constructor(flag: boolean) {
         let mut checker = DeclarationChecker::new(&mut ctx);
         checker.check(stmt_idx);
 
-        // Should have 1 TS2564 error (property not initialized on all paths)
+        // DeclarationChecker delegates TS2564; no direct emission here.
         let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
         assert_eq!(
             ts2564_errors.len(),
-            1,
-            "Expected 1 TS2564 error for property not initialized on all paths, got {}",
+            0,
+            "Expected 0 TS2564 errors from DeclarationChecker delegation path, got {}",
             ts2564_errors.len()
         );
     }
@@ -474,13 +465,13 @@ constructor(flag: boolean) {
         let mut checker = DeclarationChecker::new(&mut ctx);
         checker.check(stmt_idx);
 
-        // Should have 1 TS2564 error (property not initialized on all exit paths)
+        // DeclarationChecker delegates TS2564; no direct emission here.
         let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
         assert_eq!(
             ts2564_errors.len(),
-            1,
-            "Expected 1 TS2564 error for property not initialized before early return, got {}",
+            0,
+            "Expected 0 TS2564 errors from DeclarationChecker delegation path, got {}",
             ts2564_errors.len()
         );
     }
@@ -525,22 +516,14 @@ constructor() {
         let mut checker = DeclarationChecker::new(&mut ctx);
         checker.check(stmt_idx);
 
-        // Should have 1 TS2564 error for 'y'
+        // DeclarationChecker delegates TS2564; no direct emission here.
         let ts2564_errors: Vec<_> = ctx.diagnostics.iter().filter(|d| d.code == 2564).collect();
 
         assert_eq!(
             ts2564_errors.len(),
-            1,
-            "Expected 1 TS2564 error for property 'y', got {}",
+            0,
+            "Expected 0 TS2564 errors from DeclarationChecker delegation path, got {}",
             ts2564_errors.len()
         );
-
-        if let Some(err) = ts2564_errors.first() {
-            assert!(
-                err.message_text.contains("y"),
-                "Error message should contain 'y', got: {}",
-                err.message_text
-            );
-        }
     }
 }

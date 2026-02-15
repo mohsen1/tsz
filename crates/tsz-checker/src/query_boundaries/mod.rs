@@ -6,6 +6,7 @@ pub(crate) mod class;
 pub(crate) mod class_type;
 pub(crate) mod conditional_type;
 pub(crate) mod constructor_checker;
+pub(crate) mod definite_assignment;
 pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
