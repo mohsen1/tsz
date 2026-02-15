@@ -1595,99 +1595,91 @@ impl ParserState {
     // =========================================================================
 
     /// Check if current token can start an expression
-    #[allow(clippy::match_same_arms)]
     pub(crate) fn is_expression_start(&self) -> bool {
-        match self.token() {
-            // Literals
+        matches!(
+            self.token(),
             SyntaxKind::NumericLiteral
-            | SyntaxKind::BigIntLiteral
-            | SyntaxKind::StringLiteral
-            | SyntaxKind::NoSubstitutionTemplateLiteral
-            | SyntaxKind::TemplateHead
-            | SyntaxKind::TemplateMiddle
-            | SyntaxKind::TemplateTail
-            | SyntaxKind::TrueKeyword
-            | SyntaxKind::FalseKeyword
-            | SyntaxKind::NullKeyword
-            | SyntaxKind::Identifier
-            | SyntaxKind::ThisKeyword
-            | SyntaxKind::SuperKeyword
-            | SyntaxKind::ImportKeyword
-            | SyntaxKind::TypeKeyword
-            | SyntaxKind::AnyKeyword
-            | SyntaxKind::StringKeyword
-            | SyntaxKind::NumberKeyword
-            | SyntaxKind::BooleanKeyword
-            | SyntaxKind::SymbolKeyword
-            | SyntaxKind::BigIntKeyword
-            | SyntaxKind::ObjectKeyword
-            | SyntaxKind::NeverKeyword
-            | SyntaxKind::UnknownKeyword
-            | SyntaxKind::UndefinedKeyword
-            | SyntaxKind::RequireKeyword
-            | SyntaxKind::ModuleKeyword
-            | SyntaxKind::NamespaceKeyword
-            | SyntaxKind::AsyncKeyword
-            | SyntaxKind::AwaitKeyword
-            | SyntaxKind::YieldKeyword
-            | SyntaxKind::NewKeyword
-            | SyntaxKind::ClassKeyword
-            | SyntaxKind::FunctionKeyword
-            | SyntaxKind::DeleteKeyword
-            | SyntaxKind::VoidKeyword
-            | SyntaxKind::TypeOfKeyword
-            | SyntaxKind::InstanceOfKeyword => true,
-            // Contextual keywords that can be used as identifiers in expression context
-            // These are NOT reserved words and are valid identifiers outside their special contexts
-            SyntaxKind::StaticKeyword
-            | SyntaxKind::AbstractKeyword
-            | SyntaxKind::OverrideKeyword
-            | SyntaxKind::ReadonlyKeyword
-            | SyntaxKind::AccessorKeyword
-            | SyntaxKind::GetKeyword
-            | SyntaxKind::SetKeyword
-            | SyntaxKind::DeclareKeyword
-            | SyntaxKind::PublicKeyword
-            | SyntaxKind::ProtectedKeyword
-            | SyntaxKind::PrivateKeyword
-            | SyntaxKind::OfKeyword
-            | SyntaxKind::SatisfiesKeyword
-            | SyntaxKind::FromKeyword
-            | SyntaxKind::AsKeyword
-            | SyntaxKind::IsKeyword
-            | SyntaxKind::AssertKeyword
-            | SyntaxKind::AssertsKeyword
-            | SyntaxKind::IntrinsicKeyword
-            | SyntaxKind::OutKeyword
-            | SyntaxKind::InferKeyword
-            | SyntaxKind::UsingKeyword
-            | SyntaxKind::KeyOfKeyword
-            | SyntaxKind::UniqueKeyword
-            | SyntaxKind::GlobalKeyword
-            | SyntaxKind::InterfaceKeyword
-            | SyntaxKind::EnumKeyword
-            | SyntaxKind::DeferKeyword => true,
-            // Private identifiers (e.g., #field in obj)
-            SyntaxKind::PrivateIdentifier => true,
-            // Unary operators
-            SyntaxKind::PlusToken
-            | SyntaxKind::MinusToken
-            | SyntaxKind::AsteriskToken
-            | SyntaxKind::TildeToken
-            | SyntaxKind::ExclamationToken
-            | SyntaxKind::PlusPlusToken
-            | SyntaxKind::MinusMinusToken => true,
-            // Open parentheses/brackets/braces/angle brackets
-            SyntaxKind::OpenParenToken
-            | SyntaxKind::OpenBracketToken
-            | SyntaxKind::OpenBraceToken
-            | SyntaxKind::LessThanToken => true,
-            // Slash tokens (regex literals)
-            SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken => true,
-            // Decorators
-            SyntaxKind::AtToken => true,
-            _ => false,
-        }
+                | SyntaxKind::BigIntLiteral
+                | SyntaxKind::StringLiteral
+                | SyntaxKind::NoSubstitutionTemplateLiteral
+                | SyntaxKind::TemplateHead
+                | SyntaxKind::TemplateMiddle
+                | SyntaxKind::TemplateTail
+                | SyntaxKind::TrueKeyword
+                | SyntaxKind::FalseKeyword
+                | SyntaxKind::NullKeyword
+                | SyntaxKind::Identifier
+                | SyntaxKind::ThisKeyword
+                | SyntaxKind::SuperKeyword
+                | SyntaxKind::ImportKeyword
+                | SyntaxKind::TypeKeyword
+                | SyntaxKind::AnyKeyword
+                | SyntaxKind::StringKeyword
+                | SyntaxKind::NumberKeyword
+                | SyntaxKind::BooleanKeyword
+                | SyntaxKind::SymbolKeyword
+                | SyntaxKind::BigIntKeyword
+                | SyntaxKind::ObjectKeyword
+                | SyntaxKind::NeverKeyword
+                | SyntaxKind::UnknownKeyword
+                | SyntaxKind::UndefinedKeyword
+                | SyntaxKind::RequireKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::NamespaceKeyword
+                | SyntaxKind::AsyncKeyword
+                | SyntaxKind::AwaitKeyword
+                | SyntaxKind::YieldKeyword
+                | SyntaxKind::NewKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::DeleteKeyword
+                | SyntaxKind::VoidKeyword
+                | SyntaxKind::TypeOfKeyword
+                | SyntaxKind::InstanceOfKeyword
+                | SyntaxKind::StaticKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::ReadonlyKeyword
+                | SyntaxKind::AccessorKeyword
+                | SyntaxKind::GetKeyword
+                | SyntaxKind::SetKeyword
+                | SyntaxKind::DeclareKeyword
+                | SyntaxKind::PublicKeyword
+                | SyntaxKind::ProtectedKeyword
+                | SyntaxKind::PrivateKeyword
+                | SyntaxKind::OfKeyword
+                | SyntaxKind::SatisfiesKeyword
+                | SyntaxKind::FromKeyword
+                | SyntaxKind::AsKeyword
+                | SyntaxKind::IsKeyword
+                | SyntaxKind::AssertKeyword
+                | SyntaxKind::AssertsKeyword
+                | SyntaxKind::IntrinsicKeyword
+                | SyntaxKind::OutKeyword
+                | SyntaxKind::InferKeyword
+                | SyntaxKind::UsingKeyword
+                | SyntaxKind::KeyOfKeyword
+                | SyntaxKind::UniqueKeyword
+                | SyntaxKind::GlobalKeyword
+                | SyntaxKind::InterfaceKeyword
+                | SyntaxKind::EnumKeyword
+                | SyntaxKind::DeferKeyword
+                | SyntaxKind::PrivateIdentifier
+                | SyntaxKind::PlusToken
+                | SyntaxKind::MinusToken
+                | SyntaxKind::AsteriskToken
+                | SyntaxKind::TildeToken
+                | SyntaxKind::ExclamationToken
+                | SyntaxKind::PlusPlusToken
+                | SyntaxKind::MinusMinusToken
+                | SyntaxKind::OpenParenToken
+                | SyntaxKind::OpenBracketToken
+                | SyntaxKind::OpenBraceToken
+                | SyntaxKind::LessThanToken
+                | SyntaxKind::SlashToken
+                | SyntaxKind::SlashEqualsToken
+                | SyntaxKind::AtToken
+        )
     }
 
     /// Check if current token is a binary operator
