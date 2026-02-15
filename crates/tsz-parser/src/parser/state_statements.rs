@@ -2349,8 +2349,11 @@ impl ParserState {
                 );
                 self.parse_module_declaration_with_modifiers(start_pos, decorators)
             }
-            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::ConstKeyword => {
-                // TS1206: Decorators are not valid on variable statements
+            SyntaxKind::VarKeyword
+            | SyntaxKind::LetKeyword
+            | SyntaxKind::ConstKeyword
+            | SyntaxKind::UsingKeyword => {
+                // TS1206: Decorators are not valid on variable/using statements
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at(
                     start_pos,
@@ -2381,7 +2384,14 @@ impl ParserState {
                 self.parse_export_declaration()
             }
             _ => {
-                // Unexpected - just continue
+                // TS1206: Decorators are not valid on expression statements
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
                 self.parse_expression_statement()
             }
         }
