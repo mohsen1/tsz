@@ -9,7 +9,7 @@ use tsz_solver::TypeInterner;
 #[test]
 fn repro_parser_real_14_type_ids() {
     let source = include_str!(
-        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts"
+        "../../../TypeScript/tests/cases/conformance/parser/ecmascript5/parserRealSource14.ts"
     );
     run_and_print_source_line(source, "parserRealSource14.ts", 36, 20, "clone");
 }
@@ -18,7 +18,7 @@ fn repro_parser_real_14_type_ids() {
 #[test]
 fn repro_parser_harness_type_ids() {
     let source = include_str!(
-        "/Users/mohsenazimi/code/tsz-5/TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts"
+        "../../../TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts"
     );
     run_and_print_source_line(source, "parserharness.ts", 611, 64, "Dataset");
 }
