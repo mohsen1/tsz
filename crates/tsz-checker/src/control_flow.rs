@@ -529,9 +529,39 @@ impl<'a> FlowAnalyzer<'a> {
                 )
             } else if flow.has_any_flags(flow_flags::CONDITION) {
                 // Condition node - apply narrowing
+                // CRITICAL: For else-if chains, the antecedent is a CONDITION node
+                // from the outer if's false branch. We must wait for it to be computed
+                // so we narrow from the already-narrowed type, not the original type.
                 let (pre_type, antecedent_id) = if let Some(&ant) = flow.antecedent.first() {
-                    // Get the result from antecedent if available, otherwise use current_type
-                    (*results.get(&ant).unwrap_or(&current_type), ant)
+                    if let Some(&ant_type) = results.get(&ant) {
+                        // Antecedent already computed — use its narrowed type
+                        (ant_type, ant)
+                    } else if !visited.contains(&ant) {
+                        // Antecedent not yet computed — defer ONLY if it's a CONDITION
+                        // node (else-if chain). Non-CONDITION antecedents (START, CALL,
+                        // ASSIGNMENT) should use the fallback current_type to avoid
+                        // picking up unwanted narrowing (e.g., from asserts predicates).
+                        let ant_is_condition = self
+                            .binder
+                            .flow_nodes
+                            .get(ant)
+                            .is_some_and(|f| f.has_any_flags(flow_flags::CONDITION));
+                        if ant_is_condition {
+                            if !in_worklist.contains(&ant) {
+                                worklist.push_front((ant, current_type));
+                                in_worklist.insert(ant);
+                            }
+                            if !in_worklist.contains(&current_flow) {
+                                worklist.push_back((current_flow, current_type));
+                                in_worklist.insert(current_flow);
+                            }
+                            continue;
+                        }
+                        (current_type, ant)
+                    } else {
+                        // Antecedent visited but no result — use current_type
+                        (current_type, ant)
+                    }
                 } else {
                     (current_type, FlowNodeId::NONE)
                 };
