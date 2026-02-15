@@ -2033,7 +2033,7 @@ impl BinderState {
     pub fn get_symbol_with_libs<'a>(
         &'a self,
         id: SymbolId,
-        lib_binders: &'a [Arc<BinderState>],
+        lib_binders: &'a [Arc<Self>],
     ) -> Option<&'a Symbol> {
         // Fast path: If lib symbols are merged, all symbols are in the local arena
         // with unique IDs - no need to check lib_binders.
@@ -2103,7 +2103,7 @@ impl BinderState {
     pub fn get_global_type_with_libs(
         &self,
         name: &str,
-        lib_binders: &[Arc<BinderState>],
+        lib_binders: &[Arc<Self>],
     ) -> Option<SymbolId> {
         // First check file_locals (includes merged lib symbols when lib_symbols_merged is true)
         if let Some(sym_id) = self.file_locals.get(name) {

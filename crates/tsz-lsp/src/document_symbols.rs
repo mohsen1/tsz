@@ -52,28 +52,28 @@ impl SymbolKind {
     /// Convert to tsserver's ScriptElementKind string.
     pub fn to_script_element_kind(self) -> &'static str {
         match self {
-            SymbolKind::File => "script",
-            SymbolKind::Module | SymbolKind::Namespace => "module",
-            SymbolKind::Class => "class",
-            SymbolKind::Method => "method",
-            SymbolKind::Property | SymbolKind::Field => "property",
-            SymbolKind::Constructor => "constructor",
-            SymbolKind::Enum => "enum",
-            SymbolKind::Interface => "interface",
-            SymbolKind::Function => "function",
-            SymbolKind::Variable => "var",
-            SymbolKind::Constant | SymbolKind::String | SymbolKind::Number => "const",
-            SymbolKind::EnumMember => "enum member",
-            SymbolKind::TypeParameter => "type parameter",
-            SymbolKind::Boolean => "var",
-            SymbolKind::Array => "var",
-            SymbolKind::Object => "var",
-            SymbolKind::Key => "property",
-            SymbolKind::Null => "var",
-            SymbolKind::Struct => "type",
-            SymbolKind::Event => "function",
-            SymbolKind::Operator => "function",
-            SymbolKind::Package => "module",
+            Self::File => "script",
+            Self::Module | Self::Namespace => "module",
+            Self::Class => "class",
+            Self::Method => "method",
+            Self::Property | Self::Field => "property",
+            Self::Constructor => "constructor",
+            Self::Enum => "enum",
+            Self::Interface => "interface",
+            Self::Function => "function",
+            Self::Variable => "var",
+            Self::Constant | Self::String | Self::Number => "const",
+            Self::EnumMember => "enum member",
+            Self::TypeParameter => "type parameter",
+            Self::Boolean => "var",
+            Self::Array => "var",
+            Self::Object => "var",
+            Self::Key => "property",
+            Self::Null => "var",
+            Self::Struct => "type",
+            Self::Event => "function",
+            Self::Operator => "function",
+            Self::Package => "module",
         }
     }
 }
@@ -97,7 +97,7 @@ pub struct DocumentSymbol {
     /// The name of the containing symbol (for flat symbol lists).
     pub container_name: Option<String>,
     /// Children of this symbol, e.g. properties of a class.
-    pub children: Vec<DocumentSymbol>,
+    pub children: Vec<Self>,
 }
 
 impl DocumentSymbol {
@@ -116,7 +116,7 @@ impl DocumentSymbol {
     }
 
     /// Add a child symbol.
-    pub fn add_child(&mut self, child: DocumentSymbol) {
+    pub fn add_child(&mut self, child: Self) {
         self.children.push(child);
     }
 

@@ -242,7 +242,7 @@ pub struct BinderState {
 
     /// Lib binders for automatic lib symbol resolution.
     /// When get_symbol() doesn't find a symbol locally, it checks these lib binders.
-    pub lib_binders: Vec<Arc<BinderState>>,
+    pub lib_binders: Vec<Arc<Self>>,
 
     /// Symbol IDs that originated from lib files.
     /// Used by get_symbol() to check lib_binders first for these IDs,
@@ -369,7 +369,7 @@ impl BinderState {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        let mut binder = BinderState {
+        let mut binder = Self {
             options,
             symbols: SymbolArena::new(),
             current_scope: SymbolTable::new(),
@@ -533,7 +533,7 @@ impl BinderState {
         let mut flow_nodes = FlowNodeArena::new();
         let unreachable_flow = flow_nodes.alloc(flow_flags::UNREACHABLE);
 
-        let mut binder = BinderState {
+        let mut binder = Self {
             options,
             symbols,
             current_scope: SymbolTable::new(),
@@ -637,7 +637,7 @@ impl BinderState {
             FlowNodeId::NONE,
         );
 
-        let mut binder = BinderState {
+        let mut binder = Self {
             options,
             symbols,
             current_scope: SymbolTable::new(),
@@ -813,7 +813,7 @@ impl BinderState {
         &self,
         arena: &NodeArena,
         node_idx: NodeIndex,
-        lib_binders: &[Arc<BinderState>],
+        lib_binders: &[Arc<Self>],
         mut accept: F,
     ) -> Option<SymbolId>
     where

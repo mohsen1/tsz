@@ -16,7 +16,7 @@ pub struct Reporter {
 
 impl Reporter {
     pub fn new(color: bool) -> Self {
-        Reporter {
+        Self {
             pretty: color,
             color,
             cwd: std::env::current_dir()

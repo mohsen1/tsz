@@ -32,7 +32,7 @@ pub struct TsLanguageService {
 impl TsLanguageService {
     /// Create a new language service for a file
     #[wasm_bindgen(constructor)]
-    pub fn new(file_name: String, source_text: String) -> TsLanguageService {
+    pub fn new(file_name: String, source_text: String) -> Self {
         // Parse
         let mut parser = ParserState::new(file_name.clone(), source_text.clone());
         let root_idx = parser.parse_source_file();
@@ -45,7 +45,7 @@ impl TsLanguageService {
         let mut binder = BinderState::new();
         binder.bind_source_file(&arena, root_idx);
 
-        TsLanguageService {
+        Self {
             file_name,
             source_text,
             arena,

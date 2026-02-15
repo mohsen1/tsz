@@ -167,8 +167,8 @@ fn extract_enum_value(arena: &NodeArena, idx: NodeIndex) -> EnumMemberValue {
 impl EnumMemberValue {
     fn as_numeric(&self) -> Option<&i64> {
         match self {
-            EnumMemberValue::Auto(v) => Some(v),
-            EnumMemberValue::Numeric(v) => Some(v),
+            Self::Auto(v) => Some(v),
+            Self::Numeric(v) => Some(v),
             _ => None,
         }
     }

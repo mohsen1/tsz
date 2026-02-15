@@ -1066,7 +1066,7 @@ impl<'a> ContextualTypeContext<'a> {
 
     /// Create a child context for a nested expression.
     /// This is used when checking nested structures with contextual types.
-    pub fn for_property(&self, name: &str) -> ContextualTypeContext<'a> {
+    pub fn for_property(&self, name: &str) -> Self {
         match self.get_property_type(name) {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),
@@ -1074,7 +1074,7 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Create a child context for an array element.
-    pub fn for_array_element(&self) -> ContextualTypeContext<'a> {
+    pub fn for_array_element(&self) -> Self {
         match self.get_array_element_type() {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),
@@ -1082,7 +1082,7 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Create a child context for a tuple element at the given index.
-    pub fn for_tuple_element(&self, index: usize) -> ContextualTypeContext<'a> {
+    pub fn for_tuple_element(&self, index: usize) -> Self {
         match self.get_tuple_element_type(index) {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),
@@ -1090,7 +1090,7 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Create a child context for a function parameter at the given index.
-    pub fn for_parameter(&self, index: usize) -> ContextualTypeContext<'a> {
+    pub fn for_parameter(&self, index: usize) -> Self {
         match self.get_parameter_type(index) {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),
@@ -1098,7 +1098,7 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Create a child context for a function return expression.
-    pub fn for_return(&self) -> ContextualTypeContext<'a> {
+    pub fn for_return(&self) -> Self {
         match self.get_return_type() {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),
@@ -1190,7 +1190,7 @@ impl<'a> ContextualTypeContext<'a> {
     }
 
     /// Create a child context for a yield expression in a generator.
-    pub fn for_yield(&self) -> ContextualTypeContext<'a> {
+    pub fn for_yield(&self) -> Self {
         match self.get_generator_yield_type() {
             Some(ty) => ContextualTypeContext::with_expected(self.interner, ty),
             None => ContextualTypeContext::new(self.interner),

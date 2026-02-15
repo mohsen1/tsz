@@ -205,25 +205,25 @@ pub enum SyntaxKind {
 // =============================================================================
 
 impl SyntaxKind {
-    pub const FIRST_TOKEN: SyntaxKind = SyntaxKind::Unknown;
-    pub const LAST_TOKEN: SyntaxKind = SyntaxKind::DeferKeyword;
-    pub const FIRST_KEYWORD: SyntaxKind = SyntaxKind::BreakKeyword;
-    pub const LAST_KEYWORD: SyntaxKind = SyntaxKind::DeferKeyword;
-    pub const FIRST_PUNCTUATION: SyntaxKind = SyntaxKind::OpenBraceToken;
-    pub const LAST_PUNCTUATION: SyntaxKind = SyntaxKind::CaretEqualsToken;
-    pub const FIRST_LITERAL_TOKEN: SyntaxKind = SyntaxKind::NumericLiteral;
-    pub const LAST_LITERAL_TOKEN: SyntaxKind = SyntaxKind::NoSubstitutionTemplateLiteral;
-    pub const FIRST_TEMPLATE_TOKEN: SyntaxKind = SyntaxKind::NoSubstitutionTemplateLiteral;
-    pub const LAST_TEMPLATE_TOKEN: SyntaxKind = SyntaxKind::TemplateTail;
-    pub const FIRST_RESERVED_WORD: SyntaxKind = SyntaxKind::BreakKeyword;
-    pub const LAST_RESERVED_WORD: SyntaxKind = SyntaxKind::WithKeyword;
-    pub const FIRST_FUTURE_RESERVED_WORD: SyntaxKind = SyntaxKind::ImplementsKeyword;
-    pub const LAST_FUTURE_RESERVED_WORD: SyntaxKind = SyntaxKind::YieldKeyword;
+    pub const FIRST_TOKEN: Self = Self::Unknown;
+    pub const LAST_TOKEN: Self = Self::DeferKeyword;
+    pub const FIRST_KEYWORD: Self = Self::BreakKeyword;
+    pub const LAST_KEYWORD: Self = Self::DeferKeyword;
+    pub const FIRST_PUNCTUATION: Self = Self::OpenBraceToken;
+    pub const LAST_PUNCTUATION: Self = Self::CaretEqualsToken;
+    pub const FIRST_LITERAL_TOKEN: Self = Self::NumericLiteral;
+    pub const LAST_LITERAL_TOKEN: Self = Self::NoSubstitutionTemplateLiteral;
+    pub const FIRST_TEMPLATE_TOKEN: Self = Self::NoSubstitutionTemplateLiteral;
+    pub const LAST_TEMPLATE_TOKEN: Self = Self::TemplateTail;
+    pub const FIRST_RESERVED_WORD: Self = Self::BreakKeyword;
+    pub const LAST_RESERVED_WORD: Self = Self::WithKeyword;
+    pub const FIRST_FUTURE_RESERVED_WORD: Self = Self::ImplementsKeyword;
+    pub const LAST_FUTURE_RESERVED_WORD: Self = Self::YieldKeyword;
 
     /// Safely convert a u16 to `SyntaxKind` if it's a valid token kind.
     /// Returns None for extended syntax kinds (AST nodes > 166).
     #[must_use]
-    pub fn try_from_u16(value: u16) -> Option<SyntaxKind> {
+    pub fn try_from_u16(value: u16) -> Option<Self> {
         // Static assertion: SyntaxKind must be repr(u16) and same size as u16
         const _: () = assert!(
             std::mem::size_of::<SyntaxKind>() == std::mem::size_of::<u16>(),

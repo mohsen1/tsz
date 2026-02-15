@@ -49,7 +49,7 @@ impl SourceFile {
         let text: String = text.into();
         let len = text.len() as u32;
         let text: Arc<str> = Arc::from(text.into_boxed_str());
-        SourceFile {
+        Self {
             file_name: file_name.into(),
             text,
             line_map: None,
@@ -63,7 +63,7 @@ impl SourceFile {
         let len = text.len() as u32;
         let line_map = Some(LineMap::build(&text));
         let text: Arc<str> = Arc::from(text.into_boxed_str());
-        SourceFile {
+        Self {
             file_name: file_name.into(),
             text,
             line_map,
@@ -320,11 +320,11 @@ pub struct SourceId(pub u32);
 
 impl SourceId {
     /// The invalid/unknown source ID.
-    pub const UNKNOWN: SourceId = SourceId(u32::MAX);
+    pub const UNKNOWN: Self = Self(u32::MAX);
 
     /// Create a new SourceId.
     pub const fn new(id: u32) -> Self {
-        SourceId(id)
+        Self(id)
     }
 
     /// Check if this is the unknown source ID.
@@ -335,7 +335,7 @@ impl SourceId {
 
 impl From<u32> for SourceId {
     fn from(id: u32) -> Self {
-        SourceId(id)
+        Self(id)
     }
 }
 
@@ -379,7 +379,7 @@ impl SourceLocation {
         end_line: u32,
         end_column: u32,
     ) -> Self {
-        SourceLocation {
+        Self {
             file_name,
             span,
             start_line,
@@ -393,7 +393,7 @@ impl SourceLocation {
     pub fn from_span(source_file: &mut SourceFile, span: Span) -> Self {
         let start_pos = source_file.offset_to_position(span.start);
         let end_pos = source_file.offset_to_position(span.end);
-        SourceLocation {
+        Self {
             file_name: source_file.file_name().to_string(),
             span,
             start_line: start_pos.line,

@@ -32,7 +32,7 @@ impl FileDiscoveryOptions {
             .map(|list| list.iter().map(PathBuf::from).collect())
             .unwrap_or_default();
 
-        FileDiscoveryOptions {
+        Self {
             base_dir,
             files,
             include: config.include.clone(),

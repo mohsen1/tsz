@@ -27,7 +27,7 @@ pub struct TypeSubstitution {
 impl TypeSubstitution {
     /// Create an empty substitution.
     pub fn new() -> Self {
-        TypeSubstitution {
+        Self {
             map: FxHashMap::default(),
         }
     }
@@ -57,7 +57,7 @@ impl TypeSubstitution {
                     Some(default) => {
                         // Defaults may reference earlier type parameters, so instantiate them
                         if i > 0 && !map.is_empty() {
-                            let subst = TypeSubstitution { map: map.clone() };
+                            let subst = Self { map: map.clone() };
                             instantiate_type(interner, default, &subst)
                         } else {
                             default
@@ -72,7 +72,7 @@ impl TypeSubstitution {
             };
             map.insert(param.name, type_id);
         }
-        TypeSubstitution { map }
+        Self { map }
     }
 
     /// Add a single substitution.

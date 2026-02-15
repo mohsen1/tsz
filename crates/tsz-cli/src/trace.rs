@@ -93,7 +93,7 @@ pub struct Tracer {
 impl Tracer {
     /// Create a new tracer
     pub fn new() -> Self {
-        Tracer {
+        Self {
             events: Vec::new(),
             start_time: Instant::now(),
             active_spans: FxHashMap::default(),

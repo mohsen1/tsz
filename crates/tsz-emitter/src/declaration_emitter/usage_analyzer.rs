@@ -33,9 +33,9 @@ pub struct UsageKind {
 }
 
 impl UsageKind {
-    pub const NONE: UsageKind = UsageKind { bits: 0 };
-    pub const TYPE: UsageKind = UsageKind { bits: 1 };
-    pub const VALUE: UsageKind = UsageKind { bits: 2 };
+    pub const NONE: Self = Self { bits: 0 };
+    pub const TYPE: Self = Self { bits: 1 };
+    pub const VALUE: Self = Self { bits: 2 };
 
     #[inline]
     pub const fn is_type(self) -> bool {
@@ -52,7 +52,7 @@ impl std::ops::BitOr for UsageKind {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
-        UsageKind {
+        Self {
             bits: self.bits | rhs.bits,
         }
     }

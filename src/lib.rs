@@ -596,7 +596,7 @@ impl TryFrom<ImportCandidateInput> for ImportCandidate {
             }
         };
 
-        Ok(ImportCandidate {
+        Ok(Self {
             module_specifier: input.module_specifier,
             local_name,
             kind,
@@ -650,8 +650,8 @@ pub struct Parser {
 impl Parser {
     /// Create a new Parser for the given source file.
     #[wasm_bindgen(constructor)]
-    pub fn new(file_name: String, source_text: String) -> Parser {
-        Parser {
+    pub fn new(file_name: String, source_text: String) -> Self {
+        Self {
             parser: ParserState::new(file_name, source_text),
             source_file_idx: None,
             binder: None,
@@ -1958,8 +1958,8 @@ impl Default for WasmProgram {
 impl WasmProgram {
     /// Create a new empty program.
     #[wasm_bindgen(constructor)]
-    pub fn new() -> WasmProgram {
-        WasmProgram {
+    pub fn new() -> Self {
+        Self {
             files: Vec::new(),
             lib_files: Vec::new(),
             merged: None,

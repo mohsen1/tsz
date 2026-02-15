@@ -1032,7 +1032,7 @@ struct SemVer {
 }
 
 impl SemVer {
-    const ZERO: SemVer = SemVer {
+    const ZERO: Self = Self {
         major: 0,
         minor: 0,
         patch: 0,

@@ -38,11 +38,11 @@ pub struct TsSourceFile {
 impl TsSourceFile {
     /// Create a new source file by parsing the given text
     #[wasm_bindgen(constructor)]
-    pub fn new(file_name: String, source_text: String) -> TsSourceFile {
+    pub fn new(file_name: String, source_text: String) -> Self {
         let script_kind = get_script_kind_from_file_name(&file_name);
         let is_declaration_file = file_name.ends_with(".d.ts");
 
-        TsSourceFile {
+        Self {
             file_name,
             text: source_text,
             language_version: ScriptTarget::ESNext,

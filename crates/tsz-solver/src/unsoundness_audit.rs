@@ -42,30 +42,27 @@ pub enum ImplementationStatus {
 impl ImplementationStatus {
     /// Returns true if the rule is at least partially implemented
     pub fn is_implemented(self) -> bool {
-        matches!(
-            self,
-            ImplementationStatus::FullyImplemented | ImplementationStatus::PartiallyImplemented
-        )
+        matches!(self, Self::FullyImplemented | Self::PartiallyImplemented)
     }
 
     /// Returns the completion percentage (0.0, 0.5, or 1.0)
     pub fn completion_ratio(self) -> f32 {
         match self {
-            ImplementationStatus::FullyImplemented => 1.0,
-            ImplementationStatus::PartiallyImplemented => 0.5,
-            ImplementationStatus::NotImplemented | ImplementationStatus::Blocked => 0.0,
-            ImplementationStatus::NotApplicable => 1.0,
+            Self::FullyImplemented => 1.0,
+            Self::PartiallyImplemented => 0.5,
+            Self::NotImplemented | Self::Blocked => 0.0,
+            Self::NotApplicable => 1.0,
         }
     }
 
     /// Returns the emoji representation for display
     pub fn emoji(self) -> &'static str {
         match self {
-            ImplementationStatus::FullyImplemented => "✅",
-            ImplementationStatus::PartiallyImplemented => "⚠️",
-            ImplementationStatus::NotImplemented => "❌",
-            ImplementationStatus::Blocked => "🚫",
-            ImplementationStatus::NotApplicable => "➖",
+            Self::FullyImplemented => "✅",
+            Self::PartiallyImplemented => "⚠️",
+            Self::NotImplemented => "❌",
+            Self::Blocked => "🚫",
+            Self::NotApplicable => "➖",
         }
     }
 }
@@ -90,10 +87,10 @@ pub enum ImplementationPhase {
 impl fmt::Display for ImplementationPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ImplementationPhase::Phase1 => write!(f, "Phase 1: Hello World"),
-            ImplementationPhase::Phase2 => write!(f, "Phase 2: Business Logic"),
-            ImplementationPhase::Phase3 => write!(f, "Phase 3: Library"),
-            ImplementationPhase::Phase4 => write!(f, "Phase 4: Feature"),
+            Self::Phase1 => write!(f, "Phase 1: Hello World"),
+            Self::Phase2 => write!(f, "Phase 2: Business Logic"),
+            Self::Phase3 => write!(f, "Phase 3: Library"),
+            Self::Phase4 => write!(f, "Phase 4: Feature"),
         }
     }
 }
@@ -635,7 +632,7 @@ impl UnsoundnessAudit {
             notes: "FULLY IMPLEMENTED. apparent_primitive_members() maps primitives to their wrapper types (string -> String, number -> Number). Used in property access and keyof.",
         });
 
-        UnsoundnessAudit { rules }
+        Self { rules }
     }
 
     /// Get the implementation status of a specific rule by number

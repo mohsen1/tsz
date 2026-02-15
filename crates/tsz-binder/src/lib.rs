@@ -121,7 +121,7 @@ pub mod symbol_flags {
 pub struct SymbolId(pub u32);
 
 impl SymbolId {
-    pub const NONE: SymbolId = SymbolId(u32::MAX);
+    pub const NONE: Self = Self(u32::MAX);
 
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX
@@ -167,7 +167,7 @@ pub struct Symbol {
 impl Symbol {
     /// Create a new symbol with the given flags and name.
     pub fn new(id: SymbolId, flags: u32, name: String) -> Self {
-        Symbol {
+        Self {
             flags,
             escaped_name: name,
             declarations: Vec::new(),
@@ -209,7 +209,7 @@ pub struct SymbolTable {
 
 impl SymbolTable {
     pub fn new() -> Self {
-        SymbolTable {
+        Self {
             symbols: FxHashMap::default(),
         }
     }
@@ -274,7 +274,7 @@ impl SymbolArena {
     const MAX_SYMBOL_PREALLOC: usize = 1_000_000;
 
     pub fn new() -> Self {
-        SymbolArena {
+        Self {
             symbols: Vec::new(),
             base_offset: 0,
         }
@@ -283,7 +283,7 @@ impl SymbolArena {
     /// Create a new symbol arena with a base offset for symbol IDs.
     /// Used for checker-local symbols to avoid collisions with binder symbols.
     pub fn new_with_base(base: u32) -> Self {
-        SymbolArena {
+        Self {
             symbols: Vec::new(),
             base_offset: base,
         }
@@ -292,7 +292,7 @@ impl SymbolArena {
     /// Create a new symbol arena with pre-allocated capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         let safe_capacity = capacity.min(Self::MAX_SYMBOL_PREALLOC);
-        SymbolArena {
+        Self {
             symbols: Vec::with_capacity(safe_capacity),
             base_offset: 0,
         }
@@ -442,7 +442,7 @@ pub mod flow_flags {
 pub struct FlowNodeId(pub u32);
 
 impl FlowNodeId {
-    pub const NONE: FlowNodeId = FlowNodeId(u32::MAX);
+    pub const NONE: Self = Self(u32::MAX);
 
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX
@@ -464,7 +464,7 @@ pub struct FlowNode {
 
 impl FlowNode {
     pub fn new(id: FlowNodeId, flags: u32) -> Self {
-        FlowNode {
+        Self {
             flags,
             id,
             antecedent: Vec::new(),
@@ -489,7 +489,7 @@ pub struct FlowNodeArena {
 
 impl FlowNodeArena {
     pub fn new() -> Self {
-        FlowNodeArena { nodes: Vec::new() }
+        Self { nodes: Vec::new() }
     }
 
     /// Allocate a new flow node.
@@ -550,7 +550,7 @@ impl FlowNodeArena {
 pub struct ScopeId(pub u32);
 
 impl ScopeId {
-    pub const NONE: ScopeId = ScopeId(u32::MAX);
+    pub const NONE: Self = Self(u32::MAX);
 
     pub fn is_none(&self) -> bool {
         self.0 == u32::MAX
@@ -589,7 +589,7 @@ pub struct Scope {
 
 impl Scope {
     pub fn new(parent: ScopeId, kind: ContainerKind, node: NodeIndex) -> Self {
-        Scope {
+        Self {
             parent,
             table: SymbolTable::new(),
             kind,
@@ -625,7 +625,7 @@ pub struct ScopeContext {
 
 impl ScopeContext {
     pub fn new(kind: ContainerKind, node: NodeIndex, parent: Option<usize>) -> Self {
-        ScopeContext {
+        Self {
             locals: SymbolTable::new(),
             parent_idx: parent,
             container_kind: kind,

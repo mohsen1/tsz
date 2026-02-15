@@ -142,12 +142,12 @@ impl ScannerState {
     /// ZERO-COPY: No Vec<char> allocation, works directly with UTF-8 bytes.
     #[wasm_bindgen(constructor)]
     #[must_use]
-    pub fn new(text: String, skip_trivia: bool) -> ScannerState {
+    pub fn new(text: String, skip_trivia: bool) -> Self {
         let end = text.len(); // byte length
         // Common keywords are interned on-demand for faster startup
         let interner = Interner::new();
         let source: Arc<str> = Arc::from(text.into_boxed_str());
-        ScannerState {
+        Self {
             source,
             pos: 0,
             end,

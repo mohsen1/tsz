@@ -55,7 +55,7 @@ pub struct DefId(pub u32);
 
 impl DefId {
     /// Sentinel value for invalid DefId.
-    pub const INVALID: DefId = DefId(0);
+    pub const INVALID: Self = Self(0);
 
     /// First valid DefId.
     pub const FIRST_VALID: u32 = 1;
@@ -166,7 +166,7 @@ pub enum EnumMemberValue {
 impl DefinitionInfo {
     /// Create a new type alias definition.
     pub fn type_alias(name: Atom, type_params: Vec<TypeParamInfo>, body: TypeId) -> Self {
-        DefinitionInfo {
+        Self {
             kind: DefKind::TypeAlias,
             name,
             type_params,
@@ -195,7 +195,7 @@ impl DefinitionInfo {
             number_index: None,
             symbol: None,
         };
-        DefinitionInfo {
+        Self {
             kind: DefKind::Interface,
             name,
             type_params,
@@ -232,7 +232,7 @@ impl DefinitionInfo {
             number_index: None,
             symbol: None,
         };
-        DefinitionInfo {
+        Self {
             kind: DefKind::Class,
             name,
             type_params,
@@ -250,7 +250,7 @@ impl DefinitionInfo {
 
     /// Create a new enum definition.
     pub fn enumeration(name: Atom, members: Vec<(Atom, EnumMemberValue)>) -> Self {
-        DefinitionInfo {
+        Self {
             kind: DefKind::Enum,
             name,
             type_params: Vec::new(),
@@ -268,7 +268,7 @@ impl DefinitionInfo {
 
     /// Create a new namespace definition.
     pub fn namespace(name: Atom, exports: Vec<(Atom, DefId)>) -> Self {
-        DefinitionInfo {
+        Self {
             kind: DefKind::Namespace,
             name,
             type_params: Vec::new(),
@@ -373,7 +373,7 @@ impl DefinitionStore {
     pub fn new() -> Self {
         let instance_id = NEXT_INSTANCE_ID.fetch_add(1, Ordering::SeqCst);
         trace!(instance_id, "DefinitionStore::new - creating new instance");
-        DefinitionStore {
+        Self {
             instance_id,
             definitions: DashMap::new(),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
@@ -563,7 +563,7 @@ impl Default for ContentAddressedDefIds {
 impl ContentAddressedDefIds {
     /// Create a new content-addressed DefId generator.
     pub fn new() -> Self {
-        ContentAddressedDefIds {
+        Self {
             hash_to_def: DashMap::new(),
             next_id: AtomicU32::new(DefId::FIRST_VALID),
         }
