@@ -30,10 +30,14 @@ pub struct PreparedTest {
 ///
 /// Returns a `PreparedTest` whose temp directory must be kept alive during compilation.
 /// Use this with `tokio::process::Command` + `kill_on_drop(true)` for proper timeout handling.
+///
+/// `original_extension` is the file extension of the original test file (e.g. "tsx"),
+/// used when there are no `@Filename` directives so the single-file test preserves its extension.
 pub fn prepare_test_dir(
     content: &str,
     filenames: &[(String, String)],
     options: &HashMap<String, String>,
+    original_extension: Option<&str>,
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
 
@@ -56,7 +60,8 @@ pub fn prepare_test_dir(
         let stripped_content =
             resolve_lib_references(&stripped_content, dir_path, ts_tests_lib_dir);
         let stripped_content = rewrite_absolute_reference_paths(&stripped_content);
-        let main_file = dir_path.join("test.ts");
+        let ext = original_extension.unwrap_or("ts");
+        let main_file = dir_path.join(format!("test.{ext}"));
         std::fs::write(&main_file, stripped_content)?;
     } else {
         for (filename, file_content) in filenames {

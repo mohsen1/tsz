@@ -507,16 +507,23 @@ impl Runner {
 
                     let mut all_codes = std::collections::HashSet::new();
                     let mut all_fingerprints = std::collections::HashSet::new();
+                    let original_ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|s| s.to_string());
+
                     for variant in option_variants {
                         let content_clone = content.clone();
                         let filenames = parsed.directives.filenames.clone();
                         let variant_clone = variant.clone();
+                        let ext_clone = original_ext.clone();
 
                         let prepared = tokio::task::spawn_blocking(move || {
                             tsz_wrapper::prepare_test_dir(
                                 &content_clone,
                                 &filenames,
                                 &variant_clone,
+                                ext_clone.as_deref(),
                             )
                         })
                         .await??;
