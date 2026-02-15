@@ -852,7 +852,6 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Helper function for switch clause handling in iterative mode.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_switch_clause_iterative(
         &self,
         reference: NodeIndex,
@@ -957,7 +956,6 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Helper function for call handling in iterative mode.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn handle_call_iterative(
         &self,
         reference: NodeIndex,

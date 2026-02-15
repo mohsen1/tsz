@@ -3502,59 +3502,7 @@ impl ParserState {
         {
             let member = self.parse_class_member();
             if !member.is_none() {
-                // Consume trailing semicolons only after members that end with `;`
-                // (property declarations, index signatures, abstract methods/accessors).
-                // Members with bodies (ending with `}`) should NOT consume the
-                // following `;`, allowing it to become a SemicolonClassElement.
-                let has_body = self.arena.get(member).is_some_and(|n| match n.kind {
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_function(n)
-                        .is_some_and(|f| !f.body.is_none()),
-                    k if k == syntax_kind_ext::CONSTRUCTOR => self
-                        .arena
-                        .get_constructor(n)
-                        .is_some_and(|c| !c.body.is_none()),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(n)
-                            .is_some_and(|a| !a.body.is_none())
-                    }
-                    k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
-                    _ => false,
-                });
-                let has_initializer = if !has_body {
-                    if let Some(member_node) = self.arena.get(member) {
-                        if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                            if let Some(property) = self.arena.get_property_decl(member_node) {
-                                !property.initializer.is_none()
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                let has_semicolon = self.parse_optional(SyntaxKind::SemicolonToken);
-                if !has_body
-                    && has_initializer
-                    && !has_semicolon
-                    && (self.is_token(SyntaxKind::AtToken)
-                        || self.is_token(SyntaxKind::AsteriskToken)
-                        || self.is_token(SyntaxKind::OpenBracketToken)
-                        || self.is_token(SyntaxKind::PrivateIdentifier)
-                        || self.is_property_name())
-                {
-                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
-                }
+                self.parse_optional(SyntaxKind::SemicolonToken);
                 members.push(member);
             }
         }

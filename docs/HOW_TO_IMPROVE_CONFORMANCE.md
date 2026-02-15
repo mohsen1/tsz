@@ -25,6 +25,7 @@ Before diving in, review these documents:
 - **`conformance-fix-guide.md`** - Step-by-step implementation workflow
 - **`conformance-work-session-summary.md`** - Detailed investigation examples
 - **`TS2322_INVESTIGATION_2026-02-14.md`** - Focused TS2322 mismatch analysis (missing vs extra patterns and owners)
+- **`TS2322_EXTRA_FOCUS_2026-02-15.md`** - Latest extra-TS2322 run, top clusters, and prioritized fix queue
 
 **Key takeaway**: Budget 1-2 days per test fix. There are no "quick wins."
 

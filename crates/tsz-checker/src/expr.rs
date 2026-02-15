@@ -138,7 +138,6 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
     /// # Parameters
     /// - `idx`: The node index to check
     /// - `context_type`: Optional contextual type hint for downward inference
-    #[allow(clippy::only_used_in_recursion)]
     fn compute_type_impl(&mut self, idx: NodeIndex, _context_type: Option<TypeId>) -> TypeId {
         let Some(node) = self.ctx.arena.get(idx) else {
             // Return UNKNOWN instead of ANY to expose missing nodes as errors
