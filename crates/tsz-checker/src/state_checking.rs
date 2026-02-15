@@ -353,16 +353,14 @@ impl<'a> CheckerState<'a> {
             for &clause_idx in &heritage_clauses.nodes {
                 if let Some(clause_node) = self.ctx.arena.get(clause_idx)
                     && clause_node.kind == syntax_kind_ext::HERITAGE_CLAUSE
+                    && let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
+                    && heritage.token == SyntaxKind::ImplementsKeyword as u16
                 {
-                    if let Some(heritage) = self.ctx.arena.get_heritage_clause(clause_node)
-                        && heritage.token == SyntaxKind::ImplementsKeyword as u16
-                    {
-                        self.error_at_node(
-                            clause_idx,
-                            diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                            diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
-                        );
-                    }
+                    self.error_at_node(
+                        clause_idx,
+                        diagnostic_messages::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                        diagnostic_codes::IMPLEMENTS_CLAUSES_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
+                    );
                 }
             }
         }
