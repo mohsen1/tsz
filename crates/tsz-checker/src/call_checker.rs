@@ -369,7 +369,7 @@ impl<'a> CheckerState<'a> {
                 resolve_call_with_context(
                     self.ctx.types,
                     &self.ctx,
-                    &*env,
+                    &env,
                     resolved_func_type,
                     &arg_types,
                     force_bivariant_callbacks,
@@ -456,7 +456,7 @@ impl<'a> CheckerState<'a> {
                 resolve_call_with_context(
                     self.ctx.types,
                     &self.ctx,
-                    &*env,
+                    &env,
                     resolved_func_type,
                     &sig_arg_types,
                     force_bivariant_callbacks,
