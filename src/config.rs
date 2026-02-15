@@ -592,7 +592,15 @@ pub fn resolve_compiler_options(
             resolved.checker.use_unknown_in_catch_variables = true;
             resolved.checker.always_strict = true;
             resolved.printer.always_strict = true;
+        } else {
+            resolved.checker.no_implicit_any = false;
         }
+    }
+
+    // TypeScript defaults to `noImplicitAny: true` when not explicitly set.
+    // `strict: false` should remain the only source that disables it by default.
+    if options.strict.is_none() && options.no_implicit_any.is_none() {
+        resolved.checker.no_implicit_any = true;
     }
 
     // Individual strict-family options (override strict if set explicitly)

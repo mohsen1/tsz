@@ -390,14 +390,27 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         } else if self.ctx.no_implicit_any() && !has_type_annotation {
             let is_ambient =
                 self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
-            if is_ambient && let Some(func_name) = self.get_function_name_from_node(func_idx) {
-                use crate::diagnostics::diagnostic_codes;
+            if let Some(func_name) = self.get_function_name_from_node(func_idx) {
                 let name_node = (!func.name.is_none()).then_some(func.name);
-                self.error_at_node_msg(
-                    name_node.unwrap_or(func_idx),
-                    diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
-                    &[&func_name, "any"],
-                );
+                if is_ambient {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        name_node.unwrap_or(func_idx),
+                        diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE,
+                        &[&func_name, "any"],
+                    );
+                } else {
+                    // TS7010 for bodyless declaration signatures (TS2391 sibling error)
+                    // in non-ambient contexts.
+                    self.maybe_report_implicit_any_return(
+                        Some(func_name),
+                        name_node,
+                        TypeId::ANY,
+                        false,
+                        false,
+                        func_idx,
+                    );
+                }
             }
         }
 

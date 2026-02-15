@@ -650,21 +650,27 @@ impl<'a> CheckerState<'a> {
             {
                 return Some(symbol_name);
             }
-            if let Some(expr_node) = self.ctx.arena.get(computed.expression)
-                && matches!(
+            if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
+                if expr_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node) {
+                        return Some(ident.escaped_text.clone());
+                    }
+
+                if matches!(
                     expr_node.kind,
                     k if k == SyntaxKind::StringLiteral as u16
                         || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                         || k == SyntaxKind::NumericLiteral as u16
-                )
-                && let Some(lit) = self.ctx.arena.get_literal(expr_node)
-            {
-                if expr_node.kind == SyntaxKind::NumericLiteral as u16
-                    && let Some(canonical) = tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+                ) && let Some(lit) = self.ctx.arena.get_literal(expr_node)
                 {
-                    return Some(canonical);
+                    if expr_node.kind == SyntaxKind::NumericLiteral as u16
+                        && let Some(canonical) =
+                            tsz_solver::utils::canonicalize_numeric_name(&lit.text)
+                    {
+                        return Some(canonical);
+                    }
+                    return Some(lit.text.clone());
                 }
-                return Some(lit.text.clone());
             }
         }
 

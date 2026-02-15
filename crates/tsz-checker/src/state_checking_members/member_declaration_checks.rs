@@ -801,6 +801,9 @@ impl<'a> CheckerState<'a> {
                                     let impl_member_idx = impl_idx.unwrap_or(i + 1);
                                     if impl_member_idx == i + 1 {
                                         let impl_node_idx = members[impl_member_idx];
+                                        let expected_display = self
+                                            .get_method_name_for_diagnostic(member_idx)
+                                            .unwrap_or_else(|| name.clone());
                                         let impl_error_node = self
                                             .ctx
                                             .arena
@@ -813,7 +816,7 @@ impl<'a> CheckerState<'a> {
                                             impl_error_node,
                                             &format!(
                                                 "Function implementation name must be '{}'.",
-                                                name
+                                                expected_display
                                             ),
                                             diagnostic_codes::FUNCTION_IMPLEMENTATION_NAME_MUST_BE,
                                         );
@@ -907,19 +910,43 @@ impl<'a> CheckerState<'a> {
         }
 
         // Rest parameters use TS7019, regular parameters use TS7006
+        let report_node = self.param_node_for_implicit_any_diagnostic(param);
         if param.dot_dot_dot_token {
             self.error_at_node_msg(
-                param.name,
+                report_node,
                 diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
                 &[&param_name],
             );
         } else {
             self.error_at_node_msg(
-                param.name,
+                report_node,
                 diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
                 &[&param_name, "any"],
             );
         }
+    }
+
+    fn param_node_for_implicit_any_diagnostic(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> NodeIndex {
+        let Some(modifiers) = param.modifiers.as_ref() else {
+            return param.name;
+        };
+        use tsz_scanner::SyntaxKind;
+        for &mod_idx in &modifiers.nodes {
+            let Some(mod_node) = self.ctx.arena.get(mod_idx) else {
+                continue;
+            };
+            if mod_node.kind == SyntaxKind::PublicKeyword as u16
+                || mod_node.kind == SyntaxKind::PrivateKeyword as u16
+                || mod_node.kind == SyntaxKind::ProtectedKeyword as u16
+                || mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
+            {
+                return mod_idx;
+            }
+        }
+        param.name
     }
 
     /// Emit TS7006 errors for nested binding elements in destructuring parameters.

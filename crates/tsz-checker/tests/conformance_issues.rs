@@ -147,6 +147,61 @@ class void {}
     );
 }
 
+#[test]
+#[ignore = "temporary diagnostic probe for method name formatting investigation"]
+fn test_method_implementation_name_formatting_probe() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"class C {
+"foo"();
+"bar"() { }
+}"#,
+    );
+    println!("ClassDeclaration22 diag: {diagnostics:?}");
+
+    let mut parser = ParserState::new(
+        "test.ts".to_string(),
+        r#"class C {
+"foo"();
+"bar"() { }
+}"#
+        .to_string(),
+    );
+    let root = parser.parse_source_file();
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    if let Some(first_stmt) = source_file.statements.nodes.first() {
+        let class_node = parser.get_arena().get(*first_stmt).unwrap();
+        let class_data = parser.get_arena().get_class(class_node).unwrap();
+        for member_idx in &class_data.members.nodes {
+            let member_node = parser.get_arena().get(*member_idx).unwrap();
+            let kind = member_node.kind;
+            if let Some(method) = parser.get_arena().get_method_decl(member_node) {
+                let name_node = parser.get_arena().get(method.name).unwrap();
+                let text = parser
+                    .get_arena()
+                    .get_literal(name_node)
+                    .map(|lit| lit.text.clone())
+                    .unwrap_or_else(|| "<non-literal>".to_string());
+                println!(
+                    "member kind={kind} method body={body:?} name={name_node:?} text={text}",
+                    body = method.body,
+                    name_node = method.name
+                );
+            }
+        }
+    }
+
+    let diagnostics = compile_and_get_diagnostics(
+        r#"class C {
+["foo"](): void
+["bar"](): void;
+["foo"]() {
+    return 0;
+}
+}"#,
+    );
+    println!("Overload computed diag: {diagnostics:?}");
+}
+
 /// Issue: Interface with reserved word name
 ///
 /// Expected: TS1005 only (no cascading errors)
