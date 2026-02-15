@@ -357,6 +357,10 @@ impl ParserState {
             SyntaxKind::DoKeyword => self.parse_do_statement(),
             SyntaxKind::SwitchKeyword => self.parse_switch_statement(),
             SyntaxKind::TryKeyword => self.parse_try_statement(),
+            SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => {
+                // Orphan catch/finally block (missing try)
+                self.parse_orphan_catch_or_finally_block()
+            }
             SyntaxKind::WithKeyword => self.parse_with_statement(),
             SyntaxKind::DebuggerKeyword => self.parse_debugger_statement(),
             SyntaxKind::Identifier => {
