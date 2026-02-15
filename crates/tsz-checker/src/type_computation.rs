@@ -2256,6 +2256,7 @@ impl<'a> CheckerState<'a> {
 
         // Collect properties from the object literal (later entries override earlier ones)
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let mut has_spread = false;
         // Track getter/setter names to allow getter+setter pairs with the same name
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
@@ -2771,6 +2772,7 @@ impl<'a> CheckerState<'a> {
             else if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                 || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
             {
+                has_spread = true;
                 let spread_expr = self
                     .ctx
                     .arena
@@ -2793,7 +2795,12 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
-        let object_type = self.ctx.types.factory().object_fresh(properties);
+        // Object literals with spreads are not fresh (no excess property checking)
+        let object_type = if has_spread {
+            self.ctx.types.factory().object(properties)
+        } else {
+            self.ctx.types.factory().object_fresh(properties)
+        };
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
         // This fixes the "Zombie Freshness" bug by distinguishing fresh vs
