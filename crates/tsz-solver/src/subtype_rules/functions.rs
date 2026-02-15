@@ -754,12 +754,23 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // When target has a rest parameter, skip the arity check entirely —
         // the rest parameter can accept any number of arguments, and type
         // compatibility of extra params is checked later against the rest element type.
+        //
+        // Special case: parameters of type `void` are effectively optional in TypeScript.
+        // A function like `(a: void) => void` is assignable to `() => void` because
+        // void parameters can be called without arguments.
         let source_required = self.required_param_count(&source_params_unpacked);
         if !self.allow_bivariant_param_count
             && !target_has_rest
             && source_required > target_fixed_count
         {
-            return SubtypeResult::False;
+            let extra_are_void = source_params_unpacked
+                .iter()
+                .skip(target_fixed_count)
+                .take(source_required - target_fixed_count)
+                .all(|param| param.type_id == TypeId::VOID);
+            if !extra_are_void {
+                return SubtypeResult::False;
+            }
         }
 
         // Check parameter types
@@ -863,7 +874,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     for t_param in target_params_unpacked
                         .iter()
                         .skip(source_fixed_count)
-                        .take(target_fixed_count - source_fixed_count)
+                        .take(target_fixed_count.saturating_sub(source_fixed_count))
                     {
                         if !self.are_parameters_compatible_impl(
                             rest_elem_type,
