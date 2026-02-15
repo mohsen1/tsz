@@ -80,6 +80,42 @@ export function parseBaseline(content: string): BaselineContent {
   const isJsLikeOutput = (name: string): boolean => {
     return /\.(js|jsx|mjs|cjs)$/.test(name);
   };
+  const toSourceDtsOutputName = (name: string): string => {
+    return name.replace(/\.(ts|tsx|mts|cts)$/, '.d.ts');
+  };
+  const toJsOutputBase = (name: string): string => {
+    return name.replace(/\.(js|jsx|mjs|cjs)$/, '');
+  };
+  const jsLikeOutputToDts = (name: string): string => {
+    const stem = toJsOutputBase(name);
+    return `${stem}.d.ts`;
+  };
+
+  const sourceLikeFiles: Array<{ name: string; content: string }> = [];
+  const jsFileNames: Set<string> = new Set();
+  const sourceFileNames: Set<string> = new Set();
+  const dtsOutputCandidates: Set<string> = new Set();
+  const dtsSourceFiles: Array<{ name: string; content: string }> = [];
+
+  // First pass: collect source and js markers to infer output naming.
+  for (const seg of segments) {
+    const name = seg.name.trim();
+
+    if (isSourceLike(name)) {
+      sourceLikeFiles.push({ name, content: content.slice(seg.start, seg.end).trim() });
+      sourceFileNames.add(name);
+    } else if (isJsLikeOutput(name)) {
+      jsFileNames.add(name);
+    }
+  }
+
+  for (const sourceName of sourceLikeFiles.map((f) => f.name)) {
+    dtsOutputCandidates.add(toSourceDtsOutputName(sourceName));
+  }
+  for (const jsName of jsFileNames) {
+    dtsOutputCandidates.add(jsLikeOutputToDts(jsName));
+  }
+  dtsOutputCandidates.add('out.d.ts');
 
   // Extract content for each file
   for (const seg of segments) {
@@ -91,13 +127,6 @@ export function parseBaseline(content: string): BaselineContent {
     // Identify file types
     if (name.startsWith('tests/cases/')) {
       result.testPath = name;
-    } else if (isSourceLike(name)) {
-      result.sourceFiles.push({ name, content: fileContent });
-      // Source TypeScript file
-      if (!result.source) {
-        result.source = fileContent;
-        result.sourceFileName = name;
-      }
     } else if (isJsLikeOutput(name)) {
       // JavaScript output
       if (!result.js) {
@@ -105,13 +134,28 @@ export function parseBaseline(content: string): BaselineContent {
         result.jsFileName = name;
       }
     } else if (name.endsWith('.d.ts')) {
-      // Declaration output
-      if (!result.dts) {
-        result.dts = fileContent;
-        result.dtsFileName = name;
+      // Declaration segment: classify as emitted output when name matches an emitted d.ts path.
+      if (dtsOutputCandidates.has(name)) {
+        if (!result.dts) {
+          result.dts = fileContent;
+          result.dtsFileName = name;
+        }
+      } else {
+        dtsSourceFiles.push({ name, content: fileContent });
+      }
+    }
+    if (isSourceLike(name)) {
+      result.sourceFiles.push({ name, content: fileContent });
+      if (!result.source) {
+        // Keep the first TypeScript source file as the default entry-point.
+        result.source = fileContent;
+        result.sourceFileName = name;
       }
     }
   }
+
+  // Add declaration-only input files to the type checker input set.
+  result.sourceFiles.push(...dtsSourceFiles);
 
   // Prefer bundled outputs when present in multifile baselines.
   if (result.files.has('out.js')) {
