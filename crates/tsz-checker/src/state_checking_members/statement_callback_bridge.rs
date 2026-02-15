@@ -136,7 +136,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let has_jsdoc_param = if param.type_annotation.is_none() {
                 let from_func_jsdoc = if let Some(ref jsdoc) = func_decl_jsdoc {
                     let pname = self.parameter_name_for_error(param.name);
-                    Self::jsdoc_has_param_type(jsdoc, &pname) || Self::jsdoc_has_type_tag(jsdoc)
+                    Self::jsdoc_has_param_type(jsdoc, &pname)
+                        || Self::jsdoc_has_type_tag(jsdoc)
+                        || self.ctx.arena.get(param.name).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                                || n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        }) && Self::jsdoc_has_type_annotations(jsdoc)
                 } else {
                     false
                 };
