@@ -54,11 +54,11 @@ impl EnvVarGuard {
         match value {
             Some(value) => {
                 // tests serialize env mutation with a global lock.
-                std::env::set_var(key, value);
+                unsafe { std::env::set_var(key, value) };
             }
             None => {
                 // tests serialize env mutation with a global lock.
-                std::env::remove_var(key);
+                unsafe { std::env::remove_var(key) };
             }
         }
         Self { key, previous }
@@ -70,11 +70,11 @@ impl Drop for EnvVarGuard {
         match self.previous.as_deref() {
             Some(value) => {
                 // tests serialize env mutation with a global lock.
-                std::env::set_var(self.key, value);
+                unsafe { std::env::set_var(self.key, value) };
             }
             None => {
                 // tests serialize env mutation with a global lock.
-                std::env::remove_var(self.key);
+                unsafe { std::env::remove_var(self.key) };
             }
         }
     }

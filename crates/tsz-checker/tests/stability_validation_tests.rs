@@ -114,7 +114,7 @@ fn test_constraint_recursion_depth_limit() {
 
     assert_in_range(
         "Constraint recursion depth",
-        MAX_CONSTRAINT_RECURSION_DEPTH as usize,
+        MAX_CONSTRAINT_RECURSION_DEPTH,
         50,
         200,
     );
