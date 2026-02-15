@@ -1370,7 +1370,7 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
 
     /// Create a span for this file.
     pub fn span(&self, start: u32, length: u32) -> SourceSpan {
-        SourceSpan::new(self.file.clone(), start, length)
+        SourceSpan::new(std::sync::Arc::clone(&self.file), start, length)
     }
 
     /// Create a "Type X is not assignable to type Y" diagnostic with span.
@@ -1593,7 +1593,7 @@ impl SourceLocation {
 
     /// Convert to a SourceSpan.
     pub fn to_span(&self) -> SourceSpan {
-        SourceSpan::new(self.file.clone(), self.start, self.length())
+        SourceSpan::new(std::sync::Arc::clone(&self.file), self.start, self.length())
     }
 }
 

@@ -481,10 +481,10 @@ impl<'a, R: TypeResolver> Canonicalizer<'a, R> {
 
     /// Check if a type is a callable (Function or Callable).
     fn is_callable_type(&self, type_id: TypeId) -> bool {
-        match self.interner.lookup(type_id) {
-            Some(TypeData::Function(_)) | Some(TypeData::Callable(_)) => true,
-            _ => false,
-        }
+        matches!(
+            self.interner.lookup(type_id),
+            Some(TypeData::Function(_)) | Some(TypeData::Callable(_))
+        )
     }
 
     /// Canonicalize a single call signature with type parameter scope management.

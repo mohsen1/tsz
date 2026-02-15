@@ -2760,7 +2760,7 @@ impl<'a> CheckerState<'a> {
                 if std::ptr::eq(da.as_ref(), self.ctx.arena) {
                     return self.type_of_value_declaration(decl_idx);
                 }
-                Some(da.clone())
+                Some(std::sync::Arc::clone(da))
             } else if self.ctx.arena.get(decl_idx).is_some() {
                 // Node exists in current arena but no declaration_arenas entry.
                 // For non-lib symbols: this is the correct arena — use fast path.

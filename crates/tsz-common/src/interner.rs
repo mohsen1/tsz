@@ -194,7 +194,7 @@ impl Interner {
         };
         // Index 0 is reserved for empty/none
         let empty: Arc<str> = Arc::from("");
-        interner.strings.push(empty.clone());
+        interner.strings.push(Arc::clone(&empty));
         interner.map.insert(empty, Atom::NONE);
         interner
     }
@@ -209,7 +209,7 @@ impl Interner {
         }
         let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
         let owned: Arc<str> = Arc::from(s);
-        self.strings.push(owned.clone());
+        self.strings.push(Arc::clone(&owned));
         self.map.insert(owned, atom);
         atom
     }
@@ -223,7 +223,7 @@ impl Interner {
         }
         let atom = Atom(u32::try_from(self.strings.len()).unwrap_or(Atom::NONE.0));
         let owned: Arc<str> = Arc::from(s.into_boxed_str());
-        self.strings.push(owned.clone());
+        self.strings.push(Arc::clone(&owned));
         self.map.insert(owned, atom);
         atom
     }
@@ -301,7 +301,7 @@ impl ShardedInterner {
         // Initialize empty string in shard 0 with safe lock handling
         if let Ok(mut state) = shards[0].state.write() {
             let empty: Arc<str> = Arc::from("");
-            state.strings.push(empty.clone());
+            state.strings.push(Arc::clone(&empty));
             state.map.insert(empty, Atom::NONE);
         }
         // Note: If lock is poisoned during initialization, we continue anyway
@@ -342,7 +342,7 @@ impl ShardedInterner {
         let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
         let atom = Self::make_atom(local_index, shard_idx_u32);
         let owned: Arc<str> = Arc::from(s);
-        state.strings.push(owned.clone());
+        state.strings.push(Arc::clone(&owned));
         state.map.insert(owned, atom);
         atom
     }
@@ -377,7 +377,7 @@ impl ShardedInterner {
         let shard_idx_u32 = u32::try_from(shard_idx).unwrap_or(Atom::NONE.0);
         let atom = Self::make_atom(local_index, shard_idx_u32);
         let owned: Arc<str> = Arc::from(s);
-        state.strings.push(owned.clone());
+        state.strings.push(Arc::clone(&owned));
         state.map.insert(owned, atom);
         atom
     }

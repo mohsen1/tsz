@@ -382,13 +382,13 @@ impl<'a> TracerSubtypeChecker<'a> {
         target_id: TypeId,
         tracer: &mut T,
     ) -> bool {
-        let is_subtype = match (lit, target) {
-            (LiteralValue::String(_), IntrinsicKind::String) => true,
-            (LiteralValue::Number(_), IntrinsicKind::Number) => true,
-            (LiteralValue::Boolean(_), IntrinsicKind::Boolean) => true,
-            (LiteralValue::BigInt(_), IntrinsicKind::Bigint) => true,
-            _ => false,
-        };
+        let is_subtype = matches!(
+            (lit, target),
+            (LiteralValue::String(_), IntrinsicKind::String)
+                | (LiteralValue::Number(_), IntrinsicKind::Number)
+                | (LiteralValue::Boolean(_), IntrinsicKind::Boolean)
+                | (LiteralValue::BigInt(_), IntrinsicKind::Bigint)
+        );
 
         if !is_subtype {
             return tracer.on_mismatch(|| SubtypeFailureReason::TypeMismatch {

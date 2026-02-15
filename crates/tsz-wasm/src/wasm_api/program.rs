@@ -369,7 +369,7 @@ impl TsProgram {
         // In a full implementation, we'd cache this
         TsTypeChecker::new(
             self.merged.as_ref().unwrap(),
-            self.type_interner.clone(),
+            std::sync::Arc::clone(&self.type_interner),
             &self.options,
             &self.lib_files,
         )
