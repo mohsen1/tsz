@@ -247,7 +247,6 @@ impl ParserState {
     }
 
     /// Parse a statement
-    #[allow(clippy::too_many_lines)]
     pub fn parse_statement(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
@@ -264,49 +263,7 @@ impl ParserState {
                 }
             }
             SyntaxKind::FunctionKeyword => self.parse_function_declaration(),
-            SyntaxKind::AsyncKeyword => {
-                // async function declaration or async arrow expression statement
-                // Look ahead to see if it's "async function"
-                if self.look_ahead_is_async_function() {
-                    self.parse_async_function_declaration()
-                } else if self.look_ahead_is_async_declaration() {
-                    let start_pos = self.token_pos();
-                    // TS1042 is reported by the checker (checkGrammarModifiers), not the parser
-                    let async_start = self.token_pos();
-                    self.parse_expected(SyntaxKind::AsyncKeyword);
-                    let async_end = self.token_end();
-                    let async_modifier = self.arena.add_token(
-                        SyntaxKind::AsyncKeyword as u16,
-                        async_start,
-                        async_end,
-                    );
-                    let modifiers = Some(self.make_node_list(vec![async_modifier]));
-                    match self.token() {
-                        SyntaxKind::ClassKeyword => {
-                            self.parse_class_declaration_with_modifiers(start_pos, modifiers)
-                        }
-                        SyntaxKind::EnumKeyword => {
-                            self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
-                        }
-                        SyntaxKind::InterfaceKeyword => {
-                            self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
-                        }
-                        SyntaxKind::NamespaceKeyword
-                        | SyntaxKind::ModuleKeyword
-                        | SyntaxKind::GlobalKeyword => {
-                            if self.look_ahead_is_module_declaration() {
-                                self.parse_module_declaration_with_modifiers(start_pos, modifiers)
-                            } else {
-                                self.parse_expression_statement()
-                            }
-                        }
-                        _ => self.parse_expression_statement(),
-                    }
-                } else {
-                    // It's an async arrow function as expression statement
-                    self.parse_expression_statement()
-                }
-            }
+            SyntaxKind::AsyncKeyword => self.parse_statement_async_declaration_or_expression(),
             SyntaxKind::AwaitKeyword => {
                 // await using declaration (ES2022)
                 // Look ahead to see if it's "await using"
@@ -321,51 +278,8 @@ impl ParserState {
                 self.parse_decorated_declaration()
             }
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
-            SyntaxKind::AbstractKeyword => {
-                // abstract class declaration
-                // Check for ASI: if next token is on a new line, treat as expression
-                if self.next_token_is_on_new_line() {
-                    self.parse_expression_statement()
-                } else if self.look_ahead_is_abstract_class() {
-                    self.parse_abstract_class_declaration()
-                } else if self.look_ahead_is_abstract_declaration() {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                    );
-                    self.next_token();
-                    match self.token() {
-                        SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-                        SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
-                        SyntaxKind::NamespaceKeyword
-                        | SyntaxKind::ModuleKeyword
-                        | SyntaxKind::GlobalKeyword => {
-                            if self.look_ahead_is_module_declaration() {
-                                self.parse_module_declaration()
-                            } else {
-                                self.parse_expression_statement()
-                            }
-                        }
-                        _ => self.parse_expression_statement(),
-                    }
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
-            SyntaxKind::AccessorKeyword => {
-                if self.look_ahead_is_accessor_declaration() {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Modifiers cannot appear here.",
-                        diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
-                    );
-                    self.next_token();
-                    self.parse_statement()
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
+            SyntaxKind::AbstractKeyword => self.parse_statement_abstract_keyword(),
+            SyntaxKind::AccessorKeyword => self.parse_statement_accessor_keyword(),
             // Modifier keywords used before declarations at top level
             // e.g., `public interface I {}`, `protected class C {}`, `static class C {}`
             // These should emit TS1044 and then parse the declaration
@@ -374,102 +288,26 @@ impl ParserState {
             | SyntaxKind::ProtectedKeyword
             | SyntaxKind::PrivateKeyword
             | SyntaxKind::OverrideKeyword
-            | SyntaxKind::ReadonlyKeyword => {
-                // ASI: if next token is on a new line, treat keyword as identifier expression
-                if self.next_token_is_on_new_line() {
-                    self.parse_expression_statement()
-                } else if self.look_ahead_is_modifier_before_declaration() {
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Modifier cannot be used here.",
-                        diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
-                    );
-                    self.next_token();
-                    self.parse_statement()
-                } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
-                    // Modifier keyword followed by identifier/keyword on same line but
-                    // NOT a valid declaration. Matches tsc's isStartOfStatement() which
-                    // returns false here. In tsc, abortParsingListOrMoveToNextToken
-                    // emits TS1128 and skips the token without parsing it.
-                    // e.g., "static try" inside error recovery.
-                    use tsz_common::diagnostics::diagnostic_codes;
-                    self.parse_error_at_current_token(
-                        "Declaration or statement expected.",
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                    self.next_token();
-                    // Continue to parse the next statement (e.g., "try" after "static").
-                    // Strip cascading TS1005 errors: in tsc, this code path aborts the
-                    // statement list back to a parent context (e.g., class members), so
-                    // no cascading errors occur. We can't abort, so we suppress TS1005
-                    // errors produced during the recursive parse.
-                    let diag_count = self.parse_diagnostics.len();
-                    let result = self.parse_statement();
-                    // Remove cascading TS1005 ("'...' expected") errors
-                    let mut i = diag_count;
-                    while i < self.parse_diagnostics.len() {
-                        if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED {
-                            self.parse_diagnostics.remove(i);
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    result
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
+            | SyntaxKind::ReadonlyKeyword => self.parse_statement_top_level_modifier(),
             SyntaxKind::DefaultKeyword => {
                 self.error_unexpected_token();
                 self.next_token();
                 self.parse_statement()
             }
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
-            SyntaxKind::TypeKeyword => {
-                if self.look_ahead_is_type_alias_declaration() {
-                    self.parse_type_alias_declaration()
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
+            SyntaxKind::TypeKeyword => self.parse_statement_type_keyword(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
-            SyntaxKind::DeclareKeyword => {
-                // `declare` is a contextual keyword — it can be used as an identifier.
-                // Only parse as ambient declaration if the next token is a valid
-                // declaration keyword. E.g., `declare instanceof C` should parse
-                // `declare` as an identifier in an expression statement.
-                if self.look_ahead_is_declare_before_declaration() {
-                    self.parse_ambient_declaration()
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
+            SyntaxKind::DeclareKeyword => self.parse_statement_declare_or_expression(),
             SyntaxKind::NamespaceKeyword
             | SyntaxKind::ModuleKeyword
-            | SyntaxKind::GlobalKeyword => {
-                if self.look_ahead_is_module_declaration() {
-                    self.parse_module_declaration()
-                } else {
-                    self.parse_expression_statement()
-                }
-            }
+            | SyntaxKind::GlobalKeyword => self.parse_statement_namespace_or_expression(),
             SyntaxKind::IfKeyword => self.parse_if_statement(),
             SyntaxKind::ReturnKeyword => self.parse_return_statement(),
             SyntaxKind::WhileKeyword => self.parse_while_statement(),
             SyntaxKind::ForKeyword => self.parse_for_statement(),
             SyntaxKind::SemicolonToken => self.parse_empty_statement(),
             SyntaxKind::ExportKeyword => self.parse_export_declaration(),
-            SyntaxKind::ImportKeyword => {
-                // Check for dynamic import: import(...)
-                if self.look_ahead_is_import_call() {
-                    self.parse_expression_statement()
-                // Check for import = (import equals declaration)
-                } else if self.look_ahead_is_import_equals() {
-                    self.parse_import_equals_declaration()
-                } else {
-                    self.parse_import_declaration()
-                }
-            }
+            SyntaxKind::ImportKeyword => self.parse_statement_import_keyword(),
             SyntaxKind::BreakKeyword => self.parse_break_statement(),
             SyntaxKind::ContinueKeyword => self.parse_continue_statement(),
             SyntaxKind::ThrowKeyword => self.parse_throw_statement(),
@@ -496,6 +334,159 @@ impl ParserState {
                     self.parse_expression_statement()
                 }
             }
+        }
+    }
+
+    fn parse_statement_async_declaration_or_expression(&mut self) -> NodeIndex {
+        if self.look_ahead_is_async_function() {
+            self.parse_async_function_declaration()
+        } else if self.look_ahead_is_async_declaration() {
+            let start_pos = self.token_pos();
+            let async_start = self.token_pos();
+            self.parse_expected(SyntaxKind::AsyncKeyword);
+            let async_end = self.token_end();
+            let async_modifier =
+                self.arena
+                    .add_token(SyntaxKind::AsyncKeyword as u16, async_start, async_end);
+            let modifiers = Some(self.make_node_list(vec![async_modifier]));
+            match self.token() {
+                SyntaxKind::ClassKeyword => {
+                    self.parse_class_declaration_with_modifiers(start_pos, modifiers)
+                }
+                SyntaxKind::EnumKeyword => {
+                    self.parse_enum_declaration_with_modifiers(start_pos, modifiers)
+                }
+                SyntaxKind::InterfaceKeyword => {
+                    self.parse_interface_declaration_with_modifiers(start_pos, modifiers)
+                }
+                SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::GlobalKeyword => {
+                    if self.look_ahead_is_module_declaration() {
+                        self.parse_module_declaration_with_modifiers(start_pos, modifiers)
+                    } else {
+                        self.parse_expression_statement()
+                    }
+                }
+                _ => self.parse_expression_statement(),
+            }
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_abstract_keyword(&mut self) -> NodeIndex {
+        if self.next_token_is_on_new_line() {
+            self.parse_expression_statement()
+        } else if self.look_ahead_is_abstract_class() {
+            self.parse_abstract_class_declaration()
+        } else if self.look_ahead_is_abstract_declaration() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Modifiers cannot appear here.",
+                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+            );
+            self.next_token();
+            match self.token() {
+                SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+                SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
+                SyntaxKind::NamespaceKeyword
+                | SyntaxKind::ModuleKeyword
+                | SyntaxKind::GlobalKeyword => {
+                    if self.look_ahead_is_module_declaration() {
+                        self.parse_module_declaration()
+                    } else {
+                        self.parse_expression_statement()
+                    }
+                }
+                _ => self.parse_expression_statement(),
+            }
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_accessor_keyword(&mut self) -> NodeIndex {
+        if self.look_ahead_is_accessor_declaration() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Modifiers cannot appear here.",
+                diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
+            );
+            self.next_token();
+            self.parse_statement()
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_top_level_modifier(&mut self) -> NodeIndex {
+        use tsz_common::diagnostics::diagnostic_codes;
+
+        if self.next_token_is_on_new_line() {
+            self.parse_expression_statement()
+        } else if self.look_ahead_is_modifier_before_declaration() {
+            self.parse_error_at_current_token(
+                "Modifier cannot be used here.",
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+            );
+            self.next_token();
+            self.parse_statement()
+        } else if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
+            self.parse_error_at_current_token(
+                "Declaration or statement expected.",
+                diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+            );
+            self.next_token();
+            let diag_count = self.parse_diagnostics.len();
+            let result = self.parse_statement();
+            let mut i = diag_count;
+            while i < self.parse_diagnostics.len() {
+                if self.parse_diagnostics[i].code == diagnostic_codes::EXPECTED {
+                    self.parse_diagnostics.remove(i);
+                } else {
+                    i += 1;
+                }
+            }
+            result
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_type_keyword(&mut self) -> NodeIndex {
+        if self.look_ahead_is_type_alias_declaration() {
+            self.parse_type_alias_declaration()
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_declare_or_expression(&mut self) -> NodeIndex {
+        // `declare` is a contextual keyword — it can be used as an identifier.
+        // Only parse as ambient declaration if the next token is a valid declaration keyword.
+        if self.look_ahead_is_declare_before_declaration() {
+            self.parse_ambient_declaration()
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_namespace_or_expression(&mut self) -> NodeIndex {
+        if self.look_ahead_is_module_declaration() {
+            self.parse_module_declaration()
+        } else {
+            self.parse_expression_statement()
+        }
+    }
+
+    fn parse_statement_import_keyword(&mut self) -> NodeIndex {
+        if self.look_ahead_is_import_call() {
+            self.parse_expression_statement()
+        } else if self.look_ahead_is_import_equals() {
+            self.parse_import_equals_declaration()
+        } else {
+            self.parse_import_declaration()
         }
     }
 
