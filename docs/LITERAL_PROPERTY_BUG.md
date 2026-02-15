@@ -83,7 +83,12 @@ None currently. This is a fundamental soundness issue.
 1. The `is_disjoint_unit_type` fast path at `subtype.rs:2220-2224` works correctly for direct literals
 2. `TypeLowering` at `lower.rs:2499-2510` creates proper literal TypeIds via `self.interner.literal_number(value)`
 3. Object property comparison never reaches the literal-to-literal check
-4. Likely cause: Property types are being compared via TypeId equality before expansion, or type aliases aren't being resolved to structural types
+4. **Bug is universal:** Affects all object types (not just type aliases or object literals)
+   - `type A = { x: 1 }; type B = { x: 3 }; b = a;` ✗
+   - `let a: { x: 1 } = ...; let b: { x: 3 } = a;` ✗
+   - `let b: { x: 3 } = { x: 1 };` ✗
+   - `let b: { x: 3 } = { x: 1 as const };` ✗
+5. Likely cause: Property types are being widened during object type creation/storage, OR property comparison has faulty early-exit logic
 
 ## Status
 
