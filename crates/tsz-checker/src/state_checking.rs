@@ -2410,7 +2410,7 @@ impl<'a> CheckerState<'a> {
     /// Rest bindings from tuple members should produce an array type.
     /// Variadic tuple members can already carry array types (`...T[]`), so avoid
     /// wrapping those into nested arrays.
-    fn rest_binding_array_type(&mut self, tuple_member_type: TypeId) -> TypeId {
+    fn rest_binding_array_type(&self, tuple_member_type: TypeId) -> TypeId {
         let tuple_member_type = query::unwrap_readonly_deep(self.ctx.types, tuple_member_type);
         if query::array_element_type(self.ctx.types, tuple_member_type).is_some() {
             tuple_member_type

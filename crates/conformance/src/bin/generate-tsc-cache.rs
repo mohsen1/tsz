@@ -692,9 +692,7 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
 
 fn resolve_tsc_version() -> Result<String> {
     let script = "const fs = require('fs'); const p = require.resolve('typescript/package.json'); const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); console.log(pkg.version || 'unknown');";
-    let output = Command::new("node")
-        .args(["-e", script])
-        .output()?;
+    let output = Command::new("node").args(["-e", script]).output()?;
 
     if !output.status.success() {
         return Ok("unknown".to_string());
