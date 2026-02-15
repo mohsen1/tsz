@@ -168,18 +168,17 @@ impl<'a> CheckerState<'a> {
             // and we have type arguments, return the first one
             // This handles cases where Promise doesn't have expected flags or where
             // promise_like_type_argument_from_base fails for other reasons
-            match query::classify_promise_type(self.ctx.types, base) {
-                query::PromiseTypeKind::Lazy(def_id) => {
-                    // Phase 4.2: Use DefId -> SymbolId bridge
-                    if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                        && self.is_promise_like_name(symbol.escaped_name.as_str())
-                        && let Some(&first_arg) = args.first()
-                    {
-                        return Some(first_arg);
-                    }
+            if let query::PromiseTypeKind::Lazy(def_id) =
+                query::classify_promise_type(self.ctx.types, base)
+            {
+                // Phase 4.2: Use DefId -> SymbolId bridge
+                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                    && self.is_promise_like_name(symbol.escaped_name.as_str())
+                    && let Some(&first_arg) = args.first()
+                {
+                    return Some(first_arg);
                 }
-                _ => {}
             }
         }
 
