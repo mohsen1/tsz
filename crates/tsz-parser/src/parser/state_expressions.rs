@@ -216,8 +216,11 @@ impl ParserState {
             // Check for line break before =>
             let has_line_break = self.scanner.has_preceding_line_break();
             let is_arrow = if has_line_break {
-                // Line break before => means this is not an arrow function (ASI applies)
-                false
+                // Line break before => — still parse as arrow function but TS1200 will
+                // be emitted during actual parsing. Empty parens `()` can't be a valid
+                // expression, so this must be arrow function params.
+                self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                    || self.is_token(SyntaxKind::OpenBraceToken)
             } else if self.is_token(SyntaxKind::ColonToken) {
                 let in_conditional_true =
                     (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
@@ -271,8 +274,11 @@ impl ParserState {
 
         // Check for optional return type annotation
         let is_arrow = if has_line_break {
-            // Line break before => means this is not an arrow function (ASI applies)
-            false
+            // Line break before => — still parse as arrow function but TS1200 will
+            // be emitted during actual parsing. Parenthesized params `(x, y)` followed
+            // by `=>` are unambiguously arrow function params even with line breaks.
+            self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
         } else if self.is_token(SyntaxKind::ColonToken) {
             let in_conditional_true = (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) != 0;
             if in_conditional_true {
@@ -422,6 +428,19 @@ impl ParserState {
         } else {
             NodeIndex::NONE
         };
+
+        // Check for line terminator before arrow (TS1200)
+        // The spec forbids a line break between `)` and `=>` in arrow functions,
+        // but we still parse it as an arrow function to match TSC behavior.
+        if self.scanner.has_preceding_line_break()
+            && self.is_token(SyntaxKind::EqualsGreaterThanToken)
+        {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Line terminator not permitted before arrow.",
+                diagnostic_codes::LINE_TERMINATOR_NOT_PERMITTED_BEFORE_ARROW,
+            );
+        }
 
         // Recovery: Handle missing fat arrow - common typo: (a, b) { return a; }
         // If we see { immediately after parameters/return type, the user forgot =>
