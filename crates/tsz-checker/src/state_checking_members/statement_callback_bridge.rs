@@ -20,27 +20,27 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
-        CheckerState::check_variable_statement(self, stmt_idx)
+        CheckerState::check_variable_statement(self, stmt_idx);
     }
 
     fn check_variable_declaration_list(&mut self, list_idx: NodeIndex) {
-        CheckerState::check_variable_declaration_list(self, list_idx)
+        CheckerState::check_variable_declaration_list(self, list_idx);
     }
 
     fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
-        CheckerState::check_variable_declaration(self, decl_idx)
+        CheckerState::check_variable_declaration(self, decl_idx);
     }
 
     fn check_return_statement(&mut self, stmt_idx: NodeIndex) {
-        CheckerState::check_return_statement(self, stmt_idx)
+        CheckerState::check_return_statement(self, stmt_idx);
     }
 
     fn check_unreachable_code_in_block(&mut self, stmts: &[NodeIndex]) {
-        CheckerState::check_unreachable_code_in_block(self, stmts)
+        CheckerState::check_unreachable_code_in_block(self, stmts);
     }
 
     fn check_function_implementations(&mut self, stmts: &[NodeIndex]) {
-        CheckerState::check_function_implementations(self, stmts)
+        CheckerState::check_function_implementations(self, stmts);
     }
 
     fn check_function_declaration(&mut self, func_idx: NodeIndex) {
@@ -409,7 +409,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // We skip the DeclarationChecker delegation for classes to avoid duplicate
         // TS2564 emissions. DeclarationChecker::check_class_declaration is tested
         // independently via its own test suite.
-        CheckerState::check_class_declaration(self, class_idx)
+        CheckerState::check_class_declaration(self, class_idx);
     }
 
     fn check_interface_declaration(&mut self, iface_idx: NodeIndex) {
@@ -418,15 +418,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         checker.check_interface_declaration(iface_idx);
 
         // Continue with comprehensive interface checking in CheckerState
-        CheckerState::check_interface_declaration(self, iface_idx)
+        CheckerState::check_interface_declaration(self, iface_idx);
     }
 
     fn check_import_declaration(&mut self, import_idx: NodeIndex) {
-        CheckerState::check_import_declaration(self, import_idx)
+        CheckerState::check_import_declaration(self, import_idx);
     }
 
     fn check_import_equals_declaration(&mut self, import_idx: NodeIndex) {
-        CheckerState::check_import_equals_declaration(self, import_idx)
+        CheckerState::check_import_equals_declaration(self, import_idx);
     }
 
     fn check_export_declaration(&mut self, export_idx: NodeIndex) {
@@ -553,7 +553,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         checker.check_enum_declaration(enum_idx);
 
         // Continue with enum duplicate members checking
-        CheckerState::check_enum_duplicate_members(self, enum_idx)
+        CheckerState::check_enum_duplicate_members(self, enum_idx);
     }
 
     fn check_module_declaration(&mut self, module_idx: NodeIndex) {
@@ -616,15 +616,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_await_expression(&mut self, expr_idx: NodeIndex) {
-        CheckerState::check_await_expression(self, expr_idx)
+        CheckerState::check_await_expression(self, expr_idx);
     }
 
     fn check_for_await_statement(&mut self, stmt_idx: NodeIndex) {
-        CheckerState::check_for_await_statement(self, stmt_idx)
+        CheckerState::check_for_await_statement(self, stmt_idx);
     }
 
     fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
-        CheckerState::check_truthy_or_falsy(self, node_idx)
+        CheckerState::check_truthy_or_falsy(self, node_idx);
     }
 
     fn assign_for_in_of_initializer_types(
@@ -638,7 +638,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             decl_list_idx,
             loop_var_type,
             is_for_in,
-        )
+        );
     }
 
     fn for_of_element_type(&mut self, expr_type: TypeId) -> TypeId {
@@ -670,7 +670,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_statement(&mut self, stmt_idx: NodeIndex) {
         // This calls back to the main check_statement which will delegate to StatementChecker
-        CheckerState::check_statement(self, stmt_idx)
+        CheckerState::check_statement(self, stmt_idx);
     }
 
     fn check_switch_exhaustiveness(
@@ -773,15 +773,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
-        CheckerState::check_with_statement(self, stmt_idx)
+        CheckerState::check_with_statement(self, stmt_idx);
     }
 
     fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
-        CheckerState::check_break_statement(self, stmt_idx)
+        CheckerState::check_break_statement(self, stmt_idx);
     }
 
     fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
-        CheckerState::check_continue_statement(self, stmt_idx)
+        CheckerState::check_continue_statement(self, stmt_idx);
     }
 
     fn enter_iteration_statement(&mut self) {

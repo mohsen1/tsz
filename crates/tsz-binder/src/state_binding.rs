@@ -2441,9 +2441,8 @@ impl BinderState {
         while let Some(item) = stack.pop() {
             match item {
                 WorkItem::Visit(idx) => {
-                    let node = match arena.get(idx) {
-                        Some(n) => n,
-                        None => continue,
+                    let Some(node) = arena.get(idx) else {
+                        continue;
                     };
 
                     if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
@@ -2552,9 +2551,8 @@ impl BinderState {
         while let Some(item) = stack.pop() {
             match item {
                 WorkItem::Visit(idx) => {
-                    let node = match arena.get(idx) {
-                        Some(n) => n,
-                        None => continue,
+                    let Some(node) = arena.get(idx) else {
+                        continue;
                     };
 
                     if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
@@ -2611,9 +2609,8 @@ impl BinderState {
             return;
         }
 
-        let node = match arena.get(idx) {
-            Some(n) => n,
-            None => return,
+        let Some(node) = arena.get(idx) else {
+            return;
         };
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {

@@ -1576,7 +1576,7 @@ impl TypeInterner {
                         key_type: idx.key_type,
                         value_type: idx.value_type,
                         readonly: idx.readonly,
-                    })
+                    });
                 }
                 (Some(idx), Some(existing)) => {
                     merged_string_index = Some(IndexSignature {
@@ -1595,7 +1595,7 @@ impl TypeInterner {
                         key_type: idx.key_type,
                         value_type: idx.value_type,
                         readonly: idx.readonly,
-                    })
+                    });
                 }
                 (Some(idx), Some(existing)) => {
                     merged_number_index = Some(IndexSignature {

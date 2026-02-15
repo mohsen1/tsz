@@ -1249,7 +1249,7 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                             );
                     // Keep TS2439 and also force TS2307 in this ambient-relative import case.
-                    force_module_not_found = true
+                    force_module_not_found = true;
                 }
             }
 
