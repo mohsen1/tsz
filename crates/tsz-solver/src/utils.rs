@@ -61,9 +61,9 @@ fn js_number_to_string(value: f64) -> String {
         let mut formatted = format!("{:e}", value);
         if let Some(split) = formatted.find('e') {
             let (mantissa, exp) = formatted.split_at(split);
-            let exp_digits = &exp[1..];
-            let (sign, digits) = if exp_digits.starts_with('-') {
-                ('-', &exp_digits[1..])
+            let exp_digits = exp.strip_prefix('e').unwrap_or("");
+            let (sign, digits) = if let Some(digits) = exp_digits.strip_prefix('-') {
+                ('-', digits)
             } else {
                 ('+', exp_digits)
             };

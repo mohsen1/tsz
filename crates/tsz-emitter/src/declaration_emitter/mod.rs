@@ -475,8 +475,8 @@ impl<'a> DeclarationEmitter<'a> {
             let text = &source_file.text[comment.pos as usize..comment.end as usize];
 
             // Triple-slash directives start with ///
-            if text.starts_with("///") {
-                let trimmed = text[3..].trim_start();
+            if let Some(stripped) = text.strip_prefix("///") {
+                let trimmed = stripped.trim_start();
 
                 // Check if this is a directive we should preserve
                 if trimmed.starts_with("<reference")
@@ -1327,7 +1327,6 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     // Mapped types don't add semicolon in inline mode
-                    return;
                 }
             }
             _ => {}
@@ -3792,8 +3791,8 @@ impl<'a> DeclarationEmitter<'a> {
     fn strip_ts_extensions(&self, path: &str) -> String {
         // Remove .ts, .tsx, .d.ts, .d.tsx extensions
         for ext in [".d.ts", ".d.tsx", ".tsx", ".ts"] {
-            if path.ends_with(ext) {
-                return path[..path.len() - ext.len()].to_string();
+            if let Some(path) = path.strip_suffix(ext) {
+                return path.to_string();
             }
         }
         path.to_string()
