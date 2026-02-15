@@ -1480,7 +1480,9 @@ impl Project {
         for file_path in self.files.keys() {
             if file_path.starts_with(path_str_ref) {
                 // Ensure it's a proper directory separator
-                let rest = &file_path[path_str_ref.len()..];
+                let Some(rest) = file_path.strip_prefix(path_str_ref) else {
+                    continue;
+                };
                 if rest.starts_with('/') || rest.starts_with('\\') {
                     return true;
                 }

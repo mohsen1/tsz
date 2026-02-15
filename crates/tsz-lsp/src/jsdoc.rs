@@ -224,7 +224,7 @@ pub fn parse_jsdoc(doc: &str) -> ParsedJsdoc {
                 current_desc = desc;
             } else {
                 // Parse other tags like @returns, @mytag, etc.
-                let tag_content = &trimmed[1..]; // skip '@'
+                let tag_content = trimmed.strip_prefix('@').unwrap_or(trimmed); // skip '@'
                 let (tag_name, tag_text) =
                     if let Some(space_pos) = tag_content.find(char::is_whitespace) {
                         (

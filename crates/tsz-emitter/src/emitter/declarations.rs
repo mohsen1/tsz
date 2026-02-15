@@ -485,7 +485,6 @@ impl<'a> Printer<'a> {
                 if !enum_name.is_empty() {
                     self.declared_namespace_names.insert(enum_name);
                 }
-                return;
             }
             // If transformer returns None (e.g., const enum), emit nothing
         }

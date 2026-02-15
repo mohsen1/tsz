@@ -125,8 +125,7 @@ pub fn build_module_resolution_maps(
 
             // Index file resolution: if target is `dir/index.ts`, also register `./dir`
             let tgt_stem = strip_ts_extension(tgt_name);
-            if tgt_stem.ends_with("/index") {
-                let dir_path = &tgt_stem[..tgt_stem.len() - "/index".len()];
+            if let Some(dir_path) = tgt_stem.strip_suffix("/index") {
                 let dir_as_path = Path::new(dir_path);
                 if let Some(dir_specifier) = relative_specifier(src_dir, dir_as_path) {
                     resolved_module_paths.insert((src_idx, dir_specifier.clone()), tgt_idx);
