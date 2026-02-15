@@ -591,14 +591,15 @@ impl ParserState {
                             if self.is_token(SyntaxKind::EndOfFileToken) {
                                 false
                             }
-                            // For closing parentheses, be more strict when we see { or if
-                            // These are common cases of missing ) in parameters or conditions
+                            // For closing parentheses, be more strict when we see {, }, or if
+                            // These are common cases of missing ) in conditions/parameters
                             else if kind == SyntaxKind::CloseParenToken
                                 && (self.is_token(SyntaxKind::OpenBraceToken)
+                                    || self.is_token(SyntaxKind::CloseBraceToken)
                                     || self.is_token(SyntaxKind::IfKeyword))
                             {
-                                // If we're expecting ) but see { or if, this is likely a missing )
-                                // Don't suppress - emit the error
+                                // { = start of block body, } = end of enclosing block, if = chained
+                                // All indicate the ) was genuinely missing
                                 false
                             }
                             // If next token starts a statement, the user has clearly moved on
