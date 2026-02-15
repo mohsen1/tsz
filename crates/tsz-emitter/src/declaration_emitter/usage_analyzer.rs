@@ -223,6 +223,11 @@ impl<'a> UsageAnalyzer<'a> {
                                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                                         self.analyze_variable_statement(export.export_clause);
                                     }
+                                    k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                                        self.analyze_import_equals_declaration(
+                                            export.export_clause,
+                                        );
+                                    }
                                     _ => {}
                                 }
                             }
@@ -230,7 +235,48 @@ impl<'a> UsageAnalyzer<'a> {
                     }
                 }
             }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.analyze_module_declaration(stmt_idx);
+            }
             _ => {}
+        }
+    }
+
+    fn analyze_module_declaration(&mut self, module_idx: NodeIndex) {
+        let Some(module_node) = self.arena.get(module_idx) else {
+            return;
+        };
+        let Some(module) = self.arena.get_module(module_node) else {
+            return;
+        };
+
+        if let Some(body_node) = self.arena.get(module.body) {
+            if let Some(module_block) = self.arena.get_module_block(body_node) {
+                if let Some(ref stmts) = module_block.statements {
+                    for &stmt_idx in &stmts.nodes {
+                        self.analyze_statement(stmt_idx);
+                    }
+                }
+            } else if let Some(_nested_module) = self.arena.get_module(body_node) {
+                self.analyze_module_declaration(module.body);
+            }
+        }
+    }
+
+    fn analyze_import_equals_declaration(&mut self, import_idx: NodeIndex) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        // Mark the RHS namespace/type/value as used by this declaration.
+        if !import.module_specifier.is_none() {
+            let old = self.in_value_pos;
+            self.in_value_pos = true;
+            self.analyze_entity_name(import.module_specifier);
+            self.in_value_pos = old;
         }
     }
 
