@@ -337,7 +337,7 @@ impl<'a> Printer<'a> {
         }
 
         let mut emitted_any_member = false;
-        for &member_idx in &class.members.nodes {
+        for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
             // Skip property declarations that were lowered
             if needs_class_field_lowering
                 && let Some(member_node) = self.arena.get(member_idx)
@@ -356,6 +356,44 @@ impl<'a> Printer<'a> {
 
             let before_len = self.writer.len();
             self.emit(member_idx);
+            let mut emit_standalone_class_semicolon = false;
+            if let Some(member_node) = self.arena.get(member_idx)
+                && (member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                    || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+                    || member_node.kind == syntax_kind_ext::METHOD_DECLARATION)
+            {
+                let next_is_semicolon_member = class
+                    .members
+                    .nodes
+                    .get(member_i + 1)
+                    .and_then(|&idx| self.arena.get(idx))
+                    .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
+
+                if !next_is_semicolon_member {
+                    let has_source_semicolon = self.source_text.is_some_and(|text| {
+                        let start = std::cmp::min(member_node.end as usize, text.len());
+                        let end = class
+                            .members
+                            .nodes
+                            .get(member_i + 1)
+                            .and_then(|&idx| self.arena.get(idx))
+                            .map_or(node.end as usize, |n| n.pos as usize);
+                        let end = std::cmp::min(end, text.len());
+                        start < end && text[start..end].contains(';')
+                    });
+                    emit_standalone_class_semicolon = has_source_semicolon;
+                }
+
+                // Some parser recoveries include the semicolon in member.end without
+                // creating a separate SEMICOLON_CLASS_ELEMENT; preserve it from source.
+                if self.source_text.is_some_and(|text| {
+                    let start = std::cmp::min(member_node.pos as usize, text.len());
+                    let end = std::cmp::min(member_node.end as usize, text.len());
+                    start < end && text[start..end].trim_end().ends_with(';')
+                }) {
+                    emit_standalone_class_semicolon = true;
+                }
+            }
             if self.writer.len() == before_len
                 && let (Some(member_node), Some(text)) =
                     (self.arena.get(member_idx), self.source_text)
@@ -382,6 +420,10 @@ impl<'a> Printer<'a> {
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
+                if emit_standalone_class_semicolon {
+                    self.write(";");
+                    self.write_line();
+                }
             }
         }
 
