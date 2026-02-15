@@ -50,6 +50,24 @@
             "command": "jq -r '.tool_input.file_path' | grep -q '^TypeScript/' && echo \"Blocked: TypeScript/ is a submodule and should not be modified. If you need to understand TypeScript behavior, read the files instead.\" >&2 && exit 2 || exit 0"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -q '\\-\\-no-verify' && echo 'BLOCKED: --no-verify is forbidden. The pre-commit hook MUST run on every commit. Fix the underlying issue instead of bypassing the hook.' >&2 && exit 2 || exit 0"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command' | grep -q 'TSZ_SKIP_HOOKS' && echo 'BLOCKED: TSZ_SKIP_HOOKS is forbidden. The pre-commit hook MUST run on every commit.' >&2 && exit 2 || exit 0"
+          }
+        ]
       }
     ]
   },

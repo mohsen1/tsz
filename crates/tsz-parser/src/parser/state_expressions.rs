@@ -964,12 +964,20 @@ impl ParserState {
                 let start_pos = self.token_pos();
                 self.consume_keyword(); // TS1260 check for await keyword with escapes
 
-                // In parameter-default context, `await =>` should report missing operand
-                // but keep `=>` for outer recovery (e.g. malformed parameter lists).
+                // In parameter-default context, `await =>` should report missing operand.
+                // Consume `=>` and the following token to prevent cascading errors
+                // (e.g., TS1359 for `await` used as arrow body in async context).
                 if self.in_parameter_default_context()
                     && self.is_token(SyntaxKind::EqualsGreaterThanToken)
                 {
                     self.error_expression_expected();
+                    self.next_token(); // consume `=>`
+                    // Skip the arrow body token (e.g., second `await`) for recovery
+                    if !self.is_token(SyntaxKind::CloseParenToken)
+                        && !self.is_token(SyntaxKind::EndOfFileToken)
+                    {
+                        self.next_token();
+                    }
                     let end_pos = self.token_end();
                     return self.arena.add_unary_expr_ex(
                         syntax_kind_ext::AWAIT_EXPRESSION,
