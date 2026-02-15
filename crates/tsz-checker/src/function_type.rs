@@ -446,6 +446,7 @@ impl<'a> CheckerState<'a> {
             // This must happen before infer_return_type_from_body which evaluates body expressions.
             self.ctx.function_depth += 1;
             self.cache_parameter_types(&parameters.nodes, Some(&param_types));
+            self.record_destructured_parameter_binding_groups(&parameters.nodes, &param_types);
 
             // Assign contextual types to destructuring parameters (binding patterns)
             // This allows destructuring patterns in callbacks to infer element types from contextual types
