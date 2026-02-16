@@ -3337,8 +3337,8 @@ impl ParserState {
                     if !next_is_constructor {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
-                            "Unexpected modifier.",
-                            diagnostic_codes::UNEXPECTED_TOKEN,
+                            "'export' modifier cannot appear on class elements of this kind.",
+                            diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
                         );
                     }
                     self.next_token();
