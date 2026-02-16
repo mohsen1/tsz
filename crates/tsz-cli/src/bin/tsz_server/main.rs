@@ -491,7 +491,6 @@ impl LogConfig {
         // CLI args override TSS_LOG
         if let Some(ref verbosity) = args.log_verbosity {
             config.level = match verbosity.as_str() {
-                "off" => LogLevel::Off,
                 "terse" => LogLevel::Terse,
                 "normal" => LogLevel::Normal,
                 "requestTime" => LogLevel::RequestTime,
@@ -2207,13 +2206,13 @@ impl Server {
                 sym: &tsz::lsp::document_symbols::DocumentSymbol,
             ) -> serde_json::Value {
                 let kind = match sym.kind {
-                    tsz::lsp::document_symbols::SymbolKind::File => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Module => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Namespace => "module",
+                    tsz::lsp::document_symbols::SymbolKind::File
+                    | tsz::lsp::document_symbols::SymbolKind::Module
+                    | tsz::lsp::document_symbols::SymbolKind::Namespace => "module",
                     tsz::lsp::document_symbols::SymbolKind::Class => "class",
                     tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::document_symbols::SymbolKind::Property => "property",
-                    tsz::lsp::document_symbols::SymbolKind::Field => "property",
+                    tsz::lsp::document_symbols::SymbolKind::Property
+                    | tsz::lsp::document_symbols::SymbolKind::Field => "property",
                     tsz::lsp::document_symbols::SymbolKind::Constructor => "constructor",
                     tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
                     tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
@@ -2283,13 +2282,13 @@ impl Server {
                 items: &mut Vec<serde_json::Value>,
             ) {
                 let kind = match sym.kind {
-                    tsz::lsp::document_symbols::SymbolKind::File => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Module => "module",
-                    tsz::lsp::document_symbols::SymbolKind::Namespace => "module",
+                    tsz::lsp::document_symbols::SymbolKind::File
+                    | tsz::lsp::document_symbols::SymbolKind::Module
+                    | tsz::lsp::document_symbols::SymbolKind::Namespace => "module",
                     tsz::lsp::document_symbols::SymbolKind::Class => "class",
                     tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::document_symbols::SymbolKind::Property => "property",
-                    tsz::lsp::document_symbols::SymbolKind::Field => "property",
+                    tsz::lsp::document_symbols::SymbolKind::Property
+                    | tsz::lsp::document_symbols::SymbolKind::Field => "property",
                     tsz::lsp::document_symbols::SymbolKind::Constructor => "constructor",
                     tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
                     tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
@@ -2416,8 +2415,7 @@ impl Server {
                         Some(tsz::lsp::highlighting::DocumentHighlightKind::Write) => {
                             "writtenReference"
                         }
-                        Some(tsz::lsp::highlighting::DocumentHighlightKind::Text) => "none",
-                        None => "none",
+                        Some(tsz::lsp::highlighting::DocumentHighlightKind::Text) | None => "none",
                     };
                     serde_json::json!({
                         "start": Self::lsp_to_tsserver_position(hl.range.start),
@@ -3028,8 +3026,8 @@ impl Server {
                     tsz::lsp::document_symbols::SymbolKind::Module => "module",
                     tsz::lsp::document_symbols::SymbolKind::Class => "class",
                     tsz::lsp::document_symbols::SymbolKind::Method => "method",
-                    tsz::lsp::document_symbols::SymbolKind::Property => "property",
-                    tsz::lsp::document_symbols::SymbolKind::Field => "property",
+                    tsz::lsp::document_symbols::SymbolKind::Property
+                    | tsz::lsp::document_symbols::SymbolKind::Field => "property",
                     tsz::lsp::document_symbols::SymbolKind::Constructor => "constructor",
                     tsz::lsp::document_symbols::SymbolKind::Enum => "enum",
                     tsz::lsp::document_symbols::SymbolKind::Interface => "interface",
@@ -4395,7 +4393,6 @@ impl Server {
             module: if let Some(module_str) = &options.module {
                 // Parse module kind from string (inline version of parse_module_kind)
                 match module_str.to_lowercase().as_str() {
-                    "none" => tsz::ModuleKind::None,
                     "commonjs" => tsz::ModuleKind::CommonJS,
                     "amd" => tsz::ModuleKind::AMD,
                     "umd" => tsz::ModuleKind::UMD,
@@ -4406,7 +4403,7 @@ impl Server {
                     "esnext" => tsz::ModuleKind::ESNext,
                     "node16" => tsz::ModuleKind::Node16,
                     "nodenext" => tsz::ModuleKind::NodeNext,
-                    _ => tsz::ModuleKind::None, // Fallback
+                    _ => tsz::ModuleKind::None,
                 }
             } else {
                 // Default to CommonJS if not specified (matches tsc behavior)

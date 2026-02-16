@@ -2179,15 +2179,22 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Call expressions - check arguments
+                // Call expressions - only check the callee, NOT arguments.
+                // Arguments to call expressions get proper contextual types from
+                // the call resolution path (collect_call_argument_types_with_context),
+                // so arrow/function expressions in arguments will have their TS7006
+                // correctly suppressed by the contextual type. Walking arguments here
+                // would emit false TS7006 before contextual typing has a chance to run.
                 k if k == syntax_kind_ext::CALL_EXPRESSION => {
                     if let Some(call) = self.ctx.arena.get_call_expr(node) {
                         self.check_for_nested_function_ts7006(call.expression);
-                        if let Some(args) = &call.arguments {
-                            for &arg in &args.nodes {
-                                self.check_for_nested_function_ts7006(arg);
-                            }
-                        }
+                    }
+                }
+                // New expressions - same treatment: only check the callee, skip arguments
+                // since constructor resolution provides contextual types for arguments.
+                k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                    if let Some(new_expr) = self.ctx.arena.get_call_expr(node) {
+                        self.check_for_nested_function_ts7006(new_expr.expression);
                     }
                 }
                 // Parenthesized expression - check contents

@@ -577,8 +577,26 @@ impl<'a> Printer<'a> {
         self.emit(for_in_of.initializer);
         self.write(" of ");
         self.emit(for_in_of.expression);
-        self.write(") ");
-        self.emit(for_in_of.statement);
+        self.write(")");
+        self.emit_loop_body(for_in_of.statement);
+    }
+
+    /// Emit a loop body statement. If the body is a block, emit it inline.
+    /// If it's a single statement, put it on a new indented line (matching tsc behavior).
+    fn emit_loop_body(&mut self, body: NodeIndex) {
+        let is_block = self
+            .arena
+            .get(body)
+            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+        if is_block {
+            self.write(" ");
+            self.emit(body);
+        } else {
+            self.write_line();
+            self.increase_indent();
+            self.emit(body);
+            self.decrease_indent();
+        }
     }
 
     pub(super) fn emit_return_statement(&mut self, node: &Node) {

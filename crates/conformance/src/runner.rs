@@ -2,6 +2,7 @@
 //!
 //! Orchestrates parallel test execution using tokio and compares results.
 
+use crate::batch_pool::{BatchOutcome, ProcessPool};
 use crate::cache::{self, load_cache};
 use crate::cli::Args;
 use crate::test_parser::{
@@ -108,6 +109,27 @@ impl Runner {
         let concurrency_limit = self.args.workers;
         let semaphore = Arc::new(Semaphore::new(concurrency_limit));
 
+        // Create batch process pool (unless --no-batch)
+        let pool: Option<Arc<ProcessPool>> = if self.args.no_batch {
+            info!("Batch pool disabled (--no-batch), using per-test subprocess mode");
+            None
+        } else {
+            info!(
+                "Creating batch process pool with {} workers",
+                concurrency_limit
+            );
+            match ProcessPool::new(&self.tsz_binary, concurrency_limit).await {
+                Ok(pool) => Some(Arc::new(pool)),
+                Err(e) => {
+                    warn!(
+                        "Failed to create batch pool: {}. Falling back to subprocess mode.",
+                        e
+                    );
+                    None
+                }
+            }
+        };
+
         // Process tests in parallel
         let start = Instant::now();
 
@@ -130,6 +152,7 @@ impl Runner {
                 let error_freq = std::sync::Arc::clone(&self.error_freq);
                 let problems = std::sync::Arc::clone(&self.problems);
                 let tsz_binary = self.tsz_binary.clone();
+                let pool = pool.clone();
                 let verbose = self.args.is_verbose();
                 let print_test = self.args.print_test;
                 let print_test_files = self.args.print_test_files;
@@ -146,6 +169,7 @@ impl Runner {
                         &test_dir,
                         cache,
                         tsz_binary,
+                        pool,
                         compare_fingerprints,
                         print_test_files,
                         timeout_secs,
@@ -466,6 +490,7 @@ impl Runner {
         test_dir: &Path,
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
+        pool: Option<Arc<ProcessPool>>,
         compare_fingerprints: bool,
         print_test_files: bool,
         timeout_secs: u64,
@@ -530,38 +555,55 @@ impl Runner {
                         })
                         .await??;
 
-                        // Spawn tsz process with kill_on_drop — ensures cleanup on timeout
-                        let child = tokio::process::Command::new(&tsz_binary)
-                            .arg("--project")
-                            .arg(prepared.temp_dir.path())
-                            .arg("--noEmit")
-                            .arg("--pretty")
-                            .arg("false")
-                            .stdout(std::process::Stdio::piped())
-                            .stderr(std::process::Stdio::piped())
-                            .kill_on_drop(true)
-                            .spawn()?;
-
-                        // Wait with timeout — child is auto-killed on drop if timeout fires
-                        let output = if timeout_secs > 0 {
-                            match tokio::time::timeout(
-                                Duration::from_secs(timeout_secs),
-                                child.wait_with_output(),
-                            )
-                            .await
-                            {
-                                Ok(result) => result?,
-                                Err(_) => return Ok(TestResult::Timeout),
+                        let compile_result = if let Some(ref pool) = pool {
+                            // Use batch pool — send project dir, read output
+                            let timeout_dur = if timeout_secs > 0 {
+                                Duration::from_secs(timeout_secs)
+                            } else {
+                                Duration::ZERO
+                            };
+                            match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                                BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                    &output,
+                                    prepared.temp_dir.path(),
+                                    variant,
+                                ),
+                                BatchOutcome::Crashed => return Ok(TestResult::Crashed),
+                                BatchOutcome::Timeout => return Ok(TestResult::Timeout),
                             }
                         } else {
-                            child.wait_with_output().await?
-                        };
+                            // Subprocess fallback — spawn fresh tsz per compilation
+                            let child = tokio::process::Command::new(&tsz_binary)
+                                .arg("--project")
+                                .arg(prepared.temp_dir.path())
+                                .arg("--noEmit")
+                                .arg("--pretty")
+                                .arg("false")
+                                .stdout(std::process::Stdio::piped())
+                                .stderr(std::process::Stdio::piped())
+                                .kill_on_drop(true)
+                                .spawn()?;
 
-                        let compile_result = tsz_wrapper::parse_tsz_output(
-                            &output,
-                            prepared.temp_dir.path(),
-                            variant,
-                        );
+                            let output = if timeout_secs > 0 {
+                                match tokio::time::timeout(
+                                    Duration::from_secs(timeout_secs),
+                                    child.wait_with_output(),
+                                )
+                                .await
+                                {
+                                    Ok(result) => result?,
+                                    Err(_) => return Ok(TestResult::Timeout),
+                                }
+                            } else {
+                                child.wait_with_output().await?
+                            };
+
+                            tsz_wrapper::parse_tsz_output(
+                                &output,
+                                prepared.temp_dir.path(),
+                                variant,
+                            )
+                        };
                         if compile_result.crashed {
                             return Ok(TestResult::Crashed);
                         }
@@ -743,33 +785,49 @@ impl Runner {
                     })
                     .await??;
 
-                    let child = tokio::process::Command::new(&tsz_binary)
-                        .arg("--project")
-                        .arg(prepared.temp_dir.path())
-                        .arg("--noEmit")
-                        .arg("--pretty")
-                        .arg("false")
-                        .stdout(std::process::Stdio::piped())
-                        .stderr(std::process::Stdio::piped())
-                        .kill_on_drop(true)
-                        .spawn()?;
-
-                    let output = if timeout_secs > 0 {
-                        match tokio::time::timeout(
-                            Duration::from_secs(timeout_secs),
-                            child.wait_with_output(),
-                        )
-                        .await
-                        {
-                            Ok(result) => result?,
-                            Err(_) => return Ok(TestResult::Timeout),
+                    let compile_result = if let Some(ref pool) = pool {
+                        let timeout_dur = if timeout_secs > 0 {
+                            Duration::from_secs(timeout_secs)
+                        } else {
+                            Duration::ZERO
+                        };
+                        match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                            BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                &output,
+                                prepared.temp_dir.path(),
+                                options,
+                            ),
+                            BatchOutcome::Crashed => return Ok(TestResult::Crashed),
+                            BatchOutcome::Timeout => return Ok(TestResult::Timeout),
                         }
                     } else {
-                        child.wait_with_output().await?
-                    };
+                        let child = tokio::process::Command::new(&tsz_binary)
+                            .arg("--project")
+                            .arg(prepared.temp_dir.path())
+                            .arg("--noEmit")
+                            .arg("--pretty")
+                            .arg("false")
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .kill_on_drop(true)
+                            .spawn()?;
 
-                    let compile_result =
-                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options);
+                        let output = if timeout_secs > 0 {
+                            match tokio::time::timeout(
+                                Duration::from_secs(timeout_secs),
+                                child.wait_with_output(),
+                            )
+                            .await
+                            {
+                                Ok(result) => result?,
+                                Err(_) => return Ok(TestResult::Timeout),
+                            }
+                        } else {
+                            child.wait_with_output().await?
+                        };
+
+                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
+                    };
                     if compile_result.crashed {
                         return Ok(TestResult::Crashed);
                     }

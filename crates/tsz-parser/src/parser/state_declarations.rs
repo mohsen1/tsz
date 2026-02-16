@@ -1692,7 +1692,15 @@ impl ParserState {
         )
     }
 
+    /// Parse a module export name: either an identifier/keyword or a string literal.
+    /// ES2022 allows string literals as import/export specifier names
+    /// (arbitrary module namespace identifiers).
     fn parse_specifier_identifier_name(&mut self) -> NodeIndex {
+        // ES2022: string literals are valid as module export names
+        if self.is_token(SyntaxKind::StringLiteral) {
+            return self.parse_string_literal();
+        }
+
         let start_pos = self.token_pos();
         let end_pos = self.token_end();
 
@@ -1718,7 +1726,7 @@ impl ParserState {
         )
     }
 
-    /// Parse import specifier: x or x as y
+    /// Parse import specifier: x or x as y or "str" as y
     pub(crate) fn parse_import_specifier(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut is_type_only = false;
@@ -1728,7 +1736,8 @@ impl ParserState {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             self.next_token();
-            if self.is_token(SyntaxKind::Identifier) {
+            // type-only if followed by identifier or string literal (ES2022)
+            if self.is_token(SyntaxKind::Identifier) || self.is_token(SyntaxKind::StringLiteral) {
                 is_type_only = true;
             } else {
                 self.scanner.restore_state(snapshot);
@@ -1973,9 +1982,14 @@ impl ParserState {
     pub(crate) fn parse_export_star(&mut self, start_pos: u32, is_type_only: bool) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsteriskToken);
 
-        // Optional "as namespace" for re-export (keywords allowed as names)
+        // Optional "as namespace" for re-export (keywords and string literals allowed)
         let export_clause = if self.parse_optional(SyntaxKind::AsKeyword) {
-            self.parse_identifier_name()
+            // ES2022: `export * as "name"` uses string literal as export name
+            if self.is_token(SyntaxKind::StringLiteral) {
+                self.parse_string_literal()
+            } else {
+                self.parse_identifier_name()
+            }
         } else {
             NodeIndex::NONE
         };
@@ -2088,7 +2102,8 @@ impl ParserState {
             let snapshot = self.scanner.save_state();
             let current = self.current_token;
             self.next_token();
-            if self.is_token(SyntaxKind::Identifier) {
+            // type-only if followed by identifier or string literal (ES2022)
+            if self.is_token(SyntaxKind::Identifier) || self.is_token(SyntaxKind::StringLiteral) {
                 is_type_only = true;
             } else {
                 self.scanner.restore_state(snapshot);

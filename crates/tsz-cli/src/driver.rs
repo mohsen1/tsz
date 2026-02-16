@@ -1102,12 +1102,10 @@ fn check_module_resolution_compatibility(
     }
 
     let required_str = match required {
-        ModuleKind::Node16 => "Node16",
         ModuleKind::NodeNext => "NodeNext",
         _ => "Node16",
     };
     let resolution_str = match module_resolution {
-        ModuleResolutionKind::Node16 => "Node16",
         ModuleResolutionKind::NodeNext => "NodeNext",
         _ => "Node16",
     };

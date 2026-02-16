@@ -712,6 +712,47 @@ const MAX_EVALUATE_DEPTH: u32 = 50;
 const MAX_TOTAL_EVALUATIONS: u32 = 100_000;
 ```
 
+**Narrowing Operations**:
+
+The Solver owns all type narrowing logic through a unified API. The Checker extracts narrowing guards from AST and delegates to Solver for type algebra.
+
+```rust
+// TypeGuard: AST-agnostic representation of narrowing conditions
+pub enum TypeGuard {
+    Typeof(TypeofResult),      // typeof x === "string"
+    Instanceof(TypeId),        // x instanceof Class
+    Equality(TypeId, bool),    // x === value / x !== value
+    Discriminant(Atom, TypeId),// x.kind === "foo"
+    InProperty(Atom),          // "prop" in x
+    Truthiness,                // if (x)
+    Nullishness,               // x ?? default
+    TypePredicate(TypeId),     // x is SomeType
+}
+
+// Unified narrowing entry point
+impl NarrowingContext<'_> {
+    /// Narrows source_type by applying the guard.
+    /// sense=true for positive branch, sense=false for negative branch.
+    pub fn narrow_type(
+        &self,
+        source_type: TypeId,
+        guard: &TypeGuard,
+        sense: bool,
+    ) -> TypeId;
+}
+```
+
+**Narrowing Architecture**:
+
+| Component | Responsibility |
+|-----------|---------------|
+| Checker | Extracts TypeGuard from AST (e.g., binary expressions, type predicates) |
+| Checker | Performs reference matching (`is_matching_reference`) to identify narrowed variable |
+| Solver | Implements `narrow_type(source, guard, sense)` - all type algebra |
+| Solver | Handles union filtering, type parameter constraints, special types (unknown, any) |
+
+**Rule**: If narrowing involves type computation (union filtering, constraint application), it belongs in Solver. Checker only extracts guards from AST and calls `narrow_type`.
+
 ### 4.5 Checker
 
 **Purpose**: Thin orchestration layer that walks AST and reports diagnostics.

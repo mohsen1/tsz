@@ -271,7 +271,6 @@ const bad: Foo = { x: 1, y: 2 };
 }
 
 #[test]
-#[ignore = "excess property check for variable assignment not yet stable"]
 fn test_excess_property_allows_variable_assignment() {
     use crate::parser::ParserState;
 
@@ -603,7 +602,6 @@ const bad: Tup = arr;
 }
 
 #[test]
-#[ignore = "TODO: Satisfies expression checking"]
 fn test_satisfies_assignability_check() {
     use crate::parser::ParserState;
 
@@ -4071,7 +4069,6 @@ class C {
 }
 
 #[test]
-#[ignore = "TODO: Static property checking on constructor types (typeof A) is not implemented"]
 fn test_class_static_side_property_assignability() {
     use crate::parser::ParserState;
 
@@ -5067,7 +5064,6 @@ xs[0] = 3;
 }
 
 #[test]
-#[ignore = "TODO: Readonly method signature assignability check not yet implemented"]
 fn test_readonly_method_signature_assignment_2540() {
     // Error 2540: Cannot assign to 'run' because it is a read-only property.
     use crate::parser::ParserState;
@@ -6689,7 +6685,6 @@ const val = obj.explicitProp;
 }
 
 #[test]
-#[ignore = "Pre-existing failure: TS4111 emitted incorrectly for union with explicit property"]
 fn test_union_with_index_signature_4111() {
     use crate::parser::ParserState;
 
@@ -7082,7 +7077,6 @@ interface Derived extends Base {
 }
 
 #[test]
-#[ignore = "TODO: Interface extends checking"]
 fn test_interface_extends_optional_property_mismatch_2430() {
     use crate::parser::ParserState;
 
@@ -7159,7 +7153,6 @@ const ok3: Foo = { x: undefined };
 }
 
 #[test]
-#[ignore = "TODO: Interface extends checking"]
 fn test_interface_extends_string_literal_property_mismatch_2430() {
     use crate::parser::ParserState;
 
@@ -7199,7 +7192,6 @@ interface Derived extends Base {
 }
 
 #[test]
-#[ignore = "TODO: Interface extends checking"]
 fn test_interface_extends_generic_argument_mismatch_2430() {
     use crate::parser::ParserState;
 
@@ -7280,7 +7272,6 @@ interface Derived extends Base<string> {
 }
 
 #[test]
-#[ignore = "TODO: Interface extends checking"]
 fn test_interface_extends_namespace_qualified_base_2430() {
     use crate::parser::ParserState;
 
@@ -10530,7 +10521,6 @@ type Alias = Foo.Bar;
 ///
 /// NOTE: Currently ignored - see `test_checker_namespace_merges_with_class_element_access`.
 #[test]
-#[ignore = "Namespace-class merging not fully implemented"]
 fn test_checker_namespace_merges_with_class_value_exports() {
     use crate::parser::ParserState;
 
@@ -10569,14 +10559,17 @@ const direct = Foo.value;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const value = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging with class in reverse order
 ///
-/// NOTE: Currently ignored - see `test_checker_namespace_merges_with_class_element_access`.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-class merging not fully implemented"]
 fn test_checker_namespace_merges_with_class_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -10615,7 +10608,11 @@ const direct = Foo.value;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const value = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging across declarations for value access
@@ -10736,10 +10733,8 @@ const value: Merge.B = { y: 1 };
 
 /// Test namespace merging with function for value exports
 ///
-/// NOTE: Currently ignored - namespace-function merging is not fully implemented.
-/// Similar to namespace-class and namespace-enum merging issues.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-function merging not fully implemented"]
 fn test_checker_namespace_merges_with_function_value_exports() {
     use crate::parser::ParserState;
 
@@ -10778,14 +10773,17 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging with function in reverse order
 ///
-/// NOTE: Currently ignored - see `test_checker_namespace_merges_with_function_value_exports`.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-function merging not fully implemented"]
 fn test_checker_namespace_merges_with_function_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -10827,7 +10825,11 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 #[test]
@@ -10958,10 +10960,8 @@ type Alias = Merge.Extra;
 
 /// Test namespace merging with enum for value exports
 ///
-/// NOTE: Currently ignored - namespace-enum merging is not fully implemented.
-/// Similar to namespace-class merging issues.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-enum merging not fully implemented"]
 fn test_checker_namespace_merges_with_enum_value_exports() {
     use crate::parser::ParserState;
 
@@ -11002,14 +11002,17 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging with enum in reverse order
 ///
-/// NOTE: Currently ignored - see `test_checker_namespace_merges_with_enum_value_exports`.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-enum merging not fully implemented"]
 fn test_checker_namespace_merges_with_enum_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -11053,7 +11056,11 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 #[test]
@@ -11188,11 +11195,8 @@ type Alias = Merge.Extra;
 
 /// Test namespace merging with class for element access
 ///
-/// NOTE: Currently ignored - namespace-class merging is not fully implemented.
-/// When a namespace and class with the same name are merged, element access
-/// should work correctly, but the type resolution doesn't handle this case properly.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-class merging not fully implemented"]
 fn test_checker_namespace_merges_with_class_element_access() {
     use crate::parser::ParserState;
 
@@ -11231,7 +11235,11 @@ const direct = Foo["value"];
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const value = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 #[test]
@@ -12039,7 +12047,6 @@ var e: typeof E;
 }
 
 #[test]
-#[ignore = "TODO: Variable redeclaration checking"]
 fn test_variable_redeclaration_enum_object_literal_no_2403() {
     use crate::parser::ParserState;
 
@@ -12653,7 +12660,6 @@ let missing: Outer.Inner.Missing;
 }
 
 #[test]
-#[ignore = "TODO: Import alias namespace member resolution"]
 fn test_import_alias_namespace_member_resolution() {
     use crate::parser::ParserState;
 
@@ -16756,7 +16762,6 @@ function extractId<T extends { id: number }>(item: T): ExtractId<T> {
 /// NOTE: Currently ignored - split accessor type checking is not fully implemented.
 /// The property type should be derived from getter type for reads and setter type for writes.
 #[test]
-#[ignore]
 fn test_split_accessors_basic() {
     use crate::parser::ParserState;
 
@@ -18301,7 +18306,6 @@ const dogHandler: HandlerWithDogProp = animalHandler;
 /// With strictFunctionTypes, function properties reject the unsound
 /// covariant direction (narrower param -> wider param).
 #[test]
-#[ignore = "TODO: Feature implementation in progress"]
 fn test_function_property_rejects_covariant() {
     use crate::parser::ParserState;
 
@@ -18892,7 +18896,6 @@ const config: Config = {
 /// Variables with excess properties are NOT subject to excess property checks.
 /// This is the "stale" object behavior - width subtyping is allowed.
 #[test]
-#[ignore = "freshness stripping for variable assignment not yet stable"]
 fn test_freshness_variable_no_excess_check() {
     use crate::parser::ParserState;
 
@@ -23293,7 +23296,6 @@ class Derived extends Base {
 }
 
 #[test]
-#[ignore = "TODO: Mixin pattern requires advanced generic class expression support"]
 fn test_mixin_inheritance_property_access() {
     use crate::parser::ParserState;
 
@@ -24404,7 +24406,6 @@ aFn(), b;
 }
 
 #[test]
-#[ignore = "Broken by strict defaults change (3e0540758)"]
 fn test_ts2695_comma_operator_edge_cases() {
     use crate::checker::diagnostics::diagnostic_codes;
     use crate::parser::ParserState;
@@ -24682,7 +24683,6 @@ product.users;
     let _ = checker.ctx.diagnostics.len();
 }
 #[test]
-#[ignore = "TODO: Destructuring assignability checking"]
 fn test_object_destructuring_assignability() {
     use crate::parser::ParserState;
 
@@ -24747,7 +24747,6 @@ let { x, y }: { x: string, y: string } = obj;
 }
 
 #[test]
-#[ignore = "TODO: Tuple-to-tuple assignability is broken. [number, string] should not be assignable to [number, number]"]
 fn test_array_destructuring_assignability() {
     use crate::parser::ParserState;
 
@@ -24812,7 +24811,6 @@ let [a, b]: [number, number] = arr;
 }
 
 #[test]
-#[ignore = "TODO: Destructuring assignability checking"]
 fn test_destructuring_with_default_values_assignability() {
     use crate::parser::ParserState;
 
@@ -24878,7 +24876,6 @@ let { x = 42 }: { x: string } = obj;
 }
 
 #[test]
-#[ignore = "TODO: Destructuring assignability checking"]
 fn test_nested_destructuring_assignability() {
     use crate::parser::ParserState;
 
@@ -24943,7 +24940,6 @@ let { a: { b } }: { a: { b: string } } = obj;
 }
 
 #[test]
-#[ignore = "TODO: Destructuring assignability checking"]
 fn test_destructuring_binding_element_default_value_mismatch() {
     use crate::parser::ParserState;
 
@@ -31816,7 +31812,6 @@ let z: boolean = null;
 
 /// Test TS2322 emission for return statement type mismatch
 #[test]
-#[ignore = "TODO: Return statement type checking"]
 fn test_ts2322_return_statement_type_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -31924,7 +31919,6 @@ class Example {
 
 /// Test TS2322 emission for object literal property type mismatch
 #[test]
-#[ignore = "TODO: Object literal property type checking"]
 fn test_ts2322_object_literal_property_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -31980,7 +31974,6 @@ const p: Person = {
 
 /// Test TS2322 emission for array element type mismatch
 #[test]
-#[ignore = "TODO: Array literal element type checking"]
 fn test_ts2322_array_element_type_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -32194,7 +32187,6 @@ const y: number = "hello";
 
 /// Test TS2322 for union type assignments
 #[test]
-#[ignore = "TODO: Union type assignability"]
 fn test_ts2322_union_type_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -32243,7 +32235,6 @@ let y: "a" | "b" = "c";
 
 /// Test TS2322 for tuple type assignments
 #[test]
-#[ignore = "TODO: Tuple assignability"]
 fn test_ts2322_tuple_type_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -32291,7 +32282,6 @@ let tuple: [string, number] = [1, "hello"];
 
 /// Test TS2322 for generic type assignments
 #[test]
-#[ignore = "TODO: Generic type mismatch checking"]
 fn test_ts2322_generic_type_mismatch() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -33693,7 +33683,6 @@ const list: List<number> = { value: 1, next: { value: 2, next: null } };
 /// Test that properties are checked against own index signatures (not inherited).
 /// This is the main failing case identified in docs/ts2411-remaining-issues.md
 #[test]
-#[ignore = "TODO: TS2411 index signature checking"]
 fn test_ts2411_own_string_index_signature() {
     use crate::checker::diagnostics::diagnostic_codes;
 
@@ -33743,7 +33732,6 @@ interface Derived {
 
 /// Test that properties are checked against inherited index signatures.
 #[test]
-#[ignore = "TODO: TS2411 index signature checking"]
 fn test_ts2411_inherited_index_signature() {
     use crate::checker::diagnostics::diagnostic_codes;
 
