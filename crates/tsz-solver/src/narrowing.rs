@@ -1126,18 +1126,18 @@ impl<'a> NarrowingContext<'a> {
 
         // Handle type parameters: narrow the constraint and intersect if changed
         if let Some(type_param_info) = type_param_info(self.db, source_type) {
-            if let Some(constraint) = type_param_info.constraint {
-                if constraint != source_type {
-                    let narrowed_constraint =
-                        self.narrow_by_property_presence(constraint, property_name, present);
-                    if narrowed_constraint != constraint {
-                        trace!(
-                            "Type parameter constraint narrowed from {} to {}, creating intersection",
-                            constraint.0,
-                            narrowed_constraint.0
-                        );
-                        return self.db.intersection2(source_type, narrowed_constraint);
-                    }
+            if let Some(constraint) = type_param_info.constraint
+                && constraint != source_type
+            {
+                let narrowed_constraint =
+                    self.narrow_by_property_presence(constraint, property_name, present);
+                if narrowed_constraint != constraint {
+                    trace!(
+                        "Type parameter constraint narrowed from {} to {}, creating intersection",
+                        constraint.0,
+                        narrowed_constraint.0
+                    );
+                    return self.db.intersection2(source_type, narrowed_constraint);
                 }
             }
             // Type parameter with no constraint or unchanged constraint
