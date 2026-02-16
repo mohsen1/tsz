@@ -2482,6 +2482,17 @@ impl ParserState {
         self.scanner.re_scan_slash_token();
         self.current_token = self.scanner.get_token();
 
+        // Check for unterminated regex literal (TS1161)
+        if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                start_pos,
+                1,
+                "Unterminated regular expression literal.",
+                diagnostic_codes::UNTERMINATED_REGULAR_EXPRESSION_LITERAL,
+            );
+        }
+
         // Get the regex text (including slashes and flags)
         let text = self.scanner.get_token_value_ref().to_string();
         let raw_text = self.scanner.get_token_text_ref().to_string();

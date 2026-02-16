@@ -1626,6 +1626,11 @@ impl ScannerState {
                 self.pos += self.char_len_at(self.pos);
             }
 
+            // If we reached EOF without finding closing /, mark as unterminated
+            if self.pos >= self.end && (self.token_flags & TokenFlags::Unterminated as u32) == 0 {
+                self.token_flags |= TokenFlags::Unterminated as u32;
+            }
+
             if (self.token_flags & TokenFlags::Unterminated as u32) == 0 {
                 // Consume the closing /
                 self.pos += 1;
