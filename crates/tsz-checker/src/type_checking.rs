@@ -183,31 +183,31 @@ impl<'a> CheckerState<'a> {
 
             // Check constructor-name restrictions for class members
             if let Some(name_text) = self.get_identifier_text_from_idx(name_idx)
-                && name_text == "constructor" {
-                    // TS1341: Class constructor may not be an accessor
-                    if kind == syntax_kind_ext::GET_ACCESSOR
-                        || kind == syntax_kind_ext::SET_ACCESSOR
+                && name_text == "constructor"
+            {
+                // TS1341: Class constructor may not be an accessor
+                if kind == syntax_kind_ext::GET_ACCESSOR || kind == syntax_kind_ext::SET_ACCESSOR {
+                    self.error_at_node(
+                        name_idx,
+                        diagnostic_messages::CLASS_CONSTRUCTOR_MAY_NOT_BE_AN_ACCESSOR,
+                        diagnostic_codes::CLASS_CONSTRUCTOR_MAY_NOT_BE_AN_ACCESSOR,
+                    );
+                }
+
+                // TS1368: Class constructor may not be a generator
+                if kind == syntax_kind_ext::METHOD_DECLARATION {
+                    let node = self.ctx.arena.get(member_idx);
+                    if let Some(method) = node.and_then(|n| self.ctx.arena.get_method_decl(n))
+                        && method.asterisk_token
                     {
                         self.error_at_node(
                             name_idx,
-                            diagnostic_messages::CLASS_CONSTRUCTOR_MAY_NOT_BE_AN_ACCESSOR,
-                            diagnostic_codes::CLASS_CONSTRUCTOR_MAY_NOT_BE_AN_ACCESSOR,
+                            diagnostic_messages::CLASS_CONSTRUCTOR_MAY_NOT_BE_A_GENERATOR,
+                            diagnostic_codes::CLASS_CONSTRUCTOR_MAY_NOT_BE_A_GENERATOR,
                         );
                     }
-
-                    // TS1368: Class constructor may not be a generator
-                    if kind == syntax_kind_ext::METHOD_DECLARATION {
-                        let node = self.ctx.arena.get(member_idx);
-                        if let Some(method) = node.and_then(|n| self.ctx.arena.get_method_decl(n))
-                            && method.asterisk_token {
-                                self.error_at_node(
-                                    name_idx,
-                                    diagnostic_messages::CLASS_CONSTRUCTOR_MAY_NOT_BE_A_GENERATOR,
-                                    diagnostic_codes::CLASS_CONSTRUCTOR_MAY_NOT_BE_A_GENERATOR,
-                                );
-                            }
-                    }
                 }
+            }
         }
     }
 

@@ -560,6 +560,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // Postfix unary expression - ++ and -- require numeric operand
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
+                    // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
+                    // Must come before TS2356 to match TSC's diagnostic priority.
+                    let mut emitted_strict = false;
+                    if let Some(operand_node) = self.checker.ctx.arena.get(unary.operand)
+                        && operand_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(id_data) = self.checker.ctx.arena.get_identifier(operand_node)
+                        && (id_data.escaped_text == "eval" || id_data.escaped_text == "arguments")
+                        && self.checker.is_strict_mode_for_node(unary.operand)
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.checker.error_at_node_msg(
+                            unary.operand,
+                            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                            &[&id_data.escaped_text],
+                        );
+                        emitted_strict = true;
+                    }
+
                     // TS2588: Cannot assign to 'x' because it is a constant.
                     let is_const = self.checker.check_const_assignment(unary.operand);
 
@@ -575,7 +593,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // Get operand type for validation
                     let operand_type = self.checker.get_type_of_node(unary.operand);
 
-                    if !is_const {
+                    // Skip TS2356 when TS1100 was already emitted (TSC prioritizes strict mode)
+                    if !is_const && !emitted_strict {
                         // Check if operand is valid for increment/decrement
                         use tsz_solver::BinaryOpEvaluator;
                         let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
