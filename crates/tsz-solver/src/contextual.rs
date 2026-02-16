@@ -372,6 +372,32 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
         Some(elem_type)
     }
 
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // For unions of tuple/array types, extract the element type from each member
+        // and create a union of the results.
+        let members = self.db.type_list(TypeListId(list_id));
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor = TupleElementExtractor::new(self.db, self.index);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_single_or_union(self.db, types)
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // For intersections, try each member and return the first match.
+        let members = self.db.type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let mut extractor = TupleElementExtractor::new(self.db, self.index);
+            if let Some(ty) = extractor.extract(member) {
+                return Some(ty);
+            }
+        }
+        None
+    }
+
     fn default_output() -> Self::Output {
         None
     }
@@ -1040,6 +1066,17 @@ impl<'a> ContextualTypeContext<'a> {
             return ctx.get_return_type();
         }
 
+        // Handle Lazy, Mapped, and Conditional types by evaluating first
+        if let Some(TypeData::Lazy(_) | TypeData::Mapped(_) | TypeData::Conditional(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_return_type();
+            }
+        }
+
         // Use visitor for Function/Callable types
         let mut extractor = ReturnTypeExtractor::new(self.interner);
         extractor.extract(expected)
@@ -1076,8 +1113,9 @@ impl<'a> ContextualTypeContext<'a> {
             }
         }
 
-        // Handle Mapped/Conditional types
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_)) = self.interner.lookup(expected)
+        // Handle Mapped/Conditional/Lazy types
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
+            self.interner.lookup(expected)
         {
             let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
@@ -1142,6 +1180,17 @@ impl<'a> ContextualTypeContext<'a> {
         {
             let ctx = ContextualTypeContext::with_expected(self.interner, constraint);
             return ctx.get_tuple_element_type(index);
+        }
+
+        // Handle Mapped, Conditional, and Lazy types by evaluating them first
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
+            self.interner.lookup(expected)
+        {
+            let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+            if evaluated != expected {
+                let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                return ctx.get_tuple_element_type(index);
+            }
         }
 
         let mut extractor = TupleElementExtractor::new(self.interner, index);
@@ -1215,7 +1264,7 @@ impl<'a> ContextualTypeContext<'a> {
                     }
                 }
             }
-            Some(TypeData::Conditional(_) | TypeData::Application(_)) => {
+            Some(TypeData::Conditional(_) | TypeData::Application(_) | TypeData::Lazy(_)) => {
                 let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
