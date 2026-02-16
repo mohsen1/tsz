@@ -1,5 +1,6 @@
 use super::*;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use tsz::config::{CompilerOptions, resolve_compiler_options};
 use tsz::emitter::ModuleKind;
 
 #[test]
@@ -249,5 +250,101 @@ fn test_resolve_type_package_entry_with_mode_require() {
         resolved.to_string_lossy().contains("index.d.cts"),
         "Should resolve to index.d.cts (require condition), got: {}",
         resolved.display()
+    );
+}
+
+#[test]
+fn test_resolve_module_specifier_classic_path_mapping_falls_back_to_root() {
+    let mut raw_paths = FxHashMap::default();
+    raw_paths.insert(
+        "*".to_string(),
+        vec!["*".to_string(), "generated/*".to_string()],
+    );
+    let compiler_options = CompilerOptions {
+        base_url: Some("c:/root".to_string()),
+        paths: Some(raw_paths),
+        module: Some("amd".to_string()),
+        ..Default::default()
+    };
+    let options =
+        resolve_compiler_options(Some(&compiler_options)).expect("resolve compiler options");
+    eprintln!(
+        "resolved options: base_url={:?} paths={:?} resolution={:?}",
+        options.base_url,
+        options
+            .paths
+            .as_ref()
+            .map(|paths| paths.iter().map(|m| m.pattern.clone()).collect::<Vec<_>>()),
+        options.effective_module_resolution()
+    );
+
+    let base = PathBuf::from("/tmp/tsz-test-absolute");
+    let mut known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    known_files.insert(base.join("c:/root/folder2/file1.ts"));
+    known_files.insert(base.join("c:/root/generated/folder3/file2.ts"));
+    known_files.insert(base.join("c:/root/shared/components/file3.ts"));
+    known_files.insert(base.join("c:/file4.ts"));
+    known_files.insert(base.join("c:/root/folder1/file1.ts"));
+
+    let mut cache = ModuleResolutionCache::default();
+    let resolved = resolve_module_specifier(
+        &base.join("c:/root/folder1/file1.ts"),
+        "file4",
+        &options,
+        &base,
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(base.join("c:/file4.ts")),
+        "classic path-mapping fallback should resolve file4 to c:/file4.ts"
+    );
+}
+
+#[test]
+fn test_resolve_module_specifier_classic_path_mapping_absolute_target_fallback() {
+    let mut raw_paths = FxHashMap::default();
+    raw_paths.insert(
+        "*".to_string(),
+        vec!["*".to_string(), "c:/shared/*".to_string()],
+    );
+    raw_paths.insert(
+        "templates/*".to_string(),
+        vec!["generated/src/templates/*".to_string()],
+    );
+
+    let compiler_options = CompilerOptions {
+        base_url: Some("c:/root/src".to_string()),
+        paths: Some(raw_paths),
+        module: Some("amd".to_string()),
+        ..Default::default()
+    };
+    let options =
+        resolve_compiler_options(Some(&compiler_options)).expect("resolve compiler options");
+
+    let mut known_files: FxHashSet<PathBuf> = FxHashSet::default();
+    known_files.insert(PathBuf::from("c:/root/src/file3.d.ts"));
+    known_files.insert(PathBuf::from("c:/shared/module1.d.ts"));
+    known_files.insert(PathBuf::from("c:/root/generated/src/templates/module2.ts"));
+    known_files.insert(PathBuf::from("c:/module3.d.ts"));
+    known_files.insert(PathBuf::from("c:/root/src/file1.ts"));
+    known_files.insert(PathBuf::from("c:/root/generated/src/project/file2.ts"));
+
+    let mut cache = ModuleResolutionCache::default();
+    let resolved = resolve_module_specifier(
+        &PathBuf::from("c:/root/src/file1.ts"),
+        "module3",
+        &options,
+        &PathBuf::from("c:/root/src"),
+        &mut cache,
+        &known_files,
+    );
+
+    assert_eq!(
+        resolved,
+        Some(PathBuf::from("c:/module3.d.ts")),
+        "absolute path mapping fallback should prefer shared module declarations"
     );
 }

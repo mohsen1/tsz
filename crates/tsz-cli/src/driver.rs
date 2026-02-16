@@ -2208,16 +2208,10 @@ fn collect_diagnostics(
                             tsz::config::ModuleResolutionKind::Classic
                         );
 
-                        // Convert TS2307 to TS2792 for bare specifiers in these module kinds
-                        let is_bare_specifier = !specifier.starts_with("./")
-                            && !specifier.starts_with("../")
-                            && !specifier.starts_with('/')
-                            && !specifier.contains(':');
                         let has_explicit_extension =
                             std::path::Path::new(specifier).extension().is_some();
 
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
-                            && is_bare_specifier
                             && !has_explicit_extension
                             && (module_kind_prefers_2792 || resolution_prefers_2792)
                         {

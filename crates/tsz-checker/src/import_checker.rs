@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
     /// Returns the appropriate "module not found" diagnostic code and message.
     /// Uses TS2792 when module resolution is "classic"-like (non-Node module kinds),
     /// otherwise TS2307.
-    fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
+    pub(crate) fn module_not_found_diagnostic(&self, module_name: &str) -> (String, u32) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 
         if let Some(error) = self.ctx.get_resolution_error(module_name) {
