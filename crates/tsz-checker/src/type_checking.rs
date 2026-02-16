@@ -4067,242 +4067,261 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Merge diagnostics only when interface type parameters are identical.
-        // TS2428 is reported separately; once mismatched, compatibility checks
-        // should not be compared across declarations.
-        let Some(baseline_params) = self.interface_type_parameter_names(declarations[0]) else {
-            return;
-        };
-        if declarations[1..].iter().any(|&decl_idx| {
-            self.interface_type_parameter_names(decl_idx) != Some(baseline_params.clone())
-        }) {
-            return;
+        let mut declarations_by_scope: FxHashMap<NodeIndex, Vec<NodeIndex>> = FxHashMap::default();
+        for &decl_idx in declarations {
+            let scope = self.get_enclosing_namespace(decl_idx);
+            declarations_by_scope
+                .entry(scope)
+                .or_default()
+                .push(decl_idx);
         }
 
-        let mut declarations = declarations.to_vec();
-        declarations.sort_by_key(|&decl_idx| {
-            self.ctx
-                .arena
-                .get(decl_idx)
-                .map(|node| node.pos)
-                .unwrap_or(u32::MAX)
-        });
+        for (_, mut declarations_in_scope) in declarations_by_scope {
+            if declarations_in_scope.len() <= 1 {
+                continue;
+            }
 
-        let mut merged_string_index: Option<TypeId> = None;
-        let mut merged_number_index: Option<TypeId> = None;
-        let mut merged_properties: FxHashMap<String, TypeId> = FxHashMap::default();
-
-        for &decl_idx in &declarations {
-            let Some(node) = self.ctx.arena.get(decl_idx) else {
+            // Merge diagnostics only when interface type parameters are identical.
+            // TS2428 is reported separately; once mismatched, compatibility checks
+            // should not be compared across declarations in the same scope.
+            let Some(baseline_params) =
+                self.interface_type_parameter_names(declarations_in_scope[0])
+            else {
                 continue;
             };
-            let Some(iface) = self.ctx.arena.get_interface(node) else {
+            if declarations_in_scope[1..].iter().any(|&decl_idx| {
+                self.interface_type_parameter_names(decl_idx) != Some(baseline_params.clone())
+            }) {
                 continue;
-            };
+            }
 
-            // Resolve interface-local type parameters before reading member signatures.
-            let (_type_params, updates) = self.push_type_parameters(&iface.type_parameters);
+            declarations_in_scope.sort_by_key(|&decl_idx| {
+                self.ctx
+                    .arena
+                    .get(decl_idx)
+                    .map(|node| node.pos)
+                    .unwrap_or(u32::MAX)
+            });
 
-            let mut local_properties: Vec<(String, NodeIndex, TypeId, bool)> = Vec::new();
-            let mut local_string_index: Option<TypeId> = None;
-            let mut local_number_index: Option<TypeId> = None;
-            let mut local_string_index_node = NodeIndex::NONE;
-            let mut local_number_index_node = NodeIndex::NONE;
+            let mut merged_string_index: Option<TypeId> = None;
+            let mut merged_number_index: Option<TypeId> = None;
+            let mut merged_properties: FxHashMap<String, TypeId> = FxHashMap::default();
 
-            for &member_idx in &iface.members.nodes {
-                let Some(member_node) = self.ctx.arena.get(member_idx) else {
+            for &decl_idx in &declarations_in_scope {
+                let Some(node) = self.ctx.arena.get(decl_idx) else {
+                    continue;
+                };
+                let Some(iface) = self.ctx.arena.get_interface(node) else {
                     continue;
                 };
 
-                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
-                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name(sig.name) else {
+                // Resolve interface-local type parameters before reading member signatures.
+                let (_type_params, updates) = self.push_type_parameters(&iface.type_parameters);
+
+                let mut local_properties: Vec<(String, NodeIndex, TypeId, bool)> = Vec::new();
+                let mut local_string_index: Option<TypeId> = None;
+                let mut local_number_index: Option<TypeId> = None;
+                let mut local_string_index_node = NodeIndex::NONE;
+                let mut local_number_index_node = NodeIndex::NONE;
+
+                for &member_idx in &iface.members.nodes {
+                    let Some(member_node) = self.ctx.arena.get(member_idx) else {
                         continue;
                     };
 
-                    let is_numeric_name = self
-                        .ctx
-                        .arena
-                        .get(sig.name)
-                        .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16);
-                    let property_type = if sig.type_annotation.is_none() {
-                        TypeId::ANY
-                    } else {
-                        self.get_type_from_type_node(sig.type_annotation)
-                    };
-                    local_properties.push((name, sig.name, property_type, is_numeric_name));
-                } else if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
-                    let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
-                        continue;
-                    };
-                    let Some(param_idx) = index_sig.parameters.nodes.first().copied() else {
-                        continue;
-                    };
-                    let Some(param_node) = self.ctx.arena.get(param_idx) else {
-                        continue;
-                    };
-                    let Some(param) = self.ctx.arena.get_parameter(param_node) else {
-                        continue;
-                    };
-                    if param.type_annotation.is_none() {
-                        continue;
-                    }
-                    let key_type = self.get_type_from_type_node(param.type_annotation);
-                    let value_type = if index_sig.type_annotation.is_none() {
-                        continue;
-                    } else {
-                        self.get_type_from_type_node(index_sig.type_annotation)
-                    };
-                    if self.type_contains_error(key_type) || self.type_contains_error(value_type) {
-                        continue;
-                    }
+                    if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                        let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                            continue;
+                        };
+                        let Some(name) = self.get_property_name(sig.name) else {
+                            continue;
+                        };
 
-                    if key_type == TypeId::STRING {
-                        local_string_index = Some(value_type);
-                        local_string_index_node = member_idx;
-                    } else if key_type == TypeId::NUMBER {
-                        local_number_index = Some(value_type);
-                        local_number_index_node = member_idx;
+                        let is_numeric_name = self
+                            .ctx
+                            .arena
+                            .get(sig.name)
+                            .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16);
+                        let property_type = if sig.type_annotation.is_none() {
+                            TypeId::ANY
+                        } else {
+                            self.get_type_from_type_node(sig.type_annotation)
+                        };
+                        local_properties.push((name, sig.name, property_type, is_numeric_name));
+                    } else if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                        let Some(index_sig) = self.ctx.arena.get_index_signature(member_node)
+                        else {
+                            continue;
+                        };
+                        let Some(param_idx) = index_sig.parameters.nodes.first().copied() else {
+                            continue;
+                        };
+                        let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                            continue;
+                        };
+                        let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                            continue;
+                        };
+                        if param.type_annotation.is_none() {
+                            continue;
+                        }
+                        let key_type = self.get_type_from_type_node(param.type_annotation);
+                        let value_type = if index_sig.type_annotation.is_none() {
+                            continue;
+                        } else {
+                            self.get_type_from_type_node(index_sig.type_annotation)
+                        };
+                        if self.type_contains_error(key_type)
+                            || self.type_contains_error(value_type)
+                        {
+                            continue;
+                        }
+
+                        if key_type == TypeId::STRING {
+                            local_string_index = Some(value_type);
+                            local_string_index_node = member_idx;
+                        } else if key_type == TypeId::NUMBER {
+                            local_number_index = Some(value_type);
+                            local_number_index_node = member_idx;
+                        }
                     }
                 }
-            }
 
-            // Apply merged declarations checks for property signatures.
-            for (name, name_idx, property_type, is_numeric) in &local_properties {
-                if let Some(existing_type) = merged_properties.get(name) {
-                    if self.type_contains_error(*property_type)
-                        || self.type_contains_error(*existing_type)
-                    {
-                        continue;
+                // Apply merged declarations checks for property signatures.
+                for (name, name_idx, property_type, is_numeric) in &local_properties {
+                    if let Some(existing_type) = merged_properties.get(name) {
+                        if self.type_contains_error(*property_type)
+                            || self.type_contains_error(*existing_type)
+                        {
+                            continue;
+                        }
+
+                        let compatible_both_ways = self
+                            .is_assignable_to(*existing_type, *property_type)
+                            && self.is_assignable_to(*property_type, *existing_type);
+                        if !compatible_both_ways {
+                            let existing_type_str = self.format_type(*existing_type);
+                            let property_type_str = self.format_type(*property_type);
+                            self.error_at_node_msg(
+                                *name_idx,
+                                diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                                &[name, &existing_type_str, &property_type_str],
+                            );
+                        }
+                    } else {
+                        // Keep first declaration as canonical for subsequent comparisons.
+                        // Matching declarations are not yet merged into this map.
                     }
 
-                    let compatible_both_ways = self
-                        .is_assignable_to(*existing_type, *property_type)
-                        && self.is_assignable_to(*property_type, *existing_type);
-                    if !compatible_both_ways {
-                        let existing_type_str = self.format_type(*existing_type);
-                        let property_type_str = self.format_type(*property_type);
+                    if *is_numeric
+                        && let Some(number_index) = local_number_index.or(merged_number_index)
+                        && !self.is_assignable_to(*property_type, number_index)
+                    {
+                        let index_type_str = self.format_type(number_index);
                         self.error_at_node_msg(
                             *name_idx,
-                            diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                            &[name, &existing_type_str, &property_type_str],
+                            diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &[
+                                name,
+                                &self.format_type(*property_type),
+                                "number",
+                                &index_type_str,
+                            ],
                         );
                     }
-                } else {
-                    // Keep first declaration as canonical for subsequent comparisons.
-                    // Matching declarations are not yet merged into this map.
-                }
 
-                if *is_numeric
-                    && let Some(number_index) = local_number_index.or(merged_number_index)
-                    && !self.is_assignable_to(*property_type, number_index)
-                {
-                    let index_type_str = self.format_type(number_index);
-                    self.error_at_node_msg(
-                        *name_idx,
-                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[
-                            name,
-                            &self.format_type(*property_type),
-                            "number",
-                            &index_type_str,
-                        ],
-                    );
-                }
-
-                if let Some(string_index) = local_string_index.or(merged_string_index)
-                    && !self.is_assignable_to(*property_type, string_index)
-                {
-                    let index_type_str = self.format_type(string_index);
-                    self.error_at_node_msg(
-                        *name_idx,
-                        diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                        &[
-                            name,
-                            &self.format_type(*property_type),
-                            "string",
-                            &index_type_str,
-                        ],
-                    );
-                }
-            }
-
-            for (name, _name_idx, property_type, _is_numeric) in local_properties {
-                merged_properties.entry(name).or_insert(property_type);
-            }
-
-            // Check declaration-local index signatures against already-seen signatures.
-            if let Some(local_number) = local_number_index {
-                if let Some(existing_string) = merged_string_index {
-                    let number_str = self.format_type(local_number);
-                    let string_str = self.format_type(existing_string);
-                    if !self.is_assignable_to(local_number, existing_string) {
-                        self.error_at_node_msg(
-                            local_number_index_node,
-                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                            &["number", &number_str, "string", &string_str],
-                        );
-                    }
-                }
-
-                if let Some(existing_number) = merged_number_index {
-                    let local_str = self.format_type(local_number);
-                    let existing_str = self.format_type(existing_number);
-                    if !self.is_assignable_to(local_number, existing_number)
-                        && !self.is_assignable_to(existing_number, local_number)
+                    if let Some(string_index) = local_string_index.or(merged_string_index)
+                        && !self.is_assignable_to(*property_type, string_index)
                     {
+                        let index_type_str = self.format_type(string_index);
                         self.error_at_node_msg(
-                            local_number_index_node,
-                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                            &["number", &local_str, "number", &existing_str],
-                        );
-                    }
-                }
-            }
-
-            if let Some(local_string) = local_string_index {
-                if let Some(existing_string) = merged_string_index {
-                    let local_str = self.format_type(local_string);
-                    let existing_str = self.format_type(existing_string);
-                    if !self.is_assignable_to(local_string, existing_string)
-                        && !self.is_assignable_to(existing_string, local_string)
-                    {
-                        self.error_at_node_msg(
-                            local_string_index_node,
-                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                            &["string", &local_str, "string", &existing_str],
+                            *name_idx,
+                            diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &[
+                                name,
+                                &self.format_type(*property_type),
+                                "string",
+                                &index_type_str,
+                            ],
                         );
                     }
                 }
 
-                if let Some(existing_number) = merged_number_index {
-                    let string_str = self.format_type(local_string);
-                    let existing_str = self.format_type(existing_number);
-                    if !self.is_assignable_to(existing_number, local_string) {
-                        self.error_at_node_msg(
-                            local_string_index_node,
-                            diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
-                            &["number", &existing_str, "string", &string_str],
-                        );
+                for (name, _name_idx, property_type, _is_numeric) in local_properties {
+                    merged_properties.entry(name).or_insert(property_type);
+                }
+
+                // Check declaration-local index signatures against already-seen signatures.
+                if let Some(local_number) = local_number_index {
+                    if let Some(existing_string) = merged_string_index {
+                        let number_str = self.format_type(local_number);
+                        let string_str = self.format_type(existing_string);
+                        if !self.is_assignable_to(local_number, existing_string) {
+                            self.error_at_node_msg(
+                                local_number_index_node,
+                                diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                                &["number", &number_str, "string", &string_str],
+                            );
+                        }
+                    }
+
+                    if let Some(existing_number) = merged_number_index {
+                        let local_str = self.format_type(local_number);
+                        let existing_str = self.format_type(existing_number);
+                        if !self.is_assignable_to(local_number, existing_number)
+                            && !self.is_assignable_to(existing_number, local_number)
+                        {
+                            self.error_at_node_msg(
+                                local_number_index_node,
+                                diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                                &["number", &local_str, "number", &existing_str],
+                            );
+                        }
                     }
                 }
-            }
 
-            if merged_number_index.is_none()
-                && let Some(local_number) = local_number_index
-            {
-                merged_number_index = Some(local_number);
-            }
+                if let Some(local_string) = local_string_index {
+                    if let Some(existing_string) = merged_string_index {
+                        let local_str = self.format_type(local_string);
+                        let existing_str = self.format_type(existing_string);
+                        if !self.is_assignable_to(local_string, existing_string)
+                            && !self.is_assignable_to(existing_string, local_string)
+                        {
+                            self.error_at_node_msg(
+                                local_string_index_node,
+                                diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                                &["string", &local_str, "string", &existing_str],
+                            );
+                        }
+                    }
 
-            if merged_string_index.is_none()
-                && let Some(local_string) = local_string_index
-            {
-                merged_string_index = Some(local_string);
-            }
+                    if let Some(existing_number) = merged_number_index {
+                        let string_str = self.format_type(local_string);
+                        let existing_str = self.format_type(existing_number);
+                        if !self.is_assignable_to(existing_number, local_string) {
+                            self.error_at_node_msg(
+                                local_string_index_node,
+                                diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                                &["number", &existing_str, "string", &string_str],
+                            );
+                        }
+                    }
+                }
 
-            self.pop_type_parameters(updates);
+                if merged_number_index.is_none()
+                    && let Some(local_number) = local_number_index
+                {
+                    merged_number_index = Some(local_number);
+                }
+
+                if merged_string_index.is_none()
+                    && let Some(local_string) = local_string_index
+                {
+                    merged_string_index = Some(local_string);
+                }
+
+                self.pop_type_parameters(updates);
+            }
         }
     }
 
