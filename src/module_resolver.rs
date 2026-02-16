@@ -560,6 +560,8 @@ pub struct ModuleResolver {
     custom_conditions: Vec<String>,
     /// Whether allowJs is enabled (affects extension candidates)
     allow_js: bool,
+    /// Whether to rewrite relative imports with TypeScript extensions during emit.
+    rewrite_relative_import_extensions: bool,
     /// Cache for package.json package type lookups
     package_type_cache: FxHashMap<PathBuf, Option<PackageType>>,
     /// Cached package type for the current resolution
@@ -598,6 +600,7 @@ impl ModuleResolver {
             resolution_cache: FxHashMap::default(),
             custom_conditions: options.custom_conditions.clone(),
             allow_js: options.allow_js,
+            rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
         }
@@ -621,6 +624,7 @@ impl ModuleResolver {
             resolution_cache: FxHashMap::default(),
             custom_conditions: Vec::new(),
             allow_js: false,
+            rewrite_relative_import_extensions: false,
             package_type_cache: FxHashMap::default(),
             current_package_type: None,
         }
@@ -657,16 +661,6 @@ impl ModuleResolver {
             .to_path_buf();
         let containing_file_str = containing_file.display().to_string();
 
-        if let Some(extension) = explicit_ts_extension(specifier)
-            && !self.allow_importing_ts_extensions
-        {
-            return Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
-                extension,
-                containing_file: containing_file_str.clone(),
-                span: specifier_span,
-            });
-        }
-
         self.current_package_type = match self.resolution_kind {
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 self.get_package_type_for_dir(&containing_dir)
@@ -683,7 +677,7 @@ impl ModuleResolver {
         // Determine the module kind of the importing file
         let importing_module_kind = self.get_importing_module_kind(containing_file);
 
-        let mut result = self.resolve_uncached(
+        let (mut result, path_mapping_attempted) = self.resolve_uncached(
             specifier,
             &containing_dir,
             &containing_file_str,
@@ -691,6 +685,21 @@ impl ModuleResolver {
             importing_module_kind,
             import_kind,
         );
+
+        if !self.allow_importing_ts_extensions
+            && !self.allow_arbitrary_extensions
+            && !self.rewrite_relative_import_extensions
+            && (self.base_url.is_some() || self.path_mappings.is_empty())
+            && let Some(extension) = explicit_ts_extension(specifier)
+            && !path_mapping_attempted
+            && matches!(result, Err(ResolutionFailure::NotFound { .. }))
+        {
+            result = Err(ResolutionFailure::ImportingTsExtensionNotAllowed {
+                extension,
+                containing_file: containing_file_str.clone(),
+                span: specifier_span,
+            });
+        }
 
         if let Ok(resolved) = &result {
             if matches!(
@@ -807,41 +816,42 @@ impl ModuleResolver {
         specifier_span: Span,
         importing_module_kind: ImportingModuleKind,
         import_kind: ImportKind,
-    ) -> Result<ResolvedModule, ResolutionFailure> {
+    ) -> (Result<ResolvedModule, ResolutionFailure>, bool) {
         // Step 1: Handle #-prefixed imports (package.json imports field)
         // This is a Node16/NodeNext feature for subpath imports
         if specifier.starts_with('#') {
             if !self.resolve_package_json_imports {
-                return Err(ResolutionFailure::NotFound {
-                    specifier: specifier.to_string(),
-                    containing_file: containing_file.to_string(),
-                    span: specifier_span,
-                });
+                return (
+                    Err(ResolutionFailure::NotFound {
+                        specifier: specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    }),
+                    false,
+                );
             }
-            return self.resolve_package_imports(
-                specifier,
-                containing_dir,
-                containing_file,
-                specifier_span,
-                importing_module_kind,
+            return (
+                self.resolve_package_imports(
+                    specifier,
+                    containing_dir,
+                    containing_file,
+                    specifier_span,
+                    importing_module_kind,
+                ),
+                false,
             );
         }
 
         // Step 2: Try path mappings first (if configured and baseUrl is available).
         // TypeScript treats `paths` mappings as requiring `baseUrl` to avoid surprising
         // absolute lookups that behave like relative resolution.
+        let mut path_mapping_attempted = false;
         if self.base_url.is_some() && !self.path_mappings.is_empty() {
             let attempt = self.try_path_mappings(specifier, containing_dir);
             if let Some(resolved) = attempt.resolved {
-                return Ok(resolved);
+                return (Ok(resolved), path_mapping_attempted);
             }
-            if attempt.attempted {
-                return Err(ResolutionFailure::PathMappingFailed {
-                    message: specifier.to_string(),
-                    containing_file: containing_file.to_string(),
-                    span: specifier_span,
-                });
-            }
+            path_mapping_attempted = attempt.attempted;
         }
 
         // Step 3: Handle relative imports
@@ -850,55 +860,78 @@ impl ModuleResolver {
             || specifier == "."
             || specifier == ".."
         {
-            return self.resolve_relative(
-                specifier,
-                containing_dir,
-                containing_file,
-                specifier_span,
-                importing_module_kind,
-                import_kind,
+            return (
+                self.resolve_relative(
+                    specifier,
+                    containing_dir,
+                    containing_file,
+                    specifier_span,
+                    importing_module_kind,
+                    import_kind,
+                ),
+                path_mapping_attempted,
             );
         }
 
         // Step 4: Handle absolute imports (rare but valid)
         if specifier.starts_with('/') {
-            return self.resolve_absolute(specifier, containing_file, specifier_span);
+            return (
+                self.resolve_absolute(specifier, containing_file, specifier_span),
+                path_mapping_attempted,
+            );
         }
 
         // Step 5: Try baseUrl fallback for non-relative specifiers
         if let Some(base_url) = &self.base_url {
             let candidate = base_url.join(specifier);
             if let Some(resolved) = self.try_file_or_directory(&candidate) {
-                return Ok(ResolvedModule {
-                    resolved_path: resolved.clone(),
-                    is_external: false,
-                    package_name: None,
-                    original_specifier: specifier.to_string(),
-                    extension: ModuleExtension::from_path(&resolved),
-                });
+                return (
+                    Ok(ResolvedModule {
+                        resolved_path: resolved.clone(),
+                        is_external: false,
+                        package_name: None,
+                        original_specifier: specifier.to_string(),
+                        extension: ModuleExtension::from_path(&resolved),
+                    }),
+                    path_mapping_attempted,
+                );
             }
         }
 
         // Step 6: Classic resolution walks up the directory tree looking for
         // <specifier>.ts, <specifier>.tsx, <specifier>.d.ts at each level.
         // It does NOT consult node_modules.
-        if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
-            return self.resolve_classic_non_relative(
+        let resolved = if matches!(self.resolution_kind, ModuleResolutionKind::Classic) {
+            self.resolve_classic_non_relative(
                 specifier,
                 containing_dir,
                 containing_file,
                 specifier_span,
-            );
+            )
+        } else {
+            self.resolve_bare_specifier(
+                specifier,
+                containing_dir,
+                containing_file,
+                specifier_span,
+                importing_module_kind,
+            )
+        };
+
+        if let Err(ResolutionFailure::NotFound { .. }) = &resolved {
+            if path_mapping_attempted {
+                return (
+                    Err(ResolutionFailure::PathMappingFailed {
+                        message: specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    }),
+                    path_mapping_attempted,
+                );
+            }
         }
 
-        // Step 7: Handle bare specifiers (npm packages)
-        self.resolve_bare_specifier(
-            specifier,
-            containing_dir,
-            containing_file,
-            specifier_span,
-            importing_module_kind,
-        )
+        (resolved, path_mapping_attempted)
     }
 
     /// Resolve package.json imports field (#-prefixed specifiers)
@@ -1081,6 +1114,9 @@ impl ModuleResolver {
                     } else {
                         target.clone()
                     };
+                    if Self::has_path_mapping_target_extension(&substituted) {
+                        continue;
+                    }
 
                     let base = self
                         .base_url
@@ -1108,6 +1144,11 @@ impl ModuleResolver {
             resolved: None,
             attempted,
         }
+    }
+
+    fn has_path_mapping_target_extension(target: &str) -> bool {
+        let base_path = std::path::Path::new(target);
+        split_path_extension(base_path).is_some()
     }
 
     /// Resolve a relative import
@@ -2131,7 +2172,7 @@ impl ModuleResolver {
         let importing_module_kind = self.get_importing_module_kind(containing_file);
 
         self.allow_js = true;
-        let result = self.resolve_uncached(
+        let (result, _) = self.resolve_uncached(
             specifier,
             &containing_dir,
             &containing_file_str,

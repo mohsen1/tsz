@@ -2057,8 +2057,9 @@ fn collect_diagnostics(
                         {
                             resolved_override = Some(resolved_path.clone());
                         }
-                        // Check if this is NotFound and the old resolver would find it (virtual test files)
-                        // In that case, validate Node16 rules before accepting the fallback
+                        // Check if this is NotFound and the old
+                        // resolver would find it (virtual test files). In that case,
+                        // validate Node16 rules before accepting the fallback.
                         if failure.is_not_found()
                             && let Some(resolved) = resolve_module_specifier(
                                 file_path,
@@ -2069,6 +2070,14 @@ fn collect_diagnostics(
                                 &program_paths,
                             )
                         {
+                            if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
+                                eprintln!(
+                                    "module specifier fallback success: file={} spec={} -> {}",
+                                    file_path.display(),
+                                    specifier,
+                                    resolved.display()
+                                );
+                            }
                             // Validate Node16/NodeNext extension requirements for virtual files
                             let resolution_kind = options.effective_module_resolution();
                             let is_node16_or_next = matches!(
@@ -2137,6 +2146,15 @@ fn collect_diagnostics(
                             failure
                         };
 
+                        if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
+                            eprintln!(
+                                "module specifier resolution failed: file={} spec={} failure={:?}",
+                                file_path.display(),
+                                specifier,
+                                failure_to_use
+                            );
+                        }
+
                         // Untyped JS module handling: When resolution fails but a JS
                         // file exists for this specifier (without declaration files),
                         // TypeScript treats it as an untyped module:
@@ -2195,9 +2213,12 @@ fn collect_diagnostics(
                             && !specifier.starts_with("../")
                             && !specifier.starts_with('/')
                             && !specifier.contains(':');
+                        let has_explicit_extension =
+                            std::path::Path::new(specifier).extension().is_some();
 
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
                             && is_bare_specifier
+                            && !has_explicit_extension
                             && (module_kind_prefers_2792 || resolution_prefers_2792)
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
