@@ -801,7 +801,8 @@ impl<'a> CheckerState<'a> {
                     // Setter: get type from the first parameter
                     accessor
                         .parameters
-                        .nodes.first()
+                        .nodes
+                        .first()
                         .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                         .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                         .map(|param| param.type_annotation)
