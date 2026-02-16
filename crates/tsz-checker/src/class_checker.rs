@@ -79,6 +79,10 @@ impl<'a> CheckerState<'a> {
         };
         let kind = expr_node.kind;
 
+        if kind == SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
         if matches!(
             kind,
             k if k == SyntaxKind::StringLiteral as u16
