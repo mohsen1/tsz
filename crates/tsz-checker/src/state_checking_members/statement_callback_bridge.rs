@@ -526,6 +526,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 );
             }
 
+            // TS2823: Import attributes require specific module options
+            self.check_import_attributes_module_option(export_decl.attributes);
+
             // Check module specifier for unresolved modules (TS2792)
             if !export_decl.module_specifier.is_none() {
                 self.check_export_module_specifier(export_idx);

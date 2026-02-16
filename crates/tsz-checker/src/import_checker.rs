@@ -1833,13 +1833,34 @@ impl<'a> CheckerState<'a> {
     // Import Declaration Validation
     // =========================================================================
 
+    /// TS2823: Check that import attributes are only used with supported module options.
+    pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
+        use tsz_common::common::ModuleKind;
+
+        if attributes_idx.is_none() {
+            return;
+        }
+
+        let supported = matches!(
+            self.ctx.compiler_options.module,
+            ModuleKind::ESNext | ModuleKind::Node16 | ModuleKind::NodeNext | ModuleKind::Preserve
+        );
+
+        if !supported
+            && let Some(attr_node) = self.ctx.arena.get(attributes_idx) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_position(
+                    attr_node.pos,
+                    attr_node.end.saturating_sub(attr_node.pos),
+                    diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                    diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
+                );
+            }
+    }
+
     /// Check an import declaration for unresolved modules and missing exports.
     pub(crate) fn check_import_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
-
-        if !self.ctx.report_unresolved_imports {
-            return;
-        }
 
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
             return;
@@ -1848,6 +1869,13 @@ impl<'a> CheckerState<'a> {
         let Some(import) = self.ctx.arena.get_import_decl(node) else {
             return;
         };
+
+        // TS2823: Import attributes require specific module options
+        self.check_import_attributes_module_option(import.attributes);
+
+        if !self.ctx.report_unresolved_imports {
+            return;
+        }
 
         // Extract module specifier data eagerly to avoid borrow issues later
         let module_specifier_idx = import.module_specifier;
