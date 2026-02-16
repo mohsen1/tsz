@@ -649,10 +649,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
 
-                        // For `satisfies`, set contextual type before checking expression
-                        // This enables contextual typing for lambdas, object literals, etc.
+                        // Set contextual type before checking expression for both
+                        // type assertions and `satisfies`. This enables contextual typing
+                        // for lambdas, object literals, etc. inside `<T>(expr)` / `expr as T` / `expr satisfies T`.
                         let prev_contextual_type = self.checker.ctx.contextual_type;
-                        if k == syntax_kind_ext::SATISFIES_EXPRESSION {
+                        if !is_const_assertion {
                             self.checker.ctx.contextual_type = Some(asserted_type);
                         }
 
