@@ -210,17 +210,25 @@ impl<'a> CheckerState<'a> {
             .contextual_type
             .map(|ctx_type| self.resolve_lazy_type(ctx_type));
 
-        let tuple_context = match resolved_contextual_type {
-            Some(resolved) => {
-                // Evaluate Application types to get their structural form
-                // This handles cases like: type MyTuple<T, U> = [T, U]; function f<A, B>(): MyTuple<A, B>
-                let evaluated = self.evaluate_application_type(resolved);
-                tsz_solver::type_queries::get_tuple_elements(self.ctx.types, evaluated)
+        // When the contextual type is a union like `[number] | string`, narrow it to
+        // only the array/tuple constituents applicable to an array literal. This ensures
+        // `[1]` with contextual type `[number] | string` is typed as `[number]` not `number[]`.
+        let applicable_contextual_type = resolved_contextual_type.and_then(|resolved| {
+            let evaluated = self.evaluate_application_type(resolved);
+            tsz_solver::type_queries::get_array_applicable_type(self.ctx.types, evaluated)
+        });
+
+        let tuple_context = match applicable_contextual_type {
+            Some(applicable) => {
+                tsz_solver::type_queries::get_tuple_elements(self.ctx.types, applicable)
             }
             None => None,
         };
 
-        let ctx_helper = match resolved_contextual_type {
+        // Use the applicable (narrowed) type for contextual typing when available,
+        // falling back to the full resolved contextual type
+        let effective_contextual = applicable_contextual_type.or(resolved_contextual_type);
+        let ctx_helper = match effective_contextual {
             Some(resolved) => Some(ContextualTypeContext::with_expected_and_options(
                 self.ctx.types,
                 resolved,

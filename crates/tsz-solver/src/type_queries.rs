@@ -850,6 +850,33 @@ pub fn get_tuple_elements(
     }
 }
 
+/// Get the applicable contextual type for an array literal from a (possibly union) type.
+///
+/// When the contextual type is a union like `[number] | string`, this extracts only
+/// the array/tuple constituents that are applicable to an array literal expression.
+/// If the type is already a tuple or array, returns it directly.
+/// If the type is a union, filters to only tuple/array members and returns their union.
+/// Returns None if no array/tuple constituents are found.
+pub fn get_array_applicable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::Tuple(_) | TypeData::Array(_)) => Some(type_id),
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let applicable: Vec<TypeId> = members
+                .iter()
+                .filter(|&&m| matches!(db.lookup(m), Some(TypeData::Tuple(_) | TypeData::Array(_))))
+                .copied()
+                .collect();
+            match applicable.len() {
+                0 => None,
+                1 => Some(applicable[0]),
+                _ => Some(db.union(applicable)),
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Unpack a rest parameter with tuple type into individual fixed parameters.
 ///
 /// In TypeScript, `(...args: [A, B, C]) => R` is equivalent to `(a: A, b: B, c: C) => R`.
