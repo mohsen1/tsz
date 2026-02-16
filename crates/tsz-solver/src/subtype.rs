@@ -4400,17 +4400,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && matches!(rest_elem_type, Some(TypeId::ANY | TypeId::UNKNOWN));
         let source_required = self.required_param_count(&source.params);
         let target_required = self.required_param_count(&target.params);
-        let extra_required_ok = target_has_rest
-            && source_required > target_required
-            && self.extra_required_accepts_undefined(
-                &source.params,
-                target_required,
-                source_required,
-            );
+        // When the target has rest parameters, skip arity check entirely —
+        // the rest parameter can accept any number of arguments, and type
+        // compatibility of extra source params is checked later against the rest element type.
+        // This aligns with check_function_subtype which also skips the arity check when
+        // target_has_rest is true.
         let too_many_params = !self.allow_bivariant_param_count
             && !rest_is_top
-            && source_required > target_required
-            && (!target_has_rest || !extra_required_ok);
+            && !target_has_rest
+            && source_required > target_required;
         if !target_has_rest && too_many_params {
             return Some(SubtypeFailureReason::TooManyParameters {
                 source_count: source_required,
@@ -4493,13 +4491,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
             }
-        }
-
-        if target_has_rest && too_many_params {
-            return Some(SubtypeFailureReason::TooManyParameters {
-                source_count: source_required,
-                target_count: target_required,
-            });
         }
 
         None

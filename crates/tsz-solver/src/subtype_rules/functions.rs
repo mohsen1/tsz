@@ -174,23 +174,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             .count()
     }
 
-    /// Check if extra required parameters accept undefined.
-    pub(crate) fn extra_required_accepts_undefined(
-        &mut self,
-        params: &[ParamInfo],
-        from_index: usize,
-        required_count: usize,
-    ) -> bool {
-        params
-            .iter()
-            .take(required_count)
-            .skip(from_index)
-            .all(|param| {
-                self.check_subtype(TypeId::UNDEFINED, param.type_id)
-                    .is_true()
-            })
-    }
-
     /// Check return type compatibility with void special-casing.
     ///
     /// When `allow_void_return` is true and target returns void:

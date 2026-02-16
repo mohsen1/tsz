@@ -24843,8 +24843,8 @@ fn test_rest_param_any_with_extra_fixed_params() {
     let mut checker = SubtypeChecker::new(&interner);
 
     // TypeScript allows this assignment because the extra fixed param (args_0: any)
-    // is compatible with the rest element type (any). This works even without
-    // allow_bivariant_rest because undefined <: any (checked by extra_required_accepts_undefined).
+    // is compatible with the rest element type (any). When the target has rest params,
+    // the arity check is skipped entirely and compatibility is checked per-param.
     assert!(checker.is_subtype_of(source, target));
 
     // Should still work with allow_bivariant_rest
