@@ -1181,16 +1181,13 @@ fn resolve_node_module_specifier(
             if resolved.is_some() {
                 return resolved;
             }
-        } else if subpath.is_none() {
-            // Try resolving as a file directly in node_modules
-            // e.g., node_modules/foo.d.ts for bare specifier "foo"
-            let node_modules_dir = current.join("node_modules");
-            if node_modules_dir.is_dir() {
-                let candidates = expand_module_path_candidates(&package_root, options, None);
-                for candidate in candidates {
-                    if candidate.is_file() && is_valid_module_file(&candidate) {
-                        return Some(canonicalize_or_owned(&candidate));
-                    }
+        } else if subpath.is_none()
+            && options.effective_module_resolution() == ModuleResolutionKind::Bundler
+        {
+            let candidates = expand_module_path_candidates(&package_root, options, None);
+            for candidate in candidates {
+                if candidate.is_file() && is_valid_module_file(&candidate) {
+                    return Some(canonicalize_or_owned(&candidate));
                 }
             }
         }
