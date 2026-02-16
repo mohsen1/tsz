@@ -1740,6 +1740,9 @@ impl ParserState {
                 // ColonToken is a structural delimiter (case clauses, labels, type annotations)
                 // and must not be consumed as an error token.
                 if self.is_binary_operator() {
+                    // Binary operator at expression start means missing LHS.
+                    // Emit TS1109 matching tsc's parsePrimaryExpression behavior.
+                    self.error_expression_expected();
                     return NodeIndex::NONE;
                 }
                 if self.is_at_expression_end()
