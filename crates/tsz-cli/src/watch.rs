@@ -75,11 +75,10 @@ pub fn run(args: &CliArgs, cwd: &Path) -> Result<()> {
 fn create_watcher(args: &CliArgs, tx: mpsc::Sender<notify::Result<Event>>) -> Result<WatcherImpl> {
     // Determine polling interval for polling mode
     let poll_interval = match args.fallback_polling {
-        Some(PollingWatchKind::FixedInterval) => FIXED_POLLING_INTERVAL,
+        Some(PollingWatchKind::FixedInterval) | None => FIXED_POLLING_INTERVAL,
         Some(PollingWatchKind::PriorityInterval) => PRIORITY_POLLING_INTERVAL_MEDIUM,
         Some(PollingWatchKind::DynamicPriority) => DYNAMIC_PRIORITY_POLLING_DEFAULT,
         Some(PollingWatchKind::FixedChunkSize) => FIXED_CHUNK_SIZE_POLLING,
-        None => FIXED_POLLING_INTERVAL,
     };
 
     // Determine which watcher to use based on watch_file strategy

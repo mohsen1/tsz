@@ -778,12 +778,9 @@ impl Module {
             Self::Es2015 => ModuleKind::ES2015,
             Self::Es2020 => ModuleKind::ES2020,
             Self::Es2022 => ModuleKind::ES2022,
-            Self::EsNext => ModuleKind::ESNext,
-            Self::Node16 => ModuleKind::Node16,
-            Self::Node18 => ModuleKind::Node16, // Map to Node16 until separate support
-            Self::Node20 => ModuleKind::Node16, // Map to Node16 until separate support
+            Self::EsNext | Self::Preserve => ModuleKind::ESNext,
+            Self::Node16 | Self::Node18 | Self::Node20 => ModuleKind::Node16,
             Self::NodeNext => ModuleKind::NodeNext,
-            Self::Preserve => ModuleKind::ESNext, // Map to ESNext for preserve mode
         }
     }
 }
