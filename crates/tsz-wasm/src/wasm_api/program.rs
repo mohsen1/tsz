@@ -154,10 +154,7 @@ impl TsProgram {
                 self.type_checker = None;
                 Ok(())
             }
-            Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse options: {}",
-                e
-            ))),
+            Err(e) => Err(JsValue::from_str(&format!("Failed to parse options: {e}"))),
         }
     }
 
@@ -437,7 +434,7 @@ impl TsProgram {
                 .or_else(|| bound_file.file_name.strip_suffix(".tsx"))
                 .map_or_else(
                     || format!("{}.js", bound_file.file_name),
-                    |s| format!("{}.js", s),
+                    |s| format!("{s}.js"),
                 );
 
             emitted_files.push(serde_json::json!({
@@ -544,10 +541,10 @@ pub fn create_ts_program(
 ) -> Result<TsProgram, JsValue> {
     // Parse inputs
     let root_names: Vec<String> = serde_json::from_str(root_names_json)
-        .map_err(|e| JsValue::from_str(&format!("Invalid root names: {}", e)))?;
+        .map_err(|e| JsValue::from_str(&format!("Invalid root names: {e}")))?;
 
     let files: rustc_hash::FxHashMap<String, String> = serde_json::from_str(files_json)
-        .map_err(|e| JsValue::from_str(&format!("Invalid files: {}", e)))?;
+        .map_err(|e| JsValue::from_str(&format!("Invalid files: {e}")))?;
 
     // Create program
     let mut program = TsProgram::new();

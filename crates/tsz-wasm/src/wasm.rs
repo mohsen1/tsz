@@ -333,7 +333,7 @@ impl WasmParallelChecker {
                         start: 0,
                         length: 0,
                         code: 9999,
-                        message: format!("Internal compiler error: {}", msg),
+                        message: format!("Internal compiler error: {msg}"),
                         category: "Error".to_string(),
                     }],
                 };
