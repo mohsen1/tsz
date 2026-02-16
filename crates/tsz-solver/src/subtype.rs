@@ -1416,6 +1416,12 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Unified recursion guard for DefId-pair cycle detection.
     /// Phase 3.1: Catches cycles in Lazy(DefId) types before they're resolved.
     pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
+    /// Symbol-pair visiting set for Object-level cycle detection.
+    /// Catches cycles when comparing evaluated Object types with symbols
+    /// (e.g., `Promise<X>` vs `PromiseLike<Y>`) where `DefId` information is lost
+    /// after type evaluation. Without this, recursive interfaces like `Promise`
+    /// cause infinite expansion when comparing `then` method return types.
+    sym_visiting: FxHashSet<(tsz_binder::SymbolId, tsz_binder::SymbolId)>,
     /// Whether to use strict function types (contravariant parameters).
     /// Default: true (sound, correct behavior)
     pub strict_function_types: bool,
@@ -1480,6 +1486,7 @@ impl<'a> SubtypeChecker<'a, NoopResolver> {
             def_guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
+            sym_visiting: FxHashSet::default(),
             strict_function_types: true, // Default to strict (sound) behavior
             allow_void_return: false,
             allow_bivariant_rest: false,
@@ -1513,6 +1520,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             def_guard: crate::recursion::RecursionGuard::with_profile(
                 crate::recursion::RecursionProfile::SubtypeCheck,
             ),
+            sym_visiting: FxHashSet::default(),
             strict_function_types: true,
             allow_void_return: false,
             allow_bivariant_rest: false,
@@ -1585,6 +1593,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.guard.reset();
         self.seen_refs.clear();
         self.def_guard.reset();
+        self.sym_visiting.clear();
         self.eval_cache.clear();
     }
 
@@ -2818,6 +2827,27 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         ) {
             let s_shape = self.interner.object_shape(s_shape_id);
             let t_shape = self.interner.object_shape(t_shape_id);
+
+            // Symbol-level cycle detection for recursive interface types.
+            // When both objects have symbols (e.g., Promise<X> vs PromiseLike<Y>),
+            // check if we're already comparing objects with the same symbol pair.
+            // This catches cycles where type evaluation loses DefId identity:
+            // Promise<never> evaluates to Object(51) which has no DefId, but its
+            // `then` method returns Promise<TResult> which, after instantiation and
+            // evaluation, produces another Object with the same Promise symbol.
+            if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol)
+                && s_sym != t_sym
+            {
+                let sym_pair = (s_sym, t_sym);
+                if !self.sym_visiting.insert(sym_pair) {
+                    // Already visiting this symbol pair — coinductive cycle
+                    return SubtypeResult::CycleDetected;
+                }
+                let result = self.check_object_subtype(&s_shape, Some(s_shape_id), &t_shape);
+                self.sym_visiting.remove(&sym_pair);
+                return result;
+            }
+
             return self.check_object_subtype(&s_shape, Some(s_shape_id), &t_shape);
         }
 
