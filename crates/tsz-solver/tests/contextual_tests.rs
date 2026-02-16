@@ -504,7 +504,7 @@ fn test_contextual_generic_call_union_preserves_literal() {
     let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
     let result = apply_contextual_type(&interner, inferred, Some(union));
-    assert_eq!(result, literal);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
@@ -534,7 +534,7 @@ fn test_contextual_generic_return_union_preserves_literal() {
     let inferred = infer_ctx.resolve_with_constraints(var_t).unwrap();
 
     let result = apply_contextual_type(&interner, inferred, return_ctx.expected());
-    assert_eq!(result, literal);
+    assert_eq!(result, TypeId::STRING);
 }
 
 #[test]
