@@ -261,6 +261,8 @@ const TS2307: u32 = 2307;
 const TS2305: u32 = 2305;
 // TS1202: Import assignment cannot be used when targeting ECMAScript modules
 const TS1202: u32 = 1202;
+// TS2882: Cannot find module or type declarations for side-effect import
+const TS2882: u32 = 2882;
 
 // =============================================================================
 // ES Import Declaration Tests
@@ -350,8 +352,8 @@ fn test_es_side_effect_import_unresolved() {
     let source = r#"import "./nonexistent";"#;
     let diags = check_with_resolved_modules(source, "main.ts", vec![]);
     assert!(
-        has_error_code(&diags, TS2307),
-        "Unresolved side-effect import should emit TS2307, got: {:?}",
+        has_error_code(&diags, TS2882),
+        "Unresolved side-effect import should emit TS2882, got: {:?}",
         diags
     );
 }
