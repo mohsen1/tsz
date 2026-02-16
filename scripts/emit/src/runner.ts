@@ -203,8 +203,11 @@ function parseTarget(targetStr: string): number {
   if (lower.includes('es2020')) return 7;
   if (lower.includes('es2021')) return 8;
   if (lower.includes('es2022')) return 9;
+  if (lower.includes('es2023')) return 10;
+  if (lower.includes('es2024')) return 11;
+  if (lower.includes('es2025')) return 12;
   if (lower.includes('esnext')) return 99;
-  return 1;
+  return 12;  // TS6 default: ES2025
 }
 
 function parseModule(moduleStr: string): number {
@@ -224,12 +227,19 @@ function parseModule(moduleStr: string): number {
 }
 
 /**
- * Infer default module kind from target, matching TSC's behavior:
- * - es3/es5 → none (0) — auto_detect_module in emitter handles CommonJS wrapping
- * - es2015+ → es2015 (5) — preserve ES module syntax
+ * Infer default module kind from target, matching TS6's computed module defaults:
+ * - ESNext (99) → ESNext module (99)
+ * - >= ES2022 (9) → ES2022 module (7)
+ * - >= ES2020 (7) → ES2020 module (6)
+ * - >= ES2015 (2) → ES2015 module (5)
+ * - else → CommonJS (1)
  */
 function inferDefaultModule(target: number): number {
-  return target >= 2 ? 5 : 0;  // 2 = es2015, 5 = es2015 module kind
+  if (target === 99) return 99;  // ESNext → ESNext module
+  if (target >= 9) return 7;     // >= ES2022 → ES2022 module
+  if (target >= 7) return 6;     // >= ES2020 → ES2020 module
+  if (target >= 2) return 5;     // >= ES2015 → ES2015 module
+  return 1;                      // ES3/ES5 → CommonJS
 }
 
 function extractVariantFromFilename(
@@ -383,7 +393,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
 
     const target = variant.target ? parseTarget(variant.target)
       : directives.target ? parseTarget(String(directives.target))
-      : 1;
+      : 12;  // TS6 default: ES2025 (LatestStandard)
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
       : inferDefaultModule(target);  // Match TSC's default: commonjs for es3/es5, es2015 for es2015+
