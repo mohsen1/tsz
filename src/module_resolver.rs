@@ -1378,12 +1378,12 @@ impl ModuleResolver {
                             // Continue searching in parent directories
                         }
                     }
-                } else if subpath.is_none() {
-                    // Try resolving as a file directly in node_modules
-                    // e.g., node_modules/foo.d.ts for bare specifier "foo"
-                    if let Some(resolved) =
-                        self.try_file_or_directory(&node_modules.join(&package_name))
-                    {
+                } else if matches!(self.resolution_kind, ModuleResolutionKind::Bundler)
+                    && subpath.is_none()
+                {
+                    // In bundler mode, package specifiers may resolve directly to
+                    // files like `node_modules/foo.d.ts`.
+                    if let Some(resolved) = self.try_file_or_directory(&package_dir) {
                         return Ok(ResolvedModule {
                             resolved_path: resolved.clone(),
                             is_external: true,
