@@ -2630,7 +2630,9 @@ impl<'a> CheckerState<'a> {
         if Self::is_in_cross_arena_delegation() {
             return false;
         }
-        let is_tdz = self.is_variable_used_before_declaration_in_static_block(sym_id, idx)
+        let is_tdz_in_static_block =
+            self.is_variable_used_before_declaration_in_static_block(sym_id, idx);
+        let is_tdz = is_tdz_in_static_block
             || self.is_variable_used_before_declaration_in_computed_property(sym_id, idx)
             || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx)
             || self.is_class_or_enum_used_before_declaration(sym_id, idx);
@@ -2664,11 +2666,17 @@ impl<'a> CheckerState<'a> {
             let message = format_message(msg_template, &[name]);
             self.error_at_node(idx, &message, code);
 
-            // For block-scoped variable TDZ reads, TypeScript also reports TS2454
-            // ("used before being assigned") in strict-null mode.
+            // TypeScript also reports TS2454 ("used before being assigned") as a
+            // companion to TDZ errors in strict-null mode, but ONLY for pure
+            // block-scoped variables — not for class or enum declarations.
+            // Classes get TS2449 and enums get TS2450 without a TS2454 companion.
             if self.ctx.strict_null_checks()
                 && self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
                     sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                        && sym.flags
+                            & (tsz_binder::symbol_flags::CLASS
+                                | tsz_binder::symbol_flags::REGULAR_ENUM)
+                            == 0
                 })
                 && let Some(usage_node) = self.ctx.arena.get(idx)
             {

@@ -3145,6 +3145,17 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // null/undefined are always comparable with any type (TSC's "comparable relation").
+        // Even with strictNullChecks enabled, `null === x` and `undefined === x` should
+        // never trigger TS2367.
+        if left == TypeId::NULL
+            || left == TypeId::UNDEFINED
+            || right == TypeId::NULL
+            || right == TypeId::UNDEFINED
+        {
+            return false;
+        }
+
         // Same type always overlaps
         if left == right {
             tracing::trace!("same type");
