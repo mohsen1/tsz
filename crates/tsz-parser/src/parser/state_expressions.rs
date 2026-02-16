@@ -1604,6 +1604,11 @@ impl ParserState {
                 // TS1135: missing argument before comma: func(a, , c)
                 self.error_argument_expression_expected();
                 args.push(NodeIndex::NONE);
+            } else if self.is_token(SyntaxKind::SemicolonToken) {
+                // Semicolon terminates argument list — don't emit TS1135 here.
+                // Let parse_expected(CloseParenToken) emit TS1005 instead,
+                // matching tsc which treats `;` as a clear boundary.
+                break;
             } else {
                 let arg = self.parse_assignment_expression();
                 if arg.is_none() {
