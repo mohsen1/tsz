@@ -125,7 +125,8 @@ fn resolve_compiler_options_defaults() {
     assert!(resolved.lib_is_default);
     assert!(resolved.root_dir.is_none());
     assert!(resolved.out_dir.is_none());
-    assert!(!resolved.checker.strict);
+    // tsc 6.0+ defaults to strict: true when not specified
+    assert!(resolved.checker.strict);
     assert!(!resolved.no_emit);
     assert!(!resolved.no_emit_on_error);
 }

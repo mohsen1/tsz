@@ -306,7 +306,8 @@ fn compile_with_jsx_preserve_emits_jsx_extension() {
         r#"{
           "compilerOptions": {
             "outDir": "dist",
-            "jsx": "preserve"
+            "jsx": "preserve",
+            "strict": false
           },
           "include": ["src/**/*.tsx"]
         }"#,

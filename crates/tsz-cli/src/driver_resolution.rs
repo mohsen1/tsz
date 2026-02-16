@@ -650,8 +650,6 @@ pub(crate) fn resolve_module_specifier(
         return None;
     }
     let specifier = specifier.replace('\\', "/");
-    let is_bare_module_specifier =
-        !specifier.contains('/') && !specifier.contains('.') && !specifier.starts_with('#');
     if specifier.starts_with('#') {
         if options.resolve_package_json_imports {
             return resolve_package_imports_specifier(from_file, &specifier, base_dir, options);
@@ -707,7 +705,9 @@ pub(crate) fn resolve_module_specifier(
         // file's directory, probing for <specifier>.ts/.tsx/.d.ts and related candidates.
         // This runs even when baseUrl/path-mapping candidates were generated, matching
         // TypeScript behavior where classic resolution falls back to relative ancestor checks.
-        if !is_bare_module_specifier {
+        // Unlike Node resolution, Classic resolution walks up for all specifiers including
+        // bare module specifiers (e.g., "module3") since it has no node_modules concept.
+        {
             let mut current = from_dir.to_path_buf();
             loop {
                 candidates.extend(expand_module_path_candidates(
@@ -766,10 +766,7 @@ pub(crate) fn resolve_module_specifier(
     // TypeScript falls through to Classic-style directory walking when path mappings
     // were attempted but did not resolve. This matches behavior where path mapping
     // misses are not treated as terminal failures in classic mode.
-    if path_mapping_attempted
-        && matches!(resolution, ModuleResolutionKind::Classic)
-        && !is_bare_module_specifier
-    {
+    if path_mapping_attempted && matches!(resolution, ModuleResolutionKind::Classic) {
         let mut current = from_dir.to_path_buf();
         loop {
             for candidate in
