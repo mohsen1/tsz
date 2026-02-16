@@ -368,11 +368,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             fn visit_callable(&mut self, shape_id: u32) -> Self::Output {
                 let shape = self.db.callable_shape(CallableShapeId(shape_id));
 
-                // For contextual typing, look at call signatures (not construct signatures).
+                // For contextual typing, prefer call signatures. Fall back to construct
+                // signatures when none exist (super()/new calls have construct sigs only).
+                let signatures = if shape.call_signatures.is_empty() {
+                    &shape.construct_signatures
+                } else {
+                    &shape.call_signatures
+                };
+
                 // If arg_count is provided, select the first overload whose arity matches.
                 let sig = if let Some(count) = self.arg_count {
-                    shape
-                        .call_signatures
+                    signatures
                         .iter()
                         .find(|sig| {
                             let min_args =
@@ -380,9 +386,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             let has_rest = sig.params.iter().any(|p| p.rest);
                             count >= min_args && (has_rest || count <= sig.params.len())
                         })
-                        .or_else(|| shape.call_signatures.first())
+                        .or_else(|| signatures.first())
                 } else {
-                    shape.call_signatures.first()
+                    signatures.first()
                 };
 
                 sig.map(|sig| FunctionShape {
