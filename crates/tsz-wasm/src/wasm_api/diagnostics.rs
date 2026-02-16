@@ -220,7 +220,7 @@ pub fn format_ts_diagnostics_with_color_and_context(
                 // Get the line
                 if line_start < line_end && line_end <= source.len() {
                     let line = &source[line_start..line_end];
-                    output.push_str(&format!("\n  {}\n", line));
+                    output.push_str(&format!("\n  {line}\n"));
 
                     // Add squiggle
                     let squiggle_start = start - line_start;

@@ -354,7 +354,7 @@ pub fn format_diagnostics_with_color_and_context(
                 let lines: Vec<&str> = source_text.lines().collect();
                 if (pos.line as usize) < lines.len() {
                     let line_text = lines[pos.line as usize];
-                    output.push_str(&format!("\n{}\n", line_text));
+                    output.push_str(&format!("\n{line_text}\n"));
 
                     // Show squiggly underline
                     let spaces = " ".repeat(pos.character as usize);
@@ -364,7 +364,7 @@ pub fn format_diagnostics_with_color_and_context(
                         .min(line_text.len() as u32 - pos.character)
                         as usize;
                     let squiggly = "~".repeat(length.max(1));
-                    output.push_str(&format!("{}\x1b[31m{}\x1b[0m\n\n", spaces, squiggly));
+                    output.push_str(&format!("{spaces}\x1b[31m{squiggly}\x1b[0m\n\n"));
                 }
             } else {
                 output.push_str(&format!(

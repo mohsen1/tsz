@@ -275,7 +275,7 @@ impl TsLanguageService {
         self.source_text = source_text.clone();
 
         // Re-parse
-        let mut parser = ParserState::new(self.file_name.clone(), source_text.clone());
+        let mut parser = ParserState::new(self.file_name.clone(), source_text);
         self.root_idx = parser.parse_source_file();
         self.arena = parser.into_arena();
 
