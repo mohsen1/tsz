@@ -554,6 +554,13 @@ impl<'a> Printer<'a> {
                 }
                 false
             }
+            // A namespace containing only type-only declarations is itself type-only
+            syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = self.arena.get_module(node) {
+                    return !self.is_instantiated_module(module.body);
+                }
+                true // Empty module is type-only
+            }
             _ => false,
         }
     }
