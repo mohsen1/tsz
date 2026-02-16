@@ -311,8 +311,18 @@ impl ScannerState {
                 // ASCII: byte value == char code
                 u32::from(b)
             } else {
-                // Non-ASCII: decode UTF-8 char
-                self.source[index..].chars().next().map_or(0, |c| c as u32)
+                // Non-ASCII: decode UTF-8 char.
+                // Guard: index must be on a char boundary; if not, scan back to find it.
+                if self.source.is_char_boundary(index) {
+                    self.source[index..].chars().next().map_or(0, |c| c as u32)
+                } else {
+                    // Find the start of the current char by scanning back
+                    let mut start = index;
+                    while start > 0 && !self.source.is_char_boundary(start) {
+                        start -= 1;
+                    }
+                    self.source[start..].chars().next().map_or(0, |c| c as u32)
+                }
             }
         } else {
             0
@@ -328,8 +338,14 @@ impl ScannerState {
             let b = bytes[index];
             if b < 128 {
                 Some(u32::from(b))
-            } else {
+            } else if self.source.is_char_boundary(index) {
                 self.source[index..].chars().next().map(|c| c as u32)
+            } else {
+                let mut start = index;
+                while start > 0 && !self.source.is_char_boundary(start) {
+                    start -= 1;
+                }
+                self.source[start..].chars().next().map(|c| c as u32)
             }
         } else {
             None
