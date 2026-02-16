@@ -1087,10 +1087,14 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        // Check if this is a using/await using declaration list
+        // Check if this is a using/await using declaration list.
+        // Only check the USING bit (bit 2) — AWAIT_USING (6) = CONST (2) | USING (4),
+        // so checking just the USING bit correctly matches both using and await using
+        // but not const.
         use tsz_parser::parser::flags::node_flags;
-        let is_using = (node.flags as u32 & node_flags::USING) != 0;
-        let is_await_using = (node.flags as u32 & node_flags::AWAIT_USING) != 0;
+        let flags_u32 = node.flags as u32;
+        let is_using = (flags_u32 & node_flags::USING) != 0;
+        let is_await_using = flags_u32 == node_flags::AWAIT_USING;
 
         // VariableDeclarationList uses the same VariableData structure
         if let Some(var_list) = self.ctx.arena.get_variable(node) {
