@@ -1108,6 +1108,8 @@ impl ScannerState {
                     return;
                 }
             }
+            // Invalid or unterminated \u{...} escape
+            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
             result.push('\\');
             result.push('u');
             return;
@@ -1121,10 +1123,14 @@ impl ScannerState {
                 result.push(c);
                 return;
             }
+            // Invalid \uXXXX escape
+            self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
             result.push('\\');
             result.push('u');
             return;
         }
+        // Incomplete \u escape (not enough chars)
+        self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
         result.push('\\');
         result.push('u');
     }
