@@ -1471,6 +1471,7 @@ impl<'a> CheckerContext<'a> {
                     sym_binder
                         .declaration_arenas
                         .get(&(sym.id, *decl_idx))
+                        .and_then(|v| v.first())
                         .is_some_and(|arena| {
                             let Some(node) = arena.get(*decl_idx) else {
                                 return false;
@@ -1502,43 +1503,46 @@ impl<'a> CheckerContext<'a> {
                     || has_namespace_decl
             };
 
-            let export_assignment_target_name = |sym_binder: &BinderState,
-                                                 sym: &tsz_binder::Symbol|
-             -> Option<String> {
-                let mut decls = sym.declarations.clone();
-                if !sym.value_declaration.is_none() {
-                    decls.push(sym.value_declaration);
-                }
+            let export_assignment_target_name =
+                |sym_binder: &BinderState, sym: &tsz_binder::Symbol| -> Option<String> {
+                    let mut decls = sym.declarations.clone();
+                    if !sym.value_declaration.is_none() {
+                        decls.push(sym.value_declaration);
+                    }
 
-                for decl_idx in decls {
-                    if decl_idx.is_none() {
-                        continue;
+                    for decl_idx in decls {
+                        if decl_idx.is_none() {
+                            continue;
+                        }
+                        let Some(arena) = sym_binder
+                            .declaration_arenas
+                            .get(&(sym.id, decl_idx))
+                            .and_then(|v| v.first())
+                        else {
+                            continue;
+                        };
+                        let Some(node) = arena.get(decl_idx) else {
+                            continue;
+                        };
+                        if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                            continue;
+                        }
+                        let Some(assign) = arena.get_export_assignment(node) else {
+                            continue;
+                        };
+                        if !assign.is_export_equals {
+                            continue;
+                        }
+                        let Some(expr_node) = arena.get(assign.expression) else {
+                            continue;
+                        };
+                        if let Some(id) = arena.get_identifier(expr_node) {
+                            return Some(id.escaped_text.clone());
+                        }
                     }
-                    let Some(arena) = sym_binder.declaration_arenas.get(&(sym.id, decl_idx)) else {
-                        continue;
-                    };
-                    let Some(node) = arena.get(decl_idx) else {
-                        continue;
-                    };
-                    if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
-                        continue;
-                    }
-                    let Some(assign) = arena.get_export_assignment(node) else {
-                        continue;
-                    };
-                    if !assign.is_export_equals {
-                        continue;
-                    }
-                    let Some(expr_node) = arena.get(assign.expression) else {
-                        continue;
-                    };
-                    if let Some(id) = arena.get_identifier(expr_node) {
-                        return Some(id.escaped_text.clone());
-                    }
-                }
 
-                None
-            };
+                    None
+                };
 
             let symbol_has_namespace_shape =
                 candidate_symbols.into_iter().any(|(sym_binder, sym)| {
@@ -1594,6 +1598,7 @@ impl<'a> CheckerContext<'a> {
                 binder
                     .declaration_arenas
                     .get(&(sym.id, *decl_idx))
+                    .and_then(|v| v.first())
                     .is_some_and(|arena| {
                         let Some(node) = arena.get(*decl_idx) else {
                             return false;

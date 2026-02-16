@@ -10,6 +10,7 @@ use crate::{
     SymbolId, SymbolTable, flow_flags, symbol_flags,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{Level, debug, span};
@@ -20,6 +21,11 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
+
+/// Map from `(SymbolId, NodeIndex)` to the arena(s) containing that declaration.
+/// Uses `SmallVec` to handle cross-arena `NodeIndex` collisions with zero overhead
+/// for the common single-arena case.
+pub type DeclarationArenaMap = FxHashMap<(SymbolId, NodeIndex), SmallVec<[Arc<NodeArena>; 1]>>;
 
 const MAX_SCOPE_WALK_ITERATIONS: usize = 10_000;
 
@@ -208,9 +214,11 @@ pub struct BinderState {
     /// Symbol-to-arena mapping for cross-file declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena containing that declaration
-    /// This is needed when a symbol (like Array) is declared across multiple lib files
-    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
+    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
+    /// This is needed when a symbol (like Array) is declared across multiple lib files.
+    /// Uses `SmallVec` to handle cross-arena `NodeIndex` collisions: when two lib files have
+    /// their interface declaration at the same `NodeIndex`, both arenas are stored.
+    pub declaration_arenas: DeclarationArenaMap,
     /// Node-to-flow mapping: tracks which flow node was active at each AST node
     /// Used by the checker for control flow analysis (type narrowing)
     pub node_flow: FxHashMap<u32, FlowNodeId>,
@@ -355,7 +363,7 @@ pub struct BinderStateScopeInputs {
     pub reexports: FileReexportsMap,
     pub wildcard_reexports: FxHashMap<String, Vec<String>>,
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
-    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
+    pub declaration_arenas: DeclarationArenaMap,
     pub shorthand_ambient_modules: FxHashSet<String>,
     pub modules_with_export_equals: FxHashSet<String>,
     pub flow_nodes: FlowNodeArena,
@@ -513,7 +521,11 @@ impl BinderState {
         decl_idx: NodeIndex,
     ) -> Option<&Arc<NodeArena>> {
         // First try the precise declaration-to-arena mapping
-        if let Some(arena) = self.declaration_arenas.get(&(sym_id, decl_idx)) {
+        if let Some(arena) = self
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .and_then(|v| v.first())
+        {
             return Some(arena);
         }
         // Fall back to symbol-level arena (for backwards compatibility and non-merged symbols)
@@ -1449,12 +1461,13 @@ impl BinderState {
                                 for &decl in &lib_sym.declarations {
                                     if !existing_mut.declarations.contains(&decl) {
                                         existing_mut.declarations.push(decl);
-                                        // Track which arena this specific declaration belongs to
-                                        self.declaration_arenas.insert(
-                                            (existing_id, decl),
-                                            Arc::clone(&lib_ctx.arena),
-                                        );
                                     }
+                                    // Always track the arena — multiple lib files may
+                                    // reuse the same NodeIndex (cross-arena collision)
+                                    self.declaration_arenas
+                                        .entry((existing_id, decl))
+                                        .or_default()
+                                        .push(Arc::clone(&lib_ctx.arena));
                                 }
                                 // Update value_declaration if not set
                                 if existing_mut.value_declaration.is_none()
@@ -1471,7 +1484,9 @@ impl BinderState {
                             // Track declaration arenas for new symbol
                             for &decl in &lib_sym.declarations {
                                 self.declaration_arenas
-                                    .insert((new_id, decl), Arc::clone(&lib_ctx.arena));
+                                    .entry((new_id, decl))
+                                    .or_default()
+                                    .push(Arc::clone(&lib_ctx.arena));
                             }
                             new_id
                         }
@@ -1482,7 +1497,9 @@ impl BinderState {
                         // Track declaration arenas for new symbol
                         for &decl in &lib_sym.declarations {
                             self.declaration_arenas
-                                .insert((new_id, decl), Arc::clone(&lib_ctx.arena));
+                                .entry((new_id, decl))
+                                .or_default()
+                                .push(Arc::clone(&lib_ctx.arena));
                         }
                         new_id
                     }
@@ -1493,7 +1510,9 @@ impl BinderState {
                     // Track declaration arenas for new symbol
                     for &decl in &lib_sym.declarations {
                         self.declaration_arenas
-                            .insert((new_id, decl), Arc::clone(&lib_ctx.arena));
+                            .entry((new_id, decl))
+                            .or_default()
+                            .push(Arc::clone(&lib_ctx.arena));
                     }
                     new_id
                 };
@@ -1862,7 +1881,11 @@ impl BinderState {
             if decl_idx.is_none() {
                 return false;
             }
-            let Some(arena) = self.declaration_arenas.get(&(sym_id, decl_idx)) else {
+            let Some(arena) = self
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .and_then(|v| v.first())
+            else {
                 return false;
             };
             let Some(node) = arena.get(decl_idx) else {
@@ -1902,7 +1925,11 @@ impl BinderState {
                 if decl_idx.is_none() {
                     continue;
                 }
-                let Some(arena) = self.declaration_arenas.get(&(sym.id, decl_idx)) else {
+                let Some(arena) = self
+                    .declaration_arenas
+                    .get(&(sym.id, decl_idx))
+                    .and_then(|v| v.first())
+                else {
                     continue;
                 };
                 let Some(node) = arena.get(decl_idx) else {

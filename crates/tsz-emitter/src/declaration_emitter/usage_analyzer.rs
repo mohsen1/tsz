@@ -1148,6 +1148,7 @@ impl<'a> UsageAnalyzer<'a> {
                 self.binder
                     .declaration_arenas
                     .get(&(sym_id, decl_idx))
+                    .and_then(|v| v.first())
                     .is_some_and(|arena| Arc::ptr_eq(arena, &self.current_arena))
             })
         });

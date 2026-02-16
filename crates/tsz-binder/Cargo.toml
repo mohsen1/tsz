@@ -16,6 +16,7 @@ rustc-hash = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+smallvec = { workspace = true }
 
 [lints]
 workspace = true

@@ -28,7 +28,7 @@
 
 use crate::binder::BinderOptions;
 use crate::binder::BinderState;
-use crate::binder::state::BinderStateScopeInputs;
+use crate::binder::state::{BinderStateScopeInputs, DeclarationArenaMap};
 use crate::binder::{
     FlowNodeArena, FlowNodeId, Scope, ScopeId, SymbolArena, SymbolId, SymbolTable,
 };
@@ -188,7 +188,7 @@ pub struct BindResult {
     /// Symbol-to-arena mapping for cross-file declaration lookup (including lib symbols)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
+    pub declaration_arenas: DeclarationArenaMap,
     /// Persistent scopes for stateless checking
     pub scopes: Vec<Scope>,
     /// Map from AST node to scope ID
@@ -677,8 +677,8 @@ pub struct MergedProgram {
     /// Symbol-to-arena mapping for declaration lookup (legacy, stores last arena)
     pub symbol_arenas: FxHashMap<SymbolId, Arc<NodeArena>>,
     /// Declaration-to-arena mapping for precise cross-file declaration lookup
-    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena containing that declaration
-    pub declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>>,
+    /// Key: (`SymbolId`, `NodeIndex` of declaration) -> Arena(s) containing that declaration
+    pub declaration_arenas: DeclarationArenaMap,
     /// Global symbol table (exports from all files)
     pub globals: SymbolTable,
     /// Per-file symbol tables (file-local symbols, symbol IDs remapped)
@@ -849,8 +849,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
     // Create global symbol arena with pre-allocated capacity
     let mut global_symbols = SymbolArena::with_capacity(total_symbols);
     let mut symbol_arenas = FxHashMap::default();
-    let mut declaration_arenas: FxHashMap<(SymbolId, NodeIndex), Arc<NodeArena>> =
-        FxHashMap::default();
+    let mut declaration_arenas: DeclarationArenaMap = FxHashMap::default();
     let mut globals = SymbolTable::new();
     let mut files = Vec::with_capacity(results.len());
     let mut file_locals_list = Vec::with_capacity(results.len());
@@ -889,11 +888,13 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         // O(N*D) iteration where each symbol scans all declaration_arenas.
         let mut decl_arenas_by_sym: FxHashMap<SymbolId, Vec<(NodeIndex, Arc<NodeArena>)>> =
             FxHashMap::default();
-        for (&(sym_id, decl_idx), arena) in &lib_binder.declaration_arenas {
-            decl_arenas_by_sym
-                .entry(sym_id)
-                .or_default()
-                .push((decl_idx, Arc::clone(arena)));
+        for (&(sym_id, decl_idx), arenas) in &lib_binder.declaration_arenas {
+            for arena in arenas {
+                decl_arenas_by_sym
+                    .entry(sym_id)
+                    .or_default()
+                    .push((decl_idx, Arc::clone(arena)));
+            }
         }
 
         // Process all symbols in this lib binder
@@ -966,7 +967,10 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // This is needed when a symbol has declarations across multiple lib files
                 if let Some(entries) = decl_arenas_by_sym.get(&local_id) {
                     for (decl_idx, arena) in entries {
-                        declaration_arenas.insert((global_id, *decl_idx), Arc::clone(arena));
+                        declaration_arenas
+                            .entry((global_id, *decl_idx))
+                            .or_default()
+                            .push(Arc::clone(arena));
                     }
                 }
             }
@@ -1221,11 +1225,14 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
         }
 
         // Copy declaration_arenas entries from user file, remapping symbol IDs
-        for (&(old_sym_id, decl_idx), arena) in &result.declaration_arenas {
+        for (&(old_sym_id, decl_idx), arenas) in &result.declaration_arenas {
             if let Some(&new_sym_id) = id_remap.get(&old_sym_id) {
-                declaration_arenas
+                let target = declaration_arenas
                     .entry((new_sym_id, decl_idx))
-                    .or_insert_with(|| Arc::clone(arena));
+                    .or_default();
+                for arena in arenas {
+                    target.push(Arc::clone(arena));
+                }
             }
         }
 
