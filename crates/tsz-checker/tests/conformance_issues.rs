@@ -144,7 +144,6 @@ class void {}
 }
 
 #[test]
-#[ignore = "temporary diagnostic probe for method name formatting investigation"]
 fn test_method_implementation_name_formatting_probe() {
     let diagnostics = compile_and_get_diagnostics(
         r#"class C {

@@ -883,6 +883,19 @@ impl ParserState {
                         diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
                         diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
                     );
+                } else {
+                    // Check if the value exceeds 0x10FFFF (TS1198)
+                    let hex_str = std::str::from_utf8(&raw[i + 3..close]).unwrap_or("");
+                    if let Ok(value) = u32::from_str_radix(hex_str, 16)
+                        && value > 0x10FFFF
+                    {
+                        self.parse_error_at(
+                            self.u32_from_usize(content_start + i),
+                            (close + 1 - i) as u32,
+                            diagnostic_messages::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
+                            diagnostic_codes::AN_EXTENDED_UNICODE_ESCAPE_VALUE_MUST_BE_BETWEEN_0X0_AND_0X10FFFF_INCLUSIVE,
+                        );
+                    }
                 }
             } else if !has_digit {
                 self.parse_error_at(

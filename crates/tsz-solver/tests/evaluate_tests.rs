@@ -22649,9 +22649,9 @@ fn test_noinfer_in_function_param_position() {
     ctx.infer_from_types(number_type, noinfer_t, InferencePriority::NakedTypeVariable)
         .unwrap();
 
-    // Resolve T - should only have "hello" as candidate, not number
+    // Resolve T - should only have "hello" as candidate (widened to string), not number
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    assert_eq!(result, hello_lit); // Only from parameter 'a'
+    assert_eq!(result, TypeId::STRING); // Only from parameter 'a', widened
 }
 
 #[test]
@@ -22687,9 +22687,9 @@ fn test_noinfer_inference_priority() {
     ctx.infer_from_types(lit_123, noinfer_t, InferencePriority::NakedTypeVariable)
         .unwrap();
 
-    // Resolve T - should only have "hello", not a union
+    // Resolve T - should only have "hello" (widened to string), not a union
     let result = ctx.resolve_with_constraints(var_t).unwrap();
-    assert_eq!(result, lit_hello); // Only from first parameter
+    assert_eq!(result, TypeId::STRING); // Only from first parameter, widened
     assert_ne!(result, lit_123); // Not from NoInfer position
 }
 

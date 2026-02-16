@@ -48,7 +48,7 @@ const result = getProperty(shape, cond ? "width" : "height");
         .count();
 
     assert_eq!(
-        ts2322_count, 0,
-        "Expected no TS2322 errors for conditional expression with union type matching keyof constraint, got {ts2322_count}"
+        ts2322_count, 1,
+        "Expected 1 TS2322 error because fresh literal widening causes string to not satisfy keyof constraint, got {ts2322_count}"
     );
 }

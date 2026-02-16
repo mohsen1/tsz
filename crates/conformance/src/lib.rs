@@ -1,5 +1,6 @@
 //! TSZ Conformance Test Runner Library
 
+pub(crate) mod batch_pool;
 pub mod cache;
 pub mod cli;
 pub mod runner;

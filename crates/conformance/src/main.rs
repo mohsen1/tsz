@@ -2,6 +2,7 @@
 //!
 //! High-performance Rust implementation for testing tsz TypeScript compiler.
 
+mod batch_pool;
 mod cache;
 mod cli;
 mod runner;

@@ -238,6 +238,35 @@ impl ParserState {
         {
             let pos_before = self.token_pos();
 
+            // Error recovery: when inside a nested block within a class body (e.g.,
+            // a method body with an unclosed `{`), terminate the block if we encounter
+            // a class member modifier followed by an identifier on the same line. This
+            // matches TSC's "abort parsing list" behavior: tokens that could start a
+            // class member in an outer context cause the inner block list to terminate
+            // rather than consuming tokens that belong to the class body.
+            if self.in_block_context()
+                && self.in_class_body()
+                && matches!(
+                    self.token(),
+                    SyntaxKind::PublicKeyword
+                        | SyntaxKind::PrivateKeyword
+                        | SyntaxKind::ProtectedKeyword
+                        | SyntaxKind::StaticKeyword
+                        | SyntaxKind::AbstractKeyword
+                        | SyntaxKind::ReadonlyKeyword
+                        | SyntaxKind::OverrideKeyword
+                        | SyntaxKind::AccessorKeyword
+                )
+                && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                break;
+            }
+
             // Handle Unknown tokens (invalid characters)
             if self.is_token(SyntaxKind::Unknown) {
                 use tsz_common::diagnostics::diagnostic_codes;
@@ -4144,7 +4173,18 @@ impl ParserState {
             )
         } else {
             if has_modifiers {
-                self.error_declaration_expected();
+                // TSC emits TS1146 at the position where the name was expected
+                // (just before the current token) and TS1005 at the current token.
+                // We must emit them at different positions so the dedup logic
+                // in parse_error_at doesn't suppress the second one.
+                let token_start = self.token_pos();
+                let decl_pos = if token_start > 0 { token_start - 1 } else { 0 };
+                self.parse_error_at(
+                    decl_pos,
+                    1,
+                    "Declaration expected",
+                    diagnostic_codes::DECLARATION_EXPECTED,
+                );
                 self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
             } else {
                 self.parse_error_at_current_token(

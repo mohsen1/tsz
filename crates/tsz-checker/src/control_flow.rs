@@ -28,7 +28,9 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{BinaryExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate};
+use tsz_solver::{
+    NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate, TypeofKind,
+};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 
@@ -105,17 +107,13 @@ pub struct FlowAnalyzer<'a> {
     /// Cache for switch-reference relevance checks.
     /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+    /// Cache for `is_matching_reference` results.
+    /// Key: (`node_a`, `node_b`) -> whether references match (same symbol/property chain).
+    /// This avoids O(N²) repeated comparisons during flow analysis with many variables.
+    pub(crate) reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PropertyPresence {
-    Required,
-    Optional,
-    Absent,
-    Unknown,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -147,6 +145,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_cache: None,
             type_environment: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
+            reference_match_cache: RefCell::new(FxHashMap::default()),
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
     }
@@ -167,6 +166,7 @@ impl<'a> FlowAnalyzer<'a> {
             flow_cache: None,
             type_environment: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
+            reference_match_cache: RefCell::new(FxHashMap::default()),
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
     }
@@ -592,9 +592,24 @@ impl<'a> FlowAnalyzer<'a> {
                 // Switch clause - apply switch-specific narrowing
                 self.handle_switch_clause_iterative(reference, current_type, flow, &results)
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
-                // Assignment - check if it targets our reference
-                let targets_reference =
-                    self.assignment_targets_reference_node(flow.node, reference);
+                // OPTIMIZATION: Quick symbol-based filtering before expensive AST comparison.
+                // If we have a resolved symbol and the assignment's target has a different symbol,
+                // we can skip this assignment entirely. This turns O(N²) into O(N) for cases like
+                // many independent variable assignments.
+                let targets_reference = if let Some(target_sym) = symbol_id {
+                    // Get the assignment target's symbol (O(1) lookup)
+                    let assignment_sym = self.reference_symbol(flow.node);
+                    if assignment_sym.is_some() && assignment_sym != Some(target_sym) {
+                        // Symbols differ - this assignment cannot target our reference
+                        false
+                    } else {
+                        // Same symbol or couldn't determine - do full check
+                        self.assignment_targets_reference_node(flow.node, reference)
+                    }
+                } else {
+                    // No symbol ID - must do full check
+                    self.assignment_targets_reference_node(flow.node, reference)
+                };
 
                 if targets_reference {
                     // CRITICAL FIX: Skip "killing definition" narrowing for ANY and ERROR types only
@@ -2925,10 +2940,16 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
-            if effective_truth {
-                return narrowing.narrow_by_typeof(type_id, type_name);
+            // Use unified narrow_type API with TypeGuard::Typeof for both branches
+            if let Some(typeof_kind) = TypeofKind::parse(type_name) {
+                return narrowing.narrow_type(
+                    type_id,
+                    &TypeGuard::Typeof(typeof_kind),
+                    effective_truth,
+                );
             }
-            return self.narrow_by_typeof_negation(type_id, type_name, narrowing);
+            // Unknown typeof string (e.g., host-defined types), no narrowing
+            return type_id;
         }
 
         if let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) {
