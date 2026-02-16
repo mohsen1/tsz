@@ -43,6 +43,12 @@ pub fn prepare_test_dir(
 
     let temp_dir = TempDir::new()?;
     let dir_path = temp_dir.path();
+    if std::env::var_os("TSZ_DEBUG_PREPARE_DIR").is_some() {
+        eprintln!(
+            "[tsz_wrapper] prepare_test_dir temp_dir={}",
+            dir_path.display()
+        );
+    }
 
     // Parse @symlink associations from raw content
     // Format: @filename: /path/to/file followed by @symlink: /link1,/link2
@@ -84,15 +90,22 @@ pub fn prepare_test_dir(
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
                 let c = rewrite_absolute_reference_paths(&c);
                 let c = rewrite_absolute_imports(&c);
-                rewrite_bare_specifiers(&c, filenames)
+                rewrite_bare_specifiers(&c, filename, filenames)
             } else {
                 // Even without absolute filenames, handle /.lib/ references and bare specifiers
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
                 let c = rewrite_absolute_reference_paths(&c);
-                rewrite_bare_specifiers(&c, filenames)
+                rewrite_bare_specifiers(&c, filename, filenames)
             };
 
             std::fs::write(&file_path, written_content)?;
+            if std::env::var_os("TSZ_DEBUG_PREPARE_DIR").is_some() {
+                eprintln!(
+                    "[tsz_wrapper] wrote {} (orig={})",
+                    file_path.display(),
+                    filename
+                );
+            }
         }
     }
 
@@ -167,8 +180,26 @@ pub fn prepare_test_dir(
             &tsconfig_path,
             serde_json::to_string_pretty(&tsconfig_content)?,
         )?;
+        if std::env::var_os("TSZ_DEBUG_PREPARE_DIR").is_some() {
+            eprintln!(
+                "[tsz_wrapper] wrote default tsconfig at {}",
+                tsconfig_path.display()
+            );
+            if let Ok(content) = std::fs::read_to_string(&tsconfig_path) {
+                eprintln!("[tsz_wrapper] tsconfig content:\n{}", content);
+            }
+        }
     } else {
         copy_tsconfig_to_root_if_needed(dir_path, filenames, options)?;
+        if std::env::var_os("TSZ_DEBUG_PREPARE_DIR").is_some() {
+            eprintln!(
+                "[tsz_wrapper] copied tsconfig to root at {}",
+                tsconfig_path.display()
+            );
+            if let Ok(content) = std::fs::read_to_string(&tsconfig_path) {
+                eprintln!("[tsz_wrapper] tsconfig content:\n{}", content);
+            }
+        }
     }
 
     Ok(PreparedTest { temp_dir })
@@ -235,6 +266,12 @@ pub fn parse_tsz_output(
     project_root: &Path,
     options: HashMap<String, String>,
 ) -> CompilationResult {
+    if std::env::var_os("TSZ_DEBUG_CONFORMANCE_OUTPUT").is_some() {
+        eprintln!("----- tsz output for {} -----", project_root.display());
+        eprintln!("--- stdout\n{}", String::from_utf8_lossy(&output.stdout));
+        eprintln!("--- stderr\n{}", String::from_utf8_lossy(&output.stderr));
+    }
+
     if output.status.success() {
         return CompilationResult {
             error_codes: vec![],
@@ -854,17 +891,27 @@ fn rewrite_absolute_imports(content: &str) -> String {
 /// - Absolute paths (start with `/`)
 /// - Scoped packages (start with `@`)
 /// - Node built-ins or known npm packages (we check if file exists in filenames)
-fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> String {
+fn rewrite_bare_specifiers(
+    content: &str,
+    current_filename: &str,
+    filenames: &[(String, String)],
+) -> String {
     use once_cell::sync::Lazy;
     use regex::Regex;
+    use std::collections::HashMap;
+    let normalized_current = current_filename.replace('\\', "/");
+    let current_dir = std::path::Path::new(&normalized_current)
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| std::path::PathBuf::new());
 
     // If no multi-file test, nothing to rewrite
     if filenames.is_empty() {
         return content.to_string();
     }
 
-    // Build a set of available file basenames (without extension)
-    let mut available_files = std::collections::HashSet::new();
+    // Build a map of available file basenames (without extension) to their directories.
+    let mut available_files: HashMap<String, Vec<std::path::PathBuf>> = HashMap::new();
     let mut declared_modules = std::collections::HashSet::new();
     static DECLARE_MODULE_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r#"declare\s+module\s+['"]([^'"]+)['"]"#).unwrap());
@@ -887,7 +934,15 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
                 .and_then(|s| s.to_str())
                 .unwrap_or(filename)
         };
-        available_files.insert(basename.to_string());
+        let filename_path = std::path::Path::new(&normalized).to_path_buf();
+        let parent = filename_path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(|| std::path::PathBuf::new());
+        available_files
+            .entry(basename.to_string())
+            .or_default()
+            .push(parent);
     }
     for (_, content) in filenames {
         for cap in DECLARE_MODULE_RE.captures_iter(content) {
@@ -929,11 +984,24 @@ fn rewrite_bare_specifiers(content: &str, filenames: &[(String, String)]) -> Str
         if declared_modules.contains(specifier) {
             return false;
         }
-        available_files.contains(specifier)
-            || available_files.contains(specifier.trim_end_matches(".js"))
-            || available_files.contains(specifier.trim_end_matches(".ts"))
-            || available_files.contains(specifier.trim_end_matches(".tsx"))
-            || available_files.contains(specifier.trim_end_matches(".d.ts"))
+        let candidates = [
+            specifier,
+            specifier.trim_end_matches(".js"),
+            specifier.trim_end_matches(".ts"),
+            specifier.trim_end_matches(".tsx"),
+            specifier.trim_end_matches(".d.ts"),
+        ];
+        for candidate in candidates {
+            if let Some(candidate_dirs) = available_files.get(candidate) {
+                if candidate_dirs
+                    .iter()
+                    .any(|directory| directory == &current_dir)
+                {
+                    return true;
+                }
+            }
+        }
+        false
     };
 
     // Rewrite each pattern

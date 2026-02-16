@@ -637,6 +637,14 @@ pub(crate) fn resolve_module_specifier(
     resolution_cache: &mut ModuleResolutionCache,
     known_files: &FxHashSet<PathBuf>,
 ) -> Option<PathBuf> {
+    let debug = std::env::var_os("TSZ_DEBUG_RESOLVE").is_some();
+    if debug {
+        eprintln!(
+            "resolve_module_specifier: from_file={from_file:?}, specifier={module_specifier:?}, resolution={:?}, base_url={:?}",
+            options.effective_module_resolution(),
+            options.base_url
+        );
+    }
     let specifier = module_specifier.trim();
     if specifier.is_empty() {
         return None;
@@ -694,21 +702,21 @@ pub(crate) fn resolve_module_specifier(
             }
         }
 
-        if candidates.is_empty() {
-            // Classic resolution walks up the directory tree from the containing
-            // file's directory, probing for <specifier>.ts, .d.ts, etc. at each level.
-            let mut current = from_dir.to_path_buf();
-            loop {
-                candidates.extend(expand_module_path_candidates(
-                    &current.join(&specifier),
-                    options,
-                    package_type,
-                ));
+        // Classic resolution always walks up the directory tree from the containing
+        // file's directory, probing for <specifier>.ts/.tsx/.d.ts and related candidates.
+        // This runs even when baseUrl/path-mapping candidates were generated, matching
+        // TypeScript behavior where classic resolution falls back to relative ancestor checks.
+        let mut current = from_dir.to_path_buf();
+        loop {
+            candidates.extend(expand_module_path_candidates(
+                &current.join(&specifier),
+                options,
+                package_type,
+            ));
 
-                match current.parent() {
-                    Some(parent) if parent != current => current = parent.to_path_buf(),
-                    _ => break,
-                }
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
             }
         }
     } else if let Some(base_url) = options.base_url.as_ref() {
@@ -743,16 +751,39 @@ pub(crate) fn resolve_module_specifier(
         // Check if candidate exists in known files (for virtual test files) or on filesystem
         let exists = known_files.contains(&candidate)
             || (candidate.is_file() && is_valid_module_file(&candidate));
+        if debug {
+            eprintln!("candidate={candidate:?} exists={exists}");
+        }
 
         if exists {
             return Some(canonicalize_or_owned(&candidate));
         }
     }
 
-    // If path mapping was attempted but no file was found, return None early
-    // to emit TS2307 rather than falling through to node_modules resolution
-    if path_mapping_attempted {
-        return None;
+    // TypeScript falls through to Classic-style directory walking when path mappings
+    // were attempted but did not resolve. This matches behavior where path mapping
+    // misses are not treated as terminal failures in classic mode.
+    if path_mapping_attempted && matches!(resolution, ModuleResolutionKind::Classic) {
+        let mut current = from_dir.to_path_buf();
+        loop {
+            for candidate in
+                expand_module_path_candidates(&current.join(&specifier), options, package_type)
+            {
+                let exists = known_files.contains(&candidate)
+                    || (candidate.is_file() && is_valid_module_file(&candidate));
+                if debug {
+                    eprintln!("classic-fallback candidate={candidate:?} exists={exists}");
+                }
+                if exists {
+                    return Some(canonicalize_or_owned(&candidate));
+                }
+            }
+
+            match current.parent() {
+                Some(parent) if parent != current => current = parent.to_path_buf(),
+                _ => break,
+            }
+        }
     }
 
     if allow_node_modules {
@@ -2272,13 +2303,26 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
 
 pub(crate) fn normalize_base_url(base_dir: &Path, dir: Option<PathBuf>) -> Option<PathBuf> {
     dir.map(|dir| {
-        let resolved = if dir.is_absolute() {
+        let resolved = if dir.is_absolute() || is_windows_absolute_like(&dir) {
             dir
         } else {
             base_dir.join(dir)
         };
         canonicalize_or_owned(&resolved)
     })
+}
+
+fn is_windows_absolute_like(path: &Path) -> bool {
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+
+    let bytes = path.as_bytes();
+    if bytes.len() < 3 {
+        return false;
+    }
+
+    (bytes[1] == b':' && (bytes[2] == b'/' || bytes[2] == b'\\')) || path.starts_with("\\\\")
 }
 
 pub(crate) fn normalize_output_dir(base_dir: &Path, dir: Option<PathBuf>) -> Option<PathBuf> {

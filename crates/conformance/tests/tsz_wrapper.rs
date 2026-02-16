@@ -51,11 +51,11 @@ fn compile_test(
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
                 let c = rewrite_absolute_reference_paths(&c);
                 let c = rewrite_absolute_imports(&c);
-                rewrite_bare_specifiers(&c, filenames)
+                rewrite_bare_specifiers(&c, filename, filenames)
             } else {
                 let c = resolve_lib_references(file_content, dir_path, ts_tests_lib_dir);
                 let c = rewrite_absolute_reference_paths(&c);
-                rewrite_bare_specifiers(&c, filenames)
+                rewrite_bare_specifiers(&c, filename, filenames)
             };
 
             std::fs::write(&file_path, written_content)?;
@@ -279,42 +279,42 @@ fn test_rewrite_bare_specifiers() {
 
     // Test export * from
     let content = r#"export * from "server";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"export * from "./server";"#);
 
     // Test import from
     let content = r#"import { x } from "server";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"import { x } from "./server";"#);
 
     // Test side-effect import
     let content = r#"import "server";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"import "./server";"#);
 
     // Test require
     let content = r#"const x = require("server");"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"const x = require("./server");"#);
 
     // Should NOT rewrite npm packages
     let content = r#"import { x } from "lodash";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"import { x } from "lodash";"#);
 
     // Should NOT rewrite relative paths
     let content = r#"import { x } from "./server";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"import { x } from "./server";"#);
 
     // Should NOT rewrite absolute paths
     let content = r#"import { x } from "/server";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"import { x } from "/server";"#);
 
     // Should NOT rewrite scoped packages
     let content = r#"import { x } from "@scope/package";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
     assert_eq!(result, r#"import { x } from "@scope/package";"#);
 }
 
@@ -328,7 +328,7 @@ fn test_rewrite_bare_specifiers_with_d_ts() {
 
     // Should rewrite bare specifier for .d.ts file
     let content = r#"import * as a from "a";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "b.ts", &filenames);
     assert_eq!(result, r#"import * as a from "./a";"#);
 
     // Test with .d.cts
@@ -338,7 +338,7 @@ fn test_rewrite_bare_specifiers_with_d_ts() {
     ];
 
     let content = r#"import { T } from "types";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "index.cts", &filenames);
     assert_eq!(result, r#"import { T } from "./types";"#);
 }
 
@@ -353,7 +353,7 @@ fn test_rewrite_bare_specifiers_skips_node_modules_packages() {
     ];
 
     let content = r#"import "foo";"#;
-    let result = rewrite_bare_specifiers(content, &filenames);
+    let result = rewrite_bare_specifiers(content, "/a.ts", &filenames);
     assert_eq!(result, r#"import "foo";"#);
 }
 
