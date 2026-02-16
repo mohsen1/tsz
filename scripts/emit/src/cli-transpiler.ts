@@ -68,9 +68,12 @@ function targetToCliArg(target: number): string {
     7: 'es2020',
     8: 'es2021',
     9: 'es2022',
+    10: 'es2023',
+    11: 'es2024',
+    12: 'es2025',
     99: 'esnext',
   };
-  return targets[target] || 'es5';
+  return targets[target] || 'esnext';
 }
 
 // Convert module number to CLI arg

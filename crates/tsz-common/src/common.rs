@@ -51,6 +51,15 @@ pub enum ScriptTarget {
     /// ECMAScript 2022 (13th Edition)
     ES2022 = 9,
 
+    /// ECMAScript 2023 (14th Edition)
+    ES2023 = 10,
+
+    /// ECMAScript 2024 (15th Edition)
+    ES2024 = 11,
+
+    /// ECMAScript 2025 (16th Edition) — TS6 default (`LatestStandard`)
+    ES2025 = 12,
+
     /// Latest ECMAScript features
     #[default]
     ESNext = 99,

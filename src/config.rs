@@ -1128,7 +1128,10 @@ pub const fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
         ScriptTarget::ES2020 => "es2020.full",
         ScriptTarget::ES2021 => "es2021.full",
         ScriptTarget::ES2022 => "es2022.full",
-        ScriptTarget::ESNext => "esnext.full",
+        ScriptTarget::ES2023
+        | ScriptTarget::ES2024
+        | ScriptTarget::ES2025
+        | ScriptTarget::ESNext => "esnext.full",
     }
 }
 
@@ -1149,7 +1152,10 @@ pub const fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
         ScriptTarget::ES2020 => "es2020",
         ScriptTarget::ES2021 => "es2021",
         ScriptTarget::ES2022 => "es2022",
-        ScriptTarget::ESNext => "esnext",
+        ScriptTarget::ES2023
+        | ScriptTarget::ES2024
+        | ScriptTarget::ES2025
+        | ScriptTarget::ESNext => "esnext",
     }
 }
 
@@ -1338,9 +1344,12 @@ pub const fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptT
         ScriptTarget::ES2018 => CheckerScriptTarget::ES2018,
         ScriptTarget::ES2019 => CheckerScriptTarget::ES2019,
         ScriptTarget::ES2020 => CheckerScriptTarget::ES2020,
-        ScriptTarget::ES2021 | ScriptTarget::ES2022 | ScriptTarget::ESNext => {
-            CheckerScriptTarget::ESNext
-        }
+        ScriptTarget::ES2021
+        | ScriptTarget::ES2022
+        | ScriptTarget::ES2023
+        | ScriptTarget::ES2024
+        | ScriptTarget::ES2025
+        | ScriptTarget::ESNext => CheckerScriptTarget::ESNext,
     }
 }
 

@@ -708,6 +708,7 @@ pub enum Target {
     Es2022,
     Es2023,
     Es2024,
+    Es2025,
     #[value(name = "esnext", alias = "es-next")]
     EsNext,
 }
@@ -725,8 +726,9 @@ impl Target {
             Self::Es2020 => ScriptTarget::ES2020,
             Self::Es2021 => ScriptTarget::ES2021,
             Self::Es2022 => ScriptTarget::ES2022,
-            Self::Es2023 => ScriptTarget::ES2022, // Map to ES2022 until ES2023 support is added
-            Self::Es2024 => ScriptTarget::ES2022, // Map to ES2022 until ES2024 support is added
+            Self::Es2023 => ScriptTarget::ES2023,
+            Self::Es2024 => ScriptTarget::ES2024,
+            Self::Es2025 => ScriptTarget::ES2025,
             Self::EsNext => ScriptTarget::ESNext,
         }
     }
