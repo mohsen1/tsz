@@ -204,7 +204,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Emit modifiers (including decorators) - skip export/default for CommonJS
+        // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
@@ -212,6 +212,12 @@ impl<'a> Printer<'a> {
                     if (self.ctx.is_commonjs() || self.in_namespace_iife)
                         && (mod_node.kind == SyntaxKind::ExportKeyword as u16
                             || mod_node.kind == SyntaxKind::DefaultKeyword as u16)
+                    {
+                        continue;
+                    }
+                    // Skip TypeScript-only modifiers (abstract, declare, etc.)
+                    if mod_node.kind == SyntaxKind::AbstractKeyword as u16
+                        || mod_node.kind == SyntaxKind::DeclareKeyword as u16
                     {
                         continue;
                     }
@@ -670,6 +676,12 @@ impl<'a> Printer<'a> {
 
         // Skip ambient module declarations (declare namespace/module)
         if self.has_declare_modifier(&module.modifiers) {
+            self.skip_comments_for_erased_node(node);
+            return;
+        }
+
+        // Skip non-instantiated modules (type-only: interfaces, type aliases, empty)
+        if !self.is_instantiated_module(module.body) {
             self.skip_comments_for_erased_node(node);
             return;
         }
