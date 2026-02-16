@@ -779,6 +779,35 @@ impl<'a> CheckerState<'a> {
                 }
                 let name = self.get_member_name_text(method.name).unwrap_or_default();
                 (name, method.name, NodeIndex::NONE) // Methods use member_idx for type
+            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
+            {
+                // Getter/setter accessor declarations
+                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                    continue;
+                };
+                // Skip private accessors (#name)
+                if let Some(name_node) = self.ctx.arena.get(accessor.name)
+                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                {
+                    continue;
+                }
+                let name = self.get_member_name_text(accessor.name).unwrap_or_default();
+                // For getters, the property type is the return type annotation.
+                // For setters, the property type comes from the first parameter.
+                let type_ann = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                    accessor.type_annotation
+                } else {
+                    // Setter: get type from the first parameter
+                    accessor
+                        .parameters
+                        .nodes.first()
+                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .map(|param| param.type_annotation)
+                        .unwrap_or(NodeIndex::NONE)
+                };
+                (name, accessor.name, type_ann)
             } else {
                 // Skip other member kinds (index signatures, constructors, etc.)
                 continue;
