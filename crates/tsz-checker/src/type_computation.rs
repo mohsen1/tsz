@@ -2372,6 +2372,8 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::FxHashMap;
         use tsz_common::interner::Atom;
         use tsz_solver::PropertyInfo;
+        let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
+        let perf_start = perf_enabled.then(std::time::Instant::now);
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -3097,6 +3099,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
+        let property_count = properties.len();
         // Object literals with spreads are not fresh (no excess property checking)
         let object_type = if has_spread {
             self.ctx.types.factory().object(properties)
@@ -3111,6 +3114,15 @@ impl<'a> CheckerState<'a> {
         // Pop this type from stack if we pushed it earlier
         if marker_this_type.is_some() {
             self.ctx.this_type_stack.pop();
+        }
+
+        if let Some(start) = perf_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "object_literal",
+                props = property_count,
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
         }
 
         object_type
