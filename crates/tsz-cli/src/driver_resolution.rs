@@ -1436,9 +1436,8 @@ fn package_type_from_json(package_json: Option<&PackageJson>) -> Option<PackageT
 
     match package_json.package_type.as_deref() {
         Some("module") => Some(PackageType::Module),
-        Some("commonjs") => Some(PackageType::CommonJs),
+        Some("commonjs") | None => Some(PackageType::CommonJs),
         Some(_) => None,
-        None => Some(PackageType::CommonJs),
     }
 }
 

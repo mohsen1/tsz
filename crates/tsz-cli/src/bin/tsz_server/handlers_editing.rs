@@ -722,9 +722,7 @@ impl Server {
             match chars[i] {
                 '(' | '{' | '[' => depth += 1,
                 ')' | '}' | ']' => depth = (depth - 1).max(0),
-                ';' if depth == 0 => break,
-                // Stop at newline when at depth 0 (end of statement without semicolon)
-                '\n' if depth == 0 => break,
+                ';' | '\n' if depth == 0 => break,
                 '=' if depth == 0 => {
                     let prev = if i > 0 { chars[i - 1] } else { ' ' };
                     let next = chars.get(i + 1).copied().unwrap_or(' ');
