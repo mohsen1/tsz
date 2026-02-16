@@ -240,7 +240,7 @@ impl ParserState {
 
             // Error recovery: when inside a nested block within a class body (e.g.,
             // a method body with an unclosed `{`), terminate the block if we encounter
-            // an access modifier followed by an identifier on the same line. This
+            // a class member modifier followed by an identifier on the same line. This
             // matches TSC's "abort parsing list" behavior: tokens that could start a
             // class member in an outer context cause the inner block list to terminate
             // rather than consuming tokens that belong to the class body.
@@ -251,6 +251,11 @@ impl ParserState {
                     SyntaxKind::PublicKeyword
                         | SyntaxKind::PrivateKeyword
                         | SyntaxKind::ProtectedKeyword
+                        | SyntaxKind::StaticKeyword
+                        | SyntaxKind::AbstractKeyword
+                        | SyntaxKind::ReadonlyKeyword
+                        | SyntaxKind::OverrideKeyword
+                        | SyntaxKind::AccessorKeyword
                 )
                 && self.look_ahead_next_is_identifier_or_keyword_on_same_line()
             {
