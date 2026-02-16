@@ -1186,6 +1186,7 @@ impl<'a> CheckerState<'a> {
         // representations are handled consistently.
         let require_module_specifier = self.get_require_module_specifier(import.module_specifier);
         let mut force_module_not_found = false;
+        let mut force_module_not_found_as_2307 = false;
         if require_module_specifier.is_some()
             && self.ctx.arena.get(import.module_specifier).is_some()
         {
@@ -1250,12 +1251,13 @@ impl<'a> CheckerState<'a> {
                 // Check if this is a relative import (starts with ./ or ../)
                 if imported_module.starts_with("./") || imported_module.starts_with("../") {
                     self.error_at_node(
-                                import.module_specifier,
+                                stmt_idx,
                                 diagnostic_messages::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                                 diagnostic_codes::IMPORT_OR_EXPORT_DECLARATION_IN_AN_AMBIENT_MODULE_DECLARATION_CANNOT_REFERENCE_M,
                             );
                     // Keep TS2439 and also force TS2307 in this ambient-relative import case.
                     force_module_not_found = true;
+                    force_module_not_found_as_2307 = true;
                 }
             }
 
@@ -1493,6 +1495,17 @@ impl<'a> CheckerState<'a> {
 
         if force_module_not_found {
             let (message, code) = self.module_not_found_diagnostic(module_name);
+            let (message, code) = if force_module_not_found_as_2307 {
+                (
+                    crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                        &[module_name],
+                    ),
+                    crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS,
+                )
+            } else {
+                (message, code)
+            };
             self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
                 code,
                 category: crate::diagnostics::DiagnosticCategory::Error,
