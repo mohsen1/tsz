@@ -2399,6 +2399,113 @@ impl<'a> CheckerState<'a> {
     /// }
     /// // lib Window type is merged with augmentation
     /// ```
+    /// Merge base interface members into a lib interface type by walking
+    /// heritage (`extends`) clauses in declaration-specific arenas.
+    ///
+    /// This is needed because `merge_interface_heritage_types` uses `self.ctx.arena`
+    /// (the user file arena) and cannot read lib declarations that live in lib arenas.
+    /// Takes the interface name and looks up declarations from the binder.
+    pub(crate) fn merge_lib_interface_heritage(
+        &mut self,
+        mut derived_type: TypeId,
+        name: &str,
+    ) -> TypeId {
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let lib_contexts = self.ctx.lib_contexts.clone();
+
+        // Look up the symbol and its declarations
+        let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+            return derived_type;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return derived_type;
+        };
+
+        let fallback_arena: &NodeArena = self
+            .ctx
+            .binder
+            .symbol_arenas
+            .get(&sym_id)
+            .map(std::convert::AsRef::as_ref)
+            .or_else(|| lib_contexts.first().map(|ctx| ctx.arena.as_ref()))
+            .unwrap_or(self.ctx.arena);
+
+        let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
+            .declarations
+            .iter()
+            .flat_map(|&decl_idx| {
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    arenas
+                        .iter()
+                        .map(|arc| (decl_idx, arc.as_ref()))
+                        .collect::<Vec<_>>()
+                } else {
+                    vec![(decl_idx, fallback_arena)]
+                }
+            })
+            .collect();
+
+        // Collect base type names first, then resolve them (avoids borrow conflicts)
+        let mut base_names: Vec<String> = Vec::new();
+
+        for &(decl_idx, arena) in &decls_with_arenas {
+            let Some(node) = arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(interface) = arena.get_interface(node) else {
+                continue;
+            };
+            let Some(ref heritage_clauses) = interface.heritage_clauses else {
+                continue;
+            };
+
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(clause_node) = arena.get(clause_idx) else {
+                    continue;
+                };
+                let Some(heritage) = arena.get_heritage_clause(clause_node) else {
+                    continue;
+                };
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                for &type_idx in &heritage.types.nodes {
+                    let Some(type_node) = arena.get(type_idx) else {
+                        continue;
+                    };
+
+                    // Extract the base type name from the heritage expression
+                    let expr_idx = if let Some(eta) = arena.get_expr_type_args(type_node) {
+                        eta.expression
+                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                        arena
+                            .get_type_ref(type_node)
+                            .map_or(type_idx, |tr| tr.type_name)
+                    } else {
+                        type_idx
+                    };
+
+                    if let Some(base_name) = arena.get_identifier_text(expr_idx) {
+                        base_names.push(base_name.to_string());
+                    }
+                }
+            }
+        }
+
+        // Now resolve each base type and merge
+        for base_name in &base_names {
+            if let Some(base_type) = self.resolve_lib_type_by_name(base_name) {
+                derived_type = self.merge_interface_types(derived_type, base_type);
+            }
+        }
+
+        derived_type
+    }
+
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::node::NodeAccess;
@@ -2409,17 +2516,6 @@ impl<'a> CheckerState<'a> {
 
         // Clone lib_contexts to allow access within the resolver closure
         let lib_contexts = self.ctx.lib_contexts.clone();
-        let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
-            let arenas = self.ctx.all_arenas.as_ref()?;
-            let binders = self.ctx.all_binders.as_ref()?;
-            let arena_ptr = arena_ref as *const NodeArena;
-            for (idx, arena) in arenas.iter().enumerate() {
-                if Arc::as_ptr(arena) == arena_ptr {
-                    return binders.get(idx).map(Arc::as_ref);
-                }
-            }
-            None
-        };
         // Collect lowered types from the symbol's declarations.
         // The main file's binder already has merged declarations from all lib files.
         let mut lib_types: Vec<TypeId> = Vec::new();
@@ -2551,6 +2647,7 @@ impl<'a> CheckerState<'a> {
                                 let def_id = self.ctx.get_or_create_def_id(file_sym_id);
                                 self.ctx.insert_def_type_params(def_id, params);
                             }
+
                             lib_types.push(ty);
                         }
                     }
@@ -2628,6 +2725,12 @@ impl<'a> CheckerState<'a> {
             lib_type_id = Some(merged);
         }
 
+        // Merge heritage (extends) from lib interface declarations.
+        // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
+        if let Some(ty) = lib_type_id {
+            lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
+        }
+
         // Check for global augmentations that should merge with this type.
         // Augmentations may come from the current file or other files (cross-file merge).
         if let Some(augmentation_decls) = self.ctx.binder.global_augmentations.get(name)
@@ -2637,6 +2740,18 @@ impl<'a> CheckerState<'a> {
             // Declarations with arena=None use the current file's arena.
             let current_arena: &NodeArena = self.ctx.arena;
             let binder_ref = self.ctx.binder;
+
+            let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
+                let arenas = self.ctx.all_arenas.as_ref()?;
+                let binders = self.ctx.all_binders.as_ref()?;
+                let arena_ptr = arena_ref as *const NodeArena;
+                for (idx, arena) in arenas.iter().enumerate() {
+                    if Arc::as_ptr(arena) == arena_ptr {
+                        return binders.get(idx).map(Arc::as_ref);
+                    }
+                }
+                None
+            };
 
             // Collect declarations grouped by arena pointer identity
             let mut current_file_decls: Vec<NodeIndex> = Vec::new();
