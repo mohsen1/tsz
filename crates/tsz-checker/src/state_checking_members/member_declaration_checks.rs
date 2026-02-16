@@ -1118,7 +1118,32 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::INDEX_SIGNATURE => {
                 // Index signatures are metadata used during type resolution, not members
                 // with their own types. They're handled separately by get_index_signatures.
-                // Nothing to check here.
+                // TS1071: Accessibility modifiers cannot appear on index signatures.
+                if let Some(index_sig) = self.ctx.arena.get_index_signature(node)
+                    && let Some(ref mods) = index_sig.modifiers
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    use tsz_scanner::SyntaxKind;
+                    for &mod_idx in &mods.nodes {
+                        if let Some(mod_node) = self.ctx.arena.get(mod_idx) {
+                            let modifier_name = match mod_node.kind {
+                                k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
+                                k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
+                                k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
+                                _ => None,
+                            };
+                            if let Some(name) = modifier_name {
+                                self.error_at_node(
+                                    mod_idx,
+                                    &format!(
+                                        "'{name}' modifier cannot appear on an index signature."
+                                    ),
+                                    diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_AN_INDEX_SIGNATURE,
+                                );
+                            }
+                        }
+                    }
+                }
             }
             _ => {
                 // Other class member types (semicolons, etc.)
