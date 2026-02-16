@@ -116,8 +116,8 @@ impl<'a> Printer<'a> {
             "var"
         };
         self.write(keyword);
-        self.write(" ");
         if !decl_list.declarations.nodes.is_empty() {
+            self.write(" ");
             self.emit_comma_separated(&decl_list.declarations.nodes);
         }
     }
@@ -778,11 +778,16 @@ impl<'a> Printer<'a> {
                 // MODULE_BLOCK: emit body statements
                 let prev = self.in_namespace_iife;
                 let prev_ns_name = self.current_namespace_name.clone();
+                // Save and restore declared_namespace_names for this IIFE scope.
+                // Each IIFE creates a new function scope, so `let` declarations
+                // inside don't conflict with those in other IIFEs for the same name.
+                let prev_declared = self.declared_namespace_names.clone();
                 self.in_namespace_iife = true;
                 self.current_namespace_name = Some(name.clone());
                 self.emit_namespace_body_statements(module, &name);
                 self.in_namespace_iife = prev;
                 self.current_namespace_name = prev_ns_name;
+                self.declared_namespace_names = prev_declared;
             }
         }
 
@@ -945,13 +950,15 @@ impl<'a> Printer<'a> {
                 self.collect_binding_names(decl.name, &mut names);
 
                 for name in &names {
+                    // Skip uninitialized exports - they don't produce assignment
+                    if decl.initializer.is_none() {
+                        continue;
+                    }
                     self.write(ns_name);
                     self.write(".");
                     self.write(name);
-                    if !decl.initializer.is_none() {
-                        self.write(" = ");
-                        self.emit_expression(decl.initializer);
-                    }
+                    self.write(" = ");
+                    self.emit_expression(decl.initializer);
                     self.write(";");
                     // Emit trailing comments from the outer export statement
                     let token_end =
