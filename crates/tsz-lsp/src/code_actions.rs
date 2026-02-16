@@ -1,7 +1,6 @@
-//! Code actions and code-fix protocol metadata for tsz-lsp.
+//! Code Actions for the LSP.
 //!
-//! - `code_action_provider`: quick fixes and refactorings over the AST/symbols.
-//! - `code_action_fixes`: tsserver-style code-fix descriptors and registry.
+//! Provides quick fixes, refactorings and protocol-facing code-fix metadata.
 
 mod code_action_fixes;
 mod code_action_provider;

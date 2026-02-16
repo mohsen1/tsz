@@ -1108,7 +1108,7 @@ function* f() {
     assert_eq!(
         body.statements.nodes.len(),
         2,
-        "Expected parser recovery to keep yield statement after an invalid token",
+        "Expected parser recovery to keep yield statement after an invalid token"
     );
 
     let yield_stmt_node = parser
@@ -1118,7 +1118,7 @@ function* f() {
     assert_eq!(
         yield_stmt_node.kind,
         crate::parser::syntax_kind_ext::EXPRESSION_STATEMENT,
-        "Expected first recovered statement to be an expression statement containing yield",
+        "Expected first recovered statement to be an expression statement containing yield"
     );
 
     let yield_stmt_data = parser
