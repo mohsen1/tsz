@@ -1902,14 +1902,15 @@ impl<'a> InferenceContext<'a> {
     }
 
     fn widen_candidate_types(&self, candidates: &[InferenceCandidate]) -> Vec<TypeId> {
-        let should_widen = candidates.len() > 1;
         candidates
             .iter()
             .map(|candidate| {
-                // Fix: Always widen fresh literals when we have multiple candidates,
-                // regardless of priority. Const type parameters are protected by
-                // the is_const check in resolve_from_candidates.
-                if should_widen && candidate.is_fresh_literal {
+                // Always widen fresh literal candidates to their base type.
+                // TypeScript widens fresh literals (0 → number, false → boolean)
+                // during inference resolution. Const type parameters are protected
+                // by the is_const check in resolve_from_candidates which uses
+                // apply_const_assertion instead of this method.
+                if candidate.is_fresh_literal {
                     self.get_base_type(candidate.type_id)
                         .unwrap_or(candidate.type_id)
                 } else {
