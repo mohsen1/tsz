@@ -3688,6 +3688,24 @@ impl ParserState {
             );
         }
 
+        // TS1051: A 'set' accessor cannot have an optional parameter
+        if let Some(&first_param) = parameters.nodes.first()
+            && let Some(param_node) = self.arena.get(first_param)
+        {
+            let data_idx = param_node.data_index as usize;
+            if let Some(param_data) = self.arena.parameters.get(data_idx)
+                && param_data.question_token
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    param_node.pos,
+                    param_node.end - param_node.pos,
+                    "A 'set' accessor cannot have an optional parameter.",
+                    diagnostic_codes::A_SET_ACCESSOR_CANNOT_HAVE_AN_OPTIONAL_PARAMETER,
+                );
+            }
+        }
+
         if self.parse_optional(SyntaxKind::ColonToken) {
             use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
