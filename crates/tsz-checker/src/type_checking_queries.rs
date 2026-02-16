@@ -10,7 +10,7 @@ use tsz_binder::{SymbolId, symbol_flags};
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeArena, NodeIndex, node_flags};
+use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeParamInfo;
 use tsz_solver::is_compiler_managed_type;
@@ -1767,12 +1767,23 @@ impl<'a> CheckerState<'a> {
                 && let Some(func) = self.ctx.arena.get_function(node)
                 && func.body.is_none()
             {
-                let flags = u32::from(node.flags);
-                if (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                    || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0
-                {
-                    i += 1;
-                    continue;
+                // Suppress TS2391 when a parse error occurs within the function declaration span.
+                // When `body.is_none()` and there are parse errors within the function span,
+                // the function was likely malformed (e.g. `function f() => 4;`).
+                // This doesn't affect cases like `function f(a {` because the parser gives
+                // those a body (`body_none=false`) so they never reach this path.
+                if self.has_syntax_parse_errors() {
+                    let fn_start = node.pos;
+                    let fn_end = node.end;
+                    let has_error_in_fn = self
+                        .ctx
+                        .syntax_parse_error_positions
+                        .iter()
+                        .any(|&p| p >= fn_start && p <= fn_end);
+                    if has_error_in_fn {
+                        i += 1;
+                        continue;
+                    }
                 }
                 let is_declared = self.is_ambient_declaration(stmt_idx);
                 // Use func.is_async as the parser stores async as a flag, not a modifier

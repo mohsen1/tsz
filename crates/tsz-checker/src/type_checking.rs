@@ -1535,11 +1535,9 @@ impl<'a> CheckerState<'a> {
                     return Some(ident.escaped_text.clone());
                 }
 
-                if self.identifier_refers_to_plain_symbol(computed.expression) {
-                    return None;
-                }
-
-                return Some(ident.escaped_text.clone());
+                // Plain identifiers that are not unique symbols are not
+                // overload-matchable — TSC skips TS2391 for these.
+                return None;
             }
 
             if matches!(
@@ -1589,35 +1587,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn identifier_refers_to_plain_symbol(&self, name_node: NodeIndex) -> bool {
-        let Some(sym_id) = self.resolve_symbol_id_from_identifier_node(name_node) else {
-            return false;
-        };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            return false;
-        };
-
-        symbol.declarations.iter().any(|decl_idx| {
-            let Some(decl_node) = self.ctx.arena.get(*decl_idx) else {
-                return false;
-            };
-
-            if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-                return false;
-            }
-
-            let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
-                return false;
-            };
-
-            if var_decl.type_annotation.is_none() {
-                return false;
-            }
-
-            self.is_symbol_type_annotation(var_decl.type_annotation)
-        })
-    }
-
     fn resolve_symbol_id_from_identifier_node(&self, name_node: NodeIndex) -> Option<SymbolId> {
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(name_node) {
             return Some(sym_id);
@@ -1645,28 +1614,6 @@ impl<'a> CheckerState<'a> {
                 }),
             _ => false,
         }
-    }
-
-    fn is_symbol_type_annotation(&self, type_annotation: NodeIndex) -> bool {
-        let Some(type_node) = self.ctx.arena.get(type_annotation) else {
-            return false;
-        };
-        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
-            return false;
-        }
-
-        let Some(type_ref) = self.ctx.arena.get_type_ref(type_node) else {
-            return false;
-        };
-
-        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
-            return false;
-        };
-
-        self.ctx
-            .arena
-            .get_identifier(name_node)
-            .is_some_and(|ident| ident.escaped_text == "symbol")
     }
 
     fn is_symbol_type_node(&self, type_annotation: NodeIndex) -> bool {

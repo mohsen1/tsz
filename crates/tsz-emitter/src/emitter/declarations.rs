@@ -880,8 +880,8 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     self.write_line();
                                 }
-                            } else if emitted && inner_kind != syntax_kind_ext::MODULE_DECLARATION {
-                                // Don't write extra newline for namespaces or empty emit
+                            } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                                // Don't write extra newline for namespaces - they already call write_line()
                                 self.write_line();
                             }
                         }
@@ -900,14 +900,10 @@ impl<'a> Printer<'a> {
                     self.emit(stmt_idx);
                 } else {
                     // Regular statement - emit trailing comments on same line
-                    let before_len = self.writer.len();
                     self.emit(stmt_idx);
-                    if self.writer.len() > before_len {
-                        let token_end =
-                            self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
-                        self.emit_trailing_comments(token_end);
-                        self.write_line();
-                    }
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
+                    self.write_line();
                 }
             }
         }
@@ -1246,6 +1242,16 @@ impl<'a> Printer<'a> {
         let has_function_temps = !self.hoisted_assignment_temps.is_empty()
             || !self.hoisted_assignment_value_temps.is_empty()
             || !self.hoisted_for_of_temps.is_empty();
+
+        // Empty constructor with no prologue: emit `{ }` on one line
+        if block.statements.nodes.is_empty()
+            && param_props.is_empty()
+            && field_inits.is_empty()
+            && !has_function_temps
+        {
+            self.write("{ }");
+            return;
+        }
 
         self.write("{");
         self.write_line();
