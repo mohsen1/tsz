@@ -1611,6 +1611,17 @@ impl<'a> CheckerState<'a> {
                     ) {
                         return self.apply_flow_narrowing(idx, augmented_type);
                     }
+                    // For callable/function types, check the Function interface
+                    // for augmented members (e.g., declare global { interface Function { ... } })
+                    if tsz_solver::type_queries::is_function_type(
+                        self.ctx.types,
+                        object_type_for_access,
+                    ) && let Some(func_iface) = self.resolve_lib_type_by_name("Function")
+                        && let PropertyAccessResult::Success { type_id, .. } =
+                            self.resolve_property_access_with_env(func_iface, property_name)
+                    {
+                        return self.apply_flow_narrowing(idx, type_id);
+                    }
                     // Check for optional chaining (?.) - suppress TS2339 error when using optional chaining
                     if access.question_dot_token {
                         // With optional chaining, missing property results in undefined
