@@ -404,12 +404,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     // not yet set. Suppress TS2683 - `this` is contextually typed.
                     TypeId::ANY
                 } else if self.checker.ctx.no_implicit_this()
+                    && !self.checker.is_js_file()
                     && self
                         .checker
                         .find_enclosing_non_arrow_function(idx)
                         .is_some()
                 {
                     // TS2683: 'this' implicitly has type 'any'
+                    // Suppressed in JS files: tsc infers `this` types for JS functions
+                    // from constructor patterns (this.x = ...) and prototype assignments.
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
