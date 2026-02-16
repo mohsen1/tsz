@@ -869,12 +869,23 @@ impl ParserState {
                 close += 1;
             }
             if close >= raw.len() {
-                self.parse_error_at(
-                    self.u32_from_usize(content_start + close),
-                    0,
-                    diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                    diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
-                );
+                if !has_digit {
+                    // No hex digits at all: \u{ followed by end → TS1125
+                    self.parse_error_at(
+                        self.u32_from_usize(content_start + i + 3),
+                        0,
+                        diagnostic_messages::HEXADECIMAL_DIGIT_EXPECTED,
+                        diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED,
+                    );
+                } else {
+                    // Had hex digits but no closing brace → TS1508
+                    self.parse_error_at(
+                        self.u32_from_usize(content_start + close),
+                        0,
+                        diagnostic_messages::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                        diagnostic_codes::UNTERMINATED_UNICODE_ESCAPE_SEQUENCE,
+                    );
+                }
             } else if raw[close] == b'}' {
                 if !has_digit {
                     self.parse_error_at(
