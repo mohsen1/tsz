@@ -5216,38 +5216,6 @@ impl<'a> CheckerState<'a> {
         (false, None, None)
     }
 
-    /// Find the first return statement with an expression in a function body.
-    ///
-    /// Used for error reporting position in accessor type checking.
-    ///
-    /// ## Parameters
-    /// - `body_idx`: The function body node index
-    ///
-    /// Returns Some(NodeIndex) of the return expression if found, None otherwise.
-    pub(crate) fn find_return_statement_pos(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
-        if body_idx.is_none() {
-            return None;
-        }
-
-        let body_node = self.ctx.arena.get(body_idx)?;
-
-        if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node)
-        {
-            for &stmt_idx in &block.statements.nodes {
-                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                    && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                    && !ret.expression.is_none()
-                {
-                    return Some(ret.expression);
-                }
-            }
-        }
-
-        None
-    }
-
     /// Find a function implementation with the given name after position `start`.
     ///
     /// Recursively searches through statements to find a matching function implementation.

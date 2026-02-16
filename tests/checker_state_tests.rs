@@ -4488,8 +4488,7 @@ fn test_const_modifier_on_class_property_1248() {
 
 #[test]
 fn test_accessor_type_compatibility_2322() {
-    // Error 2322: Type 'string' is not assignable to type 'number'
-    // When getter returns string but setter expects number
+    // TS 5.1+ allows divergent getter/setter types — no TS2322 expected here.
     use crate::parser::ParserState;
     let source = r#"class C {
     public set AnnotatedSetter(a: number) { }
@@ -4514,23 +4513,11 @@ fn test_accessor_type_compatibility_2322() {
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // Debug: show all diagnostics
-    println!("=== Diagnostics for accessor type mismatch ===");
-    for d in &checker.ctx.diagnostics {
-        println!("  code={}, msg={}", d.code, d.message_text);
-    }
-
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
-        codes.contains(&2322),
-        "Expected error 2322 (Type not assignable), got codes: {:?} diagnostics: {:?}",
+        !codes.contains(&2322),
+        "TS 5.1+ allows divergent accessor types, should NOT get 2322, got codes: {:?}",
         codes,
-        checker
-            .ctx
-            .diagnostics
-            .iter()
-            .map(|d| (d.code, d.message_text.clone()))
-            .collect::<Vec<_>>()
     );
 }
 
