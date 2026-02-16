@@ -74,12 +74,15 @@ impl<'a> CheckerState<'a> {
                 return factory.index_access(intrinsic_elements_type, tag_literal);
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node_msg(
-                idx,
-                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
-                &["IntrinsicElements"],
-            );
+            // Only report when noImplicitAny is enabled (TS7026 is an implicit-any diagnostic)
+            if self.ctx.no_implicit_any() {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    idx,
+                    diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+                    &["IntrinsicElements"],
+                );
+            }
             TypeId::ANY
         } else {
             // Component: resolve as variable expression
@@ -166,12 +169,15 @@ impl<'a> CheckerState<'a> {
             }
         }
         // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.Element' exists.
-        use crate::diagnostics::diagnostic_codes;
-        self.error_at_node_msg(
-            node_idx,
-            diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
-            &["Element"],
-        );
+        // Only report when noImplicitAny is enabled (TS7026 is an implicit-any diagnostic)
+        if self.ctx.no_implicit_any() {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node_msg(
+                node_idx,
+                diagnostic_codes::JSX_ELEMENT_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_NO_INTERFACE_JSX_EXISTS,
+                &["Element"],
+            );
+        }
         TypeId::ANY
     }
 }
