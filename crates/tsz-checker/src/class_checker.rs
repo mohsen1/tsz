@@ -10,7 +10,7 @@
 //! This module extends `CheckerState` with class/interface-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
-use crate::diagnostics::diagnostic_codes;
+use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{
     should_report_member_type_mismatch, should_report_member_type_mismatch_bivariant,
 };
@@ -30,6 +30,8 @@ struct ClassMemberInfo {
     is_static: bool,
     is_accessor: bool,
     is_abstract: bool,
+    has_override: bool,
+    has_dynamic_name: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -44,6 +46,269 @@ enum MemberVisibility {
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Determine if a class member name is dynamic (e.g. `[foo]` or computed expressions),
+    /// which cannot be used with an `override` modifier.
+    fn is_computed_name_dynamic(&self, name_idx: NodeIndex) -> bool {
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+
+        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
+            return true;
+        };
+        if self.ctx.arena.get(computed.expression).is_none() {
+            return true;
+        }
+
+        if self
+            .get_symbol_property_name_from_expr(computed.expression)
+            .is_some()
+        {
+            return false;
+        }
+
+        self.is_computed_expression_dynamic(computed.expression)
+    }
+
+    fn is_computed_expression_dynamic(&self, expression_idx: NodeIndex) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(expression_idx) else {
+            return true;
+        };
+        let kind = expr_node.kind;
+
+        if matches!(
+            kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+        ) {
+            return false;
+        }
+
+        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = self.ctx.arena.get_parenthesized(expr_node) {
+                return self.is_computed_expression_dynamic(paren.expression);
+            }
+
+        true
+    }
+
+    /// Collect base member names for override suggestions.
+    fn collect_base_member_names_for_override(
+        &mut self,
+        class_idx: NodeIndex,
+        target_is_static: bool,
+        members: &mut rustc_hash::FxHashSet<String>,
+        visited: &mut rustc_hash::FxHashSet<NodeIndex>,
+    ) {
+        if !visited.insert(class_idx) {
+            return;
+        }
+
+        let Some(class_node) = self.ctx.arena.get(class_idx) else {
+            return;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(class_node) else {
+            return;
+        };
+
+        for &member_idx in &class_data.members.nodes {
+            if let Some(info) = self.extract_class_member_info(member_idx, true)
+                && info.is_static == target_is_static
+            {
+                members.insert(info.name);
+            }
+        }
+
+        if let Some(base_idx) = self.get_base_class_idx(class_idx) {
+            self.collect_base_member_names_for_override(
+                base_idx,
+                target_is_static,
+                members,
+                visited,
+            );
+        }
+    }
+
+    /// Find a close member name from base class members for "Did you mean ...?".
+    fn find_override_name_suggestion(
+        &self,
+        base_names: &rustc_hash::FxHashSet<String>,
+        target_name: &str,
+    ) -> Option<String> {
+        let name_len = target_name.len();
+        if base_names.is_empty() {
+            return None;
+        }
+
+        let maximum_length_difference = if name_len * 34 / 100 > 2 {
+            name_len * 34 / 100
+        } else {
+            2
+        };
+        let mut best_distance = name_len * 4 / 10 + 1;
+        let mut best_candidate: Option<String> = None;
+
+        for candidate in base_names {
+            if candidate == target_name {
+                continue;
+            }
+            if name_len.abs_diff(candidate.len()) > maximum_length_difference {
+                continue;
+            }
+            if candidate.len() < 3 && candidate.to_lowercase() != target_name.to_lowercase() {
+                continue;
+            }
+
+            if let Some(distance) =
+                Self::override_name_levenshtein_with_max(target_name, candidate, best_distance)
+                && distance < best_distance {
+                    best_distance = distance;
+                    best_candidate = Some(candidate.clone());
+                }
+        }
+
+        best_candidate
+    }
+
+    /// Compute edit distance with an upper bound, used for override suggestions.
+    fn override_name_levenshtein_with_max(
+        s1: &str,
+        s2: &str,
+        max_distance: usize,
+    ) -> Option<usize> {
+        if s1.len() > s2.len() {
+            return Self::override_name_levenshtein_with_max(s2, s1, max_distance);
+        }
+
+        let (short, long) = (s1.as_bytes(), s2.as_bytes());
+        let (short_len, long_len) = (short.len(), long.len());
+        if long_len - short_len > max_distance {
+            return None;
+        }
+
+        let mut previous: Vec<usize> = (0..=long_len).collect();
+        let mut current: Vec<usize> = vec![0; long_len + 1];
+
+        for (i, &lhs) in short.iter().enumerate() {
+            current[0] = i + 1;
+            let mut row_min = current[0];
+            for (j, &rhs) in long.iter().enumerate() {
+                let insert = previous[j + 1] + 1;
+                let delete = current[j] + 1;
+                let replace = previous[j] + usize::from(lhs != rhs);
+                let value = insert.min(delete).min(replace);
+                current[j + 1] = value;
+                if value < row_min {
+                    row_min = value;
+                }
+            }
+            if row_min > max_distance {
+                return None;
+            }
+            previous.copy_from_slice(&current);
+        }
+
+        let distance = previous[long_len];
+        if distance <= max_distance {
+            Some(distance)
+        } else {
+            None
+        }
+    }
+
+    /// Report explicit/implicit override errors for constructor parameter properties.
+    fn check_constructor_parameter_property_overrides(
+        &mut self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        base_class_idx: Option<NodeIndex>,
+        base_class_name: &str,
+        base_instance_member_names: &rustc_hash::FxHashSet<String>,
+        no_implicit_override: bool,
+    ) {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                continue;
+            }
+
+            let Some(ctor) = self.ctx.arena.get_constructor(member_node) else {
+                continue;
+            };
+            for &param_idx in &ctor.parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if !self.has_parameter_property_modifier(&param.modifiers) {
+                    continue;
+                }
+                let Some(param_name) = self.get_property_name(param.name) else {
+                    continue;
+                };
+
+                let has_override = self.has_override_modifier(&param.modifiers);
+                let base_member = base_class_idx.and_then(|base_idx| {
+                    self.find_member_in_class_chain(base_idx, &param_name, false, 0, true)
+                });
+
+                if has_override {
+                    if base_class_idx.is_none() {
+                        self.error_at_node(
+                            param.name,
+                            &crate::diagnostics::format_message(
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                                &[base_class_name],
+                            ),
+                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                        );
+                        continue;
+                    }
+
+                    if base_member.is_none() {
+                        if let Some(suggestion) = self
+                            .find_override_name_suggestion(base_instance_member_names, &param_name)
+                        {
+                            self.error_at_node(
+                                param.name,
+                                &crate::diagnostics::format_message(
+                                    diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                                    &[base_class_name, &suggestion],
+                                ),
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                            );
+                        } else {
+                            self.error_at_node(
+                                param.name,
+                                &crate::diagnostics::format_message(
+                                    diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                                    &[base_class_name],
+                                ),
+                                diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                            );
+                        }
+                    }
+                } else if no_implicit_override && base_member.is_some() {
+                    self.error_at_node(
+                        param.name,
+                        &crate::diagnostics::format_message(
+                            diagnostic_messages::THIS_PARAMETER_PROPERTY_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_ME,
+                            &[base_class_name],
+                        ),
+                        diagnostic_codes::THIS_PARAMETER_PROPERTY_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_ME,
+                    );
+                }
+            }
+        }
+    }
+
     /// Extract name, type, and flags from a class member node.
     ///
     /// If `skip_private` is true, returns `None` for private members.
@@ -85,6 +350,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: false,
                     is_abstract,
+                    has_override: self.has_override_modifier(&prop.modifiers),
+                    has_dynamic_name: self.is_computed_name_dynamic(prop.name),
                 })
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
@@ -123,6 +390,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: false,
                     is_abstract,
+                    has_override: self.has_override_modifier(&method.modifiers),
+                    has_dynamic_name: self.is_computed_name_dynamic(method.name),
                 })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -154,6 +423,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: true,
                     is_abstract,
+                    has_override: self.has_override_modifier(&accessor.modifiers),
+                    has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                 })
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
@@ -192,6 +463,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: true,
                     is_abstract,
+                    has_override: self.has_override_modifier(&accessor.modifiers),
+                    has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                 })
             }
             _ => None,
@@ -278,8 +551,62 @@ impl<'a> CheckerState<'a> {
             break; // Only one extends clause is valid
         }
 
-        // If no base class found, nothing to check
+        let derived_class_name = if !class_data.name.is_none() {
+            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    ident.escaped_text.clone()
+                } else {
+                    String::from("<anonymous>")
+                }
+            } else {
+                String::from("<anonymous>")
+            }
+        } else {
+            String::from("<anonymous>")
+        };
+        let no_implicit_override = self.ctx.no_implicit_override();
+
         let Some(base_idx) = base_class_idx else {
+            // Even without a base class, explicit `override` is invalid.
+            for &member_idx in &class_data.members.nodes {
+                let Some(info) = self.extract_class_member_info(member_idx, false) else {
+                    continue;
+                };
+                if !info.has_override {
+                    continue;
+                }
+
+                // Dynamic names are reported with a dedicated diagnostic.
+                if info.has_dynamic_name {
+                    self.error_at_node(
+                        info.name_idx,
+                        &crate::diagnostics::format_message(
+                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                            &[],
+                        ),
+                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                    );
+                    continue;
+                }
+
+                self.error_at_node(
+                    info.name_idx,
+                    &crate::diagnostics::format_message(
+                        diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                        &[&derived_class_name],
+                    ),
+                    diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                );
+            }
+
+            self.check_constructor_parameter_property_overrides(
+                class_data,
+                None,
+                &derived_class_name,
+                &rustc_hash::FxHashSet::default(),
+                no_implicit_override,
+            );
+
             return;
         };
 
@@ -316,20 +643,30 @@ impl<'a> CheckerState<'a> {
         let substitution =
             TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
 
-        // Get the derived class name for the error message
-        let derived_class_name = if !class_data.name.is_none() {
-            if let Some(name_node) = self.ctx.arena.get(class_data.name) {
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    ident.escaped_text.clone()
-                } else {
-                    String::from("<anonymous>")
-                }
-            } else {
-                String::from("<anonymous>")
-            }
-        } else {
-            String::from("<anonymous>")
-        };
+        let mut base_instance_member_names: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        let mut base_static_member_names: rustc_hash::FxHashSet<String> =
+            rustc_hash::FxHashSet::default();
+        self.collect_base_member_names_for_override(
+            base_idx,
+            false,
+            &mut base_instance_member_names,
+            &mut rustc_hash::FxHashSet::default(),
+        );
+        self.collect_base_member_names_for_override(
+            base_idx,
+            true,
+            &mut base_static_member_names,
+            &mut rustc_hash::FxHashSet::default(),
+        );
+
+        self.check_constructor_parameter_property_overrides(
+            class_data,
+            Some(base_idx),
+            &base_class_name,
+            &base_instance_member_names,
+            no_implicit_override,
+        );
 
         // Track names that already had TS2610/TS2611 emitted (avoid duplicate for get+set pairs)
         let mut accessor_mismatch_reported: rustc_hash::FxHashSet<String> =
@@ -349,6 +686,8 @@ impl<'a> CheckerState<'a> {
                 is_method,
                 is_static,
                 is_accessor,
+                has_override,
+                has_dynamic_name,
             ) = (
                 info.name,
                 info.type_id,
@@ -357,12 +696,93 @@ impl<'a> CheckerState<'a> {
                 info.is_method,
                 info.is_static,
                 info.is_accessor,
+                info.has_override,
+                info.has_dynamic_name,
             );
 
             // Skip override checking for private identifiers (#foo)
             // Private fields are scoped to the class that declares them and
             // do NOT participate in the inheritance hierarchy
             if member_name.starts_with('#') {
+                continue;
+            }
+
+            let base_info =
+                self.find_member_in_class_chain(base_idx, &member_name, is_static, 0, true);
+
+            if has_override {
+                // Cannot use `override` when name is computed dynamically.
+                if has_dynamic_name {
+                    self.error_at_node(
+                        member_name_idx,
+                        &crate::diagnostics::format_message(
+                            diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                            &[],
+                        ),
+                        diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                    );
+                    continue;
+                }
+            }
+
+            if has_dynamic_name {
+                // Dynamic names are allowed regardless of `noImplicitOverride`; they cannot
+                // satisfy normal override checks because their exact identity cannot be
+                // statically proven as an inherited symbol.
+            } else if has_override {
+                // `override` requires a matching visible base member.
+                if base_info.is_none() {
+                    let suggestion_names = if is_static {
+                        &base_static_member_names
+                    } else {
+                        &base_instance_member_names
+                    };
+                    if let Some(suggestion) =
+                        self.find_override_name_suggestion(suggestion_names, &member_name)
+                    {
+                        self.error_at_node(
+                            member_name_idx,
+                            &crate::diagnostics::format_message(
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                                &[&base_class_name, &suggestion],
+                            ),
+                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B_2,
+                        );
+                    } else {
+                        self.error_at_node(
+                            member_name_idx,
+                            &crate::diagnostics::format_message(
+                                diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                                &[&base_class_name],
+                            ),
+                            diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_IS_NOT_DECLARED_IN_THE_B,
+                        );
+                    }
+                    continue;
+                }
+            } else if no_implicit_override && base_info.is_some() {
+                if base_info
+                    .as_ref()
+                    .is_some_and(|base| base.is_abstract && base.is_method)
+                {
+                    self.error_at_node(
+                        member_name_idx,
+                        &crate::diagnostics::format_message(
+                            diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_AN_ABSTRACT_METH,
+                            &[&base_class_name],
+                        ),
+                        diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_AN_ABSTRACT_METH,
+                    );
+                } else {
+                    self.error_at_node(
+                        member_name_idx,
+                        &crate::diagnostics::format_message(
+                            diagnostic_messages::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                            &[&base_class_name],
+                        ),
+                        diagnostic_codes::THIS_MEMBER_MUST_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_IT_OVERRIDES_A_MEMBER_IN_THE,
+                    );
+                }
                 continue;
             }
 
