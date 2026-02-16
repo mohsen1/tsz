@@ -669,10 +669,12 @@ impl ParserState {
     }
 
     pub(crate) fn parse_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        // Don't report another error if it would just be at the same position as the last error.
-        // This matches tsc's parseErrorAtPosition deduplication behavior.
+        // Don't report another error if it would just be at the same position AND same code.
+        // In tsc, scanner diagnostics (e.g. TS1127) are separate from parser diagnostics
+        // (e.g. TS1005), so different error codes at the same position can coexist.
         if let Some(last) = self.parse_diagnostics.last()
             && last.start == start
+            && last.code == code
         {
             return;
         }
@@ -1251,13 +1253,6 @@ impl ParserState {
 
     /// Error: '{token}' expected (TS1005)
     pub(crate) fn error_token_expected(&mut self, token: &str) {
-        // Suppress TS1005 when the current token is Unknown (invalid character).
-        // The Unknown token will produce its own TS1127 when processed, matching
-        // TypeScript's behavior where the scanner-emitted TS1127 suppresses the
-        // position-duplicate TS1005 via its same-position dedup in parseErrorAt.
-        if self.is_token(SyntaxKind::Unknown) {
-            return;
-        }
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when parse_semicolon() and similar functions call this
         // Use centralized error suppression heuristic
