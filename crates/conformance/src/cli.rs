@@ -82,6 +82,11 @@ pub struct Args {
     #[arg(long)]
     pub print_fingerprints: bool,
 
+    /// Disable batch process pool and fall back to spawning a fresh tsz
+    /// process per test (slower but useful for debugging).
+    #[arg(long)]
+    pub no_batch: bool,
+
     /// Write structured parity diff artifacts for failed tests.
     #[arg(long)]
     pub write_diff_artifacts: bool,
