@@ -3950,6 +3950,71 @@ impl ParserState {
             }
         }
 
+        // Recovery: Handle 'class'/'enum' keywords that are misplaced declarations in class body.
+        // `class D { }` or `enum E { }` inside a class body are invalid — classes and enums
+        // can't be nested as class members. But `class;` or `class(){}` are valid property names.
+        // When followed by an identifier on the same line, emit TS1068 and skip the declaration.
+        if modifiers.is_none()
+            && matches!(
+                self.token(),
+                SyntaxKind::ClassKeyword | SyntaxKind::EnumKeyword
+            )
+        {
+            let snapshot = self.scanner.save_state();
+            let current = self.current_token;
+            self.next_token();
+            let next_is_identifier =
+                self.is_identifier_or_keyword() && !self.scanner.has_preceding_line_break();
+            self.scanner.restore_state(snapshot);
+            self.current_token = current;
+
+            if next_is_identifier {
+                // Misplaced class/enum declaration. Emit TS1068 at the keyword position.
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+                // Skip keyword + name. If `{` follows, skip the block body but leave
+                // the matching `}` for the outer class when the inner block has exactly
+                // one level of braces and the outer class brace is pending.
+                self.next_token(); // skip class/enum keyword
+                self.next_token(); // skip the identifier name
+                // Skip extends/implements clauses if present (e.g., `class D extends E {`)
+                while self.is_identifier_or_keyword()
+                    && !self.is_token(SyntaxKind::OpenBraceToken)
+                    && !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                {
+                    self.next_token();
+                    // Skip comma-separated items
+                    if self.is_token(SyntaxKind::CommaToken) {
+                        self.next_token();
+                    }
+                }
+                if self.is_token(SyntaxKind::OpenBraceToken) {
+                    // Skip tokens inside the block body until we find the matching }.
+                    // DON'T consume the final } — leave it for the outer class body
+                    // to use as its closing brace (error recovery behavior matching TSC).
+                    let mut depth = 1u32;
+                    self.next_token(); // consume {
+                    while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+                        if self.is_token(SyntaxKind::OpenBraceToken) {
+                            depth += 1;
+                        } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                            depth -= 1;
+                            if depth == 0 {
+                                // Leave the } for the outer class to consume
+                                break;
+                            }
+                        }
+                        self.next_token();
+                    }
+                }
+                return NodeIndex::NONE;
+            }
+        }
+
         // Whether this is an async method; needed while parsing parameters.
         let is_async = modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&idx| {
