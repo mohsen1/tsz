@@ -501,36 +501,40 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
     ) -> TypeId {
-        if !is_true_branch {
-            return type_id;
-        }
-
         if !self.is_matching_reference(bin.left, target) {
             return type_id;
         }
 
-        // Special case for unknown: instanceof narrows to object type
-        // This handles cases like: if (error instanceof Error) where error: unknown
-        if type_id == TypeId::UNKNOWN {
-            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-                return instance_type;
+        // Build narrowing context once for both branches
+        let env_borrow;
+        let narrowing = if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+        } else {
+            NarrowingContext::new(self.interner)
+        };
+
+        if is_true_branch {
+            // Special case for unknown: instanceof narrows to instance type
+            if type_id == TypeId::UNKNOWN {
+                if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                    return instance_type;
+                }
+                return TypeId::OBJECT;
             }
-            return TypeId::OBJECT;
-        }
 
-        if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-            // Create narrowing context and wire up TypeEnvironment if available
-            let env_borrow;
-            let narrowing = if let Some(env) = &self.type_environment {
-                env_borrow = env.borrow();
-                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
-            } else {
-                NarrowingContext::new(self.interner)
-            };
-            return narrowing.narrow_by_instance_type(type_id, instance_type);
-        }
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                return narrowing.narrow_by_instance_type(type_id, instance_type);
+            }
 
-        self.narrow_to_objectish(type_id)
+            self.narrow_to_objectish(type_id)
+        } else {
+            // False branch: exclude types that would match instanceof
+            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
+                return narrowing.narrow_by_instanceof_false(type_id, instance_type);
+            }
+            type_id
+        }
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {

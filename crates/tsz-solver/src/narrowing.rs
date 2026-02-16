@@ -1593,17 +1593,26 @@ impl<'a> NarrowingContext<'a> {
                 }
                 result
             } else {
-                // No type parameter match: use standard assignability filtering
+                // No type parameter match: filter by instanceof semantics.
+                // Primitives can never pass instanceof; non-primitives are
+                // checked for assignability with the instance type.
                 members
                     .iter()
                     .filter_map(|&member| {
+                        // Primitive types can never pass `instanceof` at runtime.
+                        if self.is_js_primitive(member) {
+                            return None;
+                        }
                         if let Some(narrowed) = self.narrow_type_param(member, instance_type) {
                             return Some(narrowed);
                         }
+                        // Member assignable to instance type → keep member
                         if self.is_assignable_to(member, instance_type) {
                             return Some(member);
                         }
-                        if crate::subtype::is_subtype_of_with_db(self.db, instance_type, member) {
+                        // Instance type assignable to member → narrow to instance
+                        // (e.g., member=Animal, instance=Dog → Dog)
+                        if self.is_assignable_to(instance_type, member) {
                             return Some(instance_type);
                         }
                         if self.is_array_like(member) {
@@ -1615,7 +1624,10 @@ impl<'a> NarrowingContext<'a> {
                                 return Some(member);
                             }
                         }
-                        None
+                        // Non-primitive members that don't match assignability
+                        // checks are still kept — they may be class instances
+                        // that could pass instanceof at runtime.
+                        Some(member)
                     })
                     .collect()
             };
@@ -1630,6 +1642,44 @@ impl<'a> NarrowingContext<'a> {
 
         // Non-union: delegate to narrow_to_type
         self.narrow_to_type(source_type, instance_type)
+    }
+
+    /// Narrow a type for the false branch of `instanceof`.
+    ///
+    /// Keeps primitive types (which can never pass instanceof) and excludes
+    /// non-primitive members that are subtypes of the instance type.
+    /// For example, `string | number | Date` with `instanceof Object` false
+    /// branch gives `string | number` (Date is excluded as it's an Object instance).
+    pub fn narrow_by_instanceof_false(&self, source_type: TypeId, instance_type: TypeId) -> TypeId {
+        let resolved_source = self.resolve_type(source_type);
+
+        if let Some(members) = union_list_id(self.db, resolved_source) {
+            let members = self.db.type_list(members);
+            let remaining: Vec<TypeId> = members
+                .iter()
+                .filter(|&&member| {
+                    // Primitives always survive the false branch of instanceof
+                    if self.is_js_primitive(member) {
+                        return true;
+                    }
+                    // Non-primitive: exclude if it's a subtype of the instance type
+                    // (it would have been narrowed to the true branch)
+                    !self.is_assignable_to(member, instance_type)
+                        && !crate::subtype::is_subtype_of_with_db(self.db, member, instance_type)
+                })
+                .copied()
+                .collect();
+
+            if remaining.is_empty() {
+                return TypeId::NEVER;
+            } else if remaining.len() == 1 {
+                return remaining[0];
+            }
+            return self.db.union(remaining);
+        }
+
+        // Non-union: can't narrow in the false branch
+        source_type
     }
 
     /// Narrow a type to exclude members assignable to target.
@@ -2066,6 +2116,26 @@ impl<'a> NarrowingContext<'a> {
         })
     }
 
+    /// Check if a type is a JS primitive that can never pass `instanceof`.
+    /// Includes string, number, boolean, bigint, symbol, undefined, null,
+    /// void, never, and their literal forms.
+    fn is_js_primitive(&self, type_id: TypeId) -> bool {
+        matches!(
+            type_id,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::SYMBOL
+                | TypeId::UNDEFINED
+                | TypeId::NULL
+                | TypeId::VOID
+                | TypeId::NEVER
+                | TypeId::BOOLEAN_TRUE
+                | TypeId::BOOLEAN_FALSE
+        ) || matches!(self.db.lookup(type_id), Some(TypeData::Literal(_)))
+    }
+
     /// Simple assignability check for narrowing purposes.
     fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
         if source == target {
@@ -2189,6 +2259,7 @@ impl<'a> NarrowingContext<'a> {
                     // Use narrow_by_instance_type for instanceof-specific semantics:
                     // type parameters with matching constraints are kept, but anonymous
                     // object types that happen to be structurally compatible are excluded.
+                    // Primitive types are filtered out since they can never pass instanceof.
                     let narrowed = self.narrow_by_instance_type(source_type, *instance_type);
 
                     // Fallback: If standard narrowing returns NEVER but source wasn't NEVER,
@@ -2201,13 +2272,12 @@ impl<'a> NarrowingContext<'a> {
                     }
                 } else {
                     // Negative: !(x instanceof Class)
-                    // Exclude the instance type
-                    // CRITICAL: Don't narrow when instance_type is TypeId::OBJECT (fallback from unresolved constructor).
-                    // Excluding all objects would incorrectly narrow to 'never'.
+                    // Keep primitives (they can never pass instanceof) and exclude
+                    // non-primitive types assignable to the instance type.
                     if *instance_type == TypeId::OBJECT {
                         source_type
                     } else {
-                        self.narrow_excluding_type(source_type, *instance_type)
+                        self.narrow_by_instanceof_false(source_type, *instance_type)
                     }
                 }
             }
