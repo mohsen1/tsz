@@ -977,4 +977,51 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             );
         }
     }
+
+    fn check_label_on_declaration(&mut self, label_idx: NodeIndex, statement_idx: NodeIndex) {
+        use tsz_parser::parser::node_flags;
+
+        let Some(stmt_node) = self.ctx.arena.get(statement_idx) else {
+            return;
+        };
+
+        // TS1344: A label is not allowed before certain declaration types.
+        // Check if the labeled statement is a declaration that can't have a label.
+        let is_declaration = match stmt_node.kind {
+            syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::INTERFACE_DECLARATION
+            | syntax_kind_ext::ENUM_DECLARATION
+            | syntax_kind_ext::TYPE_ALIAS_DECLARATION => true,
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                // const/let/using/await-using can't be labeled
+                if let Some(var_data) = self.ctx.arena.get_variable(stmt_node) {
+                    let list_idx = var_data
+                        .declarations
+                        .nodes
+                        .first()
+                        .copied()
+                        .unwrap_or(NodeIndex::NONE);
+                    if let Some(list_node) = self.ctx.arena.get(list_idx) {
+                        let flags = list_node.flags as u32;
+                        flags & node_flags::CONST != 0
+                            || flags & node_flags::LET != 0
+                            || flags & node_flags::USING != 0
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+
+        if is_declaration {
+            self.error_at_node(
+                label_idx,
+                "'A label is not allowed here.",
+                crate::diagnostics::diagnostic_codes::A_LABEL_IS_NOT_ALLOWED_HERE,
+            );
+        }
+    }
 }

@@ -191,6 +191,11 @@ pub trait StatementCheckCallbacks {
     /// is a declaration that requires a block context.
     fn check_declaration_in_statement_position(&mut self, stmt_idx: NodeIndex);
 
+    /// TS1344: Check if a label is placed before a declaration that doesn't allow labels.
+    /// Called when a labeled statement is found; `label_idx` is the label identifier,
+    /// `statement_idx` is the inner statement.
+    fn check_label_on_declaration(&mut self, label_idx: NodeIndex, statement_idx: NodeIndex);
+
     /// Check a with statement and emit TS2410.
     /// The 'with' statement is not supported in TypeScript.
     fn check_with_statement(&mut self, stmt_idx: NodeIndex);
@@ -582,6 +587,9 @@ impl StatementChecker {
                 };
 
                 if let Some((label_idx, statement_idx)) = labeled_data {
+                    // TS1344: Check if label is placed before a non-labelable declaration
+                    state.check_label_on_declaration(label_idx, statement_idx);
+
                     // Get the label name
                     let label_name = state.get_node_text(label_idx).unwrap_or_default();
 
