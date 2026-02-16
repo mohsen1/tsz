@@ -3653,6 +3653,27 @@ impl ParserState {
         )
     }
 
+    /// Emit TS1031 "'declare' modifier cannot appear on class elements of this kind."
+    /// at the position of the `declare` modifier in the given modifier list.
+    fn emit_declare_on_non_property_error(&mut self, modifiers: &Option<NodeList>) {
+        if let Some(mods) = modifiers {
+            for &idx in &mods.nodes {
+                if let Some(node) = self.arena.get(idx)
+                    && node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        node.pos,
+                        node.end - node.pos,
+                        "'declare' modifier cannot appear on class elements of this kind.",
+                        diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_CLASS_ELEMENTS_OF_THIS_KIND,
+                    );
+                    break;
+                }
+            }
+        }
+    }
+
     /// Parse set accessor with modifiers: static set foo(value) { }
     pub(crate) fn parse_set_accessor_with_modifiers(
         &mut self,
@@ -3926,6 +3947,10 @@ impl ParserState {
         // Handle get accessor: get foo() { }
         if !asterisk_token && self.is_token(SyntaxKind::GetKeyword) && self.look_ahead_is_accessor()
         {
+            // TS1031: 'declare' modifier cannot appear on class elements of this kind
+            if has_declare_modifier {
+                self.emit_declare_on_non_property_error(&modifiers);
+            }
             let saved_member_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
             let accessor = self.parse_get_accessor_with_modifiers(modifiers, start_pos);
@@ -3936,6 +3961,10 @@ impl ParserState {
         // Handle set accessor: set foo(value) { }
         if !asterisk_token && self.is_token(SyntaxKind::SetKeyword) && self.look_ahead_is_accessor()
         {
+            // TS1031: 'declare' modifier cannot appear on class elements of this kind
+            if has_declare_modifier {
+                self.emit_declare_on_non_property_error(&modifiers);
+            }
             let saved_member_flags = self.context_flags;
             self.context_flags |= CONTEXT_FLAG_CLASS_MEMBER_NAME;
             let accessor = self.parse_set_accessor_with_modifiers(modifiers, start_pos);
@@ -4167,6 +4196,12 @@ impl ParserState {
                 || self.is_token(SyntaxKind::LessThanToken));
 
         if is_method_like {
+            // TS1031: 'declare' modifier cannot appear on class elements of this kind
+            // (methods cannot be declared, only properties can)
+            if has_declare_modifier {
+                self.emit_declare_on_non_property_error(&modifiers);
+            }
+
             // Parse optional type parameters: foo<T, U>()
             let type_parameters = self
                 .is_token(SyntaxKind::LessThanToken)
