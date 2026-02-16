@@ -2942,7 +2942,11 @@ impl<'a> FlowAnalyzer<'a> {
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
             // Use unified narrow_type API with TypeGuard::Typeof for both branches
             if let Some(typeof_kind) = TypeofKind::parse(type_name) {
-                return narrowing.narrow_type(type_id, &TypeGuard::Typeof(typeof_kind), effective_truth);
+                return narrowing.narrow_type(
+                    type_id,
+                    &TypeGuard::Typeof(typeof_kind),
+                    effective_truth,
+                );
             }
             // Unknown typeof string (e.g., host-defined types), no narrowing
             return type_id;
