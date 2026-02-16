@@ -2336,26 +2336,91 @@ impl<'a> NarrowingContext<'a> {
                 return self.narrow_excluding_function(source_type);
             }
             "object" => {
-                // Object excludes primitives
-                // Exclude null, undefined, string, number, boolean, bigint, symbol
-                let mut result = source_type;
-                for &primitive in &[
-                    TypeId::NULL,
-                    TypeId::UNDEFINED,
-                    TypeId::STRING,
-                    TypeId::NUMBER,
-                    TypeId::BOOLEAN,
-                    TypeId::BIGINT,
-                    TypeId::SYMBOL,
-                ] {
-                    result = self.narrow_excluding_type(result, primitive);
-                }
-                return result;
+                // typeof x !== "object": keep only types where typeof !== "object"
+                // Keep: primitives (string, number, boolean, bigint, symbol), undefined, void, functions
+                // Exclude: null (typeof null === "object") and object types
+                let without_null = self.narrow_excluding_type(source_type, TypeId::NULL);
+                return self.narrow_excluding_typeof_object(without_null);
             }
             _ => return source_type,
         };
 
         self.narrow_excluding_type(source_type, excluded)
+    }
+
+    /// Exclude types where `typeof` would return `"object"` from a union.
+    ///
+    /// This is used for the negation of `typeof x === "object"`.
+    /// Keeps primitives, undefined, void, and function types.
+    /// Excludes object types (objects, arrays, tuples, class instances).
+    /// Note: null should already be excluded before calling this.
+    fn narrow_excluding_typeof_object(&self, source_type: TypeId) -> TypeId {
+        let resolved = self.resolve_type(source_type);
+
+        // For non-union types, check if it's an object type
+        let Some(members) = union_list_id(self.db, resolved) else {
+            // Single type: check if typeof would be "object"
+            if self.is_typeof_object(resolved) {
+                return TypeId::NEVER;
+            }
+            return source_type;
+        };
+
+        // Filter union members: keep only non-object types
+        let members = self.db.type_list(members);
+        let kept: Vec<TypeId> = members
+            .iter()
+            .filter(|&&member| {
+                let resolved_member = self.resolve_type(member);
+                !self.is_typeof_object(resolved_member)
+            })
+            .copied()
+            .collect();
+
+        if kept.is_empty() {
+            TypeId::NEVER
+        } else if kept.len() == members.len() {
+            source_type
+        } else {
+            self.db.union(kept)
+        }
+    }
+
+    /// Check if a type would produce `"object"` from the `typeof` operator.
+    fn is_typeof_object(&self, type_id: TypeId) -> bool {
+        // Primitives and their literal types are NOT "object"
+        if matches!(
+            type_id,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::SYMBOL
+                | TypeId::UNDEFINED
+                | TypeId::VOID
+                | TypeId::NEVER
+                | TypeId::ANY
+                | TypeId::UNKNOWN
+        ) {
+            return false;
+        }
+
+        // Check type data for structural types
+        if let Some(data) = self.db.lookup(type_id) {
+            // Object, intersection, mapped, tuple, array: typeof === "object"
+            matches!(
+                data,
+                TypeData::Object(_)
+                    | TypeData::ObjectWithIndex(_)
+                    | TypeData::Intersection(_)
+                    | TypeData::Mapped(_)
+                    | TypeData::Tuple(_)
+                    | TypeData::Array(_)
+            )
+        } else {
+            // OBJECT intrinsic: typeof === "object"
+            type_id == TypeId::OBJECT
+        }
     }
 
     /// Check if a type is definitely falsy.
