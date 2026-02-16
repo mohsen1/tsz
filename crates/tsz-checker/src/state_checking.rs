@@ -1812,25 +1812,22 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS7022: Variable implicitly has type 'any' because it does not have a type
-            // annotation and is referenced directly or indirectly in its own initializer.
+            // TS7022/TS7023: Circular initializer/return type implicit any diagnostics.
             // Gated by noImplicitAny (like all TS7xxx implicit-any diagnostics).
             //
             // Detection: During compute_final_type, if get_type_of_symbol was called for
             // this variable's symbol and cached ERROR (sym_cached_as_error), it means the
             // initializer references the variable creating a circular dependency.
             //
-            // We skip function/arrow/class expression initializers because self-references
-            // inside their bodies are in deferred contexts — they don't affect the
-            // structural type. E.g. `var f = () => f()` has type `() => any`, not circular.
+            // TS7022: Structural circularity — `var a = { f: a }`.
+            // TS7023: Return-type circularity — `var f = () => f()` or
+            //         `var f = function() { return f(); }`.
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && !var_decl.initializer.is_none()
                 && sym_cached_as_error
                 && self.type_contains_error(final_type)
             {
-                // Skip if the initializer is a deferred context (function/arrow/class).
-                // Self-references inside these bodies don't create structural circularity.
                 let is_deferred_initializer =
                     self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
                         matches!(
@@ -1840,13 +1837,23 @@ impl<'a> CheckerState<'a> {
                                 | syntax_kind_ext::CLASS_EXPRESSION
                         )
                     });
-                if !is_deferred_initializer && let Some(ref name) = var_name {
+                if let Some(ref name) = var_name {
                     use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
+                    if is_deferred_initializer {
+                        // TS7023: Function/arrow initializer with circular return type.
+                        self.error_at_node_msg(
+                            var_decl.name,
+                            diagnostic_codes::IMPLICITLY_HAS_RETURN_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_RETURN_TYPE_ANNOTATION,
+                            &[name],
+                        );
+                    } else {
+                        // TS7022: Structural circularity in initializer.
+                        self.error_at_node_msg(
                             var_decl.name,
                             diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
                             &[name],
                         );
+                    }
                 }
             }
 

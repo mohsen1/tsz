@@ -1649,3 +1649,73 @@ const fn1 = () => {
         "Should NOT emit TS7022 for self-reference in arrow function body (deferred context).\nActual errors: {diagnostics:#?}"
     );
 }
+
+// TS7023: Function implicitly has return type 'any' because it does not have a return
+// type annotation and is referenced directly or indirectly in one of its return expressions.
+
+/// TS7023 should fire for function expression variables that call themselves in return.
+/// From: implicitAnyFromCircularInference.ts
+#[test]
+fn test_ts7023_function_expression_self_call() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var f1 = function () {
+    return f1();
+};
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 for function expression self-call.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for function expression (deferred context).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7023 should fire for arrow function variables that call themselves in return.
+/// From: implicitAnyFromCircularInference.ts
+#[test]
+fn test_ts7023_arrow_function_self_call() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var f2 = () => f2();
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7023),
+        "Should emit TS7023 for arrow function self-call.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7023 should NOT fire when noImplicitAny is off.
+#[test]
+fn test_ts7023_not_emitted_without_no_implicit_any() {
+    let opts = CheckerOptions {
+        no_implicit_any: false,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var f1 = function () {
+    return f1();
+};
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7023),
+        "Should NOT emit TS7023 when noImplicitAny is off.\nActual errors: {diagnostics:#?}"
+    );
+}
