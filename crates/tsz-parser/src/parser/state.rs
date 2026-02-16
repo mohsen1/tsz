@@ -669,6 +669,13 @@ impl ParserState {
     }
 
     pub(crate) fn parse_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
+        // Don't report another error if it would just be at the same position as the last error.
+        // This matches tsc's parseErrorAtPosition deduplication behavior.
+        if let Some(last) = self.parse_diagnostics.last()
+            && last.start == start
+        {
+            return;
+        }
         // Track the position of this error to prevent cascading errors at same position
         self.last_error_pos = start;
         self.parse_diagnostics.push(ParseDiagnostic {
