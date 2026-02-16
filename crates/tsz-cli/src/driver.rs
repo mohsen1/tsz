@@ -2210,10 +2210,11 @@ fn collect_diagnostics(
 
                         let has_explicit_extension =
                             std::path::Path::new(specifier).extension().is_some();
-
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
                             && !has_explicit_extension
                             && (module_kind_prefers_2792 || resolution_prefers_2792)
+                            && options.effective_module_resolution()
+                                != tsz::config::ModuleResolutionKind::Bundler
                         {
                             diagnostic.code = tsz::module_resolver::MODULE_RESOLUTION_MODE_MISMATCH;
                             diagnostic.message = format!(
