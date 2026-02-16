@@ -1168,14 +1168,23 @@ impl ParserState {
         // but NOT CONST (2) which only has bit 1 set.
         let is_using = (flags & self.u16_from_node_flags(node_flags::USING)) != 0;
 
-        // Check TS1375: 'using' declarations do not support destructuring patterns
+        // TS1492: 'using'/'await using' declarations may not have binding patterns
         if is_using
             && (self.is_token(SyntaxKind::OpenBraceToken)
                 || self.is_token(SyntaxKind::OpenBracketToken))
         {
+            let is_await_using = (flags & self.u16_from_node_flags(node_flags::AWAIT_USING))
+                == self.u16_from_node_flags(node_flags::AWAIT_USING);
+            let decl_kind = if is_await_using {
+                "await using"
+            } else {
+                "using"
+            };
+            let msg = diagnostic_messages::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS
+                .replace("{0}", decl_kind);
             self.parse_error_at_current_token(
-                diagnostic_messages::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
-                diagnostic_codes::DECLARATIONS_CAN_ONLY_BE_DECLARED_INSIDE_A_BLOCK,
+                &msg,
+                diagnostic_codes::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS,
             );
         }
 

@@ -1096,32 +1096,6 @@ impl<'a> CheckerState<'a> {
         if let Some(var_list) = self.ctx.arena.get_variable(node) {
             // Now these are actual VariableDeclaration nodes
             for &decl_idx in &var_list.declarations.nodes {
-                // TS1492: using/await-using declarations may not have binding patterns
-                if (is_using || is_await_using)
-                    && let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                    && let Some(decl_data) = self.ctx.arena.get_variable_declaration(decl_node)
-                    && let Some(name_node) = self.ctx.arena.get(decl_data.name)
-                    && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                {
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    let decl_kind = if (node.flags as u32 & node_flags::AWAIT_USING)
-                        == node_flags::AWAIT_USING
-                    {
-                        "await using"
-                    } else {
-                        "using"
-                    };
-                    let msg = diagnostic_messages::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS
-                        .replace("{0}", decl_kind);
-                    self.ctx.error(
-                        name_node.pos,
-                        name_node.end - name_node.pos,
-                        msg,
-                        diagnostic_codes::DECLARATIONS_MAY_NOT_HAVE_BINDING_PATTERNS,
-                    );
-                }
-
                 self.check_variable_declaration(decl_idx);
 
                 // Check using/await using declarations have Symbol.dispose
