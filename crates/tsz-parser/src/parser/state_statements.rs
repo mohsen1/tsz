@@ -1261,6 +1261,7 @@ impl ParserState {
         }
         if !is_catch_clause
             && initializer.is_none()
+            && (self.context_flags & crate::parser::state::CONTEXT_FLAG_AMBIENT) == 0
             && let Some(name_node) = self.arena.get(name)
         {
             use crate::parser::syntax_kind_ext::{ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN};

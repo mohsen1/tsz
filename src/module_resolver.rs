@@ -20,6 +20,7 @@
 
 use crate::config::{JsxEmit, ModuleResolutionKind, PathMapping, ResolvedCompilerOptions};
 use crate::diagnostics::{Diagnostic, DiagnosticBag};
+use crate::emitter::ModuleKind;
 use crate::span::Span;
 use rustc_hash::FxHashMap;
 use serde_json;
@@ -115,7 +116,7 @@ pub enum PackageType {
 
 /// Module kind for the importing file
 /// Determines whether to use "import" or "require" conditions
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum ImportingModuleKind {
     /// ESM module (uses "import" condition)
     Esm,
@@ -521,9 +522,13 @@ pub struct ModuleResolver {
     allow_importing_ts_extensions: bool,
     jsx: Option<JsxEmit>,
     /// Cache of resolved modules
-    resolution_cache: FxHashMap<(PathBuf, String), Result<ResolvedModule, ResolutionFailure>>,
+    resolution_cache: FxHashMap<
+        (PathBuf, String, ImportingModuleKind),
+        Result<ResolvedModule, ResolutionFailure>,
+    >,
     /// Custom conditions from tsconfig (for customConditions option)
     custom_conditions: Vec<String>,
+    module_kind: ModuleKind,
     /// Whether allowJs is enabled (affects extension candidates)
     allow_js: bool,
     /// Whether to rewrite relative imports with TypeScript extensions during emit.
@@ -565,6 +570,7 @@ impl ModuleResolver {
             jsx: options.jsx,
             resolution_cache: FxHashMap::default(),
             custom_conditions: options.custom_conditions.clone(),
+            module_kind: options.printer.module,
             allow_js: options.allow_js,
             rewrite_relative_import_extensions: options.rewrite_relative_import_extensions,
             package_type_cache: FxHashMap::default(),
@@ -589,6 +595,7 @@ impl ModuleResolver {
             jsx: None,
             resolution_cache: FxHashMap::default(),
             custom_conditions: Vec::new(),
+            module_kind: ModuleKind::CommonJS,
             allow_js: false,
             rewrite_relative_import_extensions: false,
             package_type_cache: FxHashMap::default(),
@@ -634,14 +641,16 @@ impl ModuleResolver {
             _ => None,
         };
 
-        // Check cache first
-        let cache_key = (containing_dir.clone(), specifier.to_string());
+        // Determine the module kind of the importing file
+        let importing_module_kind = self.get_importing_module_kind(containing_file);
+        let cache_key = (
+            containing_dir.clone(),
+            specifier.to_string(),
+            importing_module_kind,
+        );
         if let Some(cached) = self.resolution_cache.get(&cache_key) {
             return cached.clone();
         }
-
-        // Determine the module kind of the importing file
-        let importing_module_kind = self.get_importing_module_kind(containing_file);
 
         let (mut result, path_mapping_attempted) = self.resolve_uncached(
             specifier,
@@ -706,6 +715,21 @@ impl ModuleResolver {
         // .cts, .cjs force CommonJS mode
         if extension.forces_cjs() {
             return ImportingModuleKind::CommonJs;
+        }
+
+        // `--module commonjs` and other CJS-style module targets ignore package.json `type`.
+        match self.module_kind {
+            ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System => {
+                return ImportingModuleKind::CommonJs;
+            }
+            ModuleKind::None
+            | ModuleKind::ES2015
+            | ModuleKind::ES2020
+            | ModuleKind::ES2022
+            | ModuleKind::ESNext
+            | ModuleKind::Node16
+            | ModuleKind::NodeNext
+            | ModuleKind::Preserve => {}
         }
 
         // Check package.json "type" field
@@ -1374,6 +1398,17 @@ impl ModuleResolver {
                             // exports is authoritative — do not continue searching.
                             return Err(e);
                         }
+                        Err(e @ ResolutionFailure::NotFound { .. }) => {
+                            if self.should_stop_on_bundler_exports_failure(
+                                &package_dir,
+                                subpath.as_deref(),
+                                &conditions,
+                                containing_file,
+                                specifier,
+                            ) {
+                                return Err(e);
+                            }
+                        }
                         Err(_) => {
                             // Continue searching in parent directories
                         }
@@ -1441,6 +1476,49 @@ impl ModuleResolver {
             containing_file: containing_file.to_string(),
             span: specifier_span,
         })
+    }
+
+    fn should_stop_on_bundler_exports_failure(
+        &self,
+        package_dir: &Path,
+        subpath: Option<&str>,
+        conditions: &[String],
+        _containing_file: &str,
+        _specifier: &str,
+    ) -> bool {
+        if !matches!(self.resolution_kind, ModuleResolutionKind::Bundler) {
+            return false;
+        }
+        if !self.resolve_package_json_exports {
+            return false;
+        }
+
+        let package_json_path = package_dir.join("package.json");
+        if !package_json_path.is_file() {
+            return false;
+        }
+
+        let package_json = match self.read_package_json(&package_json_path) {
+            Ok(package_json) => package_json,
+            Err(_) => return false,
+        };
+
+        let Some(exports) = package_json.exports else {
+            return false;
+        };
+
+        let subpath_key = match subpath {
+            Some(subpath) => format!("./{subpath}"),
+            None => ".".to_string(),
+        };
+
+        self.resolve_package_exports_with_conditions(
+            package_dir,
+            &exports,
+            &subpath_key,
+            conditions,
+        )
+        .is_none()
     }
 
     /// Try to resolve a self-reference (package importing itself by name)
@@ -1558,13 +1636,19 @@ impl ModuleResolver {
                         extension: ModuleExtension::from_path(&resolved),
                     });
                 }
-                // In Node16/NodeNext, exports field is authoritative for subpaths.
-                // Bundler mode is more permissive and allows fallback.
+                // In Node16/NodeNext/Bundler, exports field is authoritative for subpaths.
                 if matches!(
                     self.resolution_kind,
                     ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
                 ) {
                     return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                        specifier: original_specifier.to_string(),
+                        containing_file: containing_file.to_string(),
+                        span: specifier_span,
+                    });
+                }
+                if matches!(self.resolution_kind, ModuleResolutionKind::Bundler) {
+                    return Err(ResolutionFailure::NotFound {
                         specifier: original_specifier.to_string(),
                         containing_file: containing_file.to_string(),
                         span: specifier_span,
@@ -1622,14 +1706,20 @@ impl ModuleResolver {
                     extension: ModuleExtension::from_path(&resolved),
                 });
             }
-            // In Node16/NodeNext, exports field is authoritative.
-            // Do NOT fall through to types/main/index — emit TS2792.
-            // Bundler mode is more permissive and allows fallback.
+            // In Node16/NodeNext/Bundler, exports field is authoritative.
+            // Node16/NodeNext emit TS2792; Bundler uses TS2307.
             if matches!(
                 self.resolution_kind,
                 ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext
             ) {
                 return Err(ResolutionFailure::ModuleResolutionModeMismatch {
+                    specifier: original_specifier.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                });
+            }
+            if matches!(self.resolution_kind, ModuleResolutionKind::Bundler) {
+                return Err(ResolutionFailure::NotFound {
                     specifier: original_specifier.to_string(),
                     containing_file: containing_file.to_string(),
                     span: specifier_span,

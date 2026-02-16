@@ -503,6 +503,15 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Error 1089: 'async' modifier cannot appear on a constructor declaration.
+        if let Some(async_mod_idx) = self.find_async_modifier(&ctor.modifiers) {
+            self.error_at_node_msg(
+                async_mod_idx,
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_CONSTRUCTOR_DECLARATION,
+                &["async"],
+            );
+        }
+
         // Error 1242: 'abstract' modifier can only appear on a class, method, or property declaration.
         // Constructors cannot be abstract.
         if self.has_abstract_modifier(&ctor.modifiers) {

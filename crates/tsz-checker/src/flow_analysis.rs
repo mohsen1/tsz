@@ -2176,6 +2176,15 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For namespace-scoped variables, skip TS2454 when the usage is inside
+        // a nested namespace (MODULE_DECLARATION) relative to the declaration.
+        // Flow analysis can't cross namespace boundaries, and the variable may
+        // be assigned in the outer namespace before the inner namespace executes.
+        // Same-namespace usage still gets TS2454 (flow analysis works within a scope).
+        if self.is_usage_in_nested_namespace_from_decl(decl_id, idx) {
+            return false;
+        }
+
         // Walk up the parent chain to check:
         // 1. Skip definite assignment checks in ambient declarations (declare const/let)
         // 2. Anchor checks to a function-like or source-file container
@@ -2286,6 +2295,48 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a usage crosses a namespace boundary relative to its declaration.
+    /// Walk up from the usage node; if we encounter a `MODULE_DECLARATION` before
+    /// reaching the node that contains the declaration, the usage is in a nested
+    /// namespace and TS2454 should be suppressed (flow graph doesn't span across
+    /// namespace boundaries).
+    fn is_usage_in_nested_namespace_from_decl(
+        &self,
+        decl_id: NodeIndex,
+        usage_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = self.ctx.arena.get(decl_id) else {
+            return false;
+        };
+        let decl_pos = decl_node.pos;
+        let decl_end = decl_node.end;
+
+        let mut current = usage_idx;
+        for _ in 0..50 {
+            let Some(info) = self.ctx.arena.node_info(current) else {
+                break;
+            };
+            current = info.parent;
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            // If this node's span contains the declaration, we've reached the
+            // common container — no namespace boundary between usage and decl.
+            if node.pos <= decl_pos && node.end >= decl_end {
+                return false;
+            }
+            // Hit a MODULE_DECLARATION before reaching the declaration's container:
+            // usage is in a nested namespace.
+            if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                return true;
+            }
+            if current.is_none() {
+                break;
+            }
+        }
+        false
+    }
+
     /// Check if a node is a for-in/for-of initializer (assignment target).
     /// For `for (x of items)`, the identifier `x` is the initializer and is
     /// being assigned to, not read from.
@@ -2325,6 +2376,7 @@ impl<'a> CheckerState<'a> {
                 k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                     || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     || k == syntax_kind_ext::SPREAD_ELEMENT
+                    || k == syntax_kind_ext::SPREAD_ASSIGNMENT
                     || k == syntax_kind_ext::PROPERTY_ASSIGNMENT
                     || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT =>
                 {
