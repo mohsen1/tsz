@@ -941,8 +941,9 @@ impl ParserState {
                 continue;
             }
 
-            // Enum member names can be identifiers, string literals, or computed property names
-            // Computed property names ([x]) are not valid in enums but we recover gracefully
+            // Enum member names can be identifiers, string literals, or computed property names.
+            // Numeric literals are parsed as names for error recovery (TS2452 reported by checker).
+            // Computed property names ([x]) are not valid in enums but we recover gracefully.
             let name = if self.is_token(SyntaxKind::OpenBracketToken) {
                 // Handle computed property name - emit TS1164 and recover
                 self.parse_error_at_current_token(
@@ -952,6 +953,9 @@ impl ParserState {
                 self.parse_property_name()
             } else if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
+            } else if self.is_token(SyntaxKind::NumericLiteral) {
+                // Parse numeric literal as name for recovery (checker emits TS2452)
+                self.parse_numeric_literal()
             } else if self.is_token(SyntaxKind::PrivateIdentifier) {
                 self.parse_error_at_current_token(
                     "An enum member cannot be named with a private identifier.",
@@ -969,17 +973,33 @@ impl ParserState {
                 && !self.is_token(SyntaxKind::CloseBraceToken)
                 && !self.is_token(SyntaxKind::EndOfFileToken)
             {
-                let next_token_starts_member = self.is_token(SyntaxKind::OpenBracketToken)
-                    || self.is_token(SyntaxKind::StringLiteral)
-                    || self.is_token(SyntaxKind::PrivateIdentifier)
-                    || self.is_identifier_or_keyword();
-
                 self.parse_error_at_current_token(
                     "An enum member name must be followed by a ',', '=', or '}'.",
                     diagnostic_codes::AN_ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY_A_OR,
                 );
-                if next_token_starts_member {
-                    continue;
+
+                // If `:` was the unexpected token (like `a: 1`), skip past `:` and its
+                // value so the recovery can pick up the next member correctly.
+                if self.is_token(SyntaxKind::ColonToken) {
+                    self.next_token(); // skip `:`
+                    // Check if next token starts a new member (e.g., the `1` in `a: 1`)
+                    let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.is_token(SyntaxKind::StringLiteral)
+                        || self.is_token(SyntaxKind::NumericLiteral)
+                        || self.is_token(SyntaxKind::PrivateIdentifier)
+                        || self.is_identifier_or_keyword();
+                    if starts_member {
+                        continue;
+                    }
+                } else {
+                    let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
+                        || self.is_token(SyntaxKind::StringLiteral)
+                        || self.is_token(SyntaxKind::NumericLiteral)
+                        || self.is_token(SyntaxKind::PrivateIdentifier)
+                        || self.is_identifier_or_keyword();
+                    if starts_member {
+                        continue;
+                    }
                 }
 
                 // Skip to next comma, closing brace, or EOF to recover
