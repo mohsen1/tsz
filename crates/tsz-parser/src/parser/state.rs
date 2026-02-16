@@ -669,12 +669,11 @@ impl ParserState {
     }
 
     pub(crate) fn parse_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        // Don't report another error if it would just be at the same position AND same code.
-        // In tsc, scanner diagnostics (e.g. TS1127) are separate from parser diagnostics
-        // (e.g. TS1005), so different error codes at the same position can coexist.
+        // Don't report another error if it would just be at the same position as the last error.
+        // This matches tsc's parseErrorAtPosition deduplication behavior where parser errors
+        // at the same position are suppressed (only the first one survives).
         if let Some(last) = self.parse_diagnostics.last()
             && last.start == start
-            && last.code == code
         {
             return;
         }
@@ -693,6 +692,23 @@ impl ParserState {
         let start = self.u32_from_usize(self.scanner.get_token_start());
         let end = self.u32_from_usize(self.scanner.get_token_end());
         self.parse_error_at(start, end - start, message, code);
+    }
+
+    /// Report a scanner-level error at current token, bypassing same-position dedup.
+    /// In tsc, scanner diagnostics are stored separately from parser diagnostics and
+    /// don't participate in the parser's same-position dedup. This method simulates
+    /// that behavior for errors like TS1127 (Invalid character) that originate from
+    /// the scanner in tsc but are emitted by the parser in our implementation.
+    fn force_parse_error_at_current_token(&mut self, message: &str, code: u32) {
+        let start = self.u32_from_usize(self.scanner.get_token_start());
+        let end = self.u32_from_usize(self.scanner.get_token_end());
+        self.last_error_pos = start;
+        self.parse_diagnostics.push(ParseDiagnostic {
+            start,
+            length: end - start,
+            message: message.to_string(),
+            code,
+        });
     }
 
     /// Report escaped sequence diagnostics for string and template tokens.
@@ -1253,6 +1269,26 @@ impl ParserState {
 
     /// Error: '{token}' expected (TS1005)
     pub(crate) fn error_token_expected(&mut self, token: &str) {
+        // When the current token is Unknown (invalid character), emit both TS1005 and TS1127.
+        // In tsc, the scanner emits TS1127 into a separate diagnostic list during scanning,
+        // so it coexists with the parser's TS1005. Since our scanner doesn't emit diagnostics,
+        // we simulate this by emitting both here. The TS1127 uses force_parse_error_at to
+        // bypass same-position dedup (since it acts as a scanner-level diagnostic).
+        if self.is_token(SyntaxKind::Unknown) {
+            if self.should_report_error() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    &format!("'{token}' expected."),
+                    diagnostic_codes::EXPECTED,
+                );
+                // Also emit TS1127 as a scanner-level diagnostic, bypassing dedup
+                self.force_parse_error_at_current_token(
+                    "Invalid character.",
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+            }
+            return;
+        }
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when parse_semicolon() and similar functions call this
         // Use centralized error suppression heuristic
