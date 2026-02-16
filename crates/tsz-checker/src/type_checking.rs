@@ -3290,6 +3290,7 @@ impl<'a> CheckerState<'a> {
     /// have conflicting names within the same scope.
     pub(crate) fn check_duplicate_identifiers(&mut self) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use rustc_hash::FxHashMap;
 
         // When lib contexts are loaded, skip symbols that come from lib files.
         // Lib types (Array, String, etc.) have multiple declarations from merged
@@ -3382,25 +3383,44 @@ impl<'a> CheckerState<'a> {
                 .map(|(decl_idx, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {
-                self.check_merged_interface_declaration_diagnostics(&interface_decls);
+                let mut interface_decls_by_scope: FxHashMap<NodeIndex, Vec<NodeIndex>> =
+                    FxHashMap::default();
+                for &decl_idx in &interface_decls {
+                    let scope = self.get_enclosing_namespace(decl_idx);
+                    interface_decls_by_scope
+                        .entry(scope)
+                        .or_default()
+                        .push(decl_idx);
+                }
 
-                let baseline = self.interface_type_parameter_names(interface_decls[0]);
-                let mismatch = interface_decls[1..]
-                    .iter()
-                    .any(|&decl_idx| self.interface_type_parameter_names(decl_idx) != baseline);
-                if mismatch {
-                    let message = format_message(
-                        diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
-                        &[&symbol.escaped_name],
-                    );
-                    for decl_idx in interface_decls {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        self.error_at_node(
-                            error_node,
-                            &message,
-                            diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                for decls_in_scope in interface_decls_by_scope.into_values() {
+                    if decls_in_scope.len() <= 1 {
+                        continue;
+                    }
+
+                    self.check_merged_interface_declaration_diagnostics(&decls_in_scope);
+
+                    let Some(baseline) = self.interface_type_parameter_names(decls_in_scope[0])
+                    else {
+                        continue;
+                    };
+                    let mismatch = decls_in_scope[1..].iter().any(|&decl_idx| {
+                        self.interface_type_parameter_names(decl_idx) != Some(baseline.clone())
+                    });
+                    if mismatch {
+                        let message = format_message(
+                            diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                            &[&symbol.escaped_name],
                         );
+                        for decl_idx in decls_in_scope {
+                            let error_node =
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                            self.error_at_node(
+                                error_node,
+                                &message,
+                                diagnostic_codes::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
+                            );
+                        }
                     }
                 }
             }
