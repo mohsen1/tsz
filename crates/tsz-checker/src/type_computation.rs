@@ -2368,6 +2368,10 @@ impl<'a> CheckerState<'a> {
         // Track getter/setter names to allow getter+setter pairs with the same name
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
+        // Track which named properties came from explicit assignments (not spreads)
+        // so we can emit TS2783 when a later spread overwrites them.
+        // Maps property name atom -> (node_idx for error, property display name)
+        let mut named_property_nodes: FxHashMap<Atom, (NodeIndex, String)> = FxHashMap::default();
 
         // Skip duplicate property checks for destructuring assignment targets.
         // `({ x, y: y1, "y": y1 } = obj)` is valid - same property extracted twice.
@@ -2492,6 +2496,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
+
+                    // Track this named property for TS2783 spread-overwrite checking
+                    named_property_nodes.insert(name_atom, (prop.name, name.clone()));
 
                     properties.insert(
                         name_atom,
@@ -2674,6 +2681,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
+
+                    // Track this shorthand property for TS2783 spread-overwrite checking
+                    named_property_nodes.insert(name_atom, (elem_idx, name.clone()));
 
                     properties.insert(
                         name_atom,
@@ -3027,7 +3037,39 @@ impl<'a> CheckerState<'a> {
                     ) {
                         self.report_spread_not_object_type(elem_idx);
                     }
-                    for prop in self.collect_object_spread_properties(spread_type) {
+                    let spread_props = self.collect_object_spread_properties(spread_type);
+
+                    // TS2783: Check if any earlier named properties will be
+                    // overwritten by required properties from this spread.
+                    // Only when strict null checks are enabled.
+                    if self.ctx.strict_null_checks() {
+                        for sp in &spread_props {
+                            if !sp.optional
+                                && let Some((prop_node, prop_name)) =
+                                    named_property_nodes.get(&sp.name)
+                            {
+                                let message = format_message(
+                                        diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                        &[prop_name],
+                                    );
+                                self.error_at_node(
+                                        *prop_node,
+                                        &message,
+                                        diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                                    );
+                            }
+                        }
+                    }
+
+                    // After TS2783 check, clear the named-property tracking
+                    // for properties that the spread overwrites (so only the
+                    // first occurrence can trigger the diagnostic, not later
+                    // spreads which are spread-vs-spread and exempt).
+                    for prop in &spread_props {
+                        named_property_nodes.remove(&prop.name);
+                    }
+
+                    for prop in spread_props {
                         properties.insert(prop.name, prop);
                     }
                 }
