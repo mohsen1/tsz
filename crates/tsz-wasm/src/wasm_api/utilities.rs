@@ -151,7 +151,6 @@ pub fn scan_tokens(source_text: &str) -> String {
 pub fn syntax_kind_to_name(kind: u16) -> String {
     // Map common syntax kinds to names
     match kind {
-        0 => "Unknown",
         1 => "EndOfFileToken",
         9 => "NumericLiteral",
         10 => "BigIntLiteral",
@@ -283,7 +282,6 @@ pub fn format_diagnostic(diagnostic_json: &str) -> String {
 
     let category = match diag.category {
         0 => "warning",
-        1 => "error",
         2 => "suggestion",
         3 => "message",
         _ => "error",
@@ -334,7 +332,6 @@ pub fn format_diagnostics_with_color_and_context(
     for diag in diags {
         let category = match diag.category {
             0 => "\x1b[33mwarning\x1b[0m",
-            1 => "\x1b[31merror\x1b[0m",
             2 => "\x1b[36msuggestion\x1b[0m",
             3 => "message",
             _ => "\x1b[31merror\x1b[0m",
@@ -440,7 +437,6 @@ pub fn is_template_literal_kind(kind: u16) -> bool {
 #[wasm_bindgen(js_name = getOperatorPrecedence)]
 pub fn get_operator_precedence(operator_kind: u16) -> u8 {
     match operator_kind {
-        28 => 0,                        // CommaToken
         63 => 3,                        // EqualsToken (and other assignments)
         56 => 4,                        // QuestionToken (conditional)
         57 => 5,                        // BarBarToken
@@ -453,7 +449,7 @@ pub fn get_operator_precedence(operator_kind: u16) -> u8 {
         47..=49 => 12,                  // shift
         39 | 40 => 13,                  // additive
         41..=43 => 14,                  // multiplicative
-        _ => 0,
+        _ => 0,                         // CommaToken and others
     }
 }
 

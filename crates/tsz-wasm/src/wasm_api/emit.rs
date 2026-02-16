@@ -81,7 +81,6 @@ impl TranspileOptions {
     fn to_printer_options(&self) -> PrinterOptions {
         let target = match self.target.unwrap_or(1) {
             0 => ScriptTarget::ES3,
-            1 => ScriptTarget::ES5,
             2 => ScriptTarget::ES2015,
             3 => ScriptTarget::ES2016,
             4 => ScriptTarget::ES2017,
@@ -94,7 +93,6 @@ impl TranspileOptions {
             _ => ScriptTarget::ES5,
         };
         let module = match self.module.unwrap_or(0) {
-            0 => ModuleKind::None,
             1 => ModuleKind::CommonJS,
             2 => ModuleKind::AMD,
             4 => ModuleKind::System,
@@ -194,13 +192,11 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     // Create emit context with specified options
     let target = match target.unwrap_or(1) {
         0 => ScriptTarget::ES3,
-        1 => ScriptTarget::ES5,
         2 => ScriptTarget::ES2015,
         99 => ScriptTarget::ESNext,
         _ => ScriptTarget::ES5,
     };
     let module = match module.unwrap_or(0) {
-        0 => ModuleKind::None,
         1 => ModuleKind::CommonJS,
         6 => ModuleKind::ES2015,
         99 => ModuleKind::ESNext,

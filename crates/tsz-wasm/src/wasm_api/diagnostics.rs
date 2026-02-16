@@ -115,7 +115,6 @@ impl TsDiagnostic {
 pub fn format_ts_diagnostic(diagnostic: &TsDiagnostic, new_line: &str) -> String {
     let category_name = match diagnostic.category {
         0 => "warning",
-        1 => "error",
         2 => "suggestion",
         3 => "message",
         _ => "error",
@@ -191,7 +190,6 @@ pub fn format_ts_diagnostics_with_color_and_context(
         // Format message
         let category_name = match diag.category {
             0 => "warning",
-            1 => "error",
             2 => "suggestion",
             3 => "message",
             _ => "error",

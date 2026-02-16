@@ -82,16 +82,16 @@ impl TsLanguageService {
             .map(|item| CompletionItemJson {
                 label: item.label,
                 kind: match item.kind {
-                    CompletionItemKind::Variable => 6,
+                    CompletionItemKind::Variable
+                    | CompletionItemKind::Parameter
+                    | CompletionItemKind::TypeAlias => 6,
                     CompletionItemKind::Function => 3,
                     CompletionItemKind::Class => 7,
                     CompletionItemKind::Method => 2,
-                    CompletionItemKind::Parameter => 6,
                     CompletionItemKind::Property => 10,
                     CompletionItemKind::Keyword => 14,
                     CompletionItemKind::Interface => 8,
                     CompletionItemKind::Enum => 13,
-                    CompletionItemKind::TypeAlias => 6,
                     CompletionItemKind::Module => 9,
                     CompletionItemKind::TypeParameter => 25,
                     CompletionItemKind::Constructor => 4,
