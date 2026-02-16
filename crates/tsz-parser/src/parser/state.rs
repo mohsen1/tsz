@@ -566,6 +566,36 @@ impl ParserState {
             }
             self.next_token();
             true
+        } else if self.is_token(SyntaxKind::Unknown) {
+            // Unknown token = invalid character. In tsc, the scanner emits TS1127 via
+            // scanError callback and advances past the invalid char during scanning.
+            // The parser then sees the next real token. We replicate this by emitting
+            // TS1127, advancing, and re-checking for the expected token.
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Invalid character.",
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+            }
+            self.next_token();
+            // After skipping the invalid character, check if expected token is now present
+            if self.is_token(kind) {
+                self.next_token();
+                return true;
+            }
+            // Expected token still not found — emit TS1005 at the new position.
+            // In tsc, parseErrorAtPosition dedup is same-position only (not distance-based),
+            // so TS1005 at the post-Unknown position always emits. Use direct error emit
+            // to bypass our distance-based should_report_error() suppression.
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    &format!("'{}' expected.", Self::token_to_string(kind)),
+                    diagnostic_codes::EXPECTED,
+                );
+            }
+            false
         } else {
             // Force error emission for missing ) in common patterns.
             // This bypasses the should_report_error() distance check.
