@@ -243,6 +243,12 @@ impl<'a> CheckerState<'a> {
                             if self.has_accessor_modifier(&prop.modifiers) {
                                 return Some(true);
                             }
+                            // Ambient class members (from `declare class`) are not
+                            // class field definitions — they don't use [[Define]]
+                            // semantics, so super access is valid.
+                            if self.is_ambient_declaration(current) {
+                                return Some(true);
+                            }
                             return Some(false);
                         }
                     }

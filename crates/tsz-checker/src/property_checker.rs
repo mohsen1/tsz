@@ -68,9 +68,11 @@ impl<'a> CheckerState<'a> {
             && let Some(false) =
                 self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
         {
-            // ES5: TS2340 for all non-method super access (including getters/setters)
-            // ES2015+: TS2855 for field-only super access (getters/setters are methods)
-            if self.ctx.compiler_options.target.is_es5() {
+            // TS2340 when useDefineForClassFields is effectively false (target < ES2022):
+            //   "Only public and protected methods of the base class are accessible via the 'super' keyword."
+            // TS2855 when useDefineForClassFields is effectively true (target >= ES2022):
+            //   "Class field '{}' defined by the parent class is not accessible in the child class via super."
+            if !self.ctx.compiler_options.target.supports_es2022() {
                 self.error_at_node(
                     error_node,
                     diagnostic_messages::ONLY_PUBLIC_AND_PROTECTED_METHODS_OF_THE_BASE_CLASS_ARE_ACCESSIBLE_VIA_THE_SUPER,
