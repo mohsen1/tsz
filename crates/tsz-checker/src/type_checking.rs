@@ -585,7 +585,12 @@ impl<'a> CheckerState<'a> {
     /// - Checks array destructuring target types (TS2461)
     /// - Validates default value assignability for binding elements
     /// - Recursively checks nested binding patterns
-    pub(crate) fn check_binding_pattern(&mut self, pattern_idx: NodeIndex, pattern_type: TypeId) {
+    pub(crate) fn check_binding_pattern(
+        &mut self,
+        pattern_idx: NodeIndex,
+        pattern_type: TypeId,
+        check_default_assignability: bool,
+    ) {
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -603,7 +608,13 @@ impl<'a> CheckerState<'a> {
         // here to avoid duplicate TS2488 errors.
 
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-            self.check_binding_element(element_idx, pattern_kind, i, pattern_type);
+            self.check_binding_element(
+                element_idx,
+                pattern_kind,
+                i,
+                pattern_type,
+                check_default_assignability,
+            );
         }
     }
 
@@ -628,6 +639,7 @@ impl<'a> CheckerState<'a> {
         pattern_kind: u16,
         element_index: usize,
         parent_type: TypeId,
+        check_default_assignability: bool,
     ) {
         let Some(element_node) = self.ctx.arena.get(element_idx) else {
             return;
@@ -658,7 +670,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if there's a default value (initializer)
-        if !element_data.initializer.is_none()
+        // TypeScript only checks default value assignability in function parameter
+        // destructuring, not in variable declaration destructuring.
+        if check_default_assignability
+            && !element_data.initializer.is_none()
             && element_type != TypeId::ANY
             // For object binding patterns, a default initializer is only reachable when
             // the property can be missing/undefined. Skip assignability checks for required
@@ -692,7 +707,11 @@ impl<'a> CheckerState<'a> {
             && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
         {
-            self.check_binding_pattern(element_data.name, element_type);
+            self.check_binding_pattern(
+                element_data.name,
+                element_type,
+                check_default_assignability,
+            );
         }
     }
 
