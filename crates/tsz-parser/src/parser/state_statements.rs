@@ -2031,6 +2031,32 @@ impl ParserState {
             NodeIndex::NONE
         };
 
+        // TS1047: A rest parameter cannot be optional
+        if dot_dot_dot_token && question_token {
+            use tsz_common::diagnostics::diagnostic_codes;
+            if let Some(node) = self.arena.get(name) {
+                self.parse_error_at(
+                    node.pos,
+                    node.end - node.pos,
+                    "A rest parameter cannot be optional.",
+                    diagnostic_codes::A_REST_PARAMETER_CANNOT_BE_OPTIONAL,
+                );
+            }
+        }
+
+        // TS1048: A rest parameter cannot have an initializer
+        if dot_dot_dot_token && initializer != NodeIndex::NONE {
+            use tsz_common::diagnostics::diagnostic_codes;
+            if let Some(node) = self.arena.get(name) {
+                self.parse_error_at(
+                    node.pos,
+                    node.end - node.pos,
+                    "A rest parameter cannot have an initializer.",
+                    diagnostic_codes::A_REST_PARAMETER_CANNOT_HAVE_AN_INITIALIZER,
+                );
+            }
+        }
+
         let end_pos = self.token_end();
         self.arena.add_parameter(
             syntax_kind_ext::PARAMETER,
