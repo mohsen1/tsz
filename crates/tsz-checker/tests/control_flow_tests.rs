@@ -649,7 +649,10 @@ if (assertString(x)) {
     assert_eq!(narrowed_then, TypeId::STRING);
 
     let narrowed_else = analyzer.get_flow_type(ident_else, union, flow_else);
-    assert_eq!(narrowed_else, union);
+    // After `assertString(x)`, x is narrowed to string at the call site.
+    // The else branch of `if (assertString(x))` still has x: string because
+    // the assertion applies regardless of the if-condition's truthiness.
+    assert_eq!(narrowed_else, TypeId::STRING);
 }
 
 #[test]

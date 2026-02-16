@@ -473,14 +473,14 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if let Some(predicate_type) = predicate.type_id {
-            if is_true_branch {
-                let narrowed = narrowing.narrow_to_type(type_id, predicate_type);
-                if predicate.asserts && narrowed == TypeId::NEVER && type_id != TypeId::NEVER {
-                    return tsz_solver::remove_nullish(self.interner, type_id);
-                }
-                return narrowed;
-            }
-            return narrowing.narrow_excluding_type(type_id, predicate_type);
+            // Route through TypeGuard::Predicate for proper intersection semantics.
+            // When source and target don't overlap (e.g. successive type guards
+            // hasLegs then hasWings), the solver falls back to intersection.
+            let guard = TypeGuard::Predicate {
+                type_id: Some(predicate_type),
+                asserts: predicate.asserts,
+            };
+            return narrowing.narrow_type(type_id, &guard, is_true_branch);
         }
 
         // Assertion guards without type predicate (asserts x) narrow to truthy

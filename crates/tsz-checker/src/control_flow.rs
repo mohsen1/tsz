@@ -534,16 +534,20 @@ impl<'a> FlowAnalyzer<'a> {
                         // Antecedent already computed — use its narrowed type
                         (ant_type, ant)
                     } else if !visited.contains(&ant) {
-                        // Antecedent not yet computed — defer ONLY if it's a CONDITION
-                        // node (else-if chain). Non-CONDITION antecedents (START, CALL,
-                        // ASSIGNMENT) should use the fallback current_type to avoid
-                        // picking up unwanted narrowing (e.g., from asserts predicates).
-                        let ant_is_condition = self
+                        // Antecedent not yet computed — defer if it's a CONDITION
+                        // (else-if chain) or CALL (which carries assertion narrowing
+                        // or passes through the narrowed type from its own antecedent).
+                        // This ensures nested type guards chain correctly:
+                        //   if (hasLegs(x)) { if (hasWings(x)) { x.legs; } }
+                        let ant_flags = self
                             .binder
                             .flow_nodes
                             .get(ant)
-                            .is_some_and(|f| f.has_any_flags(flow_flags::CONDITION));
-                        if ant_is_condition {
+                            .map(|f| f.flags)
+                            .unwrap_or(0);
+                        let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
+                            || (ant_flags & flow_flags::CALL) != 0;
+                        if ant_needs_defer {
                             if !in_worklist.contains(&ant) {
                                 worklist.push_front((ant, current_type));
                                 in_worklist.insert(ant);
