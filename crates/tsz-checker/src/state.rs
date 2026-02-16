@@ -361,6 +361,29 @@ impl<'a> CheckerState<'a> {
         self.ctx.has_syntax_parse_errors
     }
 
+    /// Check if a node's span overlaps with or is very close to a parse error position.
+    /// Used to suppress cascading checker diagnostics (e.g. TS2391, TS2364) when the
+    /// node is likely a parser-recovery artifact.
+    pub(crate) fn node_has_nearby_parse_error(&self, idx: NodeIndex) -> bool {
+        if !self.has_syntax_parse_errors() || self.ctx.syntax_parse_error_positions.is_empty() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        // A generous window: if any parse error is within the node's span or up to
+        // 8 bytes beyond it, consider the node tainted by parser recovery.
+        const MARGIN: u32 = 8;
+        let node_start = node.pos.saturating_sub(MARGIN);
+        let node_end = node.end.saturating_add(MARGIN);
+        for &err_pos in &self.ctx.syntax_parse_error_positions {
+            if err_pos >= node_start && err_pos <= node_end {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Apply `this` type substitution to a method call's return type.
     ///
     /// When a method returns `this`, the return type should be the type of the receiver.

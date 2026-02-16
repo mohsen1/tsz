@@ -351,6 +351,8 @@ fn test_es_side_effect_import_resolved() {
 fn test_es_side_effect_import_unresolved() {
     let source = r#"import "./nonexistent";"#;
     let diags = check_with_resolved_modules(source, "main.ts", vec![]);
+    // TS2882: Cannot find module or type declarations for side-effect import.
+    // (Changed from TS2307 after feat(checker): emit TS2882 for unresolvable side-effect imports)
     assert!(
         has_error_code(&diags, TS2882),
         "Unresolved side-effect import should emit TS2882, got: {:?}",
