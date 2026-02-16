@@ -491,9 +491,13 @@ impl ParserState {
         if self.next_token_is_on_new_line() {
             self.parse_expression_statement()
         } else if self.look_ahead_is_modifier_before_declaration() {
+            // TS1044: '{0}' modifier cannot appear on a module or namespace element.
+            let modifier_text = self.scanner.get_token_text();
             self.parse_error_at_current_token(
-                "Modifier cannot be used here.",
-                diagnostic_codes::MODIFIER_CANNOT_BE_USED_HERE,
+                &format!(
+                    "'{modifier_text}' modifier cannot appear on a module or namespace element."
+                ),
+                diagnostic_codes::MODIFIER_CANNOT_APPEAR_ON_A_MODULE_OR_NAMESPACE_ELEMENT,
             );
             self.next_token();
             self.parse_statement()
