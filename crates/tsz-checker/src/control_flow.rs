@@ -1646,6 +1646,31 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
+        // For for-of / for-in initializer assignments, the binder creates a
+        // flow ASSIGNMENT pointing to the initializer node (e.g. the identifier
+        // `x` in `for (x of arr)`). Walk up to find the parent for-of/for-in
+        // statement and get the iterated expression's element type.
+        if self.is_matching_reference(assignment_node, target)
+            && let Some(ext) = self.arena.get_extended(assignment_node)
+            && !ext.parent.is_none()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && (parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                || parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT)
+            && let Some(for_data) = self.arena.get_for_in_of(parent_node)
+            && let Some(node_types) = self.node_types
+            && let Some(&expr_type) = node_types.get(&for_data.expression.0)
+        {
+            if parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT {
+                return Some(TypeId::STRING);
+            }
+            // for-of: extract element type from the array/iterable expression type
+            if let Some(elem) =
+                tsz_solver::type_queries::get_array_element_type(self.interner, expr_type)
+            {
+                return Some(elem);
+            }
+        }
+
         None
     }
 
