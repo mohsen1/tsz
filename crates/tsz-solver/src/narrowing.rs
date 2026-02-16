@@ -2331,6 +2331,7 @@ impl<'a> NarrowingContext<'a> {
             "boolean" => TypeId::BOOLEAN,
             "bigint" => TypeId::BIGINT,
             "symbol" => TypeId::SYMBOL,
+            "undefined" => TypeId::UNDEFINED,
             "function" => {
                 // Functions are more complex - handle separately
                 return self.narrow_excluding_function(source_type);
