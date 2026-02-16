@@ -7,7 +7,7 @@ use tsz_solver::{ContextualTypeContext, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_property_declaration(&mut self, member_idx: NodeIndex) {
-        use crate::diagnostics::diagnostic_codes;
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -113,6 +113,44 @@ impl<'a> CheckerState<'a> {
                 "A class member cannot have the 'const' keyword.",
                 diagnostic_codes::A_CLASS_MEMBER_CANNOT_HAVE_THE_KEYWORD,
             );
+        }
+
+        // TS1255/TS1263/TS1264: Definite assignment assertion checks on class properties
+        if prop.exclamation_token {
+            let in_ambient = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| c.is_declared);
+            let is_static = self.has_static_modifier(&prop.modifiers);
+            let is_abstract = self.has_abstract_modifier(&prop.modifiers);
+
+            // TS1255: ! is not permitted on static, abstract, or ambient properties
+            if in_ambient || is_static || is_abstract {
+                self.error_at_node(
+                    prop.name,
+                    diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                    diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                );
+            }
+
+            // TS1263: ! with initializer is contradictory
+            if !prop.initializer.is_none() {
+                self.error_at_node(
+                    prop.name,
+                    diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                    diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                );
+            }
+
+            // TS1264: ! without type annotation is meaningless
+            if prop.type_annotation.is_none() {
+                self.error_at_node(
+                    prop.name,
+                    diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                    diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                );
+            }
         }
 
         // Check for await expressions in the initializer (TS1308)
