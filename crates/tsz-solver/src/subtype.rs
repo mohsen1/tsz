@@ -215,6 +215,15 @@ pub trait TypeResolver {
         false
     }
 
+    /// Check if a `TypeId` is any known resolved form of a boxed type.
+    ///
+    /// The `Object` interface (and other boxed types) can have multiple `TypeId`s:
+    /// one from `resolve_lib_type_by_name` and another from `type_reference_symbol_type`.
+    /// This method checks all registered boxed `DefId`s and their resolved `TypeId`s.
+    fn is_boxed_type_id(&self, _type_id: TypeId, _kind: IntrinsicKind) -> bool {
+        false
+    }
+
     /// Get the Array<T> interface type from lib.d.ts.
     /// This is used to resolve array methods via the official interface
     /// instead of hardcoding. Returns the generic Array interface type.
@@ -487,6 +496,28 @@ impl TypeEnvironment {
             .is_some_and(|ids| ids.contains(&def_id))
     }
 
+    /// Check if a `TypeId` is any known resolved form of a boxed type.
+    ///
+    /// The `Object` interface can have multiple `TypeId`s from different resolution paths
+    /// (`resolve_lib_type_by_name` vs `type_reference_symbol_type`). This checks all
+    /// registered boxed `DefId`s and their resolved `TypeId`s to see if the given
+    /// `type_id` matches any.
+    pub fn is_boxed_type_id(&self, type_id: TypeId, kind: IntrinsicKind) -> bool {
+        // First check the direct boxed type
+        if self.boxed_types.get(&kind).is_some_and(|&t| t == type_id) {
+            return true;
+        }
+        // Check if any registered boxed DefId resolves to this TypeId
+        if let Some(def_ids) = self.boxed_def_ids.get(&kind) {
+            for &def_id in def_ids {
+                if self.def_types.get(&def_id.0).is_some_and(|&t| t == type_id) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Register the Array<T> interface type from lib.d.ts.
     /// This enables array property access to use lib.d.ts definitions.
     /// `type_params` should contain the type parameters of the Array interface (usually just [T]).
@@ -693,6 +724,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn is_boxed_def_id(&self, def_id: DefId, kind: IntrinsicKind) -> bool {
         Self::is_boxed_def_id(self, def_id, kind)
+    }
+
+    fn is_boxed_type_id(&self, type_id: TypeId, kind: IntrinsicKind) -> bool {
+        Self::is_boxed_type_id(self, type_id, kind)
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
@@ -2378,6 +2413,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // =========================================================================
         // Pre-evaluation intrinsic checks
         // =========================================================================
+        // Object interface: any non-nullable source is assignable.
+        // In TypeScript, the Object interface from lib.d.ts is the root of
+        // the prototype chain — all types except null/undefined/void are
+        // assignable to it. We must check BEFORE evaluate_type() because
+        // evaluation may change the target TypeId, losing the boxed identity.
+        {
+            let is_object_interface_target = self
+                .resolver
+                .is_boxed_type_id(target, IntrinsicKind::Object)
+                || self
+                    .resolver
+                    .get_boxed_type(IntrinsicKind::Object)
+                    .is_some_and(|boxed| boxed == target)
+                || lazy_def_id(self.interner, target).is_some_and(|def_id| {
+                    self.resolver.is_boxed_def_id(def_id, IntrinsicKind::Object)
+                });
+            if is_object_interface_target {
+                let is_nullable = matches!(source, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID);
+                if !is_nullable {
+                    if let Some(dp) = def_entered {
+                        self.def_guard.leave(dp);
+                    }
+                    self.guard.leave(pair);
+                    return SubtypeResult::True;
+                }
+            }
+        }
+
         // Check if target is a Lazy(DefId) that resolves to a known intrinsic interface
         // (like Function). We must check BEFORE evaluate_type() because evaluation
         // resolves Lazy(DefId) → ObjectShape, losing the DefId identity needed to
@@ -2758,11 +2821,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //   exclude bare callable types from primitive-style object assignability.
         let is_global_object_target = self
             .resolver
-            .get_boxed_type(IntrinsicKind::Object)
-            .is_some_and(|boxed| boxed == target || self.evaluate_type(boxed) == target)
-            || ref_symbol(self.interner, target)
-                .and_then(|sym| self.resolver.symbol_to_def_id(sym))
-                .is_some_and(|def_id| self.resolver.is_boxed_def_id(def_id, IntrinsicKind::Object))
+            .is_boxed_type_id(target, IntrinsicKind::Object)
+            || self
+                .resolver
+                .get_boxed_type(IntrinsicKind::Object)
+                .is_some_and(|boxed| boxed == target)
             || lazy_def_id(self.interner, target)
                 .is_some_and(|t_def| self.resolver.is_boxed_def_id(t_def, IntrinsicKind::Object));
         if is_global_object_target {
