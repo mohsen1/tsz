@@ -186,7 +186,9 @@ impl<'a> CheckerState<'a> {
                 // resolve to concrete function types usable for parameter typing.
                 self.judge_evaluate(ctx_type)
             } else {
-                ctx_type
+                // For unions/intersections, evaluate to resolve lazy members
+                // so contextual parameter typing can extract callable signatures.
+                self.evaluate_contextual_type(ctx_type)
             };
 
             contextual_signature_type_params =
