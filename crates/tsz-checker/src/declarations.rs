@@ -480,6 +480,22 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         };
 
+        // TS2452: An enum member cannot have a numeric name
+        for &member_idx in &enum_data.members.nodes {
+            if let Some(member_node) = self.ctx.arena.get(member_idx)
+                && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
+                && let Some(name_node) = self.ctx.arena.get(member_data.name)
+                && name_node.kind == SyntaxKind::NumericLiteral as u16
+            {
+                self.ctx.error(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    "An enum member cannot have a numeric name.".to_string(),
+                    diagnostic_codes::AN_ENUM_MEMBER_CANNOT_HAVE_A_NUMERIC_NAME,
+                );
+            }
+        }
+
         // TS1066: In ambient enum declarations, member initializer must be constant expression
         let is_ambient = self
             .ctx
