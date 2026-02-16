@@ -687,6 +687,13 @@ pub struct CliArgs {
     )]
     pub types_versions_compiler_version: Option<String>,
 
+    // ==================== Batch Mode ====================
+    /// Enter batch mode: read project paths from stdin, one per line,
+    /// compile each, and print diagnostics followed by a sentinel line.
+    /// Used by the conformance runner's process pool for amortized startup.
+    #[arg(long, hide = true)]
+    pub batch: bool,
+
     // ==================== Input Files ====================
     /// Input files to compile.
     #[arg(value_name = "FILE")]

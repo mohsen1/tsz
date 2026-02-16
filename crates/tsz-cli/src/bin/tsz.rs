@@ -53,6 +53,11 @@ fn actual_main() -> Result<()> {
     // Initialize locale for i18n message translation
     locale::init_locale(args.locale.as_deref());
 
+    // Handle --batch: enter batch compilation mode
+    if args.batch {
+        return run_batch_mode();
+    }
+
     // Handle --init: create tsconfig.json
     if args.init {
         return handle_init(&args, &cwd);
@@ -218,6 +223,65 @@ fn actual_main() -> Result<()> {
     }
 
     std::process::exit(EXIT_SUCCESS);
+}
+
+/// Batch compilation mode: read project directory paths from stdin (one per line),
+/// compile each with `--project <path> --noEmit --pretty false`, print diagnostics,
+/// then print a sentinel line so the caller can demarcate output boundaries.
+///
+/// Each iteration creates fresh `CliArgs` — no state is shared between compilations.
+/// If tsz panics during any compilation, the process exits naturally (no catch_unwind).
+/// The pool manager detects EOF on stdout and respawns a fresh worker.
+fn run_batch_mode() -> Result<()> {
+    use std::io::{BufRead, Write};
+
+    let stdin = std::io::stdin();
+    let reader = stdin.lock();
+    let mut stdout = std::io::stdout().lock();
+
+    for line in reader.lines() {
+        let line = line.context("failed to read from stdin")?;
+        let project_dir = line.trim();
+        if project_dir.is_empty() {
+            // Skip empty lines, print sentinel to keep protocol in sync
+            writeln!(stdout, "---TSZ-BATCH-DONE---")?;
+            stdout.flush()?;
+            continue;
+        }
+
+        let project_path = std::path::Path::new(project_dir);
+
+        // Build args matching what the conformance runner passes per test
+        let batch_args = CliArgs::parse_from([
+            "tsz",
+            "--project",
+            project_dir,
+            "--noEmit",
+            "--pretty",
+            "false",
+        ]);
+
+        match driver::compile(&batch_args, project_path) {
+            Ok(result) => {
+                if !result.diagnostics.is_empty() {
+                    let mut reporter = Reporter::new(false);
+                    let output = reporter.render(&result.diagnostics);
+                    if !output.is_empty() {
+                        write!(stdout, "{output}")?;
+                    }
+                }
+            }
+            Err(e) => {
+                // Print the error so the runner can see it, but don't exit
+                writeln!(stdout, "error: {e}")?;
+            }
+        }
+
+        writeln!(stdout, "---TSZ-BATCH-DONE---")?;
+        stdout.flush()?;
+    }
+
+    Ok(())
 }
 
 /// Preprocess command-line arguments for tsc compatibility.
