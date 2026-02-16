@@ -461,6 +461,29 @@ impl<'a> Printer<'a> {
                     false
                 }
             }
+            syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_data) = self.arena.get_export_decl(node) {
+                    // `export type { ... }` is always erased
+                    if export_data.is_type_only {
+                        return true;
+                    }
+                    // `export <declaration>` - check if the inner declaration is erased
+                    // (e.g., `export declare namespace Foo { ... }`, `export interface Bar { }`)
+                    if let Some(inner_node) = self.arena.get(export_data.export_clause) {
+                        return self.is_erased_statement(inner_node);
+                    }
+                }
+                false
+            }
+            syntax_kind_ext::IMPORT_DECLARATION => {
+                // `import type { ... } from '...'` is erased
+                if let Some(import_data) = self.arena.get_import_decl(node)
+                    && let Some(clause_node) = self.arena.get(import_data.import_clause)
+                        && let Some(clause) = self.arena.get_import_clause(clause_node) {
+                            return clause.is_type_only;
+                        }
+                false
+            }
             _ => false,
         }
     }
