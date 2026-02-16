@@ -1437,6 +1437,39 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1255/TS1263/TS1264: Definite assignment assertion checks on variables
+        if var_decl.exclamation_token {
+            // TS1255: ! is not permitted in ambient context (declare let/var/const)
+            if self.is_ambient_declaration(decl_idx) {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    var_decl.name,
+                    diagnostic_messages::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                    diagnostic_codes::A_DEFINITE_ASSIGNMENT_ASSERTION_IS_NOT_PERMITTED_IN_THIS_CONTEXT,
+                );
+            }
+
+            // TS1263: ! with initializer is contradictory
+            if !var_decl.initializer.is_none() {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    var_decl.name,
+                    diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                    diagnostic_codes::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
+                );
+            }
+
+            // TS1264: ! without type annotation is meaningless
+            if var_decl.type_annotation.is_none() {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    var_decl.name,
+                    diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                    diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                );
+            }
+        }
+
         // Check if this is a destructuring pattern (object/array binding)
         let is_destructuring = if let Some(name_node) = self.ctx.arena.get(var_decl.name) {
             name_node.kind != SyntaxKind::Identifier as u16
