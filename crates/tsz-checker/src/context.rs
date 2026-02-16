@@ -2621,7 +2621,7 @@ impl<'a> CheckerContext<'a> {
 
     /// Check if noImplicitOverride is enabled.
     pub const fn no_implicit_override(&self) -> bool {
-        self.no_implicit_override
+        self.compiler_options.no_implicit_override
     }
 
     /// Check if strictNullChecks is enabled.

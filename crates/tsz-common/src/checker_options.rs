@@ -80,6 +80,8 @@ pub struct CheckerOptions {
     pub check_js: bool,
     /// When true, disable dependency expansion from imports and triple-slash references.
     pub no_resolve: bool,
+    /// When true, require 'override' modifier on members that override base class members (TS4114).
+    pub no_implicit_override: bool,
 }
 
 impl Default for CheckerOptions {
@@ -113,6 +115,7 @@ impl Default for CheckerOptions {
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,
+            no_implicit_override: false,
         }
     }
 }

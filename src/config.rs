@@ -228,6 +228,13 @@ pub struct CompilerOptions {
     /// Do not report errors on unreachable code
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_unreachable_code: Option<bool>,
+    /// Require 'override' modifier on members that override base class members
+    #[serde(
+        default,
+        alias = "noImplicitOverride",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub no_implicit_override: Option<bool>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -635,6 +642,9 @@ pub fn resolve_compiler_options(
     if let Some(v) = options.strict_bind_call_apply {
         resolved.checker.strict_bind_call_apply = v;
     }
+    if let Some(v) = options.no_implicit_override {
+        resolved.checker.no_implicit_override = v;
+    }
 
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
@@ -856,6 +866,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_parameters,
             allow_unreachable_code,
             no_resolve,
+            no_implicit_override,
         }
     )
 }

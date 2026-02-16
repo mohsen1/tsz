@@ -29203,6 +29203,7 @@ fn test_tier_2_type_checker_accuracy_fixes() {
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,
+            no_implicit_override: false,
         },
     );
     assert!(
