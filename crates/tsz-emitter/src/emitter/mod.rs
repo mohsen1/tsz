@@ -2447,6 +2447,7 @@ impl<'a> Printer<'a> {
         // trivia, then emit all comments before that position.
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
+        let mut has_runtime_module_syntax = false;
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 if self.ctx.is_commonjs()
@@ -2465,6 +2466,19 @@ impl<'a> Printer<'a> {
                 // skip their leading comments entirely - they should not appear in output.
                 let is_erased =
                     !self.ctx.flags.in_declaration_emit && self.is_erased_statement(stmt_node);
+
+                // Track whether any non-erased module-indicating statement exists
+                // (needed for `export {};` insertion at end of file)
+                if !is_erased && !has_runtime_module_syntax {
+                    let k = stmt_node.kind;
+                    if k == syntax_kind_ext::IMPORT_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    {
+                        has_runtime_module_syntax = true;
+                    }
+                }
 
                 // Find the actual start of the statement's first token by
                 // scanning forward from node.pos past whitespace only.
@@ -2558,6 +2572,15 @@ impl<'a> Printer<'a> {
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 self.write_line();
             }
+        }
+
+        // When a file is an ES module but all import/export statements were erased
+        // (all type-only), emit `export {};` to preserve module semantics.
+        // This matches tsc behavior: the file must remain an ES module even if
+        // all its import/export syntax was type-only and got stripped.
+        if is_file_module && is_es_module_output && !has_runtime_module_syntax {
+            self.write("export {};");
+            self.write_line();
         }
 
         // Emit remaining trailing comments at the end of file
