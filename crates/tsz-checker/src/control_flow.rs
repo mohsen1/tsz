@@ -630,17 +630,60 @@ impl<'a> FlowAnalyzer<'a> {
                         }
                     }
                 } else if self.assignment_affects_reference_node(flow.node, reference) {
-                    // CRITICAL FIX: Mutations (x.prop = ...) should NOT reset narrowing
-                    // Previously: Stopped traversal and lost all previous narrowing
-                    // Now: Continue to antecedent to preserve existing narrowing
-                    if let Some(&ant) = flow.antecedent.first() {
-                        if !in_worklist.contains(&ant) && !visited.contains(&ant) {
+                    // Two sub-cases of "affects reference":
+                    // 1. Base reassignment (obj = ... affects obj.prop): clears narrowing
+                    // 2. Property mutation (obj.prop.x = ... affects obj.prop): preserves narrowing
+                    //
+                    // Check if the assignment targets a BASE of the reference. If so,
+                    // the reference value may have changed entirely and narrowing is invalid.
+                    let is_base_reassignment =
+                        self.assignment_targets_base_of_reference(flow.node, reference);
+
+                    if is_base_reassignment {
+                        // Base was reassigned — narrowing is invalidated.
+                        // Return initial (declared) type.
+                        if let Some(&ant) = flow.antecedent.first()
+                            && !in_worklist.contains(&ant)
+                            && !visited.contains(&ant)
+                        {
                             worklist.push_back((ant, current_type));
                             in_worklist.insert(ant);
                         }
-                        *results.get(&ant).unwrap_or(&current_type)
-                    } else {
                         current_type
+                    } else {
+                        // Property mutation — preserve narrowing from antecedent.
+                        // Must defer when antecedent carries narrowing (CONDITION/CALL)
+                        // and hasn't been computed yet, otherwise we lose typeof narrowing.
+                        if let Some(&ant) = flow.antecedent.first() {
+                            if let Some(&ant_type) = results.get(&ant) {
+                                ant_type
+                            } else if !visited.contains(&ant) {
+                                let ant_needs_defer =
+                                    self.binder.flow_nodes.get(ant).is_some_and(|f| {
+                                        f.has_any_flags(flow_flags::CONDITION | flow_flags::CALL)
+                                    });
+                                if ant_needs_defer {
+                                    if !in_worklist.contains(&ant) {
+                                        worklist.push_front((ant, current_type));
+                                        in_worklist.insert(ant);
+                                    }
+                                    if !in_worklist.contains(&current_flow) {
+                                        worklist.push_back((current_flow, current_type));
+                                        in_worklist.insert(current_flow);
+                                    }
+                                    continue;
+                                }
+                                if !in_worklist.contains(&ant) {
+                                    worklist.push_back((ant, current_type));
+                                    in_worklist.insert(ant);
+                                }
+                                *results.get(&ant).unwrap_or(&current_type)
+                            } else {
+                                current_type
+                            }
+                        } else {
+                            current_type
+                        }
                     }
                 } else {
                     // This assignment doesn't affect our reference — pass through to antecedent.
@@ -2204,6 +2247,29 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         self.assignment_targets_reference_internal(assignment_node, target)
+    }
+
+    /// Check if the assignment node reassigns a BASE of the reference.
+    ///
+    /// For example, if `reference` is `obj.prop` and the assignment is `obj = { prop: 1 }`,
+    /// this returns true because `obj` (a base of `obj.prop`) is being reassigned.
+    ///
+    /// But if `reference` is `config['works']` and the assignment is `config.works.prop = 'test'`,
+    /// this returns false because the LHS is deeper than the reference, not a base of it.
+    pub(crate) fn assignment_targets_base_of_reference(
+        &self,
+        assignment_node: NodeIndex,
+        reference: NodeIndex,
+    ) -> bool {
+        // Walk up the bases of the reference and check if the assignment targets any of them
+        let mut current = self.reference_base(reference);
+        while let Some(base) = current {
+            if self.assignment_targets_reference_node(assignment_node, base) {
+                return true;
+            }
+            current = self.reference_base(base);
+        }
+        false
     }
 
     pub(crate) fn narrow_by_switch_clause(
