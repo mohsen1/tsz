@@ -212,6 +212,13 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub use_unknown_in_catch_variables: Option<bool>,
+    /// Check that the arguments for 'bind', 'call', and 'apply' methods match the original function
+    #[serde(
+        default,
+        alias = "strictBindCallApply",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub strict_bind_call_apply: Option<bool>,
     /// Report errors on unused local variables
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_unused_locals: Option<bool>,
@@ -586,6 +593,14 @@ pub fn resolve_compiler_options(
             resolved.printer.always_strict = true;
         } else {
             resolved.checker.no_implicit_any = false;
+            resolved.checker.strict_null_checks = false;
+            resolved.checker.strict_function_types = false;
+            resolved.checker.strict_bind_call_apply = false;
+            resolved.checker.strict_property_initialization = false;
+            resolved.checker.no_implicit_this = false;
+            resolved.checker.use_unknown_in_catch_variables = false;
+            resolved.checker.always_strict = false;
+            resolved.printer.always_strict = false;
         }
     }
 
@@ -616,6 +631,9 @@ pub fn resolve_compiler_options(
     }
     if let Some(v) = options.use_unknown_in_catch_variables {
         resolved.checker.use_unknown_in_catch_variables = v;
+    }
+    if let Some(v) = options.strict_bind_call_apply {
+        resolved.checker.strict_bind_call_apply = v;
     }
 
     if let Some(no_emit) = options.no_emit {
@@ -833,6 +851,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             strict_property_initialization,
             no_implicit_this,
             use_unknown_in_catch_variables,
+            strict_bind_call_apply,
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
