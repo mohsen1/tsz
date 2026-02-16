@@ -21,7 +21,7 @@ pub struct ModuleId(pub u32);
 impl ModuleId {
     pub const NONE: Self = Self(u32::MAX);
 
-    pub fn is_none(&self) -> bool {
+    pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
 }
@@ -35,7 +35,7 @@ pub struct ModuleInfo {
     pub path: PathBuf,
     /// Original specifier (for external modules)
     pub specifier: Option<String>,
-    /// Whether this is an external module (from node_modules)
+    /// Whether this is an external module (from `node_modules`)
     pub is_external: bool,
     /// Import tracking for this module
     pub imports: ImportTracker,

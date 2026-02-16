@@ -3,7 +3,7 @@
 //! This module provides data structures and utilities for tracking imports
 //! in TypeScript/JavaScript source files, including:
 //! - ES6 imports (named, default, namespace)
-//! - CommonJS require() calls
+//! - CommonJS `require()` calls
 //! - Dynamic imports
 //! - Type-only imports
 
@@ -38,7 +38,7 @@ pub enum ImportKind {
 pub struct ImportedBinding {
     /// Local name used in this file
     pub local_name: String,
-    /// Exported name from the source module (may differ from local_name)
+    /// Exported name from the source module (may differ from `local_name`)
     pub imported_name: String,
     /// The module specifier
     pub module_specifier: String,
@@ -314,27 +314,27 @@ impl ImportedBindingBuilder {
         self
     }
 
-    pub fn kind(mut self, kind: ImportKind) -> Self {
+    pub const fn kind(mut self, kind: ImportKind) -> Self {
         self.kind = kind;
         self
     }
 
-    pub fn declaration_node(mut self, node: NodeIndex) -> Self {
+    pub const fn declaration_node(mut self, node: NodeIndex) -> Self {
         self.declaration_node = node;
         self
     }
 
-    pub fn binding_node(mut self, node: NodeIndex) -> Self {
+    pub const fn binding_node(mut self, node: NodeIndex) -> Self {
         self.binding_node = node;
         self
     }
 
-    pub fn symbol_id(mut self, id: SymbolId) -> Self {
+    pub const fn symbol_id(mut self, id: SymbolId) -> Self {
         self.symbol_id = id;
         self
     }
 
-    pub fn type_only(mut self, is_type_only: bool) -> Self {
+    pub const fn type_only(mut self, is_type_only: bool) -> Self {
         self.is_type_only = is_type_only;
         self
     }

@@ -59,7 +59,7 @@ pub const MODULE_RESOLUTION_MODE_MISMATCH: u32 = 2792;
 /// Example: `import data from './config.json'` without resolveJsonModule enabled
 pub const JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE: u32 = 2732;
 
-/// TS2834: Relative import paths need explicit file extensions in EcmaScript imports
+/// TS2834: Relative import paths need explicit file extensions in `EcmaScript` imports
 ///
 /// This error code is emitted when a relative import in an ESM context under Node16/NodeNext
 /// resolution mode does not include an explicit file extension. ESM requires explicit extensions.
@@ -74,9 +74,9 @@ pub const MODULE_WAS_RESOLVED_TO_BUT_JSX_NOT_SET: u32 = 6142;
 pub struct ResolvedModule {
     /// Resolved file path
     pub resolved_path: PathBuf,
-    /// Whether the module is an external package (from node_modules)
+    /// Whether the module is an external package (from `node_modules`)
     pub is_external: bool,
-    /// Package name if resolved from node_modules
+    /// Package name if resolved from `node_modules`
     pub package_name: Option<String>,
     /// Original specifier used in import
     pub original_specifier: String,
@@ -170,7 +170,7 @@ impl ModuleExtension {
     }
 
     /// Get the extension string
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Ts => ".ts",
             Self::Tsx => ".tsx",
@@ -190,13 +190,13 @@ impl ModuleExtension {
 
     /// Check if this extension forces ESM mode
     /// .mts, .mjs, .d.mts files are always ESM
-    pub fn forces_esm(&self) -> bool {
+    pub const fn forces_esm(&self) -> bool {
         matches!(self, Self::Mts | Self::Mjs | Self::DmTs)
     }
 
     /// Check if this extension forces CommonJS mode
     /// .cts, .cjs, .d.cts files are always CommonJS
-    pub fn forces_cjs(&self) -> bool {
+    pub const fn forces_cjs(&self) -> bool {
         matches!(self, Self::Cts | Self::Cjs | Self::DCts)
     }
 }
@@ -264,7 +264,7 @@ pub enum ResolutionFailure {
         /// Span of the module specifier in source
         span: Span,
     },
-    /// TS2834: Relative import paths need explicit file extensions in EcmaScript imports
+    /// TS2834: Relative import paths need explicit file extensions in `EcmaScript` imports
     /// when '--moduleResolution' is 'node16' or 'nodenext'.
     ImportPathNeedsExtension {
         /// Module specifier that was used without an extension
@@ -335,62 +335,32 @@ impl ResolutionFailure {
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!(
-                    "Cannot find module '{}' or its corresponding type declarations.",
-                    specifier
-                ),
+                format!("Cannot find module '{specifier}' or its corresponding type declarations.",),
                 CANNOT_FIND_MODULE,
             ),
             Self::InvalidSpecifier {
                 message,
                 containing_file,
                 span,
-            } => Diagnostic::error(
+            }
+            | Self::PackageJsonError {
+                message,
                 containing_file,
-                *span,
-                format!(
-                    "Cannot find module '{}' or its corresponding type declarations.",
-                    message
-                ),
-                CANNOT_FIND_MODULE,
-            ),
-            Self::PackageJsonError {
+                span,
+            }
+            | Self::CircularResolution {
+                message,
+                containing_file,
+                span,
+            }
+            | Self::PathMappingFailed {
                 message,
                 containing_file,
                 span,
             } => Diagnostic::error(
                 containing_file,
                 *span,
-                format!(
-                    "Cannot find module '{}' or its corresponding type declarations.",
-                    message
-                ),
-                CANNOT_FIND_MODULE,
-            ),
-            Self::CircularResolution {
-                message,
-                containing_file,
-                span,
-            } => Diagnostic::error(
-                containing_file,
-                *span,
-                format!(
-                    "Cannot find module '{}' or its corresponding type declarations.",
-                    message
-                ),
-                CANNOT_FIND_MODULE,
-            ),
-            Self::PathMappingFailed {
-                message,
-                containing_file,
-                span,
-            } => Diagnostic::error(
-                containing_file,
-                *span,
-                format!(
-                    "Cannot find module '{}' or its corresponding type declarations.",
-                    message
-                ),
+                format!("Cannot find module '{message}' or its corresponding type declarations.",),
                 CANNOT_FIND_MODULE,
             ),
             Self::ImportPathNeedsExtension {
@@ -413,8 +383,7 @@ impl ResolutionFailure {
                         containing_file,
                         *span,
                         format!(
-                            "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{}{}'?",
-                            specifier, suggested_extension
+                            "Relative import paths need explicit file extensions in EcmaScript imports when '--moduleResolution' is 'node16' or 'nodenext'. Did you mean '{specifier}{suggested_extension}'?",
                         ),
                         IMPORT_PATH_NEEDS_EXTENSION_SUGGESTION,
                     )
@@ -428,8 +397,7 @@ impl ResolutionFailure {
                 containing_file,
                 *span,
                 format!(
-                    "An import path can only end with a '{}' extension when 'allowImportingTsExtensions' is enabled.",
-                    extension
+                    "An import path can only end with a '{extension}' extension when 'allowImportingTsExtensions' is enabled.",
                 ),
                 IMPORT_PATH_TS_EXTENSION_NOT_ALLOWED,
             ),
@@ -456,8 +424,7 @@ impl ResolutionFailure {
                 containing_file,
                 *span,
                 format!(
-                    "Cannot find module '{}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?",
-                    specifier
+                    "Cannot find module '{specifier}'. Did you mean to set the 'moduleResolution' option to 'nodenext', or to add aliases to the 'paths' option?",
                 ),
                 MODULE_RESOLUTION_MODE_MISMATCH,
             ),
@@ -469,8 +436,7 @@ impl ResolutionFailure {
                 containing_file,
                 *span,
                 format!(
-                    "Cannot find module '{}'. Consider using '--resolveJsonModule' to import module with '.json' extension.",
-                    specifier
+                    "Cannot find module '{specifier}'. Consider using '--resolveJsonModule' to import module with '.json' extension.",
                 ),
                 JSON_MODULE_WITHOUT_RESOLVE_JSON_MODULE,
             ),
@@ -514,7 +480,7 @@ impl ResolutionFailure {
     }
 
     /// Get the span for this resolution failure
-    pub fn span(&self) -> Span {
+    pub const fn span(&self) -> Span {
         match self {
             Self::NotFound { span, .. }
             | Self::InvalidSpecifier { span, .. }
@@ -529,8 +495,8 @@ impl ResolutionFailure {
         }
     }
 
-    /// Check if this is a NotFound error
-    pub fn is_not_found(&self) -> bool {
+    /// Check if this is a `NotFound` error
+    pub const fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound { .. })
     }
 }
@@ -646,7 +612,7 @@ impl ModuleResolver {
     }
 
     /// Resolve a module specifier from a containing file, with import kind information.
-    /// The import_kind is used to determine whether to emit TS2834 (extensionless ESM import)
+    /// The `import_kind` is used to determine whether to emit TS2834 (extensionless ESM import)
     /// or TS2307 (cannot find module) for extensionless imports in Node16/NodeNext.
     pub fn resolve_with_kind(
         &mut self,
@@ -710,13 +676,13 @@ impl ModuleResolver {
                 result = Err(ResolutionFailure::JsxNotEnabled {
                     specifier: specifier.to_string(),
                     resolved_path: resolved.resolved_path.clone(),
-                    containing_file: containing_file_str.clone(),
+                    containing_file: containing_file_str,
                     span: specifier_span,
                 });
             } else if resolved.extension == ModuleExtension::Json && !self.resolve_json_module {
                 result = Err(ResolutionFailure::JsonModuleWithoutResolveJsonModule {
                     specifier: specifier.to_string(),
-                    containing_file: containing_file_str.clone(),
+                    containing_file: containing_file_str,
                     span: specifier_span,
                 });
             }
@@ -918,17 +884,17 @@ impl ModuleResolver {
             )
         };
 
-        if let Err(ResolutionFailure::NotFound { .. }) = &resolved {
-            if path_mapping_attempted {
-                return (
-                    Err(ResolutionFailure::PathMappingFailed {
-                        message: specifier.to_string(),
-                        containing_file: containing_file.to_string(),
-                        span: specifier_span,
-                    }),
-                    path_mapping_attempted,
-                );
-            }
+        if let Err(ResolutionFailure::NotFound { .. }) = &resolved
+            && path_mapping_attempted
+        {
+            return (
+                Err(ResolutionFailure::PathMappingFailed {
+                    message: specifier.to_string(),
+                    containing_file: containing_file.to_string(),
+                    span: specifier_span,
+                }),
+                path_mapping_attempted,
+            );
         }
 
         (resolved, path_mapping_attempted)
@@ -1201,14 +1167,12 @@ impl ModuleResolver {
                     ModuleExtension::Ts
                     | ModuleExtension::Tsx
                     | ModuleExtension::Js
-                    | ModuleExtension::Jsx => ".js",
-                    ModuleExtension::Mts | ModuleExtension::Mjs => ".mjs",
-                    ModuleExtension::Cts | ModuleExtension::Cjs => ".cjs",
-                    ModuleExtension::Dts => ".js",
-                    ModuleExtension::DmTs => ".mjs",
-                    ModuleExtension::DCts => ".cjs",
+                    | ModuleExtension::Jsx
+                    | ModuleExtension::Dts
+                    | ModuleExtension::Unknown => ".js",
+                    ModuleExtension::Mts | ModuleExtension::Mjs | ModuleExtension::DmTs => ".mjs",
+                    ModuleExtension::Cts | ModuleExtension::Cjs | ModuleExtension::DCts => ".cjs",
                     ModuleExtension::Json => ".json",
-                    ModuleExtension::Unknown => ".js",
                 };
                 return Err(ResolutionFailure::ImportPathNeedsExtension {
                     specifier: specifier.to_string(),
@@ -1422,7 +1386,7 @@ impl ModuleResolver {
                         return Ok(ResolvedModule {
                             resolved_path: resolved.clone(),
                             is_external: true,
-                            package_name: Some(package_name.clone()),
+                            package_name: Some(package_name),
                             original_specifier: specifier.to_string(),
                             extension: ModuleExtension::from_path(&resolved),
                         });
@@ -1513,7 +1477,7 @@ impl ModuleResolver {
                         && let Some(exports) = &package_json.exports
                     {
                         let subpath_key = match subpath {
-                            Some(sp) => format!("./{}", sp),
+                            Some(sp) => format!("./{sp}"),
                             None => ".".to_string(),
                         };
 
@@ -1573,7 +1537,7 @@ impl ModuleResolver {
 
         // If there's a subpath, resolve it directly
         if let Some(subpath) = subpath {
-            let subpath_key = format!("./{}", subpath);
+            let subpath_key = format!("./{subpath}");
 
             // Try exports field first (Node16+)
             if self.resolve_package_json_exports
@@ -1627,7 +1591,7 @@ impl ModuleResolver {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
-                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    package_name: Some(package_json.name.unwrap_or_default()),
                     original_specifier: original_specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
@@ -1697,7 +1661,7 @@ impl ModuleResolver {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
-                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    package_name: Some(package_json.name.unwrap_or_default()),
                     original_specifier: original_specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
@@ -1706,7 +1670,7 @@ impl ModuleResolver {
                 return Ok(ResolvedModule {
                     resolved_path: resolved.clone(),
                     is_external: true,
-                    package_name: Some(package_json.name.clone().unwrap_or_default()),
+                    package_name: Some(package_json.name.unwrap_or_default()),
                     original_specifier: original_specifier.to_string(),
                     extension: ModuleExtension::from_path(&resolved),
                 });
@@ -1768,7 +1732,7 @@ impl ModuleResolver {
             return Ok(ResolvedModule {
                 resolved_path: resolved.clone(),
                 is_external: true,
-                package_name: Some(package_json.name.clone().unwrap_or_default()),
+                package_name: Some(package_json.name.unwrap_or_default()),
                 original_specifier: original_specifier.to_string(),
                 extension: ModuleExtension::from_path(&resolved),
             });
@@ -2030,7 +1994,7 @@ impl ModuleResolver {
         None
     }
 
-    fn extension_candidates_for_resolution(&self) -> &'static [&'static str] {
+    const fn extension_candidates_for_resolution(&self) -> &'static [&'static str] {
         match self.resolution_kind {
             ModuleResolutionKind::Node16 | ModuleResolutionKind::NodeNext => {
                 match self.current_package_type {
@@ -2139,7 +2103,7 @@ impl ModuleResolver {
 
     /// Read and parse package.json
     ///
-    /// Returns a String error for flexibility - callers can convert to ResolutionFailure
+    /// Returns a String error for flexibility - callers can convert to `ResolutionFailure`
     /// with appropriate span/file information at the call site.
     fn read_package_json(&self, path: &Path) -> Result<PackageJson, String> {
         let content = std::fs::read_to_string(path)
@@ -2204,7 +2168,7 @@ impl ModuleResolver {
     }
 
     /// Get the current resolution kind
-    pub fn resolution_kind(&self) -> ModuleResolutionKind {
+    pub const fn resolution_kind(&self) -> ModuleResolutionKind {
         self.resolution_kind
     }
 
@@ -2212,11 +2176,11 @@ impl ModuleResolver {
     ///
     /// All module resolution failures emit TS2307 "Cannot find module" error.
     /// This includes:
-    /// - NotFound: Module specifier could not be resolved
-    /// - InvalidSpecifier: Module specifier is malformed
-    /// - PackageJsonError: Package.json is missing or invalid
-    /// - CircularResolution: Circular dependency detected during resolution
-    /// - PathMappingFailed: Path mapping from tsconfig did not resolve
+    /// - `NotFound`: Module specifier could not be resolved
+    /// - `InvalidSpecifier`: Module specifier is malformed
+    /// - `PackageJsonError`: Package.json is missing or invalid
+    /// - `CircularResolution`: Circular dependency detected during resolution
+    /// - `PathMappingFailed`: Path mapping from tsconfig did not resolve
     pub fn emit_resolution_error(
         &self,
         diagnostics: &mut DiagnosticBag,
@@ -2355,7 +2319,7 @@ fn types_versions_compiler_version(value: Option<&str>) -> SemVer {
         .unwrap_or_else(default_types_versions_compiler_version)
 }
 
-fn default_types_versions_compiler_version() -> SemVer {
+const fn default_types_versions_compiler_version() -> SemVer {
     TYPES_VERSIONS_COMPILER_VERSION_FALLBACK
 }
 

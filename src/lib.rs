@@ -460,12 +460,13 @@ where
             // Note: For shared values like ES2015/ES6, we use the ScriptTarget value
             // because both target and module use the same match arm
             let result = match value.to_uppercase().as_str() {
-                // ScriptTarget values (0-10, 99)
-                "ES3" => 0,
-                "ES5" => 1,
-                "ES2015" | "ES6" => 2,
-                "ES2016" => 3,
-                "ES2017" => 4,
+                // ScriptTarget values (0-10, 99) and ModuleKind-specific values
+                // Combined arms where ScriptTarget and ModuleKind share the same numeric value
+                "ES3" | "NONE" => 0,
+                "ES5" | "COMMONJS" => 1,
+                "ES2015" | "ES6" | "AMD" => 2,
+                "ES2016" | "UMD" => 3,
+                "ES2017" | "SYSTEM" => 4,
                 "ES2018" => 5,
                 "ES2019" => 6,
                 "ES2020" => 7,
@@ -473,12 +474,6 @@ where
                 "ES2022" => 9,
                 "ES2023" => 10,
                 "ESNEXT" => 99,
-                // ModuleKind-specific values
-                "NONE" => 0,
-                "COMMONJS" => 1,
-                "AMD" => 2,
-                "UMD" => 3,
-                "SYSTEM" => 4,
                 "NODE16" => 100,
                 "NODENEXT" => 199,
                 _ => return Ok(None), // Unknown value, treat as unset
@@ -545,15 +540,12 @@ impl CompilerOptions {
             Some(5) => ScriptTarget::ES2018,
             Some(6) => ScriptTarget::ES2019,
             Some(7) => ScriptTarget::ES2020,
-            Some(8) => ScriptTarget::ESNext,
-            Some(9) => ScriptTarget::ESNext,
-            Some(99) => ScriptTarget::ESNext,
             Some(_) => ScriptTarget::ESNext,
             None => ScriptTarget::default(),
         }
     }
 
-    /// Convert to CheckerOptions for type checking.
+    /// Convert to `CheckerOptions` for type checking.
     pub fn to_checker_options(&self) -> crate::checker::context::CheckerOptions {
         let strict = self.strict.unwrap_or(false);
         let strict_null_checks = self.get_strict_null_checks();
@@ -604,8 +596,7 @@ impl TryFrom<ImportCandidateInput> for ImportCandidate {
             "namespace" => ImportCandidateKind::Namespace,
             other => {
                 return Err(JsValue::from_str(&format!(
-                    "Unsupported import candidate kind: {}",
-                    other
+                    "Unsupported import candidate kind: {other}"
                 )));
             }
         };
@@ -644,7 +635,7 @@ pub struct Parser {
     source_file_idx: Option<parser::NodeIndex>,
     binder: Option<BinderState>,
     /// Local type interner for single-file checking.
-    /// For multi-file compilation, use MergedProgram.type_interner instead.
+    /// For multi-file compilation, use `MergedProgram.type_interner` instead.
     type_interner: TypeInterner,
     /// Line map for LSP position conversion (lazy initialized)
     line_map: Option<LineMap>,
@@ -702,8 +693,7 @@ impl Parser {
                 Ok(())
             }
             Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {}",
-                e
+                "Failed to parse compiler options: {e}"
             ))),
         }
     }
@@ -747,6 +737,7 @@ impl Parser {
     }
 
     /// Get the number of nodes in the AST.
+    #[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
     #[wasm_bindgen(js_name = getNodeCount)]
     pub fn get_node_count(&self) -> usize {
         self.parser.get_node_count()
@@ -983,7 +974,6 @@ impl Parser {
                 _ => ScriptTarget::ESNext,
             },
             module: match module {
-                0 => ModuleKind::None,
                 1 => ModuleKind::CommonJS,
                 2 => ModuleKind::AMD,
                 3 => ModuleKind::UMD,
@@ -1071,7 +1061,7 @@ impl Parser {
         }
 
         if interface_decls.is_empty() {
-            return format!("Interface '{}' not found", interface_name);
+            return format!("Interface '{interface_name}' not found");
         }
 
         result.push(format!(
@@ -1084,11 +1074,11 @@ impl Parser {
         let lowering = TypeLowering::new(arena, &self.type_interner);
         let type_id = lowering.lower_interface_declarations(&interface_decls);
 
-        result.push(format!("Lowered type ID: {:?}", type_id));
+        result.push(format!("Lowered type ID: {type_id:?}"));
 
         // Inspect the result
         if let Some(key) = self.type_interner.lookup(type_id) {
-            result.push(format!("Type key: {:?}", key));
+            result.push(format!("Type key: {key:?}"));
             if let TypeData::Object(shape_id) = key {
                 let shape = self.type_interner.object_shape(shape_id);
                 result.push(format!(
@@ -1103,7 +1093,7 @@ impl Parser {
                     ));
                     // Try to show what the type_id resolves to
                     if let Some(prop_key) = self.type_interner.lookup(prop.type_id) {
-                        result.push(format!("    -> {:?}", prop_key));
+                        result.push(format!("    -> {prop_key:?}"));
                     }
                 }
             }
@@ -1129,10 +1119,7 @@ impl Parser {
                 && let Some(ident) = arena.get_identifier(name_node)
                 && ident.escaped_text == interface_name
             {
-                result.push(format!(
-                    "Interface '{}' found at node {}",
-                    interface_name, i
-                ));
+                result.push(format!("Interface '{interface_name}' found at node {i}"));
                 result.push(format!("  members list: {:?}", interface.members.nodes));
 
                 for (mi, &member_idx) in interface.members.nodes.iter().enumerate() {
@@ -1175,7 +1162,7 @@ impl Parser {
         }
 
         if result.is_empty() {
-            format!("Interface '{}' not found", interface_name)
+            format!("Interface '{interface_name}' not found")
         } else {
             result.join("\n")
         }
@@ -1249,7 +1236,7 @@ impl Parser {
         };
 
         let mut result = Vec::new();
-        result.push(format!("=== Tracing parent chain for position {} ===", pos));
+        result.push(format!("=== Tracing parent chain for position {pos} ==="));
 
         // Find node at position
         let mut target_node = None;
@@ -1267,10 +1254,10 @@ impl Parser {
 
         let start_idx = match target_node {
             Some(idx) => idx,
-            None => return format!("No identifier node found at position {}", pos),
+            None => return format!("No identifier node found at position {pos}"),
         };
 
-        result.push(format!("Starting node: {:?}", start_idx));
+        result.push(format!("Starting node: {start_idx:?}"));
 
         let mut current = start_idx;
         let mut depth = 0;
@@ -1315,7 +1302,7 @@ impl Parser {
         let idx = parser::NodeIndex(var_decl_idx);
 
         let Some(node) = arena.get(idx) else {
-            return format!("NodeIndex({}) not found", var_decl_idx);
+            return format!("NodeIndex({var_decl_idx}) not found");
         };
 
         let Some(var_decl) = arena.get_variable_declaration(node) else {
@@ -1373,7 +1360,7 @@ impl Parser {
     // LSP Feature Methods
     // =========================================================================
 
-    /// Ensure internal LineMap is built.
+    /// Ensure internal `LineMap` is built.
     fn ensure_line_map(&mut self) {
         if self.line_map.is_none() {
             self.line_map = Some(LineMap::build(self.parser.get_source_text()));
@@ -1467,7 +1454,7 @@ impl Parser {
         Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
-    /// Completions: Returns array of CompletionItem objects.
+    /// Completions: Returns array of `CompletionItem` objects.
     #[wasm_bindgen(js_name = getCompletionsAtPosition)]
     pub fn get_completions_at_position(
         &mut self,
@@ -1511,7 +1498,7 @@ impl Parser {
         Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
-    /// Hover: Returns HoverInfo object.
+    /// Hover: Returns `HoverInfo` object.
     #[wasm_bindgen(js_name = getHoverAtPosition)]
     pub fn get_hover_at_position(&mut self, line: u32, character: u32) -> Result<JsValue, JsValue> {
         self.ensure_bound()?;
@@ -1551,7 +1538,7 @@ impl Parser {
         Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
-    /// Signature Help: Returns SignatureHelp object.
+    /// Signature Help: Returns `SignatureHelp` object.
     #[wasm_bindgen(js_name = getSignatureHelpAtPosition)]
     pub fn get_signature_help_at_position(
         &mut self,
@@ -1595,7 +1582,7 @@ impl Parser {
         Ok(serde_wasm_bindgen::to_value(&result)?)
     }
 
-    /// Document Symbols: Returns array of DocumentSymbol objects.
+    /// Document Symbols: Returns array of `DocumentSymbol` objects.
     #[wasm_bindgen(js_name = getDocumentSymbols)]
     pub fn get_document_symbols(&mut self) -> Result<JsValue, JsValue> {
         self.ensure_bound()?;
@@ -1858,7 +1845,7 @@ impl Parser {
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
-                file_name.clone(),
+                file_name,
                 cache,
                 &checker_options,
             )
@@ -1867,7 +1854,7 @@ impl Parser {
                 self.parser.get_arena(),
                 binder,
                 &self.type_interner,
-                file_name.clone(),
+                file_name,
                 &checker_options,
             )
         };
@@ -1980,7 +1967,7 @@ impl WasmProgram {
     /// Add a file to the program.
     ///
     /// Files are accumulated and compiled together when `checkAll` is called.
-    /// The file_name should be a relative path like "src/a.ts".
+    /// The `file_name` should be a relative path like "src/a.ts".
     ///
     /// For TypeScript library files (lib.d.ts, lib.dom.d.ts, etc.), use `addLibFile` instead.
     #[wasm_bindgen(js_name = addFile)]
@@ -2035,13 +2022,13 @@ impl WasmProgram {
                 Ok(())
             }
             Err(e) => Err(JsValue::from_str(&format!(
-                "Failed to parse compiler options: {}",
-                e
+                "Failed to parse compiler options: {e}"
             ))),
         }
     }
 
     /// Get the number of files in the program.
+    #[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
     #[wasm_bindgen(js_name = getFileCount)]
     pub fn get_file_count(&self) -> usize {
         self.files.len()
@@ -2437,6 +2424,7 @@ pub const DIRECTORY_SEPARATOR: char = '/';
 pub const ALT_DIRECTORY_SEPARATOR: char = '\\';
 
 /// Determines whether a charCode corresponds to `/` or `\`.
+#[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
 #[wasm_bindgen(js_name = isAnyDirectorySeparator)]
 pub fn is_any_directory_separator(char_code: u32) -> bool {
     char_code == DIRECTORY_SEPARATOR as u32 || char_code == ALT_DIRECTORY_SEPARATOR as u32
@@ -2495,7 +2483,7 @@ pub fn ensure_trailing_directory_separator(path: &str) -> String {
     if has_trailing_directory_separator(path) {
         path.to_string()
     } else {
-        format!("{}/", path)
+        format!("{path}/")
     }
 }
 
@@ -2577,6 +2565,7 @@ pub fn to_file_name_lower_case(x: &str) -> String {
 use crate::char_codes::CharacterCodes;
 
 /// Check if character is a line break (LF, CR, LS, PS).
+#[allow(clippy::missing_const_for_fn)] // wasm_bindgen does not support const fn
 #[wasm_bindgen(js_name = isLineBreak)]
 pub fn is_line_break(ch: u32) -> bool {
     ch == CharacterCodes::LINE_FEED
