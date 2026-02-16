@@ -1395,7 +1395,9 @@ impl<'a> CheckerState<'a> {
                         args,
                         |i, arg_count| {
                             // Skip contextually sensitive arguments in Round 1.
-                            if sensitive_args[i] {
+                            // Guard against out-of-bounds: large indices are used to probe
+                            // for rest parameters (see call_checker.rs spread handling).
+                            if i < sensitive_args.len() && sensitive_args[i] {
                                 None
                             } else {
                                 ctx_helper.get_parameter_type_for_call(i, arg_count)
@@ -1498,7 +1500,10 @@ impl<'a> CheckerState<'a> {
                     // Now that type parameters are partially inferred, lambdas get proper contextual types.
                     self.collect_call_argument_types_with_context(
                         args,
-                        |i, _arg_count| round2_contextual_types[i],
+                        |i, _arg_count| {
+                            // Guard: large indices are used to probe for rest parameters
+                            round2_contextual_types.get(i).copied().flatten()
+                        },
                         check_excess_properties,
                         None, // Don't skip anything in Round 2 - check all args with inferred context
                     )
