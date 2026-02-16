@@ -821,6 +821,43 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(return_type);
         self.ensure_relation_input_ready(expected_type);
 
+        // Substitute `ThisType` in the expected return type with the class instance type.
+        // When a method declares `clone(): this`, the return type is `ThisType` (polymorphic).
+        // The `this` expression evaluates to the concrete class instance type, so we need
+        // to substitute `ThisType` → class instance type before the assignability check,
+        // matching tsc's behavior where `this` acts as a type parameter constrained to
+        // the class type.
+        let expected_type = if tsz_solver::is_this_type(self.ctx.types, expected_type) {
+            if let Some(class_info) = &self.ctx.enclosing_class {
+                let class_idx = class_info.class_idx;
+                if let Some(node) = self.ctx.arena.get(class_idx)
+                    && let Some(class_data) = self.ctx.arena.get_class(node)
+                {
+                    self.get_class_instance_type(class_idx, class_data)
+                } else {
+                    expected_type
+                }
+            } else {
+                expected_type
+            }
+        } else if tsz_solver::contains_this_type(self.ctx.types, expected_type) {
+            if let Some(class_info) = &self.ctx.enclosing_class {
+                let class_idx = class_info.class_idx;
+                if let Some(node) = self.ctx.arena.get(class_idx)
+                    && let Some(class_data) = self.ctx.arena.get_class(node)
+                {
+                    let instance_type = self.get_class_instance_type(class_idx, class_data);
+                    tsz_solver::substitute_this_type(self.ctx.types, expected_type, instance_type)
+                } else {
+                    expected_type
+                }
+            } else {
+                expected_type
+            }
+        } else {
+            expected_type
+        };
+
         // Check if the return type is assignable to the expected type.
         let is_in_constructor = self
             .ctx
