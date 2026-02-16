@@ -75,26 +75,50 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::type_queries::{
             EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
         };
-        if let EvaluationNeeded::Union(members) = classify_for_evaluation(self.ctx.types, type_id) {
-            let factory = self.ctx.types.factory();
-            // Distribute evaluation over union members so lazy/application/etc.
-            // inside a union get resolved through the checker's type environment.
-            let mut changed = false;
-            let evaluated: Vec<TypeId> = members
-                .iter()
-                .map(|&member| {
-                    let ev = self.evaluate_contextual_type(member);
-                    if ev != member {
-                        changed = true;
-                    }
-                    ev
-                })
-                .collect();
-            return if changed {
-                factory.union(evaluated)
-            } else {
-                type_id
-            };
+        match classify_for_evaluation(self.ctx.types, type_id) {
+            EvaluationNeeded::Union(members) => {
+                let factory = self.ctx.types.factory();
+                // Distribute evaluation over union members so lazy/application/etc.
+                // inside a union get resolved through the checker's type environment.
+                let mut changed = false;
+                let evaluated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| {
+                        let ev = self.evaluate_contextual_type(member);
+                        if ev != member {
+                            changed = true;
+                        }
+                        ev
+                    })
+                    .collect();
+                return if changed {
+                    factory.union(evaluated)
+                } else {
+                    type_id
+                };
+            }
+            EvaluationNeeded::Intersection(members) => {
+                let factory = self.ctx.types.factory();
+                // Distribute evaluation over intersection members so lazy/application/etc.
+                // inside an intersection get resolved through the checker's type environment.
+                let mut changed = false;
+                let evaluated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| {
+                        let ev = self.evaluate_contextual_type(member);
+                        if ev != member {
+                            changed = true;
+                        }
+                        ev
+                    })
+                    .collect();
+                return if changed {
+                    factory.intersection(evaluated)
+                } else {
+                    type_id
+                };
+            }
+            _ => {}
         }
 
         let needs_evaluation = get_lazy_def_id(self.ctx.types, type_id).is_some()
