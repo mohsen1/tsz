@@ -225,9 +225,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         } else {
             // Set contextual type for yield expression from the generator's yield type.
             // This allows `yield (num) => ...` to contextually type arrow params.
+            // For `yield *expr`, the expression is an iterable of the yield type,
+            // so wrap the contextual type in Array<T> to contextually type array elements.
             let prev_contextual = self.checker.ctx.contextual_type;
             if let Some(yield_ctx) = self.checker.ctx.current_yield_type() {
-                self.checker.ctx.contextual_type = Some(yield_ctx);
+                if yield_expr.asterisk_token {
+                    // yield *[x => ...] needs Array<TYield> as contextual type
+                    // so each array element gets TYield as its contextual type
+                    let array_of_yield = self.checker.ctx.types.factory().array(yield_ctx);
+                    self.checker.ctx.contextual_type = Some(array_of_yield);
+                } else {
+                    self.checker.ctx.contextual_type = Some(yield_ctx);
+                }
             }
             let expression_type = self.checker.get_type_of_node(yield_expr.expression);
             self.checker.ctx.contextual_type = prev_contextual;
