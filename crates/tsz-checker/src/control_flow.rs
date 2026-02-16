@@ -196,19 +196,6 @@ impl<'a> FlowAnalyzer<'a> {
             return cached;
         }
 
-        // Special case: switch(true) or switch(false)
-        // Boolean literal switches use case expressions for narrowing (not the switch expression itself)
-        // Example: switch(true) { case typeof x === "string": } narrows x, even though the switch
-        // expression (true) doesn't reference x
-        if let Some(switch_node) = self.arena.get(switch_expr)
-            && (switch_node.kind == SyntaxKind::TrueKeyword as u16
-                || switch_node.kind == SyntaxKind::FalseKeyword as u16)
-            {
-                // Boolean switches can potentially narrow any reference via their case expressions
-                self.switch_reference_cache.borrow_mut().insert(key, true);
-                return true;
-            }
-
         let affects = self.is_matching_reference(switch_expr, reference)
             || self
                 .discriminant_property_info(switch_expr, reference)
@@ -2324,37 +2311,6 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         narrowing: &NarrowingContext,
     ) -> TypeId {
-        // Special case: switch(true) or switch(false)
-        // For boolean literal switches, narrow directly based on the case expression
-        // rather than creating a synthetic `true === case_expr` comparison.
-        // Example: switch(true) { case typeof x === "string": } should narrow x to string
-        if let Some(switch_node) = self.arena.get(switch_expr) {
-            if switch_node.kind == SyntaxKind::TrueKeyword as u16 {
-                // switch(true) - case expression should be truthy
-                let mut visited = Vec::new();
-                return self.narrow_type_by_condition_inner(
-                    type_id,
-                    case_expr,
-                    target,
-                    true,
-                    FlowNodeId::NONE,
-                    &mut visited,
-                );
-            } else if switch_node.kind == SyntaxKind::FalseKeyword as u16 {
-                // switch(false) - case expression should be falsy
-                let mut visited = Vec::new();
-                return self.narrow_type_by_condition_inner(
-                    type_id,
-                    case_expr,
-                    target,
-                    false,
-                    FlowNodeId::NONE,
-                    &mut visited,
-                );
-            }
-        }
-
-        // Normal switch: synthesize equality comparison
         let binary = BinaryExprData {
             left: switch_expr,
             operator_token: SyntaxKind::EqualsEqualsEqualsToken as u16,
