@@ -2221,20 +2221,14 @@ impl<'a> Printer<'a> {
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
                     let stmt_token_end =
                         self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
-                    let mut is_erased = false;
-
-                    // Check if statement is a type-only declaration (erased in JS)
-                    if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                        || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                    {
-                        is_erased = true;
-                    }
-                    // Also check if it's an export declaration wrapping an interface/type
-                    else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    // Check if statement is erased in JS emit (type-only, ambient, etc.)
+                    let mut is_erased = self.is_erased_statement(stmt_node);
+                    // Also check if it's an export declaration wrapping an erased declaration
+                    if !is_erased
+                        && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                         && let Some(export) = self.arena.get_export_decl(stmt_node)
                         && let Some(inner_node) = self.arena.get(export.export_clause)
-                        && (inner_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                            || inner_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
+                        && self.is_erased_statement(inner_node)
                     {
                         is_erased = true;
                     }
@@ -2467,11 +2461,10 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                // For erased declarations (interface, type alias) in JS emit mode,
+                // For erased declarations (type-only, ambient, etc.) in JS emit mode,
                 // skip their leading comments entirely - they should not appear in output.
-                let is_erased = !self.ctx.flags.in_declaration_emit
-                    && (stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                        || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION);
+                let is_erased =
+                    !self.ctx.flags.in_declaration_emit && self.is_erased_statement(stmt_node);
 
                 // Find the actual start of the statement's first token by
                 // scanning forward from node.pos past whitespace only.

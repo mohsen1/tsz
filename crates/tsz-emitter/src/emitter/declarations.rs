@@ -19,12 +19,14 @@ impl<'a> Printer<'a> {
 
         // Skip ambient declarations (declare function)
         if self.has_declare_modifier(&func.modifiers) {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
         // For JavaScript emit: skip declaration-only functions (no body)
-        // These are just type information in TypeScript
+        // These are just type information in TypeScript (overload signatures)
         if func.body.is_none() {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
@@ -152,6 +154,7 @@ impl<'a> Printer<'a> {
 
         // Skip ambient declarations (declare class)
         if self.has_declare_modifier(&class.modifiers) {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
@@ -528,6 +531,7 @@ impl<'a> Printer<'a> {
         if self.has_declare_modifier(&enum_decl.modifiers)
             || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
         {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
@@ -666,6 +670,7 @@ impl<'a> Printer<'a> {
 
         // Skip ambient module declarations (declare namespace/module)
         if self.has_declare_modifier(&module.modifiers) {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
@@ -805,25 +810,20 @@ impl<'a> Printer<'a> {
                     continue;
                 };
 
-                // Skip erased declarations (interface, type alias) and their comments
-                if stmt_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                    || stmt_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                {
+                // Skip erased declarations (type-only, ambient, etc.) and their comments
+                if self.is_erased_statement(stmt_node) {
                     self.skip_comments_for_erased_node(stmt_node);
                     continue;
                 }
 
-                // Also handle export { interface/type } by checking export clause
+                // Also handle export wrapping an erased declaration
                 if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     && let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && let Some(inner_node) = self.arena.get(export.export_clause)
+                    && self.is_erased_statement(inner_node)
                 {
-                    let inner_kind = self.arena.get(export.export_clause).map_or(0, |n| n.kind);
-                    if inner_kind == syntax_kind_ext::INTERFACE_DECLARATION
-                        || inner_kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                    {
-                        self.skip_comments_for_erased_node(stmt_node);
-                        continue;
-                    }
+                    self.skip_comments_for_erased_node(stmt_node);
+                    continue;
                 }
 
                 // Emit leading comments before this statement
