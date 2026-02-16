@@ -1124,6 +1124,27 @@ impl<'a> NarrowingContext<'a> {
             return narrowed;
         }
 
+        // Handle type parameters: narrow the constraint and intersect if changed
+        if let Some(type_param_info) = type_param_info(self.db, source_type) {
+            if let Some(constraint) = type_param_info.constraint {
+                if constraint != source_type {
+                    let narrowed_constraint =
+                        self.narrow_by_property_presence(constraint, property_name, present);
+                    if narrowed_constraint != constraint {
+                        trace!(
+                            "Type parameter constraint narrowed from {} to {}, creating intersection",
+                            constraint.0,
+                            narrowed_constraint.0
+                        );
+                        return self.db.intersection2(source_type, narrowed_constraint);
+                    }
+                }
+            }
+            // Type parameter with no constraint or unchanged constraint
+            trace!("Type parameter unchanged, returning source");
+            return source_type;
+        }
+
         // If source is a union, filter members based on property presence
         if let Some(members_id) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members_id);
@@ -2293,14 +2314,22 @@ impl<'a> NarrowingContext<'a> {
                     // Primitive types are filtered out since they can never pass instanceof.
                     let narrowed = self.narrow_by_instance_type(source_type, *instance_type);
 
-                    // Fallback: If standard narrowing returns NEVER but source wasn't NEVER,
+                    if narrowed != TypeId::NEVER || source_type == TypeId::NEVER {
+                        return narrowed;
+                    }
+
+                    // Fallback 1: If standard narrowing returns NEVER but source wasn't NEVER,
                     // it might be an interface vs class check (which is allowed in TS).
                     // Use intersection in that case.
-                    if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
-                        self.db.intersection2(source_type, *instance_type)
-                    } else {
-                        narrowed
+                    let intersection = self.db.intersection2(source_type, *instance_type);
+                    if intersection != TypeId::NEVER {
+                        return intersection;
                     }
+
+                    // Fallback 2: If even intersection fails, narrow to object-like types.
+                    // On the true branch of instanceof, we know the value must be some
+                    // kind of object (primitives can never pass instanceof).
+                    self.narrow_to_objectish(source_type)
                 } else {
                     // Negative: !(x instanceof Class)
                     // Keep primitives (they can never pass instanceof) and exclude
@@ -2537,6 +2566,78 @@ impl<'a> NarrowingContext<'a> {
         } else {
             // OBJECT intrinsic: typeof === "object"
             type_id == TypeId::OBJECT
+        }
+    }
+
+    /// Check if a type is definitely a primitive (can never pass instanceof).
+    ///
+    /// Returns true for primitive types and their literals:
+    /// string, number, boolean, bigint, symbol, undefined, void, null, never
+    fn is_definitely_primitive(&self, type_id: TypeId) -> bool {
+        // Fast path: check intrinsic primitive types
+        if matches!(
+            type_id,
+            TypeId::STRING
+                | TypeId::NUMBER
+                | TypeId::BOOLEAN
+                | TypeId::BIGINT
+                | TypeId::SYMBOL
+                | TypeId::UNDEFINED
+                | TypeId::VOID
+                | TypeId::NULL
+                | TypeId::NEVER
+                | TypeId::BOOLEAN_TRUE
+                | TypeId::BOOLEAN_FALSE
+        ) {
+            return true;
+        }
+
+        // Check for literal types (which are primitives)
+        if let Some(data) = self.db.lookup(type_id) {
+            matches!(data, TypeData::Literal(_))
+        } else {
+            false
+        }
+    }
+
+    /// Narrow a type to keep only object-like types (excluding primitives).
+    ///
+    /// This is used for instanceof fallback: if we're on the true branch of
+    /// an instanceof check but couldn't narrow to the specific instance type,
+    /// at least narrow to exclude primitives (which can never pass instanceof).
+    fn narrow_to_objectish(&self, source_type: TypeId) -> TypeId {
+        // ANY and UNKNOWN are kept as-is
+        if source_type == TypeId::ANY {
+            return TypeId::ANY;
+        }
+        if source_type == TypeId::UNKNOWN {
+            return TypeId::OBJECT;
+        }
+
+        let resolved = self.resolve_type(source_type);
+
+        // Handle unions: filter out primitive members
+        if let Some(members_id) = union_list_id(self.db, resolved) {
+            let members = self.db.type_list(members_id);
+            let kept: Vec<TypeId> = members
+                .iter()
+                .filter(|&&member| !self.is_definitely_primitive(member))
+                .copied()
+                .collect();
+
+            return match kept.len() {
+                0 => TypeId::NEVER,
+                1 => kept[0],
+                n if n == members.len() => source_type, // All members kept
+                _ => self.db.union(kept),
+            };
+        }
+
+        // Non-union: check if primitive
+        if self.is_definitely_primitive(resolved) {
+            TypeId::NEVER
+        } else {
+            source_type
         }
     }
 

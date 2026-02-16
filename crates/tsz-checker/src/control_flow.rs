@@ -28,7 +28,9 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{BinaryExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, NodeList, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate};
+use tsz_solver::{
+    NarrowingContext, ParamInfo, QueryDatabase, TypeGuard, TypeId, TypePredicate, TypeofKind,
+};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 
@@ -112,14 +114,6 @@ pub struct FlowAnalyzer<'a> {
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PropertyPresence {
-    Required,
-    Optional,
-    Absent,
-    Unknown,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2946,10 +2940,12 @@ impl<'a> FlowAnalyzer<'a> {
         };
 
         if let Some(type_name) = self.typeof_comparison_literal(bin.left, bin.right, target) {
-            if effective_truth {
-                return narrowing.narrow_by_typeof(type_id, type_name);
+            // Use unified narrow_type API with TypeGuard::Typeof for both branches
+            if let Some(typeof_kind) = TypeofKind::parse(type_name) {
+                return narrowing.narrow_type(type_id, &TypeGuard::Typeof(typeof_kind), effective_truth);
             }
-            return self.narrow_by_typeof_negation(type_id, type_name, narrowing);
+            // Unknown typeof string (e.g., host-defined types), no narrowing
+            return type_id;
         }
 
         if let Some(nullish) = self.nullish_comparison(bin.left, bin.right, target) {

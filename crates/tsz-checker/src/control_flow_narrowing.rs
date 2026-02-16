@@ -15,15 +15,14 @@ use tsz_solver::{
     NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
     TypeofKind,
     type_queries::{
-        ConstructorInstanceKind, LiteralValueKind, NonObjectKind, PredicateSignatureKind,
-        PropertyPresenceKind, TypeParameterConstraintKind, UnionMembersKind,
-        classify_for_constructor_instance, classify_for_literal_value, classify_for_non_object,
-        classify_for_predicate_signature, classify_for_property_presence,
+        ConstructorInstanceKind, LiteralValueKind, PredicateSignatureKind,
+        TypeParameterConstraintKind, UnionMembersKind, classify_for_constructor_instance,
+        classify_for_literal_value, classify_for_predicate_signature,
         classify_for_type_parameter_constraint, classify_for_union_members, is_narrowing_literal,
     },
 };
 
-use super::control_flow::{FlowAnalyzer, PredicateSignature, PropertyKey, PropertyPresence};
+use super::control_flow::{FlowAnalyzer, PredicateSignature, PropertyKey};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn assignment_affects_reference(&self, left: NodeIndex, target: NodeIndex) -> bool {
@@ -519,18 +518,11 @@ impl<'a> FlowAnalyzer<'a> {
             NarrowingContext::new(self.interner)
         };
 
-        let result = narrowing.narrow_type(
-            type_id,
-            &TypeGuard::Instanceof(instance_type),
-            is_true_branch,
-        );
-
-        // Fallback for true branch: if narrowing fails, narrow to object-like types
-        if is_true_branch && result == TypeId::NEVER && type_id != TypeId::NEVER {
-            return self.narrow_to_objectish(type_id);
-        }
-
-        result
+        // Delegate all type algebra to solver - it handles all fallback cases:
+        // 1. Instance type narrowing
+        // 2. Intersection fallback for interface vs class
+        // 3. Object-like filtering for primitives
+        narrowing.narrow_type(type_id, &TypeGuard::Instanceof(instance_type), is_true_branch)
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {
@@ -614,141 +606,27 @@ impl<'a> FlowAnalyzer<'a> {
         target: NodeIndex,
         is_true_branch: bool,
     ) -> TypeId {
+        // AST extraction: check if we're narrowing the right reference
         if !self.is_matching_reference(bin.right, target) {
             return type_id;
         }
 
-        let Some((prop_name, prop_is_number)) = self.in_property_name(bin.left) else {
+        // AST extraction: get property name from left side of `in` operator
+        let Some((prop_name, _prop_is_number)) = self.in_property_name(bin.left) else {
             return type_id;
         };
 
-        if type_id == TypeId::ANY {
-            return type_id;
-        }
-
-        // For UNKNOWN, delegate to solver which creates { [prop]: unknown }
-        // This is more precise than just returning object
-        if type_id == TypeId::UNKNOWN {
-            let env_borrow;
-            let narrowing = if let Some(env) = &self.type_environment {
-                env_borrow = env.borrow();
-                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
-            } else {
-                NarrowingContext::new(self.interner)
-            };
-            return narrowing.narrow_type(
-                type_id,
-                &TypeGuard::InProperty(prop_name),
-                is_true_branch,
-            );
-        }
-
-        if let TypeParameterConstraintKind::TypeParameter { constraint } =
-            classify_for_type_parameter_constraint(self.interner, type_id)
-        {
-            if let Some(constraint) = constraint
-                && constraint != type_id
-            {
-                let narrowed_constraint =
-                    self.narrow_by_in_operator(constraint, bin, target, is_true_branch);
-                if narrowed_constraint != constraint {
-                    return self
-                        .interner
-                        .intersection(vec![type_id, narrowed_constraint]);
-                }
-            }
-            return type_id;
-        }
-
-        let UnionMembersKind::Union(members) = classify_for_union_members(self.interner, type_id)
-        else {
-            return type_id;
-        };
-
-        let members_len = members.len();
-        let mut filtered = Vec::new();
-        for member in members {
-            let presence = self.property_presence(member, prop_name, prop_is_number);
-            if self.keep_in_operator_member(presence, is_true_branch) {
-                filtered.push(member);
-            }
-        }
-
-        match filtered.len() {
-            0 => TypeId::NEVER,
-            1 => filtered[0],
-            _ => {
-                if filtered.len() == members_len {
-                    type_id
-                } else {
-                    self.interner.union(filtered)
-                }
-            }
-        }
-    }
-
-    pub(crate) fn narrow_to_objectish(&self, type_id: TypeId) -> TypeId {
-        if type_id == TypeId::ANY {
-            return type_id;
-        }
-        // For UNKNOWN, typeof x === "object" narrows to non-primitive types
-        // TypeScript allows narrowing unknown through typeof checks
-        if type_id == TypeId::UNKNOWN {
-            // typeof x === "object" narrows unknown to object types (excluding primitives)
-            // This is a union of object, array, tuple, function, etc.
-            return TypeId::OBJECT;
-        }
-
-        if let UnionMembersKind::Union(members) = classify_for_union_members(self.interner, type_id)
-        {
-            let members_len = members.len();
-            let mut kept = Vec::new();
-            for member in members {
-                if !self.is_definitely_non_object(member) {
-                    kept.push(member);
-                }
-            }
-
-            return match kept.len() {
-                0 => TypeId::NEVER,
-                1 => kept[0],
-                _ => {
-                    if kept.len() == members_len {
-                        type_id
-                    } else {
-                        self.interner.union(kept)
-                    }
-                }
-            };
-        }
-
-        if self.is_definitely_non_object(type_id) {
-            TypeId::NEVER
+        // Delegate ALL type algebra to solver via unified narrow_type API
+        // Solver handles: ANY, UNKNOWN, type parameters, unions, non-union types
+        let env_borrow;
+        let narrowing = if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
         } else {
-            type_id
-        }
-    }
+            NarrowingContext::new(self.interner)
+        };
 
-    pub(crate) fn is_definitely_non_object(&self, type_id: TypeId) -> bool {
-        if matches!(
-            type_id,
-            TypeId::NEVER
-                | TypeId::VOID
-                | TypeId::UNDEFINED
-                | TypeId::NULL
-                | TypeId::BOOLEAN
-                | TypeId::NUMBER
-                | TypeId::STRING
-                | TypeId::BIGINT
-                | TypeId::SYMBOL
-        ) {
-            return true;
-        }
-
-        match classify_for_non_object(self.interner, type_id) {
-            NonObjectKind::Literal | NonObjectKind::IntrinsicPrimitive => true,
-            NonObjectKind::MaybeObject => false,
-        }
+        narrowing.narrow_type(type_id, &TypeGuard::InProperty(prop_name), is_true_branch)
     }
 
     pub(crate) fn in_property_name(&self, idx: NodeIndex) -> Option<(Atom, bool)> {
@@ -763,97 +641,6 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         self.literal_atom_and_kind_from_node_or_type(idx)
-    }
-
-    pub(crate) const fn keep_in_operator_member(
-        &self,
-        presence: PropertyPresence,
-        is_true_branch: bool,
-    ) -> bool {
-        !matches!(
-            (presence, is_true_branch),
-            (PropertyPresence::Required, false) | (PropertyPresence::Absent, true)
-        )
-    }
-
-    pub(crate) fn property_presence(
-        &self,
-        type_id: TypeId,
-        prop_name: Atom,
-        prop_is_number: bool,
-    ) -> PropertyPresence {
-        match classify_for_property_presence(self.interner, type_id) {
-            PropertyPresenceKind::IntrinsicObject | PropertyPresenceKind::Unknown => {
-                PropertyPresence::Unknown
-            }
-            PropertyPresenceKind::Object(shape_id) => {
-                self.property_presence_in_object(shape_id, prop_name, prop_is_number)
-            }
-            PropertyPresenceKind::Callable(callable_id) => {
-                self.property_presence_in_callable(callable_id, prop_name)
-            }
-            PropertyPresenceKind::ArrayLike => {
-                if prop_is_number {
-                    PropertyPresence::Optional
-                } else {
-                    PropertyPresence::Unknown
-                }
-            }
-        }
-    }
-
-    pub(crate) fn property_presence_in_object(
-        &self,
-        shape_id: tsz_solver::ObjectShapeId,
-        prop_name: Atom,
-        prop_is_number: bool,
-    ) -> PropertyPresence {
-        let shape = self.interner.object_shape(shape_id);
-        let mut found = None;
-
-        match self.interner.object_property_index(shape_id, prop_name) {
-            tsz_solver::PropertyLookup::Found(idx) => {
-                found = shape.properties.get(idx);
-            }
-            tsz_solver::PropertyLookup::Uncached => {
-                found = shape.properties.iter().find(|prop| prop.name == prop_name);
-            }
-            tsz_solver::PropertyLookup::NotFound => {}
-        }
-
-        if let Some(prop) = found {
-            return if prop.optional {
-                PropertyPresence::Optional
-            } else {
-                PropertyPresence::Required
-            };
-        }
-
-        if prop_is_number && shape.number_index.is_some() {
-            return PropertyPresence::Optional;
-        }
-
-        if shape.string_index.is_some() {
-            return PropertyPresence::Optional;
-        }
-
-        PropertyPresence::Absent
-    }
-
-    pub(crate) fn property_presence_in_callable(
-        &self,
-        callable_id: tsz_solver::CallableShapeId,
-        prop_name: Atom,
-    ) -> PropertyPresence {
-        let shape = self.interner.callable_shape(callable_id);
-        if let Some(prop) = shape.properties.iter().find(|prop| prop.name == prop_name) {
-            return if prop.optional {
-                PropertyPresence::Optional
-            } else {
-                PropertyPresence::Required
-            };
-        }
-        PropertyPresence::Absent
     }
 
     pub(crate) fn union_types(&self, left: TypeId, right: TypeId) -> TypeId {
@@ -1291,25 +1078,6 @@ impl<'a> FlowAnalyzer<'a> {
             return self.literal_type_from_node(left);
         }
         None
-    }
-
-    pub(crate) fn narrow_by_typeof_negation(
-        &self,
-        type_id: TypeId,
-        typeof_result: &str,
-        narrowing: &NarrowingContext,
-    ) -> TypeId {
-        match typeof_result {
-            "string" => narrowing.narrow_excluding_type(type_id, TypeId::STRING),
-            "number" => narrowing.narrow_excluding_type(type_id, TypeId::NUMBER),
-            "boolean" => narrowing.narrow_excluding_type(type_id, TypeId::BOOLEAN),
-            "bigint" => narrowing.narrow_excluding_type(type_id, TypeId::BIGINT),
-            "symbol" => narrowing.narrow_excluding_type(type_id, TypeId::SYMBOL),
-            "undefined" => narrowing.narrow_excluding_type(type_id, TypeId::UNDEFINED),
-            "object" => narrowing.narrow_excluding_type(type_id, TypeId::OBJECT),
-            "function" => narrowing.narrow_excluding_function(type_id),
-            _ => type_id,
-        }
     }
 
     pub(crate) fn strip_numeric_separators<'b>(&self, text: &'b str) -> Cow<'b, str> {
