@@ -857,10 +857,13 @@ impl<'a> Printer<'a> {
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
+                            let before_len = self.writer.len();
                             self.emit(inner_idx);
+                            let emitted = self.writer.len() > before_len;
                             // Emit trailing comments on the same line
-                            if let Some(inner_node) = self.arena.get(inner_idx) {
-                                let token_end = self.find_token_end_before_trivia(inner_node.pos, inner_node.end);
+                            if emitted && let Some(inner_node) = self.arena.get(inner_idx) {
+                                let token_end = self
+                                    .find_token_end_before_trivia(inner_node.pos, inner_node.end);
                                 self.emit_trailing_comments(token_end);
                             }
 
@@ -877,8 +880,8 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     self.write_line();
                                 }
-                            } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
-                                // Don't write extra newline for namespaces - they already call write_line()
+                            } else if emitted && inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                                // Don't write extra newline for namespaces or empty emit
                                 self.write_line();
                             }
                         }
@@ -897,10 +900,14 @@ impl<'a> Printer<'a> {
                     self.emit(stmt_idx);
                 } else {
                     // Regular statement - emit trailing comments on same line
+                    let before_len = self.writer.len();
                     self.emit(stmt_idx);
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
-                    self.emit_trailing_comments(token_end);
-                    self.write_line();
+                    if self.writer.len() > before_len {
+                        let token_end =
+                            self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                        self.emit_trailing_comments(token_end);
+                        self.write_line();
+                    }
                 }
             }
         }
