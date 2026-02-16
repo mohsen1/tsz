@@ -377,7 +377,10 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
     ) -> TypeId {
         // TS2364: The left-hand side of an assignment expression must be a variable or a property access.
-        if !self.is_valid_assignment_target(left_idx) {
+        // Suppress when the LHS is near a parse error (e.g. `1 >>/**/= 2;` where `>>=` is split
+        // by a comment — the parser already emits TS1109 and the assignment is a recovery artifact).
+        if !self.is_valid_assignment_target(left_idx) && !self.node_has_nearby_parse_error(left_idx)
+        {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an assignment expression must be a variable or a property access.",
@@ -751,7 +754,9 @@ impl<'a> CheckerState<'a> {
         expr_idx: NodeIndex,
     ) -> TypeId {
         // TS2364: The left-hand side of an assignment expression must be a variable or a property access.
-        if !self.is_valid_assignment_target(left_idx) {
+        // Suppress when near a parse error (same rationale as in check_assignment_expression).
+        if !self.is_valid_assignment_target(left_idx) && !self.node_has_nearby_parse_error(left_idx)
+        {
             self.error_at_node(
                 left_idx,
                 "The left-hand side of an assignment expression must be a variable or a property access.",
