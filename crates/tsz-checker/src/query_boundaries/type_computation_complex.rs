@@ -69,3 +69,7 @@ pub(crate) fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 pub(crate) fn object_shape_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<ObjectShapeId> {
     tsz_solver::type_queries::get_object_shape_id(db, type_id)
 }
+
+pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_intersection_members(db, type_id)
+}

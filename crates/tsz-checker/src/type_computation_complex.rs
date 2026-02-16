@@ -379,6 +379,12 @@ impl<'a> CheckerState<'a> {
         // Evaluate application types (e.g., Newable<T>, Constructor<{}>) to get the actual Callable
         constructor_type = self.evaluate_application_type(constructor_type);
 
+        // For intersection types (e.g., Constructor<Tagged> & typeof Base), evaluate
+        // Application members within the intersection so the solver can find construct
+        // signatures from all members. Without this, `Constructor<Tagged>` would remain
+        // an unevaluated Application and its construct signature would be missed.
+        constructor_type = self.evaluate_application_members_in_intersection(constructor_type);
+
         // Resolve Ref types to ensure we get the actual constructor type, not just a symbolic reference
         // This is critical for classes where we need the Callable with construct signatures
         constructor_type = self.resolve_ref_type(constructor_type);
@@ -530,6 +536,36 @@ impl<'a> CheckerState<'a> {
                 }
                 TypeId::ERROR
             }
+        }
+    }
+
+    /// For intersection constructor types, evaluate any Application members so
+    /// the solver can resolve their construct signatures.
+    ///
+    /// e.g. `Constructor<Tagged> & typeof Base` — `Constructor<Tagged>` is an
+    /// Application that must be instantiated to reveal `new(...) => Tagged`.
+    fn evaluate_application_members_in_intersection(&mut self, type_id: TypeId) -> TypeId {
+        let Some(members) = query::intersection_members(self.ctx.types, type_id) else {
+            return type_id;
+        };
+
+        let mut changed = false;
+        let mut new_members = Vec::with_capacity(members.len());
+
+        for member in &members {
+            let evaluated = self.evaluate_application_type(*member);
+            if evaluated != *member {
+                changed = true;
+                new_members.push(evaluated);
+            } else {
+                new_members.push(*member);
+            }
+        }
+
+        if changed {
+            self.ctx.types.intersection(new_members)
+        } else {
+            type_id
         }
     }
 
