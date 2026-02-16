@@ -2103,19 +2103,11 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ERROR;
             }
 
-            // ES2015+ globals (Symbol, Promise, Map, Set, etc.) used as values
-            // require target >= ES2015. When target < ES2015, emit TS2585 even
-            // if the value is transitively available through DOM typings.
-            {
-                use tsz_binder::lib_loader;
-                if lib_loader::is_es2015_plus_type(name)
-                    && !(name == "Promise" && self.ctx.has_promise_constructor_in_scope())
-                    && !self.ctx.compiler_options.target.supports_es2015()
-                {
-                    self.error_type_only_value_at(name, idx);
-                    return TypeId::ERROR;
-                }
-            }
+            // NOTE: tsc 6.0 does NOT emit TS2585 based on target version alone.
+            // ES2015+ globals (Symbol, Promise, Map, Set, etc.) may be available
+            // even with target ES5 because lib.dom.d.ts transitively loads
+            // lib.es2015.d.ts. We let the normal value-binding resolution below
+            // determine if the value is truly available.
 
             // If the symbol wasn't found in the main binder (flags==0), it came
             // from a lib or cross-file binder.  For known ES2015+ global type
@@ -2157,26 +2149,10 @@ impl<'a> CheckerState<'a> {
             // handles finding the right type (SymbolConstructor, PromiseConstructor, etc.)
             let is_merged_interface_value =
                 has_type && has_value && (flags & tsz_binder::symbol_flags::INTERFACE) != 0;
-            // TS2585: For ES2015+ global types (Symbol, Promise, Map, Set, etc.)
-            // used as values in an ES5/ES3 target, the VALUE binding came from
-            // a transitively loaded ES2015+ lib (via DOM's reference directives).
-            // The target doesn't natively support these as values, so emit TS2585.
-            if is_merged_interface_value {
-                use tsz_binder::lib_loader;
-                use tsz_common::common::ScriptTarget;
-                let is_es5_or_lower = matches!(
-                    self.ctx.compiler_options.target,
-                    ScriptTarget::ES3 | ScriptTarget::ES5
-                );
-                if is_es5_or_lower && lib_loader::is_es2015_plus_type(name) {
-                    if name == "Promise" && self.ctx.has_promise_constructor_in_scope() {
-                        // Promise is explicitly available via es2015.promise lib.
-                    } else {
-                        self.error_type_only_value_at(name, idx);
-                        return TypeId::ERROR;
-                    }
-                }
-            }
+            // NOTE: tsc 6.0 does NOT emit TS2585 for ES2015+ globals based on
+            // target alone. The value bindings from transitively loaded libs
+            // (e.g. lib.dom.d.ts → lib.es2015.d.ts) are considered available.
+            // The merged interface+value resolution below handles this correctly.
             if is_merged_interface_value {
                 trace!(
                     name = name,
@@ -2184,20 +2160,8 @@ impl<'a> CheckerState<'a> {
                     value_decl = ?value_decl,
                     "get_type_of_identifier: merged interface+value path"
                 );
-                // For ES2015+ types (Symbol, Promise, Map, Set, etc.) used as values
-                // in targets below ES2015, tsc emits TS2585 even though the lib files
-                // DO include the value declaration (via dom.d.ts → es2015.d.ts chain).
-                // tsc checks the target version directly, not lib availability.
-                {
-                    use tsz_binder::lib_loader;
-                    if lib_loader::is_es2015_plus_type(name)
-                        && !(name == "Promise" && self.ctx.has_promise_constructor_in_scope())
-                        && self.ctx.compiler_options.target.is_es5()
-                    {
-                        self.error_type_only_value_at(name, idx);
-                        return TypeId::ERROR;
-                    }
-                }
+                // NOTE: tsc 6.0 does NOT emit TS2585 based on target version.
+                // Value declarations from transitively loaded libs are available.
                 // Prefer value-declaration resolution for merged symbols so we pick
                 // the constructor-side type (e.g. Promise -> PromiseConstructor).
                 let mut value_type = self.type_of_value_declaration_for_symbol(sym_id, value_decl);
@@ -2463,12 +2427,9 @@ impl<'a> CheckerState<'a> {
             self.error_cannot_find_name_change_lib(name, idx);
             return TypeId::ERROR;
         }
-        // When target < ES2015, Symbol is type-only even if transitively
-        // loaded through DOM typings. TSC emits TS2585 in this case.
-        if !self.ctx.compiler_options.target.supports_es2015() {
-            self.error_type_only_value_at(name, idx);
-            return TypeId::ERROR;
-        }
+        // NOTE: tsc 6.0 does NOT emit TS2585 based on target version alone.
+        // Symbol may be available even with target ES5 via transitive lib loading.
+        // Proceed to check if the value binding actually exists.
         let value_type = self.type_of_value_symbol_by_name(name);
         if value_type != TypeId::UNKNOWN && value_type != TypeId::ERROR {
             return value_type;

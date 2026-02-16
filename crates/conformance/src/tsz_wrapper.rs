@@ -573,12 +573,14 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             .or_insert(serde_json::Value::Bool(strict_value));
     }
 
-    // Match tsc default compiler behavior for tests that omit @target.
-    // TypeScript defaults target to ES5 when not specified.
+    // Match tsc 6.0 default compiler behavior for tests that omit @target.
+    // tsc 6.0 defaults target to LatestStandard (ES2025), which maps to our
+    // ES2022 ScriptTarget. This is critical because ES2022+ targets default
+    // to ES module kind, affecting TS1202 and other module-related diagnostics.
     if !opts.contains_key("target") {
         opts.insert(
             "target".to_string(),
-            serde_json::Value::String("es5".to_string()),
+            serde_json::Value::String("es2022".to_string()),
         );
     }
 
