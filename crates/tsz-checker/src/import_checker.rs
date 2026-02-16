@@ -1846,16 +1846,15 @@ impl<'a> CheckerState<'a> {
             ModuleKind::ESNext | ModuleKind::Node16 | ModuleKind::NodeNext | ModuleKind::Preserve
         );
 
-        if !supported
-            && let Some(attr_node) = self.ctx.arena.get(attributes_idx) {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_position(
+        if !supported && let Some(attr_node) = self.ctx.arena.get(attributes_idx) {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_position(
                     attr_node.pos,
                     attr_node.end.saturating_sub(attr_node.pos),
                     diagnostic_messages::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
                     diagnostic_codes::IMPORT_ATTRIBUTES_ARE_ONLY_SUPPORTED_WHEN_THE_MODULE_OPTION_IS_SET_TO_ESNEXT_NOD,
                 );
-            }
+        }
     }
 
     /// Check an import declaration for unresolved modules and missing exports.
