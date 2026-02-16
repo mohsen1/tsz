@@ -206,6 +206,7 @@ impl<'a> Printer<'a> {
 
         // Skip ambient declarations (declare var/let/const)
         if self.has_declare_modifier(&var_stmt.modifiers) {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 

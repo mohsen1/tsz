@@ -1,8 +1,8 @@
 use super::Printer;
 use crate::printer::safe_slice;
 use crate::source_writer::SourcePosition;
-use tsz_parser::parser::node::NodeAccess;
-use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -415,6 +415,54 @@ impl<'a> Printer<'a> {
     /// Check if modifiers include the `declare` keyword
     pub(super) fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
         self.has_modifier(modifiers, SyntaxKind::DeclareKeyword as u16)
+    }
+
+    /// Check if a top-level statement is erased in JS emit (type-only, ambient, etc.).
+    /// This includes interfaces, type aliases, declare function/class/enum/module/var,
+    /// const enums, and function overload signatures (no body).
+    pub(super) fn is_erased_statement(&self, node: &Node) -> bool {
+        match node.kind {
+            syntax_kind_ext::INTERFACE_DECLARATION | syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                true
+            }
+            syntax_kind_ext::FUNCTION_DECLARATION => {
+                if let Some(func) = self.arena.get_function(node) {
+                    self.has_declare_modifier(&func.modifiers) || func.body.is_none()
+                } else {
+                    false
+                }
+            }
+            syntax_kind_ext::CLASS_DECLARATION => {
+                if let Some(class) = self.arena.get_class(node) {
+                    self.has_declare_modifier(&class.modifiers)
+                } else {
+                    false
+                }
+            }
+            syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = self.arena.get_enum(node) {
+                    self.has_declare_modifier(&enum_decl.modifiers)
+                        || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+                } else {
+                    false
+                }
+            }
+            syntax_kind_ext::MODULE_DECLARATION => {
+                if let Some(module) = self.arena.get_module(node) {
+                    self.has_declare_modifier(&module.modifiers)
+                } else {
+                    false
+                }
+            }
+            syntax_kind_ext::VARIABLE_STATEMENT => {
+                if let Some(var_stmt) = self.arena.get_variable(node) {
+                    self.has_declare_modifier(&var_stmt.modifiers)
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
     }
 
     /// Check if modifiers include the `export` keyword
