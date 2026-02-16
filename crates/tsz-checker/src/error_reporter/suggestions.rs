@@ -177,18 +177,20 @@ impl<'a> CheckerState<'a> {
 
     /// Find the best spelling suggestion for a name, matching tsc's `getSpellingSuggestion`.
     /// Returns `Some(best_name)` if a close-enough match is found.
+    ///
+    /// `meaning_flags` controls which symbol categories are eligible as candidates.
+    /// Pass `symbol_flags::VALUE` for value-position lookups, `symbol_flags::TYPE` for
+    /// type-position lookups, or `symbol_flags::VALUE | symbol_flags::TYPE` for both.
     pub(crate) fn find_similar_identifiers(
         &self,
         name: &str,
         idx: NodeIndex,
+        meaning_flags: u32,
     ) -> Option<Vec<String>> {
         let visible_names = self.ctx.binder.collect_visible_symbol_names_filtered(
             self.ctx.arena,
             idx,
-            // `Cannot find name` is emitted for value-space lookup failures.
-            // Restrict spelling candidates to value-meaning symbols so type-only
-            // declarations (e.g. `type A = ...`) don't trigger TS2552 in value positions.
-            tsz_binder::symbol_flags::VALUE,
+            meaning_flags,
         );
 
         let name_len = name.len();

@@ -113,6 +113,64 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is in a type-annotation context (type reference, implements, extends, etc.).
+    /// Used to determine which symbol meaning to use for spelling suggestions.
+    fn is_in_type_context(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Walk up the AST to find if we're inside a type annotation
+        let mut current = idx;
+        let mut guard = 0;
+        while !current.is_none() {
+            guard += 1;
+            if guard > 64 {
+                break;
+            }
+            if let Some(node) = self.ctx.arena.get(current) {
+                match node.kind {
+                    syntax_kind_ext::TYPE_REFERENCE
+                    | syntax_kind_ext::HERITAGE_CLAUSE
+                    | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    | syntax_kind_ext::INTERFACE_DECLARATION
+                    | syntax_kind_ext::TYPE_PARAMETER
+                    | syntax_kind_ext::MAPPED_TYPE
+                    | syntax_kind_ext::CONDITIONAL_TYPE
+                    | syntax_kind_ext::INDEXED_ACCESS_TYPE
+                    | syntax_kind_ext::UNION_TYPE
+                    | syntax_kind_ext::INTERSECTION_TYPE
+                    | syntax_kind_ext::ARRAY_TYPE
+                    | syntax_kind_ext::TUPLE_TYPE
+                    | syntax_kind_ext::TYPE_LITERAL
+                    | syntax_kind_ext::FUNCTION_TYPE
+                    | syntax_kind_ext::CONSTRUCTOR_TYPE
+                    | syntax_kind_ext::PARENTHESIZED_TYPE
+                    | syntax_kind_ext::TYPE_OPERATOR
+                    | syntax_kind_ext::TYPE_QUERY
+                    | syntax_kind_ext::INFER_TYPE => return true,
+                    // Stop at expression/statement boundaries
+                    syntax_kind_ext::FUNCTION_DECLARATION
+                    | syntax_kind_ext::FUNCTION_EXPRESSION
+                    | syntax_kind_ext::ARROW_FUNCTION
+                    | syntax_kind_ext::CLASS_DECLARATION
+                    | syntax_kind_ext::CLASS_EXPRESSION
+                    | syntax_kind_ext::VARIABLE_STATEMENT
+                    | syntax_kind_ext::EXPRESSION_STATEMENT
+                    | syntax_kind_ext::BLOCK
+                    | syntax_kind_ext::SOURCE_FILE => return false,
+                    _ => {}
+                }
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Report a cannot find name error using solver diagnostics with source tracking.
     /// Enhanced to provide suggestions for similar names, import suggestions, and
     /// library change suggestions for ES2015+ types.
@@ -471,9 +529,19 @@ impl<'a> CheckerState<'a> {
         let suppress_spelling_suggestion =
             is_accessibility_modifier_name || is_in_spread_element || is_arguments_name;
 
+        // Determine spelling suggestion meaning based on context.
+        // In type positions (type annotations, implements clauses, type references),
+        // only suggest TYPE-meaning symbols. In value positions, suggest VALUE symbols.
+        // This matches tsc's getSpellingSuggestionForName behavior.
+        let suggestion_meaning = if self.is_in_type_context(idx) {
+            tsz_binder::symbol_flags::TYPE
+        } else {
+            tsz_binder::symbol_flags::VALUE
+        };
+
         // Try to find similar identifiers in scope for better error messages
         if !suppress_spelling_suggestion
-            && let Some(suggestions) = self.find_similar_identifiers(name, idx)
+            && let Some(suggestions) = self.find_similar_identifiers(name, idx, suggestion_meaning)
             && !suggestions.is_empty()
         {
             // Use the first suggestion for "Did you mean?" error
