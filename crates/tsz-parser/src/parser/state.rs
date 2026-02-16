@@ -694,23 +694,6 @@ impl ParserState {
         self.parse_error_at(start, end - start, message, code);
     }
 
-    /// Report a scanner-level error at current token, bypassing same-position dedup.
-    /// In tsc, scanner diagnostics are stored separately from parser diagnostics and
-    /// don't participate in the parser's same-position dedup. This method simulates
-    /// that behavior for errors like TS1127 (Invalid character) that originate from
-    /// the scanner in tsc but are emitted by the parser in our implementation.
-    fn force_parse_error_at_current_token(&mut self, message: &str, code: u32) {
-        let start = self.u32_from_usize(self.scanner.get_token_start());
-        let end = self.u32_from_usize(self.scanner.get_token_end());
-        self.last_error_pos = start;
-        self.parse_diagnostics.push(ParseDiagnostic {
-            start,
-            length: end - start,
-            message: message.to_string(),
-            code,
-        });
-    }
-
     /// Report escaped sequence diagnostics for string and template tokens.
     pub(crate) fn report_invalid_string_or_template_escape_errors(&mut self) {
         let token_text = self.scanner.get_token_text_ref().to_string();
@@ -1269,20 +1252,15 @@ impl ParserState {
 
     /// Error: '{token}' expected (TS1005)
     pub(crate) fn error_token_expected(&mut self, token: &str) {
-        // When the current token is Unknown (invalid character), emit both TS1005 and TS1127.
-        // In tsc, the scanner emits TS1127 into a separate diagnostic list during scanning,
-        // so it coexists with the parser's TS1005. Since our scanner doesn't emit diagnostics,
-        // we simulate this by emitting both here. The TS1127 uses force_parse_error_at to
-        // bypass same-position dedup (since it acts as a scanner-level diagnostic).
+        // When the current token is Unknown (invalid character), emit only TS1127.
+        // In tsc, the scanner emits TS1127 into parseDiagnostics via scanError callback
+        // *before* the parser's parseExpected runs. Since tsc's parseErrorAtPosition dedup
+        // suppresses errors at the same position as the last error, the parser's TS1005 is
+        // always shadowed by the scanner's TS1127. We replicate this by emitting only TS1127.
         if self.is_token(SyntaxKind::Unknown) {
             if self.should_report_error() {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
-                    &format!("'{token}' expected."),
-                    diagnostic_codes::EXPECTED,
-                );
-                // Also emit TS1127 as a scanner-level diagnostic, bypassing dedup
-                self.force_parse_error_at_current_token(
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
                 );
