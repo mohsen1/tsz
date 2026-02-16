@@ -1146,17 +1146,19 @@ impl<'a> CheckerState<'a> {
 
         // Use get_symbol_globally to find symbols in lib files and other files.
         // Extract needed data to avoid holding a borrow during deeper operations.
-        let (flags, value_decl, declarations) = match self.get_symbol_globally(sym_id) {
-            Some(symbol) => (
-                symbol.flags,
-                symbol.value_declaration,
-                symbol.declarations.clone(),
-            ),
-            None => {
-                self.ctx.leave_recursion();
-                return Vec::new();
-            }
-        };
+        let (flags, value_decl, declarations, sym_escaped_name) =
+            match self.get_symbol_globally(sym_id) {
+                Some(symbol) => (
+                    symbol.flags,
+                    symbol.value_declaration,
+                    symbol.declarations.clone(),
+                    symbol.escaped_name.clone(),
+                ),
+                None => {
+                    self.ctx.leave_recursion();
+                    return Vec::new();
+                }
+            };
 
         // Fast path: only class/interface/type alias symbols can declare type parameters.
         if flags & (symbol_flags::TYPE_ALIAS | symbol_flags::CLASS | symbol_flags::INTERFACE) == 0 {
@@ -1255,25 +1257,34 @@ impl<'a> CheckerState<'a> {
         // we must check ALL declarations because the first one may not have type params.
         // TypeScript considers the union of type parameters across all declarations.
         if flags & symbol_flags::INTERFACE != 0 {
+            // Helper: verify that a node in the given arena is an interface whose name
+            // matches the symbol's escaped_name. This prevents cross-arena NodeIndex
+            // collisions from returning the wrong interface's type parameters (e.g.,
+            // Promise declarations that accidentally resolve to Float32Array in a
+            // different lib arena).
+            let is_matching_interface =
+                |arena: &tsz_parser::parser::NodeArena, decl: NodeIndex| -> bool {
+                    if let Some(node) = arena.get(decl)
+                        && let Some(iface) = arena.get_interface(node)
+                    {
+                        if let Some(name_node) = arena.get(iface.name)
+                            && let Some(name_ident) = arena.get_identifier(name_node)
+                        {
+                            return name_ident.escaped_text.as_str() == sym_escaped_name;
+                        }
+                        // If we can't resolve the name, accept it (backwards compat)
+                        return true;
+                    }
+                    false
+                };
+
             // First try value_decl, then search all declarations for one with type params
             let mut decl_candidates = Vec::new();
-            if !value_decl.is_none()
-                && self
-                    .ctx
-                    .arena
-                    .get(value_decl)
-                    .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
-            {
+            if !value_decl.is_none() && is_matching_interface(self.ctx.arena, value_decl) {
                 decl_candidates.push(value_decl);
             }
             for &decl in &declarations {
-                if decl != value_decl
-                    && self
-                        .ctx
-                        .arena
-                        .get(decl)
-                        .is_some_and(|node| self.ctx.arena.get_interface(node).is_some())
-                {
+                if decl != value_decl && is_matching_interface(self.ctx.arena, decl) {
                     decl_candidates.push(decl);
                 }
             }
