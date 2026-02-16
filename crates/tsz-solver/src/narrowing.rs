@@ -2133,8 +2133,15 @@ impl<'a> NarrowingContext<'a> {
         // This handles class inheritance (Derived extends Base), interface
         // implementations, and other structural relationships that the
         // fast-path checks above don't cover.
-        let mut checker = SubtypeChecker::new(self.db.as_type_database());
-        checker.is_subtype_of(source, target)
+        // CRITICAL: Resolve Lazy(DefId) types before the subtype check.
+        // Without resolution, two unrelated interfaces (e.g., Cat and Dog)
+        // remain as opaque Lazy types and the SubtypeChecker can't distinguish them.
+        let source = self.resolve_type(source);
+        let target = self.resolve_type(target);
+        if source == target {
+            return true;
+        }
+        crate::subtype::is_subtype_of_with_db(self.db, source, target)
     }
 
     /// Applies a type guard to narrow a type.
@@ -2265,8 +2272,16 @@ impl<'a> NarrowingContext<'a> {
                     Some(target_type) => {
                         // Type guard with specific type: is T or asserts T
                         if sense {
-                            // True branch: narrow to the target type
-                            self.narrow_to_type(source_type, *target_type)
+                            // True branch: narrow to the target type.
+                            // Like instanceof, if narrow_to_type returns NEVER
+                            // (source and target don't overlap), fall back to
+                            // intersection (e.g. Legged & Winged from successive guards).
+                            let narrowed = self.narrow_to_type(source_type, *target_type);
+                            if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
+                                self.db.intersection2(source_type, *target_type)
+                            } else {
+                                narrowed
+                            }
                         } else if *asserts {
                             // CRITICAL: For assertion functions, the false branch is unreachable
                             // (the function throws if the assertion fails), so we don't narrow
