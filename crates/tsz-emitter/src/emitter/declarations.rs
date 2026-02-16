@@ -746,13 +746,9 @@ impl<'a> Printer<'a> {
         let name = self.get_identifier_text_idx(module.name);
 
         // Determine if we should emit a variable declaration for this namespace.
-        // Inside a namespace IIFE, always emit `let` (each IIFE creates a new function scope).
-        // At top level, skip `var` if name already declared by class/function/enum.
-        let should_declare = if self.in_namespace_iife {
-            true // Always need `let` inside IIFE body
-        } else {
-            !self.declared_namespace_names.contains(&name)
-        };
+        // Skip if name already declared by class/function/enum (both at top level and
+        // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
+        let should_declare = !self.declared_namespace_names.contains(&name);
         if should_declare {
             let keyword = if self.in_namespace_iife { "let" } else { "var" };
             self.write(keyword);
@@ -857,11 +853,16 @@ impl<'a> Printer<'a> {
 
                         if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
                             // export var x = 10; → ns.x = 10;
-                            self.emit_namespace_exported_variable(inner_idx, &ns_name);
+                            self.emit_namespace_exported_variable(inner_idx, &ns_name, stmt_node);
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
                             self.emit(inner_idx);
+                            // Emit trailing comments on the same line
+                            if let Some(inner_node) = self.arena.get(inner_idx) {
+                                let token_end = self.find_token_end_before_trivia(inner_node.pos, inner_node.end);
+                                self.emit_trailing_comments(token_end);
+                            }
 
                             if !export_names.is_empty() {
                                 if !self.writer.is_at_line_start() {
@@ -888,13 +889,17 @@ impl<'a> Printer<'a> {
                     self.in_namespace_iife = true;
                     self.emit(stmt_idx);
                     self.in_namespace_iife = prev;
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
                     self.write_line();
                 } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     // Nested namespace: recurse (emit_namespace_iife adds its own newline)
                     self.emit(stmt_idx);
                 } else {
-                    // Regular statement
+                    // Regular statement - emit trailing comments on same line
                     self.emit(stmt_idx);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
                     self.write_line();
                 }
             }
@@ -903,7 +908,12 @@ impl<'a> Printer<'a> {
 
     /// Emit exported variable as namespace property assignment.
     /// `export var x = 10;` → `ns.x = 10;`
-    fn emit_namespace_exported_variable(&mut self, var_stmt_idx: NodeIndex, ns_name: &str) {
+    fn emit_namespace_exported_variable(
+        &mut self,
+        var_stmt_idx: NodeIndex,
+        ns_name: &str,
+        outer_stmt: &Node,
+    ) {
         let Some(var_node) = self.arena.get(var_stmt_idx) else {
             return;
         };
@@ -940,6 +950,10 @@ impl<'a> Printer<'a> {
                         self.emit_expression(decl.initializer);
                     }
                     self.write(";");
+                    // Emit trailing comments from the outer export statement
+                    let token_end =
+                        self.find_token_end_before_trivia(outer_stmt.pos, outer_stmt.end);
+                    self.emit_trailing_comments(token_end);
                     self.write_line();
                 }
             }
