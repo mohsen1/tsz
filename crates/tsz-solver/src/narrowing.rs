@@ -1615,18 +1615,11 @@ impl<'a> NarrowingContext<'a> {
                         if self.is_assignable_to(instance_type, member) {
                             return Some(instance_type);
                         }
-                        if self.is_array_like(member) {
-                            use crate::type_queries;
-                            let is_target_lazy_or_app =
-                                type_queries::is_type_reference(self.db, resolved_target)
-                                    || type_queries::is_generic_type(self.db, resolved_target);
-                            if is_target_lazy_or_app {
-                                return Some(member);
-                            }
-                        }
-                        // Non-primitive members that don't match assignability
-                        // checks are still kept — they may be class instances
-                        // that could pass instanceof at runtime.
+                        // Non-primitive members with no detected assignability
+                        // relation are still kept — they may be class instances
+                        // that could pass instanceof at runtime (e.g., Date with
+                        // instanceof Object). The is_assignable_to check can miss
+                        // some Ref type relationships.
                         Some(member)
                     })
                     .collect()
