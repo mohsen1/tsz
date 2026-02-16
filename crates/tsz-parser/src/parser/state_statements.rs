@@ -3133,11 +3133,14 @@ impl ParserState {
                 seen_accessibility = true;
             } else if current_kind == SyntaxKind::StaticKeyword {
                 // Check for duplicate static modifier
+                // In tsc 6.0+, duplicate `static` in class members emits TS1434
+                // (Unexpected keyword or identifier) because the second `static`
+                // is treated as a potential property name rather than a duplicate modifier.
                 if seen_static {
-                    use tsz_common::diagnostics::diagnostic_codes;
+                    use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.parse_error_at_current_token(
-                        "'static' modifier already seen.",
-                        diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                        diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                        diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     );
                 }
                 // TS1029: static must come after accessibility, before certain others
