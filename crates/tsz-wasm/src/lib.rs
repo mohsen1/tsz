@@ -1,4 +1,4 @@
-//! WebAssembly bindings for the tsz TypeScript compiler.
+//! `WebAssembly` bindings for the `tsz` TypeScript compiler.
 //!
 //! This crate provides the WASM entry point (cdylib) and TypeScript API
 //! compatibility layer for the tsz compiler. It wraps the core `tsz` library

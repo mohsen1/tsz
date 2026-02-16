@@ -65,7 +65,7 @@ pub struct TsCompilerOptions {
 }
 
 impl TsCompilerOptions {
-    /// Convert to internal CheckerOptions
+    /// Convert to internal `CheckerOptions`
     pub fn to_checker_options(&self) -> CheckerOptions {
         let strict = self.strict.unwrap_or(false);
         CheckerOptions {
@@ -111,7 +111,7 @@ impl TsCompilerOptions {
 /// - Emit functionality
 #[wasm_bindgen]
 pub struct TsProgram {
-    /// Files added to the program (file_name, source_text)
+    /// Files added to the program (`file_name`, `source_text`)
     files: Vec<(String, String)>,
     /// Library files (lib.d.ts, etc.)
     lib_files: Vec<Arc<LibFile>>,
@@ -532,7 +532,7 @@ impl Default for TsProgram {
 /// * `files_json` - JSON object mapping file names to content
 ///
 /// # Returns
-/// A new TsProgram instance
+/// A new `TsProgram` instance
 #[wasm_bindgen(js_name = createTsProgram)]
 pub fn create_ts_program(
     root_names_json: &str,

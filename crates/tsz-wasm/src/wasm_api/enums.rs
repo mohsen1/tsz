@@ -5,8 +5,8 @@
 
 use wasm_bindgen::prelude::wasm_bindgen;
 
-/// SyntaxKind enum values
-/// Matches TypeScript's SyntaxKind exactly
+/// `SyntaxKind` enum values
+/// Matches TypeScript's `SyntaxKind` exactly
 pub mod syntax_kind {
     pub const UNKNOWN: u16 = 0;
     pub const END_OF_FILE_TOKEN: u16 = 1;
@@ -122,7 +122,7 @@ pub mod syntax_kind {
 
 pub use syntax_kind as SyntaxKind;
 
-/// DiagnosticCategory enum
+/// `DiagnosticCategory` enum
 #[wasm_bindgen]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,7 +133,7 @@ pub enum DiagnosticCategory {
     Message = 3,
 }
 
-/// ScriptTarget enum (ES version)
+/// `ScriptTarget` enum (ES version)
 #[wasm_bindgen]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -154,7 +154,7 @@ pub enum ScriptTarget {
     JSON = 100,
 }
 
-/// ModuleKind enum
+/// `ModuleKind` enum
 #[wasm_bindgen]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -174,7 +174,7 @@ pub enum ModuleKind {
     Preserve = 200,
 }
 
-/// ScriptKind enum (file type)
+/// `ScriptKind` enum (file type)
 #[wasm_bindgen]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -190,7 +190,7 @@ pub enum ScriptKind {
     Deferred = 7,
 }
 
-/// TypeFlags enum
+/// `TypeFlags` enum
 pub mod type_flags {
     pub const ANY: u32 = 1 << 0;
     pub const UNKNOWN: u32 = 1 << 1;
@@ -225,7 +225,7 @@ pub mod type_flags {
 
 pub use type_flags as TypeFlags;
 
-/// SymbolFlags enum
+/// `SymbolFlags` enum
 pub mod symbol_flags {
     pub const NONE: u32 = 0;
     pub const FUNCTION_SCOPED_VARIABLE: u32 = 1 << 0;
@@ -265,7 +265,7 @@ pub mod symbol_flags {
 
 pub use symbol_flags as SymbolFlags;
 
-/// SignatureKind enum
+/// `SignatureKind` enum
 #[wasm_bindgen]
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -1,12 +1,12 @@
 //! WASM Integration Module
 //!
-//! This module provides the WebAssembly interface for the TypeScript compiler.
-//! It exposes parallel type checking capabilities and the TypeInterner for
+//! This module provides the `WebAssembly` interface for the TypeScript compiler.
+//! It exposes parallel type checking capabilities and the `TypeInterner` for
 //! concurrent access from JavaScript.
 //!
 //! # Architecture
 //!
-//! The WASM module uses wasm-bindgen to expose Rust types to JavaScript.
+//! The WASM module uses `wasm-bindgen` to expose Rust types to JavaScript.
 //! Key types exposed:
 //!
 //! - `WasmTypeInterner`: Thread-safe type interning with lock-free concurrent access
@@ -15,13 +15,13 @@
 //!
 //! # Concurrency Model
 //!
-//! The TypeInterner uses a sharded DashMap architecture that enables true
+//! The `TypeInterner` uses a sharded `DashMap` architecture that enables true
 //! parallel type checking:
 //!
 //! - 64 shards distribute type storage to minimize contention
-//! - Lock-free reads and writes via DashMap
+//! - Lock-free reads and writes via `DashMap`
 //! - Atomic counters for ID allocation
-//! - Arc<T> for safe sharing across threads
+//! - `Arc<T>` for safe sharing across threads
 //!
 //! # Usage from JavaScript
 //!
@@ -46,8 +46,8 @@ use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
 
 /// WASM-compatible type interner for parallel type checking.
 ///
-/// This wraps the internal TypeInterner with a wasm-bindgen compatible interface.
-/// The underlying interner uses lock-free DashMap storage for concurrent access.
+/// This wraps the internal `TypeInterner` with a `wasm-bindgen` compatible interface.
+/// The underlying interner uses lock-free `DashMap` storage for concurrent access.
 #[wasm_bindgen]
 pub struct WasmTypeInterner {
     inner: TypeInterner,
@@ -240,7 +240,7 @@ pub struct WasmDiagnostic {
     pub category: String,
 }
 
-/// Parallel type checker using the shared TypeInterner.
+/// Parallel type checker using the shared `TypeInterner`.
 ///
 /// This enables parallel type checking of function bodies across multiple files
 /// while sharing a single type interner for deduplication.

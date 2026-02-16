@@ -1,6 +1,6 @@
-//! TypeScript SourceFile API
+//! TypeScript `SourceFile` API
 //!
-//! Provides the `TsSourceFile` struct which implements TypeScript's SourceFile interface.
+//! Provides the `TsSourceFile` struct which implements TypeScript's `SourceFile` interface.
 
 use std::sync::Arc;
 use wasm_bindgen::prelude::{JsValue, wasm_bindgen};
@@ -10,7 +10,7 @@ use tsz::parser::{NodeArena, NodeIndex, ParserState};
 
 use super::enums::{ScriptKind, ScriptTarget};
 
-/// TypeScript SourceFile - represents a parsed source file
+/// TypeScript `SourceFile` - represents a parsed source file
 ///
 /// Provides access to:
 /// - File metadata (name, text, language version)
@@ -108,7 +108,7 @@ impl TsSourceFile {
         0
     }
 
-    /// Get the kind (always SourceFile)
+    /// Get the kind (always `SourceFile`)
     #[wasm_bindgen(getter)]
     pub fn kind(&self) -> u16 {
         syntax_kind_ext::SOURCE_FILE
