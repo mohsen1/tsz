@@ -1367,14 +1367,46 @@ impl<'a> InferenceContext<'a> {
         let source_list = self.interner.type_list(source_members);
         let target_list = self.interner.type_list(target_members);
 
-        // Try to infer each source member against each target member
-        for source_ty in source_list.iter() {
-            for target_ty in target_list.iter() {
-                self.infer_from_types(*source_ty, *target_ty, priority)?;
+        // TypeScript inference filtering: when the target union contains both
+        // type parameters and fixed types (e.g., `T | undefined`), strip source
+        // members that match fixed target members before inferring against the
+        // parameterized members. This prevents `undefined` in `number | undefined`
+        // from being inferred as a candidate for `T` in `T | undefined`.
+        let (parameterized, fixed): (Vec<TypeId>, Vec<TypeId>) = target_list
+            .iter()
+            .partition(|&&t| self.target_contains_inference_param(t));
+
+        if !parameterized.is_empty() && !fixed.is_empty() {
+            // Filter source: only infer members not already covered by fixed targets
+            for &source_ty in source_list.iter() {
+                let matches_fixed = fixed.contains(&source_ty);
+                if !matches_fixed {
+                    for &target_ty in &parameterized {
+                        self.infer_from_types(source_ty, target_ty, priority)?;
+                    }
+                }
+            }
+        } else {
+            // No filtering needed — fall back to exhaustive inference
+            for source_ty in source_list.iter() {
+                for target_ty in target_list.iter() {
+                    self.infer_from_types(*source_ty, *target_ty, priority)?;
+                }
             }
         }
 
         Ok(())
+    }
+
+    /// Check if a target type directly is or contains an inference type parameter.
+    fn target_contains_inference_param(&self, target: TypeId) -> bool {
+        let Some(key) = self.interner.lookup(target) else {
+            return false;
+        };
+        match key {
+            TypeData::TypeParameter(ref info) => self.find_type_param(info.name).is_some(),
+            _ => false,
+        }
     }
 
     /// Infer from intersection types

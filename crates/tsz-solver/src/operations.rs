@@ -2409,6 +2409,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }
             }
+            (Some(TypeData::Union(s_members)), Some(TypeData::Union(t_members))) => {
+                // When both source and target are unions, filter source members that
+                // match fixed (non-parameterized) target members before constraining
+                // against parameterized members. This implements TypeScript's inference
+                // filtering: for `T | undefined`, `undefined` in the source should match
+                // the fixed `undefined` in the target, not be inferred as T.
+                let s_members = self.interner.type_list(s_members);
+                let t_members_list = self.interner.type_list(t_members);
+
+                // Collect fixed target members (those without placeholders)
+                let mut member_visited = FxHashSet::default();
+                let fixed_targets: Vec<TypeId> = t_members_list
+                    .iter()
+                    .filter(|&&m| {
+                        member_visited.clear();
+                        !self.type_contains_placeholder(m, var_map, &mut member_visited)
+                    })
+                    .copied()
+                    .collect();
+
+                for &member in s_members.iter() {
+                    // Skip source members that directly match a fixed target member
+                    let matches_fixed = fixed_targets.contains(&member);
+                    if !matches_fixed {
+                        self.constrain_types(ctx, var_map, member, target, priority);
+                    }
+                }
+            }
             (Some(TypeData::Union(s_members)), _) => {
                 let s_members = self.interner.type_list(s_members);
                 for &member in s_members.iter() {
