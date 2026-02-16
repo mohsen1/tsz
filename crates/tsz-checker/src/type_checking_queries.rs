@@ -877,14 +877,19 @@ impl<'a> CheckerState<'a> {
     /// Parse a numeric index from a string.
     /// Returns None if the string is not a valid non-negative integer.
     pub(crate) fn get_numeric_index_from_string(&self, value: &str) -> Option<usize> {
-        let parsed: f64 = value.parse().ok()?;
-        if !parsed.is_finite() || parsed.fract() != 0.0 || parsed < 0.0 {
+        // TypeScript only treats canonical unsigned integer strings as numeric indexes.
+        // Examples: "0", "1", "42"
+        // Non-canonical forms like "0.0", "01", "+1" are string property names.
+        if value.is_empty() {
             return None;
         }
-        if parsed > (usize::MAX as f64) {
+        if value != "0" && value.starts_with('0') {
             return None;
         }
-        Some(parsed as usize)
+        if !value.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        value.parse::<usize>().ok()
     }
 
     // =========================================================================
