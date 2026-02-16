@@ -245,7 +245,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // Cache parameter types from annotations (so for-of binding uses correct types)
             // and then infer for any remaining unknown parameters using contextual information.
-            self.cache_parameter_types(&func.parameters.nodes, None);
+            // For closures (function expressions / arrow functions), parameter types are
+            // already properly cached by get_type_of_function with contextual typing.
+            // Calling cache_parameter_types(None) here would overwrite contextually-typed
+            // parameters (e.g., `data` in `() => data => data.map(s => ...)`) with ANY,
+            // causing downstream callback contextual typing to break (false TS7006).
+            if !is_closure {
+                self.cache_parameter_types(&func.parameters.nodes, None);
+            }
             self.infer_parameter_types_from_context(&func.parameters.nodes);
 
             // Check that parameter default values are assignable to declared types (TS2322)
