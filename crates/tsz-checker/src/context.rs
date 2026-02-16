@@ -2093,8 +2093,36 @@ impl<'a> CheckerContext<'a> {
     /// Get type parameters for a `DefId`.
     ///
     /// Returns None if the `DefId` has no type parameters or hasn't been registered yet.
+    /// Falls back to SymbolId-based lookup when the same interface has multiple `DefIds`
+    /// (e.g., lib types like `PromiseLike` that get different `DefIds` in different contexts).
     pub fn get_def_type_params(&self, def_id: DefId) -> Option<Vec<tsz_solver::TypeParamInfo>> {
-        self.def_type_params.borrow().get(&def_id).cloned()
+        let params = self.def_type_params.borrow();
+        if let Some(result) = params.get(&def_id) {
+            return Some(result.clone());
+        }
+
+        // Fallback: look up via SymbolId. Multiple DefIds can map to the same symbol
+        // when lib interfaces are referenced from different checker contexts.
+        let sym_id = self.def_to_symbol.borrow().get(&def_id).copied()?;
+        for (&other_def, other_params) in params.iter() {
+            if other_def != def_id
+                && self
+                    .def_to_symbol
+                    .borrow()
+                    .get(&other_def)
+                    .is_some_and(|&s| s == sym_id)
+            {
+                // Found type params registered under a different DefId for the same symbol.
+                // Cache for future lookups.
+                let result = other_params.clone();
+                drop(params);
+                self.def_type_params
+                    .borrow_mut()
+                    .insert(def_id, result.clone());
+                return Some(result);
+            }
+        }
+        None
     }
 
     /// Resolve a `TypeId` to its underlying `SymbolId` if it is a reference type.
