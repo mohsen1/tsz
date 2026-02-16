@@ -912,7 +912,7 @@ fn rewrite_bare_specifiers(
     let current_dir = std::path::Path::new(&normalized_current)
         .parent()
         .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|| std::path::PathBuf::new());
+        .unwrap_or_else(std::path::PathBuf::new);
 
     // If no multi-file test, nothing to rewrite
     if filenames.is_empty() {
@@ -947,7 +947,7 @@ fn rewrite_bare_specifiers(
         let parent = filename_path
             .parent()
             .map(std::path::Path::to_path_buf)
-            .unwrap_or_else(|| std::path::PathBuf::new());
+            .unwrap_or_else(std::path::PathBuf::new);
         available_files
             .entry(basename.to_string())
             .or_default()

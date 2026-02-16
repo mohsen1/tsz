@@ -401,14 +401,12 @@ impl TsProgram {
         // Determine target and module from options
         let target = match self.options.target.unwrap_or(1) {
             0 => tsz::emitter::ScriptTarget::ES3,
-            1 => tsz::emitter::ScriptTarget::ES5,
             2 => tsz::emitter::ScriptTarget::ES2015,
             99 => tsz::emitter::ScriptTarget::ESNext,
             _ => tsz::emitter::ScriptTarget::ES5,
         };
 
         let module = match self.options.module.unwrap_or(0) {
-            0 => tsz::emitter::ModuleKind::None,
             1 => tsz::emitter::ModuleKind::CommonJS,
             6 => tsz::emitter::ModuleKind::ES2015,
             99 => tsz::emitter::ModuleKind::ESNext,
@@ -479,14 +477,12 @@ impl TsProgram {
 
                 let target = match self.options.target.unwrap_or(1) {
                     0 => tsz::emitter::ScriptTarget::ES3,
-                    1 => tsz::emitter::ScriptTarget::ES5,
                     2 => tsz::emitter::ScriptTarget::ES2015,
                     99 => tsz::emitter::ScriptTarget::ESNext,
                     _ => tsz::emitter::ScriptTarget::ES5,
                 };
 
                 let module = match self.options.module.unwrap_or(0) {
-                    0 => tsz::emitter::ModuleKind::None,
                     1 => tsz::emitter::ModuleKind::CommonJS,
                     6 => tsz::emitter::ModuleKind::ES2015,
                     99 => tsz::emitter::ModuleKind::ESNext,
