@@ -1213,7 +1213,9 @@ impl<'a> CheckerState<'a> {
         let Some(list) = self.ctx.arena.get_variable(list_node) else {
             return;
         };
-
+        // When there are multiple declarations, TS1188 is already reported by the parser.
+        // TSC suppresses per-declaration grammar errors (TS1189/TS1190/TS2483) in this case.
+        let single_declaration = list.declarations.nodes.len() == 1;
         for &decl_idx in &list.declarations.nodes {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
@@ -1222,16 +1224,44 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
+            // TS1189/TS1190: The variable declaration of a for-in/for-of statement cannot have an initializer
+            // Only check when there's a single declaration (TSC suppresses when TS1188 is reported)
+            if single_declaration && !var_decl.initializer.is_none() {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                if is_for_in {
+                    self.error_at_node(
+                        var_decl.initializer,
+                        diagnostic_messages::THE_VARIABLE_DECLARATION_OF_A_FOR_IN_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                        diagnostic_codes::THE_VARIABLE_DECLARATION_OF_A_FOR_IN_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                    );
+                } else {
+                    self.error_at_node(
+                        var_decl.initializer,
+                        diagnostic_messages::THE_VARIABLE_DECLARATION_OF_A_FOR_OF_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                        diagnostic_codes::THE_VARIABLE_DECLARATION_OF_A_FOR_OF_STATEMENT_CANNOT_HAVE_AN_INITIALIZER,
+                    );
+                }
+            }
+
             // If there's a type annotation, check that the element type is assignable to it
             if !var_decl.type_annotation.is_none() {
                 // TS2404: The left-hand side of a 'for...in' statement cannot use a type annotation
                 // TSC emits TS2404 and skips the assignability check for for-in loops.
+                // TS2483: The left-hand side of a 'for...of' statement cannot use a type annotation
+                // Only check with single declaration (TSC suppresses when TS1188 is reported)
                 if is_for_in {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         var_decl.type_annotation,
                         diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                         diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
+                    );
+                } else if single_declaration {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        var_decl.type_annotation,
+                        diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
+                        diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                     );
                 }
 
