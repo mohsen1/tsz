@@ -89,9 +89,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(expr_node) {
-                return self.is_computed_expression_dynamic(paren.expression);
-            }
+            && let Some(paren) = self.ctx.arena.get_parenthesized(expr_node)
+        {
+            return self.is_computed_expression_dynamic(paren.expression);
+        }
 
         true
     }
@@ -165,10 +166,11 @@ impl<'a> CheckerState<'a> {
 
             if let Some(distance) =
                 Self::override_name_levenshtein_with_max(target_name, candidate, best_distance)
-                && distance < best_distance {
-                    best_distance = distance;
-                    best_candidate = Some(candidate.clone());
-                }
+                && distance < best_distance
+            {
+                best_distance = distance;
+                best_candidate = Some(candidate.clone());
+            }
         }
 
         best_candidate
