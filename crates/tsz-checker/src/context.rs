@@ -2878,6 +2878,18 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         }
     }
 
+    fn is_boxed_type_id(
+        &self,
+        type_id: tsz_solver::TypeId,
+        kind: tsz_solver::IntrinsicKind,
+    ) -> bool {
+        if let Ok(env) = self.type_env.try_borrow() {
+            env.is_boxed_type_id(type_id, kind)
+        } else {
+            false
+        }
+    }
+
     /// Get the boxed interface type for a primitive intrinsic.
     /// Delegates to the type environment which stores boxed types registered from lib.d.ts.
     fn get_boxed_type(&self, kind: tsz_solver::IntrinsicKind) -> Option<tsz_solver::TypeId> {
