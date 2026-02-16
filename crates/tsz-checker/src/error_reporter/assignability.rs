@@ -214,8 +214,26 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
+                // Private brand properties are internal implementation details for
+                // nominal private member checking. They should never appear in
+                // user-facing diagnostics — emit TS2322 instead of TS2741.
                 let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
+                if prop_name.starts_with("__private_brand") {
+                    let src_str = self.format_type(*source_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
+                // TS2741: Property 'x' is missing in type 'A' but required in type 'B'.
                 let src_str = self.format_type(*source_type);
                 let message = format_message(
                     diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
@@ -280,19 +298,49 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
+                // Filter out private brand properties — they are internal implementation
+                // details and should never appear in user-facing diagnostics.
+                let filtered_names: Vec<_> = property_names
+                    .iter()
+                    .filter(|name| {
+                        !self
+                            .ctx
+                            .types
+                            .resolve_atom_ref(**name)
+                            .starts_with("__private_brand")
+                    })
+                    .collect();
+
+                // If all missing properties were private brands, emit TS2322 instead.
+                if filtered_names.is_empty() {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // TS2739: Type 'A' is missing the following properties from type 'B': x, y, z
                 // TS2740: Type 'A' is missing the following properties from type 'B': x, y, z, and N more.
                 let src_str = self.format_type(*source_type);
                 let tgt_str = self.format_type(*target_type);
-                let prop_list: Vec<String> = property_names
+                let prop_list: Vec<String> = filtered_names
                     .iter()
                     .take(5)
-                    .map(|name| self.ctx.types.resolve_atom_ref(*name).to_string())
+                    .map(|name| self.ctx.types.resolve_atom_ref(**name).to_string())
                     .collect();
                 let props_joined = prop_list.join(", ");
                 // Use TS2740 when there are 5+ missing properties (tsc behavior)
-                if property_names.len() > 5 {
-                    let more_count = (property_names.len() - 5).to_string();
+                if filtered_names.len() > 5 {
+                    let more_count = (filtered_names.len() - 5).to_string();
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE_AND_MORE,
                         &[&src_str, &tgt_str, &props_joined, &more_count],

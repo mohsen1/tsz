@@ -22154,7 +22154,6 @@ declare const required: Required<{x?: number}>;
 declare const readonly: Readonly<{x: number}>;
 declare const record: Record<string, number>;
 declare const iterator: Iterator<number>;
-declare const iterable: Iterable<string>;
 declare const element: Element;
 declare const htmlElement: HTMLElement;
 declare const doc: Document;
