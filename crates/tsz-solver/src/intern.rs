@@ -1984,6 +1984,16 @@ impl TypeInterner {
     }
 
     fn intersection_has_disjoint_object_literals(&self, members: &[TypeId]) -> bool {
+        // Performance guard: skip O(N²) check for large intersections.
+        // The check detects { kind: "a" } & { kind: "b" } → never, but for very
+        // large type intersections (e.g., T extends A & B & C & ...), the O(N²)
+        // pairwise comparison is prohibitively expensive. Skip it and let the
+        // merged object handle any conflicts.
+        const MAX_DISJOINT_CHECK_SIZE: usize = 25;
+        if members.len() > MAX_DISJOINT_CHECK_SIZE {
+            return false;
+        }
+
         let mut objects: Vec<Arc<ObjectShape>> = Vec::new();
 
         for &member in members {
@@ -2468,6 +2478,15 @@ impl TypeInterner {
     /// Remove redundant types from an intersection using shallow subtype checks.
     /// If A <: B, then A & B = A (B is redundant).
     fn reduce_intersection_subtypes(&self, flat: &mut TypeListBuffer) {
+        // Performance guard: skip O(N²) reduction for large intersections.
+        // This is an optimization (removing redundant supertypes), not required for correctness.
+        // For very large intersections (e.g., T extends A & B & C & ...), the O(N²) pairwise
+        // subtype checks are prohibitively expensive. Skip and keep all members.
+        const MAX_REDUCTION_SIZE: usize = 25;
+        if flat.len() > MAX_REDUCTION_SIZE {
+            return;
+        }
+
         // Mark redundant elements, then compact in one pass.
         // This avoids O(n) Vec::remove() per element (which shifts all subsequent items).
         let len = flat.len();
