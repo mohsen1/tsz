@@ -17,8 +17,8 @@ pub mod module_resolution_debug;
 pub mod state;
 mod state_binding;
 pub use state::{
-    BinderOptions, BinderState, FileFeatures, GlobalAugmentation, LibContext, ModuleAugmentation,
-    ValidationError,
+    BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, GlobalAugmentation, LibContext,
+    ModuleAugmentation, ValidationError,
 };
 
 // =============================================================================

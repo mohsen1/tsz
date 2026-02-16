@@ -2450,14 +2450,17 @@ impl<'a> CheckerState<'a> {
                 let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
                     .declarations
                     .iter()
-                    .map(|&decl_idx| {
-                        let arena = self
-                            .ctx
-                            .binder
-                            .declaration_arenas
-                            .get(&(sym_id, decl_idx))
-                            .map_or(fallback_arena, |arc| arc.as_ref());
-                        (decl_idx, arena)
+                    .flat_map(|&decl_idx| {
+                        if let Some(arenas) =
+                            self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                        {
+                            arenas
+                                .iter()
+                                .map(|arc| (decl_idx, arc.as_ref()))
+                                .collect::<Vec<_>>()
+                        } else {
+                            vec![(decl_idx, fallback_arena)]
+                        }
                     })
                     .collect();
 
@@ -2599,6 +2602,7 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .declaration_arenas
                         .get(&(sym_id, decl_idx))
+                        .and_then(|v| v.first())
                         .map_or(fallback_arena, |arc| arc.as_ref());
                     let value_lowering = lowering.with_arena(value_arena);
                     let val_type = value_lowering.lower_type(decl_idx);
@@ -2817,13 +2821,17 @@ impl<'a> CheckerState<'a> {
                 let decls_with_arenas: Vec<(NodeIndex, &NodeArena)> = symbol
                     .declarations
                     .iter()
-                    .map(|&decl_idx| {
-                        let arena = lib_ctx
-                            .binder
-                            .declaration_arenas
-                            .get(&(sym_id, decl_idx))
-                            .map_or(fallback_arena, |arc| arc.as_ref());
-                        (decl_idx, arena)
+                    .flat_map(|&decl_idx| {
+                        if let Some(arenas) =
+                            lib_ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                        {
+                            arenas
+                                .iter()
+                                .map(|arc| (decl_idx, arc.as_ref()))
+                                .collect::<Vec<_>>()
+                        } else {
+                            vec![(decl_idx, fallback_arena)]
+                        }
                     })
                     .collect();
 
@@ -2947,6 +2955,7 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .declaration_arenas
                         .get(&(sym_id, decl_idx))
+                        .and_then(|v| v.first())
                         .map_or(fallback_arena, |arc| arc.as_ref());
                     let value_lowering = lowering.with_arena(value_arena);
                     lib_types.push(value_lowering.lower_type(decl_idx));

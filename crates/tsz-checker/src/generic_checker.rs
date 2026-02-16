@@ -401,7 +401,12 @@ impl<'a> CheckerState<'a> {
             }
 
             // Try declaration_arenas
-            if let Some(decl_arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+            if let Some(decl_arena) = self
+                .ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .and_then(|v| v.first())
                 && let Some(node) = decl_arena.get(decl_idx)
             {
                 if let Some(ta) = decl_arena.get_type_alias(node) {

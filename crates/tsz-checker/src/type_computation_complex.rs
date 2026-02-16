@@ -2741,6 +2741,7 @@ impl<'a> CheckerState<'a> {
             .binder
             .declaration_arenas
             .get(&(_sym_id, value_decl))
+            .and_then(|v| v.first())
             && let Some(node) = decl_arena.get(value_decl)
             && let Some(var_decl) = decl_arena.get_variable_declaration(node)
             && !var_decl.type_annotation.is_none()
@@ -2802,23 +2803,28 @@ impl<'a> CheckerState<'a> {
         // in both the lib arena and the main arena (cross-arena collision).
         // If we checked arena.get() first, we'd read a wrong node from the
         // main arena instead of the correct node from the lib arena.
-        let decl_arena =
-            if let Some(da) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
-                if std::ptr::eq(da.as_ref(), self.ctx.arena) {
-                    return self.type_of_value_declaration(decl_idx);
-                }
-                Some(std::sync::Arc::clone(da))
-            } else if self.ctx.arena.get(decl_idx).is_some() {
-                // Node exists in current arena but no declaration_arenas entry.
-                // For non-lib symbols: this is the correct arena — use fast path.
-                // For lib symbols: this may be a cross-arena collision — use symbol_arenas.
-                if !self.ctx.binder.symbol_arenas.contains_key(&sym_id) {
-                    return self.type_of_value_declaration(decl_idx);
-                }
-                self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
-            } else {
-                None
-            };
+        let decl_arena = if let Some(da) = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, decl_idx))
+            .and_then(|v| v.first())
+        {
+            if std::ptr::eq(da.as_ref(), self.ctx.arena) {
+                return self.type_of_value_declaration(decl_idx);
+            }
+            Some(std::sync::Arc::clone(da))
+        } else if self.ctx.arena.get(decl_idx).is_some() {
+            // Node exists in current arena but no declaration_arenas entry.
+            // For non-lib symbols: this is the correct arena — use fast path.
+            // For lib symbols: this may be a cross-arena collision — use symbol_arenas.
+            if !self.ctx.binder.symbol_arenas.contains_key(&sym_id) {
+                return self.type_of_value_declaration(decl_idx);
+            }
+            self.ctx.binder.symbol_arenas.get(&sym_id).cloned()
+        } else {
+            None
+        };
         let Some(decl_arena) = decl_arena else {
             return TypeId::UNKNOWN;
         };

@@ -1552,7 +1552,12 @@ impl<'a> CheckerState<'a> {
                     if decl_idx.is_none() {
                         continue;
                     }
-                    if let Some(arena) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    if let Some(arena) = self
+                        .ctx
+                        .binder
+                        .declaration_arenas
+                        .get(&(sym_id, decl_idx))
+                        .and_then(|v| v.first())
                         && !std::ptr::eq(arena.as_ref(), self.ctx.arena)
                     {
                         delegate_arena = Some(arena.as_ref());
@@ -2363,8 +2368,12 @@ impl<'a> CheckerState<'a> {
                 if self.ctx.arena.get(decl_idx).is_none() {
                     return true;
                 }
-                if let Some(decl_arena) =
-                    self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                if let Some(decl_arena) = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .and_then(|v| v.first())
                 {
                     return !std::ptr::eq(decl_arena.as_ref(), self.ctx.arena);
                 }
