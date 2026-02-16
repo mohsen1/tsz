@@ -1456,6 +1456,7 @@ impl ParserState {
         self.next_token(); // consume 'with' or 'assert'
 
         if !self.is_token(SyntaxKind::OpenBraceToken) {
+            self.error_token_expected("{");
             return NodeIndex::NONE;
         }
 
