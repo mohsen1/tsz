@@ -1720,7 +1720,16 @@ impl<'a> CheckerState<'a> {
 
         if let Some(sym_id) = self.ctx.binder.get_node_symbol(decl_idx) {
             self.push_symbol_dependency(sym_id, true);
+            // Snapshot whether symbol was already cached BEFORE compute_final_type.
+            // If it was, any ERROR in the cache is from earlier resolution (e.g., use-before-def),
+            // not from circular detection during this declaration's initializer processing.
+            let sym_already_cached = self.ctx.symbol_types.contains_key(&sym_id);
             let mut final_type = compute_final_type(self);
+            // Check if get_type_of_symbol cached ERROR specifically DURING compute_final_type.
+            // This happens when the initializer (directly or indirectly) references the variable,
+            // causing the node-level cycle detection to return ERROR.
+            let sym_cached_as_error =
+                !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
             if !self.ctx.compiler_options.sound_mode {
                 final_type = tsz_solver::freshness::widen_freshness(self.ctx.types, final_type);
             }
@@ -1801,6 +1810,45 @@ impl<'a> CheckerState<'a> {
                         &[name, "any"],
                     );
                 }
+            }
+
+            // TS7022: Variable implicitly has type 'any' because it does not have a type
+            // annotation and is referenced directly or indirectly in its own initializer.
+            // Gated by noImplicitAny (like all TS7xxx implicit-any diagnostics).
+            //
+            // Detection: During compute_final_type, if get_type_of_symbol was called for
+            // this variable's symbol and cached ERROR (sym_cached_as_error), it means the
+            // initializer references the variable creating a circular dependency.
+            //
+            // We skip function/arrow/class expression initializers because self-references
+            // inside their bodies are in deferred contexts — they don't affect the
+            // structural type. E.g. `var f = () => f()` has type `() => any`, not circular.
+            if self.ctx.no_implicit_any()
+                && var_decl.type_annotation.is_none()
+                && !var_decl.initializer.is_none()
+                && sym_cached_as_error
+                && self.type_contains_error(final_type)
+            {
+                // Skip if the initializer is a deferred context (function/arrow/class).
+                // Self-references inside these bodies don't create structural circularity.
+                let is_deferred_initializer =
+                    self.ctx.arena.get(var_decl.initializer).is_some_and(|n| {
+                        matches!(
+                            n.kind,
+                            syntax_kind_ext::FUNCTION_EXPRESSION
+                                | syntax_kind_ext::ARROW_FUNCTION
+                                | syntax_kind_ext::CLASS_EXPRESSION
+                        )
+                    });
+                if !is_deferred_initializer
+                    && let Some(ref name) = var_name {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            var_decl.name,
+                            diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
+                            &[name],
+                        );
+                    }
             }
 
             // Check for variable redeclaration in the current scope (TS2403).
