@@ -1,6 +1,6 @@
-//! TypeScript TypeChecker API
+//! TypeScript `TypeChecker` API
 //!
-//! Provides the `TsTypeChecker` struct which implements TypeScript's TypeChecker interface.
+//! Provides the `TsTypeChecker` struct which implements TypeScript's `TypeChecker` interface.
 
 use std::sync::Arc;
 use wasm_bindgen::prelude::wasm_bindgen;
@@ -12,7 +12,7 @@ use tsz_solver::{TypeFormatter, TypeId, TypeInterner};
 use super::enums::SignatureKind;
 use super::program::TsCompilerOptions;
 
-/// TypeScript TypeChecker - provides type information
+/// TypeScript `TypeChecker` - provides type information
 ///
 /// The type checker is the primary interface for querying type information
 /// from a program. It provides methods like:
@@ -52,7 +52,7 @@ impl TsTypeChecker {
     /// * `node_handle` - Handle (index) of the AST node
     ///
     /// # Returns
-    /// Handle (ID) of the symbol, or u32::MAX if none
+    /// Handle (ID) of the symbol, or `u32::MAX` if none
     #[wasm_bindgen(js_name = getSymbolAtLocation)]
     pub fn get_symbol_at_location(&self, _node_handle: u32) -> u32 {
         // In a full implementation, we'd look up the symbol
@@ -202,7 +202,7 @@ impl TsTypeChecker {
     }
 }
 
-/// Macro for intrinsic type ID getters on TsTypeChecker.
+/// Macro for intrinsic type ID getters on `TsTypeChecker`.
 /// Each entry generates a `pub fn` that returns `TypeId::X.0`.
 macro_rules! define_checker_type_getters {
     ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $type_id:expr);* $(;)?) => {

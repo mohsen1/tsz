@@ -6,7 +6,7 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use tsz_solver::TypeId;
 
-/// Macro for handle-based type identity checks on TsType.
+/// Macro for handle-based type identity checks on `TsType`.
 /// Each entry generates a `pub fn` that returns `self.handle == TypeId::X.0`.
 macro_rules! define_type_handle_checks {
     ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $type_id:expr);* $(;)?) => {
@@ -23,7 +23,7 @@ macro_rules! define_type_handle_checks {
     };
 }
 
-/// Macro for flag-based checks on TsType.
+/// Macro for flag-based checks on `TsType`.
 /// Each entry generates a `pub fn` that returns `(self.flags & mask) != 0`.
 macro_rules! define_type_flag_checks {
     ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $mask:expr);* $(;)?) => {
@@ -40,7 +40,7 @@ macro_rules! define_type_flag_checks {
     };
 }
 
-/// Macro for flag-based checks on TsSymbol.
+/// Macro for flag-based checks on `TsSymbol`.
 /// Each entry generates a `pub fn` that returns `(self.flags & mask) != 0`.
 macro_rules! define_symbol_flag_checks {
     ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $mask:expr);* $(;)?) => {
@@ -72,8 +72,8 @@ macro_rules! define_type_creators {
 
 /// TypeScript Type - represents a type in the type system
 ///
-/// Types are identified by handles (TypeId) and have:
-/// - flags (TypeFlags bits)
+/// Types are identified by handles (`TypeId`) and have:
+/// - flags (`TypeFlags` bits)
 /// - optional symbol
 /// - various type-specific properties
 #[wasm_bindgen]
@@ -164,7 +164,7 @@ define_type_flag_checks! {
 ///
 /// Symbols have:
 /// - name (escaped name for identifiers)
-/// - flags (SymbolFlags bits)
+/// - flags (`SymbolFlags` bits)
 /// - declarations (AST nodes where declared)
 /// - value declaration (primary declaration)
 #[wasm_bindgen]

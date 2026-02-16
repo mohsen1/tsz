@@ -230,7 +230,7 @@ fn actual_main() -> Result<()> {
 /// then print a sentinel line so the caller can demarcate output boundaries.
 ///
 /// Each iteration creates fresh `CliArgs` — no state is shared between compilations.
-/// If tsz panics during any compilation, the process exits naturally (no catch_unwind).
+/// If tsz panics during any compilation, the process exits naturally (no `catch_unwind`).
 /// The pool manager detects EOF on stdout and respawns a fresh worker.
 fn run_batch_mode() -> Result<()> {
     use std::io::{BufRead, Write};

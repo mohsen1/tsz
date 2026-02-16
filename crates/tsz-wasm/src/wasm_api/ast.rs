@@ -22,7 +22,7 @@ const FALSE_KEYWORD: u16 = SyntaxKind::FalseKeyword as u16;
 
 /// Get children of a node based on its kind
 ///
-/// Returns a vector of child NodeIndex values
+/// Returns a vector of child `NodeIndex` values
 pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeIndex> {
     let Some(node) = arena.get(node_idx) else {
         return Vec::new();
@@ -407,7 +407,7 @@ pub fn get_node_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<NodeInde
 // === Node Type Guards ===
 // These functions check if a node is of a specific kind
 
-/// Macro to generate single-kind wasm_bindgen predicate functions.
+/// Macro to generate single-kind `wasm_bindgen` predicate functions.
 macro_rules! define_kind_predicates {
     ($($(#[doc = $doc:expr])* $js_name:literal, $rust_name:ident => $kind:expr);* $(;)?) => {
         $(

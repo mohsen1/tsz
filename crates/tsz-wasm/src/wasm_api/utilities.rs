@@ -146,7 +146,7 @@ pub fn scan_tokens(source_text: &str) -> String {
     "[]".to_string()
 }
 
-/// Get the name of a SyntaxKind
+/// Get the name of a `SyntaxKind`
 #[wasm_bindgen(js_name = syntaxKindToName)]
 pub fn syntax_kind_to_name(kind: u16) -> String {
     // Map common syntax kinds to names

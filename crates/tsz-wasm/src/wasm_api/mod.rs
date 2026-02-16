@@ -7,8 +7,8 @@
 //!
 //! The API is organized to match TypeScript's structure:
 //! - `TsProgram` - Program interface (createProgram equivalent)
-//! - `TsTypeChecker` - TypeChecker interface
-//! - `TsSourceFile` - SourceFile interface with AST access
+//! - `TsTypeChecker` - `TypeChecker` interface
+//! - `TsSourceFile` - `SourceFile` interface with AST access
 //! - `TsNode` - AST node interface
 //! - `TsType` / `TsSymbol` - Type system interfaces
 //!
