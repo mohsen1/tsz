@@ -1840,15 +1840,14 @@ impl<'a> CheckerState<'a> {
                                 | syntax_kind_ext::CLASS_EXPRESSION
                         )
                     });
-                if !is_deferred_initializer
-                    && let Some(ref name) = var_name {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node_msg(
+                if !is_deferred_initializer && let Some(ref name) = var_name {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
                             var_decl.name,
                             diagnostic_codes::IMPLICITLY_HAS_TYPE_ANY_BECAUSE_IT_DOES_NOT_HAVE_A_TYPE_ANNOTATION_AND_IS_REFERE,
                             &[name],
                         );
-                    }
+                }
             }
 
             // Check for variable redeclaration in the current scope (TS2403).
