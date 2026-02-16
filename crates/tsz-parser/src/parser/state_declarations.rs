@@ -13,6 +13,7 @@ use crate::parser::{
 };
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::TokenFlags;
 
 enum TypeMemberPropertyOrMethodName {
     Property(NodeIndex),
@@ -2289,6 +2290,18 @@ impl ParserState {
         let end_pos = self.token_end();
         let text = self.scanner.get_token_value_ref().to_string();
         let raw_text = self.scanner.get_token_text_ref().to_string();
+
+        // Check for unterminated string literal (TS1002)
+        if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at(
+                start_pos,
+                1,
+                diagnostic_messages::UNTERMINATED_STRING_LITERAL,
+                diagnostic_codes::UNTERMINATED_STRING_LITERAL,
+            );
+        }
+
         self.report_invalid_string_or_template_escape_errors();
         self.next_token();
 
