@@ -444,8 +444,22 @@ impl ParserState {
             // Don't consume the {, just continue to body parsing
             // The arrow is logically present but missing
         } else {
-            // Normal case: expect =>
-            self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
+            // TypeScript rule: Line terminator is not permitted before arrow (TS1200)
+            // Example: `f(() \n => {})` should emit TS1200 at the =>
+            if self.scanner.has_preceding_line_break()
+                && self.is_token(SyntaxKind::EqualsGreaterThanToken)
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Line terminator not permitted before arrow.",
+                    diagnostic_codes::LINE_TERMINATOR_NOT_PERMITTED_BEFORE_ARROW,
+                );
+                // Still consume the => token to continue parsing
+                self.next_token();
+            } else {
+                // Normal case: expect =>
+                self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
+            }
         }
 
         // Async context was already set at the start of this function for parameter parsing
