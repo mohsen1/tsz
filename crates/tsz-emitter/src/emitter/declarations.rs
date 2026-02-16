@@ -1214,13 +1214,24 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let has_function_temps = !self.hoisted_assignment_temps.is_empty()
+            || !self.hoisted_assignment_value_temps.is_empty()
+            || !self.hoisted_for_of_temps.is_empty();
+
+        // Empty constructor with no prologue: emit `{ }` on one line
+        if block.statements.nodes.is_empty()
+            && param_props.is_empty()
+            && field_inits.is_empty()
+            && !has_function_temps
+        {
+            self.write("{ }");
+            return;
+        }
+
         self.write("{");
         self.write_line();
         self.increase_indent();
 
-        let has_function_temps = !self.hoisted_assignment_temps.is_empty()
-            || !self.hoisted_assignment_value_temps.is_empty()
-            || !self.hoisted_for_of_temps.is_empty();
         if has_function_temps {
             self.emit_function_body_hoisted_temps();
         }
