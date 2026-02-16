@@ -1552,8 +1552,9 @@ impl<'a> NarrowingContext<'a> {
         if let Some(members) = union_list_id(self.db, resolved_source) {
             let members = self.db.type_list(members);
             trace!(
-                "instanceof: narrowing union with {} members to instance type {}",
+                "instanceof: narrowing union with {} members {:?} to instance type {}",
                 members.len(),
+                members.iter().map(|m| m.0).collect::<Vec<_>>(),
                 instance_type.0
             );
 
