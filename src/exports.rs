@@ -39,7 +39,7 @@ pub enum ExportKind {
 pub struct ExportedBinding {
     /// Exported name (name visible to importers)
     pub exported_name: String,
-    /// Local name in this file (may differ from exported_name)
+    /// Local name in this file (may differ from `exported_name`)
     pub local_name: String,
     /// Kind of export
     pub kind: ExportKind,
@@ -354,7 +354,7 @@ pub struct ExportStats {
     pub reexport_sources: usize,
 }
 
-/// Builder for creating ExportedBinding
+/// Builder for creating `ExportedBinding`
 pub struct ExportedBindingBuilder {
     exported_name: String,
     local_name: String,
@@ -388,27 +388,27 @@ impl ExportedBindingBuilder {
         self
     }
 
-    pub fn kind(mut self, kind: ExportKind) -> Self {
+    pub const fn kind(mut self, kind: ExportKind) -> Self {
         self.kind = kind;
         self
     }
 
-    pub fn declaration_node(mut self, node: NodeIndex) -> Self {
+    pub const fn declaration_node(mut self, node: NodeIndex) -> Self {
         self.declaration_node = node;
         self
     }
 
-    pub fn local_declaration_node(mut self, node: NodeIndex) -> Self {
+    pub const fn local_declaration_node(mut self, node: NodeIndex) -> Self {
         self.local_declaration_node = node;
         self
     }
 
-    pub fn symbol_id(mut self, id: SymbolId) -> Self {
+    pub const fn symbol_id(mut self, id: SymbolId) -> Self {
         self.symbol_id = id;
         self
     }
 
-    pub fn type_only(mut self, is_type_only: bool) -> Self {
+    pub const fn type_only(mut self, is_type_only: bool) -> Self {
         self.is_type_only = is_type_only;
         self
     }

@@ -37,8 +37,7 @@ where
                 _ => {
                     // Invalid boolean string - return error with helpful message
                     Err(Error::custom(format!(
-                        "invalid boolean value: '{}'. Expected true, false, 'true', or 'false'",
-                        s
+                        "invalid boolean value: '{s}'. Expected true, false, 'true', or 'false'",
                     )))
                 }
             }
@@ -320,13 +319,13 @@ impl PathMapping {
         Some(specifier[start..end].to_string())
     }
 
-    pub fn specificity(&self) -> usize {
+    pub const fn specificity(&self) -> usize {
         self.prefix.len() + self.suffix.len()
     }
 }
 
 impl ResolvedCompilerOptions {
-    pub fn effective_module_resolution(&self) -> ModuleResolutionKind {
+    pub const fn effective_module_resolution(&self) -> ModuleResolutionKind {
         if let Some(resolution) = self.module_resolution {
             return resolution;
         }
@@ -521,10 +520,10 @@ pub fn resolve_compiler_options(
         resolved.base_url = Some(PathBuf::from(base_url));
     }
 
-    if let Some(paths) = options.paths.as_ref() {
-        if !paths.is_empty() {
-            resolved.paths = Some(build_path_mappings(paths));
-        }
+    if let Some(paths) = options.paths.as_ref()
+        && !paths.is_empty()
+    {
+        resolved.paths = Some(build_path_mappings(paths));
     }
 
     if let Some(root_dir) = options.root_dir.as_deref()
@@ -774,7 +773,7 @@ fn merge_configs(base: TsConfig, mut child: TsConfig) -> TsConfig {
 }
 
 /// Merge two `CompilerOptions` structs, preferring child values over base.
-/// Every `Option` field in CompilerOptions uses `.or()` — child wins when present.
+/// Every `Option` field in `CompilerOptions` uses `.or()` — child wins when present.
 macro_rules! merge_options {
     ($child:expr, $base:expr, $Struct:ident { $($field:ident),* $(,)? }) => {
         $Struct { $( $field: $child.$field.or($base.$field), )* }
@@ -859,7 +858,7 @@ fn parse_script_target(value: &str) -> Result<ScriptTarget> {
         "es2021" => ScriptTarget::ES2021,
         "es2022" | "es2023" | "es2024" => ScriptTarget::ES2022,
         "esnext" => ScriptTarget::ESNext,
-        _ => bail!("unsupported compilerOptions.target '{}'", value),
+        _ => bail!("unsupported compilerOptions.target '{value}'"),
     };
 
     Ok(target)
@@ -881,7 +880,7 @@ fn parse_module_kind(value: &str) -> Result<ModuleKind> {
         "node16" | "node18" | "node20" => ModuleKind::Node16,
         "nodenext" => ModuleKind::NodeNext,
         "preserve" => ModuleKind::Preserve,
-        _ => bail!("unsupported compilerOptions.module '{}'", value),
+        _ => bail!("unsupported compilerOptions.module '{value}'"),
     };
 
     Ok(module)
@@ -896,7 +895,7 @@ fn parse_module_resolution(value: &str) -> Result<ModuleResolutionKind> {
         "node16" => ModuleResolutionKind::Node16,
         "nodenext" => ModuleResolutionKind::NodeNext,
         "bundler" => ModuleResolutionKind::Bundler,
-        _ => bail!("unsupported compilerOptions.moduleResolution '{}'", value),
+        _ => bail!("unsupported compilerOptions.moduleResolution '{value}'"),
     };
 
     Ok(resolution)
@@ -910,7 +909,7 @@ fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
         "react-jsx" | "reactjsx" => JsxEmit::ReactJsx,
         "react-jsxdev" | "reactjsxdev" => JsxEmit::ReactJsxDev,
         "reactnative" | "react-native" => JsxEmit::ReactNative,
-        _ => bail!("unsupported compilerOptions.jsx '{}'", value),
+        _ => bail!("unsupported compilerOptions.jsx '{value}'"),
     };
 
     Ok(jsx)
@@ -1085,17 +1084,17 @@ pub fn resolve_default_lib_files_from_dir(
 /// - Each target loads the corresponding `.full` lib which includes:
 ///   - The ES version libs (e.g., es5, es2015.promise, etc.)
 ///   - DOM types (document, window, console, fetch, etc.)
-///   - ScriptHost types
+///   - `ScriptHost` types
 ///
 /// The mapping matches TypeScript's `getDefaultLibFileName()` in utilitiesPublic.ts:
 /// - ES3/ES5 → lib.d.ts (equivalent to es5.full.d.ts in source tree)
 /// - ES2015  → lib.es6.d.ts (equivalent to es2015.full.d.ts in source tree)
 /// - ES2016+ → lib.es20XX.full.d.ts
-/// - ESNext  → lib.esnext.full.d.ts
+/// - `ESNext`  → lib.esnext.full.d.ts
 ///
 /// Note: The source tree uses `es5.full.d.ts` naming, while built TypeScript uses `lib.d.ts`.
 /// We use the source tree naming since that's what exists in TypeScript/src/lib.
-pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
+pub const fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
         // ES3/ES5 -> lib.d.ts (ES5 + DOM + ScriptHost)
         ScriptTarget::ES3 | ScriptTarget::ES5 => "lib",
@@ -1120,7 +1119,7 @@ pub fn default_lib_name_for_target(target: ScriptTarget) -> &'static str {
 /// 1. Tests don't need DOM types
 /// 2. Core libs are smaller and faster to load
 /// 3. Tests that need DOM should specify @lib: dom explicitly
-pub fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
+pub const fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
     match target {
         ScriptTarget::ES3 | ScriptTarget::ES5 => "es5",
         ScriptTarget::ES2015 => "es2015",
@@ -1138,7 +1137,7 @@ pub fn core_lib_name_for_target(target: ScriptTarget) -> &'static str {
 /// Get the default lib directory.
 ///
 /// Searches in order:
-/// 1. TSZ_LIB_DIR environment variable
+/// 1. `TSZ_LIB_DIR` environment variable
 /// 2. Relative to the executable
 /// 3. Relative to current working directory
 /// 4. TypeScript/src/lib in the source tree
@@ -1308,9 +1307,9 @@ fn normalize_lib_name(value: &str) -> String {
         .to_string()
 }
 
-/// Convert emitter ScriptTarget to checker ScriptTarget.
-/// The emitter has more variants (ES2021, ES2022) which map to ESNext in the checker.
-pub fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget {
+/// Convert emitter `ScriptTarget` to checker `ScriptTarget`.
+/// The emitter has more variants (`ES2021`, `ES2022`) which map to `ESNext` in the checker.
+pub const fn checker_target_from_emitter(target: ScriptTarget) -> CheckerScriptTarget {
     match target {
         ScriptTarget::ES3 => CheckerScriptTarget::ES3,
         ScriptTarget::ES5 => CheckerScriptTarget::ES5,
