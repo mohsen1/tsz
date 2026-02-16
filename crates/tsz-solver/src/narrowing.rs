@@ -1634,8 +1634,36 @@ impl<'a> NarrowingContext<'a> {
             return self.db.union(matching);
         }
 
-        // Non-union: delegate to narrow_to_type
-        self.narrow_to_type(source_type, instance_type)
+        // Non-union: use instanceof-specific semantics
+        trace!(
+            "instanceof: non-union path for source_type={}",
+            source_type.0
+        );
+
+        // Try type parameter narrowing first (produces T & InstanceType)
+        if let Some(narrowed) = self.narrow_type_param(resolved_source, instance_type) {
+            return narrowed;
+        }
+
+        // For non-primitive, non-type-param source types, instanceof narrowing
+        // should keep them when there's a potential runtime relationship.
+        // This handles cases like `readonly number[]` narrowed by `instanceof Array`:
+        // - readonly number[] is NOT a subtype of Array<T> (missing mutating methods)
+        // - Array<T> is NOT a subtype of readonly number[] (unbound T)
+        // - But at runtime, a readonly array IS an Array instance
+        if !self.is_js_primitive(resolved_source) {
+            if self.is_assignable_to(resolved_source, instance_type) {
+                return source_type;
+            }
+            if self.is_assignable_to(instance_type, resolved_source) {
+                return instance_type;
+            }
+            // Non-primitive types may still be instances at runtime
+            // Keep the source type rather than returning NEVER.
+            return source_type;
+        }
+        // Primitives can never pass instanceof
+        TypeId::NEVER
     }
 
     /// Narrow a type for the false branch of `instanceof`.
@@ -1656,10 +1684,13 @@ impl<'a> NarrowingContext<'a> {
                     if self.is_js_primitive(member) {
                         return true;
                     }
-                    // Non-primitive: exclude if it's a subtype of the instance type
-                    // (it would have been narrowed to the true branch)
-                    !self.is_assignable_to(member, instance_type)
-                        && !crate::subtype::is_subtype_of_with_db(self.db, member, instance_type)
+                    // Non-primitive: use the true-branch logic to determine if this
+                    // member would be kept by instanceof narrowing. If the true branch
+                    // would keep it, exclude it from the false branch.
+                    let true_result = self.narrow_by_instance_type(member, instance_type);
+                    // If true-branch narrows to NEVER, the member wouldn't pass instanceof
+                    // → keep it in the false branch
+                    true_result == TypeId::NEVER
                 })
                 .copied()
                 .collect();
