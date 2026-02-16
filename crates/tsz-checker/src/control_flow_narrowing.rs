@@ -505,7 +505,12 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // Build narrowing context once for both branches
+        // Extract instance type from constructor expression (AST -> TypeId)
+        let instance_type = self
+            .instance_type_from_constructor(bin.right)
+            .unwrap_or(TypeId::OBJECT);
+
+        // Delegate to solver via unified narrow_type API
         let env_borrow;
         let narrowing = if let Some(env) = &self.type_environment {
             env_borrow = env.borrow();
@@ -514,27 +519,18 @@ impl<'a> FlowAnalyzer<'a> {
             NarrowingContext::new(self.interner)
         };
 
-        if is_true_branch {
-            // Special case for unknown: instanceof narrows to instance type
-            if type_id == TypeId::UNKNOWN {
-                if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-                    return instance_type;
-                }
-                return TypeId::OBJECT;
-            }
+        let result = narrowing.narrow_type(
+            type_id,
+            &TypeGuard::Instanceof(instance_type),
+            is_true_branch,
+        );
 
-            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-                return narrowing.narrow_by_instance_type(type_id, instance_type);
-            }
-
-            self.narrow_to_objectish(type_id)
-        } else {
-            // False branch: exclude types that would match instanceof
-            if let Some(instance_type) = self.instance_type_from_constructor(bin.right) {
-                return narrowing.narrow_by_instanceof_false(type_id, instance_type);
-            }
-            type_id
+        // Fallback for true branch: if narrowing fails, narrow to object-like types
+        if is_true_branch && result == TypeId::NEVER && type_id != TypeId::NEVER {
+            return self.narrow_to_objectish(type_id);
         }
+
+        result
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {
@@ -630,12 +626,21 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // For UNKNOWN, 'prop' in x narrows to object types
-        // TypeScript allows narrowing unknown through 'in' operator
+        // For UNKNOWN, delegate to solver which creates { [prop]: unknown }
+        // This is more precise than just returning object
         if type_id == TypeId::UNKNOWN {
-            // 'prop' in x narrows unknown to object types (objects, arrays, etc.)
-            // Primitives don't have properties that can be checked with 'in'
-            return TypeId::OBJECT;
+            let env_borrow;
+            let narrowing = if let Some(env) = &self.type_environment {
+                env_borrow = env.borrow();
+                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            } else {
+                NarrowingContext::new(self.interner)
+            };
+            return narrowing.narrow_type(
+                type_id,
+                &TypeGuard::InProperty(prop_name),
+                is_true_branch,
+            );
         }
 
         if let TypeParameterConstraintKind::TypeParameter { constraint } =
@@ -1485,7 +1490,28 @@ impl<'a> FlowAnalyzer<'a> {
         let a = self.skip_parenthesized(a);
         let b = self.skip_parenthesized(b);
 
+        // Fast path: same node index
+        if a == b {
+            return true;
+        }
+
+        // Check cache first to avoid O(N²) repeated comparisons
+        let key = (a.0.min(b.0), a.0.max(b.0)); // Normalize order for symmetric lookup
+        if let Some(&cached) = self.reference_match_cache.borrow().get(&key) {
+            return cached;
+        }
+
         trace!(?a, ?b, "is_matching_reference called");
+
+        let result = self.is_matching_reference_uncached(a, b);
+
+        self.reference_match_cache.borrow_mut().insert(key, result);
+        result
+    }
+
+    /// Internal uncached implementation of reference matching.
+    fn is_matching_reference_uncached(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        use tracing::trace;
 
         if let (Some(node_a), Some(node_b)) = (self.arena.get(a), self.arena.get(b)) {
             if node_a.kind == SyntaxKind::ThisKeyword as u16

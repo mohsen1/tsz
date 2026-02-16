@@ -2280,6 +2280,12 @@ impl<'a> NarrowingContext<'a> {
             TypeGuard::Instanceof(instance_type) => {
                 if sense {
                     // Positive: x instanceof Class
+                    // Special case: `unknown` instanceof X narrows to X (or object if X unknown)
+                    // This must be handled here in the solver, not in the checker.
+                    if source_type == TypeId::UNKNOWN {
+                        return *instance_type;
+                    }
+
                     // CRITICAL: The payload is already the Instance Type (extracted by Checker)
                     // Use narrow_by_instance_type for instanceof-specific semantics:
                     // type parameters with matching constraints are kept, but anonymous
