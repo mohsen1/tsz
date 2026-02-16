@@ -631,6 +631,36 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
                 .collect();
         }
 
+        // If no call signatures matched, check non-generic construct signatures.
+        // This handles super() calls and new expressions where the callee
+        // is a Callable with construct signatures (not call signatures).
+        // Skip generic construct signatures: their type parameters must be
+        // inferred by the solver, not used as contextual types for arguments.
+        if param_types.is_empty() {
+            matched = false;
+            for sig in &shape.construct_signatures {
+                if !sig.type_params.is_empty() {
+                    continue;
+                }
+                if self.signature_accepts_arg_count(&sig.params, self.arg_count) {
+                    matched = true;
+                    if let Some(param_type) =
+                        extract_param_type_at(self.db, &sig.params, self.index)
+                    {
+                        param_types.push(param_type);
+                    }
+                }
+            }
+            if param_types.is_empty() && !matched {
+                param_types = shape
+                    .construct_signatures
+                    .iter()
+                    .filter(|sig| sig.type_params.is_empty())
+                    .filter_map(|sig| extract_param_type_at(self.db, &sig.params, self.index))
+                    .collect();
+            }
+        }
+
         collect_single_or_union(self.db, param_types)
     }
 
