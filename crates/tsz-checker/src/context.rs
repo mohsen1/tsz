@@ -320,6 +320,9 @@ pub struct CheckerContext<'a> {
     pub class_instance_resolution_set: FxHashSet<SymbolId>,
     /// O(1) lookup set for class constructor type resolution to avoid recursion.
     pub class_constructor_resolution_set: FxHashSet<SymbolId>,
+    /// Deferred TS7034 candidates: non-ambient variables with no annotation, no init, and type ANY.
+    /// Maps symbol ID → declaration name node. Consumed when a capture is detected.
+    pub pending_implicit_any_vars: FxHashMap<SymbolId, NodeIndex>,
 
     /// Inheritance graph tracking class/interface relationships
     pub inheritance_graph: tsz_solver::inheritance::InheritanceGraph,
@@ -640,6 +643,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: 50,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            pending_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: FxHashSet::default(),
@@ -760,6 +764,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: 50,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            pending_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: FxHashSet::default(),
@@ -871,6 +876,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: 50,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            pending_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: FxHashSet::default(),
@@ -984,6 +990,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: 50,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            pending_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: FxHashSet::default(),
@@ -1096,6 +1103,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: 50,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            pending_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: FxHashSet::default(),
@@ -1228,6 +1236,7 @@ impl<'a> CheckerContext<'a> {
             max_symbol_resolution_depth: 50,
             class_instance_resolution_set: FxHashSet::default(),
             class_constructor_resolution_set: FxHashSet::default(),
+            pending_implicit_any_vars: FxHashMap::default(),
             inheritance_graph: tsz_solver::inheritance::InheritanceGraph::new(),
             node_resolution_stack: Vec::new(),
             node_resolution_set: FxHashSet::default(),

@@ -2007,6 +2007,28 @@ impl<'a> CheckerState<'a> {
                 "get_type_of_identifier: resolved symbol"
             );
 
+            // TS7034: Check if this identifier references a pending implicit-any variable
+            // from a nested function scope (i.e., the variable is captured by a closure).
+            // If so, emit TS7034 at the declaration site.
+            if self.ctx.pending_implicit_any_vars.contains_key(&sym_id) {
+                let ref_fn = self.find_enclosing_function(idx);
+                let decl_name_node = self.ctx.pending_implicit_any_vars[&sym_id];
+                let decl_fn = self.find_enclosing_function(decl_name_node);
+                if ref_fn != decl_fn {
+                    // Variable is captured by a nested function — emit TS7034 at declaration.
+                    let decl_name_node =
+                        self.ctx.pending_implicit_any_vars.remove(&sym_id).unwrap();
+                    if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            decl_name_node,
+                            diagnostic_codes::VARIABLE_IMPLICITLY_HAS_TYPE_IN_SOME_LOCATIONS_WHERE_ITS_TYPE_CANNOT_BE_DETERMIN,
+                            &[&sym.escaped_name, "any"],
+                        );
+                    }
+                }
+            }
+
             if self.is_type_only_import_equals_namespace_expr(idx) {
                 self.error_namespace_used_as_value_at(name, idx);
                 if let Some(sym_id) = self.resolve_identifier_symbol(idx)

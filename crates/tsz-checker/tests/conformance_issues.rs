@@ -1719,3 +1719,71 @@ var f1 = function () {
         "Should NOT emit TS7023 when noImplicitAny is off.\nActual errors: {diagnostics:#?}"
     );
 }
+
+// TS7034: Variable implicitly has type 'any' in some locations where its type cannot be determined.
+
+/// TS7034 should fire for variables without type annotation that are captured by nested functions.
+/// From: implicitAnyDeclareVariablesWithoutTypeAndInit.ts
+#[test]
+fn test_ts7034_captured_variable_in_nested_function() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var y;
+function func(k: any) { y };
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 for variable captured by nested function.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7034 should NOT fire for variables used only at the same scope level.
+#[test]
+fn test_ts7034_not_emitted_for_same_scope_usage() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var x;
+function func(k: any) {};
+func(x);
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7034),
+        "Should NOT emit TS7034 for variable used at same scope level.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7034 should fire for variables captured by arrow functions.
+/// From: controlFlowNoImplicitAny.ts (f10)
+#[test]
+fn test_ts7034_captured_by_arrow_function() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f10() {
+    let x;
+    x = 'hello';
+    const f = () => { x; };
+}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7034),
+        "Should emit TS7034 for variable captured by arrow function.\nActual errors: {diagnostics:#?}"
+    );
+}
