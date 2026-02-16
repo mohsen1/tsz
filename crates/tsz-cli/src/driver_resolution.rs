@@ -639,7 +639,7 @@ pub(crate) fn resolve_module_specifier(
 ) -> Option<PathBuf> {
     let debug = std::env::var_os("TSZ_DEBUG_RESOLVE").is_some();
     if debug {
-        eprintln!(
+        tracing::debug!(
             "resolve_module_specifier: from_file={from_file:?}, specifier={module_specifier:?}, resolution={:?}, base_url={:?}",
             options.effective_module_resolution(),
             options.base_url
@@ -686,21 +686,20 @@ pub(crate) fn resolve_module_specifier(
             package_type,
         ));
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
-        if options.base_url.is_some() {
-            if let Some(paths) = options.paths.as_ref()
+        if options.base_url.is_some()
+            && let Some(paths) = options.paths.as_ref()
                 && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
-            {
-                path_mapping_attempted = true;
-                let base = options.base_url.as_ref().expect("baseUrl present");
-                for target in &mapping.targets {
-                    let substituted = substitute_path_target(target, &wildcard);
-                    let path = if Path::new(&substituted).is_absolute() {
-                        PathBuf::from(substituted)
-                    } else {
-                        base.join(substituted)
-                    };
-                    candidates.extend(expand_module_path_candidates(&path, options, package_type));
-                }
+        {
+            path_mapping_attempted = true;
+            let base = options.base_url.as_ref().expect("baseUrl present");
+            for target in &mapping.targets {
+                let substituted = substitute_path_target(target, &wildcard);
+                let path = if Path::new(&substituted).is_absolute() {
+                    PathBuf::from(substituted)
+                } else {
+                    base.join(substituted)
+                };
+                candidates.extend(expand_module_path_candidates(&path, options, package_type));
             }
         }
 
@@ -756,7 +755,7 @@ pub(crate) fn resolve_module_specifier(
         let exists = known_files.contains(&candidate)
             || (candidate.is_file() && is_valid_module_file(&candidate));
         if debug {
-            eprintln!("candidate={candidate:?} exists={exists}");
+            tracing::debug!("candidate={candidate:?} exists={exists}");
         }
 
         if exists {
@@ -779,7 +778,7 @@ pub(crate) fn resolve_module_specifier(
                 let exists = known_files.contains(&candidate)
                     || (candidate.is_file() && is_valid_module_file(&candidate));
                 if debug {
-                    eprintln!("classic-fallback candidate={candidate:?} exists={exists}");
+                    tracing::debug!("classic-fallback candidate={candidate:?} exists={exists}");
                 }
                 if exists {
                     return Some(canonicalize_or_owned(&candidate));

@@ -2070,8 +2070,8 @@ fn collect_diagnostics(
                                 &program_paths,
                             )
                         {
-                            if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
-                                eprintln!(
+                        if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
+                                tracing::debug!(
                                     "module specifier fallback success: file={} spec={} -> {}",
                                     file_path.display(),
                                     specifier,
@@ -2147,7 +2147,7 @@ fn collect_diagnostics(
                         };
 
                         if std::env::var_os("TSZ_DEBUG_RESOLVE").is_some() {
-                            eprintln!(
+                            tracing::debug!(
                                 "module specifier resolution failed: file={} spec={} failure={:?}",
                                 file_path.display(),
                                 specifier,
