@@ -3,10 +3,6 @@
 //! This module contains modifier, member access, and query methods for `CheckerState`.
 //! Split from `type_checking.rs` for maintainability.
 
-use crate::query_boundaries::type_checking::{
-    first_construct_signature_return_type, is_direct_class_lazy_reference,
-    should_report_accessor_mismatch,
-};
 use crate::state::{CheckerState, MemberAccessLevel};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -36,37 +32,6 @@ impl SyntacticTruthiness {
 }
 
 impl<'a> CheckerState<'a> {
-    // =========================================================================
-    // Helper Functions
-    // =========================================================================
-
-    /// Resolve a type annotation node to its type, handling class references correctly.
-    /// For direct class references in type position (e.g., `a: A` where A is a class),
-    /// this returns the instance type. For `typeof A`, returns the constructor type.
-    fn resolve_type_annotation(&mut self, type_node: NodeIndex) -> TypeId {
-        let type_id = self.get_type_of_node(type_node);
-
-        // Check if this is a direct Lazy reference to a class symbol
-        let is_class_lazy = is_direct_class_lazy_reference(self, type_id);
-
-        if is_class_lazy {
-            // This is a direct class reference - get the instance type
-            let resolved = self.resolve_lazy_type(type_id);
-
-            // Extract instance type from constructor type
-            if let Some(instance_type) =
-                first_construct_signature_return_type(self.ctx.types, resolved)
-            {
-                return instance_type;
-            }
-
-            return resolved;
-        }
-
-        // For non-class references or already-resolved types, use default resolution
-        self.resolve_lazy_type(type_id)
-    }
-
     // =========================================================================
     // Section 27: Modifier and Member Access Utilities
     // =========================================================================
@@ -2159,122 +2124,6 @@ impl<'a> CheckerState<'a> {
 
     // Section 43: Accessor Type Checking
     // -----------------------------------
-
-    /// Check that accessor pairs (get/set) have compatible types.
-    /// The getter return type must be assignable to the setter parameter type.
-    pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
-        use crate::diagnostics::diagnostic_codes;
-        use rustc_hash::FxHashMap;
-
-        // Collect getter return types and setter parameter types
-        struct AccessorTypeInfo {
-            getter: Option<(NodeIndex, TypeId, NodeIndex, bool, bool)>, // (accessor_idx, return_type, body_or_return_pos, is_abstract, is_declared)
-            setter: Option<(NodeIndex, TypeId, bool, bool)>, // (accessor_idx, param_type, is_abstract, is_declared)
-        }
-
-        let mut accessors: FxHashMap<String, AccessorTypeInfo> = FxHashMap::default();
-
-        for &member_idx in members {
-            let Some(node) = self.ctx.arena.get(member_idx) else {
-                continue;
-            };
-
-            if node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && let Some(name) = self.get_property_name(accessor.name)
-                {
-                    // Check if this accessor is abstract or declared
-                    let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
-                    let is_declared = self.has_declare_modifier(&accessor.modifiers);
-
-                    // Get the return type - check explicit annotation first
-                    let return_type = if !accessor.type_annotation.is_none() {
-                        self.resolve_type_annotation(accessor.type_annotation)
-                    } else {
-                        // Infer from return statements in body
-                        self.infer_getter_return_type(accessor.body)
-                    };
-
-                    // Find the position of the return statement for error reporting
-                    let error_pos = self
-                        .find_return_statement_pos(accessor.body)
-                        .unwrap_or(member_idx);
-
-                    let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
-                        getter: None,
-                        setter: None,
-                    });
-                    info.getter =
-                        Some((member_idx, return_type, error_pos, is_abstract, is_declared));
-                }
-            } else if node.kind == syntax_kind_ext::SET_ACCESSOR
-                && let Some(accessor) = self.ctx.arena.get_accessor(node)
-                && let Some(name) = self.get_property_name(accessor.name)
-            {
-                // Check if this accessor is abstract or declared
-                let is_abstract = self.has_abstract_modifier(&accessor.modifiers);
-                let is_declared = self.has_declare_modifier(&accessor.modifiers);
-
-                // Get the parameter type from the setter's first parameter
-                let param_type = if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
-                    if let Some(param) = self.ctx.arena.get_parameter_at(first_param_idx) {
-                        if !param.type_annotation.is_none() {
-                            self.resolve_type_annotation(param.type_annotation)
-                        } else {
-                            TypeId::ANY
-                        }
-                    } else {
-                        TypeId::ANY
-                    }
-                } else {
-                    TypeId::ANY
-                };
-
-                let info = accessors.entry(name).or_insert_with(|| AccessorTypeInfo {
-                    getter: None,
-                    setter: None,
-                });
-                info.setter = Some((member_idx, param_type, is_abstract, is_declared));
-            }
-        }
-
-        // Check type compatibility for each accessor pair
-        for (_, info) in accessors {
-            if let (
-                Some((_getter_idx, getter_type, error_pos, getter_abstract, getter_declared)),
-                Some((_setter_idx, setter_type, setter_abstract, setter_declared)),
-            ) = (info.getter, info.setter)
-            {
-                // Skip if either accessor is abstract - abstract accessors don't need type compatibility checks
-                if getter_abstract || setter_abstract {
-                    continue;
-                }
-
-                // Skip if either accessor is declared - declared accessors don't need type compatibility checks
-                if getter_declared || setter_declared {
-                    continue;
-                }
-
-                // Skip if either type is ANY (no meaningful check)
-                if getter_type == TypeId::ANY || setter_type == TypeId::ANY {
-                    continue;
-                }
-
-                // Check if getter return type is assignable to setter param type
-                if should_report_accessor_mismatch(self, getter_type, setter_type, error_pos) {
-                    // Get type strings for error message
-                    let getter_type_str = self.format_type(getter_type);
-                    let setter_type_str = self.format_type(setter_type);
-
-                    self.error_at_node_msg(
-                        error_pos,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&getter_type_str, &setter_type_str],
-                    );
-                }
-            }
-        }
-    }
 
     /// Recursively check for TS7006 in nested function/arrow expressions within a node.
     /// This handles cases like `async function foo(a = x => x)` where the nested arrow function

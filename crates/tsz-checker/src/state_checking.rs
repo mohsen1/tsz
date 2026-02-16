@@ -4458,9 +4458,9 @@ impl<'a> CheckerState<'a> {
         // Getter and setter must both be abstract or both non-abstract
         self.check_accessor_abstract_consistency(&class.members.nodes);
 
-        // Check for getter/setter type compatibility (error 2322)
-        // Getter return type must be assignable to setter parameter type
-        self.check_accessor_type_compatibility(&class.members.nodes);
+        // NOTE: TS 5.1+ allows divergent getter/setter types (getter return type
+        // does NOT need to be assignable to setter parameter type). The old
+        // check_accessor_type_compatibility has been removed.
 
         // Check strict property initialization (TS2564)
         self.check_property_initialization(stmt_idx, class, is_declared, is_abstract_class);

@@ -528,7 +528,8 @@ fn test_ts2322_no_false_positive_nested_conditional() {
 }
 
 #[test]
-fn test_ts2322_accessor_getter_setter_type_mismatch_message() {
+fn test_ts2322_accessor_divergent_types_allowed_ts51() {
+    // TS 5.1+ allows divergent getter/setter types — no TS2322 expected.
     let source = r#"
         class C {
             get x(): string { return "s"; }
@@ -543,14 +544,8 @@ fn test_ts2322_accessor_getter_setter_type_mismatch_message() {
         .collect();
 
     assert!(
-        !ts2322.is_empty(),
-        "Expected TS2322 for accessor type mismatch; diagnostics: {diagnostics:?}"
-    );
-    assert!(
-        ts2322
-            .iter()
-            .any(|(_, msg)| msg.contains("string") && msg.contains("number")),
-        "Expected accessor TS2322 message to mention string and number; TS2322 diagnostics: {ts2322:?}"
+        ts2322.is_empty(),
+        "TS 5.1+ allows divergent accessor types, should NOT get 2322; diagnostics: {ts2322:?}"
     );
 }
 

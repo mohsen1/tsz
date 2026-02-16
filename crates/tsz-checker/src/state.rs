@@ -778,8 +778,23 @@ impl<'a> CheckerState<'a> {
                 return self.apply_flow_narrowing(idx, cached);
             }
 
-            tracing::trace!(idx = idx.0, type_id = cached.0, "(cached) get_type_of_node");
-            return cached;
+            // TS 5.1+ divergent accessor types: when in a write context
+            // (skip_flow_narrowing is true, used by get_type_of_assignment_target),
+            // property/element access nodes may have a different write type
+            // than the cached read type. Bypass the cache so
+            // get_type_of_property_access can return the write_type.
+            if self.ctx.skip_flow_narrowing
+                && self.ctx.arena.get(idx).is_some_and(|node| {
+                    use tsz_parser::parser::syntax_kind_ext;
+                    node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                })
+            {
+                // Fall through to recompute with write-type awareness
+            } else {
+                tracing::trace!(idx = idx.0, type_id = cached.0, "(cached) get_type_of_node");
+                return cached;
+            }
         }
 
         // Check fuel - return ERROR if exhausted to prevent timeout
