@@ -268,7 +268,7 @@ fn test_resolve_module_specifier_classic_path_mapping_falls_back_to_root() {
     };
     let options =
         resolve_compiler_options(Some(&compiler_options)).expect("resolve compiler options");
-    eprintln!(
+    tracing::debug!(
         "resolved options: base_url={:?} paths={:?} resolution={:?}",
         options.base_url,
         options
