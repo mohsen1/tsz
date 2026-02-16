@@ -1771,14 +1771,20 @@ impl<'a> CheckerState<'a> {
 
             // TS7005: Variable implicitly has an 'any' type
             // Report this error when noImplicitAny is enabled and the variable has no type annotation
-            // and the inferred type is 'any'
+            // and the inferred type is 'any'.
             // Skip destructuring patterns - TypeScript doesn't emit TS7005 for them
-            // because binding elements with default values can infer their types
+            // because binding elements with default values can infer their types.
+            //
+            // For non-ambient declarations, `symbol_types` guards against emitting
+            // TS7005 for control-flow typed variables (e.g., `var x;` later assigned).
+            // For ambient declarations (`declare var foo;`), there's no control flow
+            // so we always emit when the type is implicitly `any`.
+            let is_ambient = self.is_ambient_declaration(decl_idx);
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
                 && final_type == TypeId::ANY
-                && !self.ctx.symbol_types.contains_key(&sym_id)
+                && (is_ambient || !self.ctx.symbol_types.contains_key(&sym_id))
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern =
