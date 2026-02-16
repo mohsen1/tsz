@@ -479,9 +479,10 @@ impl<'a> Printer<'a> {
                 // `import type { ... } from '...'` is erased
                 if let Some(import_data) = self.arena.get_import_decl(node)
                     && let Some(clause_node) = self.arena.get(import_data.import_clause)
-                        && let Some(clause) = self.arena.get_import_clause(clause_node) {
-                            return clause.is_type_only;
-                        }
+                    && let Some(clause) = self.arena.get_import_clause(clause_node)
+                {
+                    return clause.is_type_only;
+                }
                 false
             }
             _ => false,
