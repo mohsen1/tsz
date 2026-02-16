@@ -355,6 +355,46 @@ impl<'a> CheckerState<'a> {
     // Main Assignability Check
     // =========================================================================
 
+    /// Substitute `ThisType` in a type with the enclosing class instance type.
+    ///
+    /// When inside a class body, `ThisType` represents the polymorphic `this` type
+    /// (a type parameter bounded by the class). Since the `this` expression evaluates
+    /// to the concrete class instance type, we must substitute `ThisType` → class
+    /// instance type before assignability checks. This matches tsc's behavior where
+    /// `return this`, `f(this)`, etc. succeed when the target type is `this`.
+    fn substitute_this_type_if_needed(&mut self, type_id: TypeId) -> TypeId {
+        // Fast path: intrinsic types can't contain ThisType
+        if type_id.is_intrinsic() {
+            return type_id;
+        }
+
+        let needs_substitution = tsz_solver::is_this_type(self.ctx.types, type_id)
+            || tsz_solver::contains_this_type(self.ctx.types, type_id);
+        if !needs_substitution {
+            return type_id;
+        }
+
+        let Some(class_info) = &self.ctx.enclosing_class else {
+            return type_id;
+        };
+        let class_idx = class_info.class_idx;
+
+        let Some(node) = self.ctx.arena.get(class_idx) else {
+            return type_id;
+        };
+        let Some(class_data) = self.ctx.arena.get_class(node) else {
+            return type_id;
+        };
+
+        let instance_type = self.get_class_instance_type(class_idx, class_data);
+
+        if tsz_solver::is_this_type(self.ctx.types, type_id) {
+            instance_type
+        } else {
+            tsz_solver::substitute_this_type(self.ctx.types, type_id, instance_type)
+        }
+    }
+
     /// Check if source type is assignable to target type.
     ///
     /// This is the main entry point for assignability checking, used throughout
@@ -366,6 +406,13 @@ impl<'a> CheckerState<'a> {
         // A and B in type_env before we can check if a type is assignable to the intersection.
         self.ensure_relation_input_ready(source);
         self.ensure_relation_input_ready(target);
+
+        // Substitute `ThisType` in the target with the class instance type.
+        // In tsc, `this` acts as a type parameter constrained to the class type.
+        // The `this` expression evaluates to the concrete class instance type, so when
+        // the target (return type, parameter type, etc.) contains `ThisType`, we need to
+        // resolve it to the class instance type before the assignability check.
+        let target = self.substitute_this_type_if_needed(target);
 
         // Pre-check: Function interface accepts any callable type.
         // Must check before evaluate_type_for_assignability resolves Lazy(DefId)
