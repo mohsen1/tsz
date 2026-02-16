@@ -510,13 +510,13 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        // MODULE_BLOCK: check if any statement produces runtime code
+        // MODULE_BLOCK: check if any statement is a value declaration
         if let Some(block) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block.statements
         {
             for &stmt_idx in &stmts.nodes {
                 if let Some(stmt_node) = self.arena.get(stmt_idx)
-                    && !self.is_erased_statement(stmt_node)
+                    && !self.is_type_only_declaration(stmt_node)
                 {
                     return true;
                 }
@@ -524,6 +524,38 @@ impl<'a> Printer<'a> {
         }
 
         false
+    }
+
+    /// Check if a statement is purely a type declaration (interface, type alias, import type).
+    /// Unlike `is_erased_statement`, this does NOT consider function overload signatures as
+    /// type-only, because they still instantiate their containing namespace.
+    fn is_type_only_declaration(&self, node: &Node) -> bool {
+        match node.kind {
+            syntax_kind_ext::INTERFACE_DECLARATION | syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                true
+            }
+            syntax_kind_ext::IMPORT_DECLARATION => {
+                if let Some(import_data) = self.arena.get_import_decl(node)
+                    && let Some(clause_node) = self.arena.get(import_data.import_clause)
+                    && let Some(clause) = self.arena.get_import_clause(clause_node)
+                {
+                    return clause.is_type_only;
+                }
+                false
+            }
+            syntax_kind_ext::EXPORT_DECLARATION => {
+                if let Some(export_data) = self.arena.get_export_decl(node) {
+                    if export_data.is_type_only {
+                        return true;
+                    }
+                    if let Some(inner_node) = self.arena.get(export_data.export_clause) {
+                        return self.is_type_only_declaration(inner_node);
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     /// Check if modifiers include the `export` keyword
