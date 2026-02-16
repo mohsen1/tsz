@@ -400,6 +400,12 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         // Fall back to index signatures for Object types too
         // This handles cases where interfaces/types have index signatures
         // but are stored as Object rather than ObjectWithIndex
+        // For numeric property names (e.g., "1"), check number index signature first
+        if self.name.parse::<f64>().is_ok()
+            && let Some(ref idx) = shape.number_index
+        {
+            return Some(idx.value_type);
+        }
         if let Some(ref idx) = shape.string_index {
             return Some(idx.value_type);
         }
@@ -411,8 +417,14 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         if let Some(ty) = self.visit_object(shape_id) {
             return Some(ty);
         }
-        // Fall back to string index signature value type
         let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        // For numeric property names, check number index signature first
+        if self.name.parse::<f64>().is_ok()
+            && let Some(ref idx) = shape.number_index
+        {
+            return Some(idx.value_type);
+        }
+        // Fall back to string index signature value type
         if let Some(ref idx) = shape.string_index {
             return Some(idx.value_type);
         }
