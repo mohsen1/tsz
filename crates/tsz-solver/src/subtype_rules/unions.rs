@@ -388,6 +388,7 @@ fn narrow_object_property(
     if let Ok(idx) = new_props.binary_search_by(|p| p.name.cmp(&prop_name)) {
         new_props[idx] = PropertyInfo {
             type_id: narrowed_type,
+            write_type: narrowed_type,
             ..new_props[idx].clone()
         };
     }
