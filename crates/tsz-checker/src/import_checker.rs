@@ -1891,6 +1891,8 @@ impl<'a> CheckerState<'a> {
         };
 
         let module_name = &literal.text;
+        let has_import_clause = self.ctx.arena.get(import_clause_idx).is_some();
+        let is_side_effect_import = !has_import_clause;
         let is_type_only_import = self
             .ctx
             .arena
@@ -1971,9 +1973,19 @@ impl<'a> CheckerState<'a> {
             if error_code
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
             {
-                let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
-                error_code = fallback_code;
-                error_message = fallback_message;
+                // Side-effect imports use TS2882 instead of TS2307/TS2792
+                if is_side_effect_import {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                    error_code = diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF;
+                    error_message = format_message(
+                        diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                        &[module_name],
+                    );
+                } else {
+                    let (fallback_message, fallback_code) = self.module_not_found_diagnostic(module_name);
+                    error_code = fallback_code;
+                    error_message = fallback_message;
+                }
             }
             tracing::trace!(%module_name, error_code, "check_import_declaration: resolution error found");
             // Check if we've already emitted an error for this module (prevents duplicate emissions)
@@ -2145,7 +2157,19 @@ impl<'a> CheckerState<'a> {
         // Check if we've already emitted for this module (prevents duplicate emissions)
         if !self.ctx.modules_with_ts2307_emitted.contains(&module_key) {
             self.ctx.modules_with_ts2307_emitted.insert(module_key);
-            let (message, code) = self.module_not_found_diagnostic(module_name);
+            // Side-effect imports (bare `import "module"`) use TS2882 instead of TS2307
+            let (message, code) = if is_side_effect_import {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                (
+                    format_message(
+                        diagnostic_messages::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                        &[module_name],
+                    ),
+                    diagnostic_codes::CANNOT_FIND_MODULE_OR_TYPE_DECLARATIONS_FOR_SIDE_EFFECT_IMPORT_OF,
+                )
+            } else {
+                self.module_not_found_diagnostic(module_name)
+            };
             // Use pre-extracted position instead of error_at_node to avoid
             // silent failures when get_node_span returns None
             self.error_at_position(spec_start, spec_length, &message, code);
