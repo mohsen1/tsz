@@ -2203,16 +2203,11 @@ fn collect_diagnostics(
                                 | ModuleKind::ESNext
                                 | ModuleKind::Preserve
                         );
-                        let resolution_prefers_2792 = matches!(
-                            options.effective_module_resolution(),
-                            tsz::config::ModuleResolutionKind::Classic
-                        );
-
                         let has_explicit_extension =
                             std::path::Path::new(specifier).extension().is_some();
                         if diagnostic.code == tsz::module_resolver::CANNOT_FIND_MODULE
                             && !has_explicit_extension
-                            && (module_kind_prefers_2792 || resolution_prefers_2792)
+                            && module_kind_prefers_2792
                             && options.effective_module_resolution()
                                 != tsz::config::ModuleResolutionKind::Bundler
                         {
