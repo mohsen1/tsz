@@ -513,6 +513,24 @@ impl<'a> CheckerState<'a> {
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
             {
+                // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
+                // Must come before TS2356 to match TSC's diagnostic priority.
+                let mut emitted_strict = false;
+                if let Some(operand_node) = self.ctx.arena.get(unary.operand)
+                    && operand_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(id_data) = self.ctx.arena.get_identifier(operand_node)
+                    && (id_data.escaped_text == "eval" || id_data.escaped_text == "arguments")
+                    && self.is_strict_mode_for_node(unary.operand)
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        unary.operand,
+                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                        &[&id_data.escaped_text],
+                    );
+                    emitted_strict = true;
+                }
+
                 // TS2588: Cannot assign to 'x' because it is a constant.
                 let is_const = self.check_const_assignment(unary.operand);
 
@@ -529,7 +547,8 @@ impl<'a> CheckerState<'a> {
                 let operand_type = self.get_type_of_node(unary.operand);
 
                 // Check if operand is valid for increment/decrement (number, bigint, any, or enum)
-                if !is_const {
+                // Skip when TS1100 was already emitted (TSC prioritizes strict mode over type check)
+                if !is_const && !emitted_strict {
                     use tsz_solver::BinaryOpEvaluator;
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
                     let is_valid = evaluator.is_arithmetic_operand(operand_type);
