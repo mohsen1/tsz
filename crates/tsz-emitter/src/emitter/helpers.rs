@@ -450,6 +450,7 @@ impl<'a> Printer<'a> {
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
                     self.has_declare_modifier(&module.modifiers)
+                        || !self.is_instantiated_module(module.body)
                 } else {
                     false
                 }
@@ -487,6 +488,42 @@ impl<'a> Printer<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Check if a module/namespace has any value-producing (instantiated) members.
+    /// A module is NOT instantiated if it only contains type-only declarations
+    /// (interfaces, type aliases, import type, etc.) or is empty.
+    /// TypeScript skips emitting IIFE wrappers for non-instantiated modules.
+    pub(super) fn is_instantiated_module(&self, module_body: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(module_body) else {
+            return false;
+        };
+
+        // If body is another MODULE_DECLARATION (dotted namespace like Foo.Bar),
+        // recurse into the inner module
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION
+            && let Some(inner_module) = self.arena.get_module(body_node)
+        {
+            return self.is_instantiated_module(inner_module.body);
+        }
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            return false;
+        }
+
+        // MODULE_BLOCK: check if any statement produces runtime code
+        if let Some(block) = self.arena.get_module_block(body_node)
+            && let Some(ref stmts) = block.statements
+        {
+            for &stmt_idx in &stmts.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt_idx)
+                    && !self.is_erased_statement(stmt_node)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if modifiers include the `export` keyword
