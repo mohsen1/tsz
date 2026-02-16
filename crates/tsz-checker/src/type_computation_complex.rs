@@ -2632,9 +2632,13 @@ impl<'a> CheckerState<'a> {
         }
         let is_tdz_in_static_block =
             self.is_variable_used_before_declaration_in_static_block(sym_id, idx);
+        let is_tdz_in_property_initializer =
+            self.is_variable_used_before_declaration_in_computed_property(sym_id, idx);
+        let is_tdz_in_heritage_clause =
+            self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx);
         let is_tdz = is_tdz_in_static_block
-            || self.is_variable_used_before_declaration_in_computed_property(sym_id, idx)
-            || self.is_variable_used_before_declaration_in_heritage_clause(sym_id, idx)
+            || is_tdz_in_property_initializer
+            || is_tdz_in_heritage_clause
             || self.is_class_or_enum_used_before_declaration(sym_id, idx);
         if is_tdz {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -2668,9 +2672,16 @@ impl<'a> CheckerState<'a> {
 
             // TypeScript also reports TS2454 ("used before being assigned") as a
             // companion to TDZ errors in strict-null mode, but ONLY for pure
-            // block-scoped variables — not for class or enum declarations.
-            // Classes get TS2449 and enums get TS2450 without a TS2454 companion.
-            if self.ctx.strict_null_checks()
+            // block-scoped variables in non-deferred contexts:
+            // - Static blocks and regular code → emit companion
+            // - Computed property names → NO companion
+            // - Static property initializers → NO companion
+            // - Heritage clauses → NO companion
+            // - Class/enum declarations → NO companion (they get TS2449/TS2450)
+            if !is_tdz_in_property_initializer
+                && !is_tdz_in_heritage_clause
+                && !self.is_in_static_property_initializer_ast_context(idx)
+                && self.ctx.strict_null_checks()
                 && self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
                     sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
                         && sym.flags
