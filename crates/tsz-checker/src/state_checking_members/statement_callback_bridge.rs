@@ -584,6 +584,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // Continue with comprehensive type alias checking
             if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
+                // TS1212: Check type alias name for strict mode reserved words
+                self.check_strict_mode_reserved_name_at(type_alias.name, type_alias_idx);
+
                 // TS2457: Type alias name cannot be 'undefined'
                 if let Some(name_node) = self.ctx.arena.get(type_alias.name)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
@@ -611,6 +614,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             && let Some(enum_data) = self.ctx.arena.get_enum(node)
         {
             self.check_async_modifier_on_declaration(&enum_data.modifiers);
+            // TS1212: Check enum name for strict mode reserved words
+            self.check_strict_mode_reserved_name_at(enum_data.name, enum_idx);
         }
 
         // Delegate to DeclarationChecker first
@@ -629,6 +634,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
             // Check module body and modifiers
             if let Some(module) = self.ctx.arena.get_module(node) {
+                // TS1212: Check module/namespace name for strict mode reserved words
+                self.check_strict_mode_reserved_name_at(module.name, module_idx);
+
                 // TS1042: async modifier cannot be used on module/namespace declarations
                 self.check_async_modifier_on_declaration(&module.modifiers);
 

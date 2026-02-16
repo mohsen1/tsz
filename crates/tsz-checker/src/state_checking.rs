@@ -40,6 +40,49 @@ pub(crate) fn is_strict_mode_reserved_name(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    /// Check a declaration name node for strict mode reserved words.
+    /// Emits TS1212 (general strict mode) or TS1213 (class context).
+    pub(crate) fn check_strict_mode_reserved_name_at(
+        &mut self,
+        name_idx: tsz_parser::parser::NodeIndex,
+        context_node: tsz_parser::parser::NodeIndex,
+    ) {
+        if name_idx.is_none() || !self.is_strict_mode_for_node(context_node) {
+            return;
+        }
+        let Some(name_node) = self.ctx.arena.get(name_idx) else {
+            return;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return;
+        };
+        if !is_strict_mode_reserved_name(&ident.escaped_text) {
+            return;
+        }
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        if self.ctx.enclosing_class.is_some() {
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                &[&ident.escaped_text],
+            );
+            self.error_at_node(
+                name_idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            );
+        } else {
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                &[&ident.escaped_text],
+            );
+            self.error_at_node(
+                name_idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+            );
+        }
+    }
+
     // =========================================================================
     // Source File Checking (Full Traversal)
     // =========================================================================
@@ -4083,6 +4126,9 @@ impl<'a> CheckerState<'a> {
         if checker.check_class_inheritance_cycle(stmt_idx, class) {
             return; // Cycle detected - error already emitted, skip all type checking
         }
+
+        // TS1212: Check class name for strict mode reserved words
+        self.check_strict_mode_reserved_name_at(class.name, stmt_idx);
 
         // Check for reserved class names (error 2414)
         if !class.name.is_none()
