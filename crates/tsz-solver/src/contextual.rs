@@ -1264,7 +1264,25 @@ impl<'a> ContextualTypeContext<'a> {
                     }
                 }
             }
-            Some(TypeData::Conditional(_) | TypeData::Application(_) | TypeData::Lazy(_)) => {
+            Some(TypeData::Application(app_id)) => {
+                let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
+                if evaluated != expected {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
+                    return ctx.get_property_type(name);
+                }
+                // Fallback for unevaluated Application types (e.g. Readonly<T>, Partial<T>).
+                // When evaluation fails (e.g. due to RefCell borrow conflicts during contextual
+                // typing), try to extract the property from the type argument directly.
+                // This is correct for homomorphic mapped types where property types are preserved.
+                let app = self.interner.type_application(app_id);
+                if !app.args.is_empty() {
+                    let ctx = ContextualTypeContext::with_expected(self.interner, app.args[0]);
+                    if let Some(prop) = ctx.get_property_type(name) {
+                        return Some(prop);
+                    }
+                }
+            }
+            Some(TypeData::Conditional(_) | TypeData::Lazy(_)) => {
                 let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
                 if evaluated != expected {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
