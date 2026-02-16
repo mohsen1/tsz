@@ -1793,7 +1793,6 @@ impl<'a> CheckerState<'a> {
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
                 && final_type == TypeId::ANY
-                && (is_ambient || !self.ctx.symbol_types.contains_key(&sym_id))
             {
                 // Check if the variable name is a destructuring pattern
                 let is_destructuring_pattern =
@@ -1803,12 +1802,23 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        var_decl.name,
-                        diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
-                        &[name, "any"],
-                    );
+                    if is_ambient {
+                        // TS7005: Ambient declarations always emit at the declaration site.
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            var_decl.name,
+                            diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+                            &[name, "any"],
+                        );
+                    } else {
+                        // Non-ambient: defer decision between TS7034 and no-error.
+                        // TS7034 fires when the variable is captured by a nested function.
+                        // Detection happens in get_type_of_identifier when a reference
+                        // to this variable is found inside a nested function scope.
+                        self.ctx
+                            .pending_implicit_any_vars
+                            .insert(sym_id, var_decl.name);
+                    }
                 }
             }
 
