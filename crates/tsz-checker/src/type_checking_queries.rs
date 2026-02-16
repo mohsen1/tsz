@@ -173,6 +173,14 @@ impl<'a> CheckerState<'a> {
         self.has_modifier_kind(modifiers, SyntaxKind::AccessorKeyword)
     }
 
+    /// Check if modifiers include the 'override' keyword.
+    pub(crate) fn has_override_modifier(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        self.has_modifier_kind(modifiers, SyntaxKind::OverrideKeyword)
+    }
+
     /// Check if modifiers include the 'private' keyword.
     pub(crate) fn has_private_modifier(
         &self,

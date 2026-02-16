@@ -2256,6 +2256,14 @@ impl<'a> CheckerState<'a> {
         self.ctx.no_implicit_this()
     }
 
+    /// Resolve the noImplicitOverride setting from source file comments.
+    pub(crate) fn resolve_no_implicit_override_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitoverride") {
+            return value;
+        }
+        self.ctx.no_implicit_override()
+    }
+
     /// Resolve the strictPropertyInitialization setting from source file comments.
     pub(crate) fn resolve_strict_property_initialization_from_source(&self, text: &str) -> bool {
         if let Some(value) = Self::parse_test_option_bool(text, "@strictpropertyinitialization") {

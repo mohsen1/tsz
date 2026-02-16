@@ -213,6 +213,9 @@ pub struct CheckerContext<'a> {
     /// Compiler options for type checking.
     pub compiler_options: CheckerOptions,
 
+    /// Whether `noImplicitOverride` diagnostics are enabled for this source file.
+    pub no_implicit_override: bool,
+
     /// Whether unresolved import diagnostics should be emitted by the checker.
     /// The CLI driver handles module resolution in multi-file mode.
     ///
@@ -606,6 +609,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
+            no_implicit_override: false,
             symbol_types: FxHashMap::default(),
             symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -725,6 +729,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
+            no_implicit_override: false,
             symbol_types: FxHashMap::default(),
             symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -835,6 +840,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
+            no_implicit_override: false,
             symbol_types: FxHashMap::default(),
             symbol_instance_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -947,6 +953,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
+            no_implicit_override: false,
             symbol_types: cache.symbol_types,
             symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
@@ -1058,6 +1065,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
+            no_implicit_override: false,
             symbol_types: cache.symbol_types,
             symbol_instance_types: cache.symbol_instance_types,
             var_decl_types: FxHashMap::default(),
@@ -1176,6 +1184,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             report_unresolved_imports: false,
+            no_implicit_override: parent.no_implicit_override,
             // Share symbol caches: after merge, all binders use global SymbolIds,
             // so SymbolId(N) means the same entity regardless of which arena/binder
             // the child checker operates on. Sharing avoids redundant re-resolution
@@ -2594,6 +2603,11 @@ impl<'a> CheckerContext<'a> {
     /// Check if noImplicitThis is enabled.
     pub const fn no_implicit_this(&self) -> bool {
         self.compiler_options.no_implicit_this
+    }
+
+    /// Check if noImplicitOverride is enabled.
+    pub const fn no_implicit_override(&self) -> bool {
+        self.no_implicit_override
     }
 
     /// Check if strictNullChecks is enabled.
