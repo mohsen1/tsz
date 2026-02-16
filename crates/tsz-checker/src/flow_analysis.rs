@@ -1977,7 +1977,7 @@ impl<'a> CheckerState<'a> {
             self.ctx.file_name.clone(),
             pos,
             length,
-            format!("Variable '{name}' is used before being assigned"),
+            format!("Variable '{name}' is used before being assigned."),
             2454, // TS2454
         ));
     }
@@ -2079,6 +2079,13 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // Skip definite assignment check if this identifier is an assignment target
+        // in a destructuring assignment — it's being written to, not read.
+        // e.g., `let x: string; [x] = items;` — the `x` is being assigned to.
+        if self.is_destructuring_assignment_target(idx) {
+            return false;
+        }
+
         // Get the symbol
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return false;
@@ -2111,9 +2118,33 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // If there's an initializer, no need to check definite assignment
+        // If there's an initializer, skip definite assignment check — unless the variable
+        // is `var` (function-scoped) and the usage is before the declaration in source
+        // order.  `var` hoists the binding but NOT the initializer, so at the usage
+        // point the variable is `undefined`.  Block-scoped variables (let/const) don't
+        // need this: TDZ checks handle pre-declaration use separately.
         if !var_data.initializer.is_none() {
-            return false;
+            let is_function_scoped =
+                symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
+            if !is_function_scoped {
+                return false;
+            }
+            // For `var` with initializer, only proceed when usage is before the
+            // declaration in source order (the initializer hasn't executed yet).
+            let usage_before_decl = self
+                .ctx
+                .arena
+                .get(idx)
+                .and_then(|usage_node| {
+                    self.ctx
+                        .arena
+                        .get(decl_id)
+                        .map(|decl_node| usage_node.pos < decl_node.pos)
+                })
+                .unwrap_or(false);
+            if !usage_before_decl {
+                return false;
+            }
         }
 
         // If there's a definite assignment assertion (!), skip check
@@ -2274,6 +2305,43 @@ impl<'a> CheckerState<'a> {
             && for_data.initializer == idx
         {
             return true;
+        }
+        false
+    }
+
+    /// Check if an identifier is an assignment target in a destructuring assignment.
+    /// e.g., `[x] = a` or `({x} = a)` — the `x` is being written to, not read.
+    fn is_destructuring_assignment_target(&self, idx: NodeIndex) -> bool {
+        let mut current = idx;
+        for _ in 0..10 {
+            let Some(info) = self.ctx.arena.node_info(current) else {
+                return false;
+            };
+            let parent = info.parent;
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    || k == syntax_kind_ext::SPREAD_ELEMENT
+                    || k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT =>
+                {
+                    current = parent;
+                }
+                k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                    // Check this is the LHS of a simple assignment (=)
+                    if let Some(bin) = self.ctx.arena.get_binary_expr(parent_node)
+                        && bin.operator_token == SyntaxKind::EqualsToken as u16
+                        && bin.left == current
+                    {
+                        return true;
+                    }
+                    return false;
+                }
+                _ => return false,
+            }
         }
         false
     }
