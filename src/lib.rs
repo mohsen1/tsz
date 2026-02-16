@@ -578,6 +578,7 @@ impl CompilerOptions {
             resolve_json_module: false, // WASM API: defaults to false
             check_js: false,            // WASM API: defaults to false
             no_resolve: false,
+            no_implicit_override: false,
         }
     }
 }

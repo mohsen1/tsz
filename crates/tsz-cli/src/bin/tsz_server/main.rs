@@ -388,6 +388,8 @@ struct CheckOptions {
     check_js: bool,
     #[serde(default)]
     resolve_json_module: bool,
+    #[serde(default)]
+    no_implicit_override: bool,
 }
 
 /// Legacy response to client
@@ -4425,6 +4427,7 @@ impl Server {
             resolve_json_module: options.resolve_json_module,
             check_js: options.check_js,
             no_resolve: options.no_resolve,
+            no_implicit_override: options.no_implicit_override,
         }
     }
 }

@@ -3617,6 +3617,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_unused_parameters {
         options.checker.no_unused_parameters = true;
     }
+    if args.no_implicit_override {
+        options.checker.no_implicit_override = true;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
