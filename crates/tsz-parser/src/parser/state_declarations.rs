@@ -2311,6 +2311,16 @@ impl ParserState {
                     self.token_pos(),
                     self.token_pos(),
                 )
+            } else if self.is_token(SyntaxKind::CloseBraceToken) {
+                // TS1109: `if (cond) }` — missing then-clause. Emit "Expression expected"
+                // at the `}` position and create an empty statement. Don't consume `}` so
+                // it can close the enclosing block.
+                self.error_expression_expected();
+                self.arena.add_token(
+                    syntax_kind_ext::EMPTY_STATEMENT,
+                    self.token_pos(),
+                    self.token_pos(),
+                )
             } else {
                 self.parse_statement()
             };
