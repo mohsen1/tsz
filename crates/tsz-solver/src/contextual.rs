@@ -133,6 +133,20 @@ impl<'a> TypeVisitor for ReturnTypeExtractor<'a> {
         collect_single_or_union(self.db, return_types)
     }
 
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // For unions of callable types, extract return type from each member
+        // and create a union of the results.
+        let members = self.db.type_list(TypeListId(list_id));
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor = ReturnTypeExtractor::new(self.db);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_single_or_union(self.db, types)
+    }
+
     fn default_output() -> Self::Output {
         None
     }
@@ -440,6 +454,21 @@ impl<'a> TypeVisitor for PropertyExtractor<'a> {
         }
     }
 
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // For unions, extract the property from each member and combine as a union.
+        // e.g., for { foo: ... } with contextual type A | B,
+        // the contextual type of `foo` is A["foo"] | B["foo"].
+        let members = self.db.type_list(TypeListId(list_id));
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor = PropertyExtractor::new(self.db, self.name.clone());
+                extractor.extract(member)
+            })
+            .collect();
+        collect_single_or_union(self.db, types)
+    }
+
     fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
         let members = self.db.type_list(TypeListId(list_id));
         for &member in members.iter() {
@@ -554,6 +583,34 @@ impl<'a> TypeVisitor for ParameterExtractor<'a> {
             // If noImplicitAny is true, create a union type
             self.no_implicit_any.then(|| self.db.union(param_types))
         }
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // For unions of callable types, extract the parameter type from each member
+        // and create a union of the results.
+        // e.g., ((a: number) => void) | ((a: string) => void) at index 0 => number | string
+        let members = self.db.type_list(TypeListId(list_id));
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor =
+                    ParameterExtractor::new(self.db, self.index, self.no_implicit_any);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_single_or_union(self.db, types)
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> Self::Output {
+        // For intersections, try each member and return the first match.
+        let members = self.db.type_list(TypeListId(list_id));
+        for &member in members.iter() {
+            let mut extractor = ParameterExtractor::new(self.db, self.index, self.no_implicit_any);
+            if let Some(ty) = extractor.extract(member) {
+                return Some(ty);
+            }
+        }
+        None
     }
 
     fn default_output() -> Self::Output {
@@ -674,6 +731,20 @@ impl<'a> TypeVisitor for ParameterForCallExtractor<'a> {
         }
 
         collect_single_or_union(self.db, param_types)
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> Self::Output {
+        // For unions, extract parameter types from each member and combine.
+        let members = self.db.type_list(TypeListId(list_id));
+        let types: Vec<TypeId> = members
+            .iter()
+            .filter_map(|&member| {
+                let mut extractor =
+                    ParameterForCallExtractor::new(self.db, self.index, self.arg_count);
+                extractor.extract(member)
+            })
+            .collect();
+        collect_single_or_union(self.db, types)
     }
 
     fn default_output() -> Self::Output {
@@ -830,8 +901,9 @@ impl<'a> ContextualTypeContext<'a> {
             return None;
         }
 
-        // Handle Mapped and Conditional types by evaluating them first
-        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_)) = self.interner.lookup(expected)
+        // Handle Mapped, Conditional, and Lazy types by evaluating them first
+        if let Some(TypeData::Mapped(_) | TypeData::Conditional(_) | TypeData::Lazy(_)) =
+            self.interner.lookup(expected)
         {
             let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
