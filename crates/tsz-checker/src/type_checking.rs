@@ -2753,22 +2753,82 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Collect interface type parameter names in declaration order.
-    fn interface_type_parameter_names(&self, decl_idx: NodeIndex) -> Option<Vec<String>> {
-        let node = self.ctx.arena.get(decl_idx)?;
-        let interface = self.ctx.arena.get_interface(node)?;
-        let list = interface.type_parameters.as_ref()?;
+    /// Compare interface type parameters across declarations for declaration-merge compatibility.
+    ///
+    /// - Parameter names must match and appear in the same order.
+    /// - Parameter constraints must be mutually assignable when both are present.
+    /// - Missing constraints are compatible with any constraint (e.g. `T` vs `T extends number`).
+    fn interface_type_parameters_are_merge_compatible(
+        &mut self,
+        first: NodeIndex,
+        second: NodeIndex,
+    ) -> bool {
+        let Some(first_profile) = self.interface_type_parameter_profile(first) else {
+            return false;
+        };
+        let Some(second_profile) = self.interface_type_parameter_profile(second) else {
+            return false;
+        };
 
-        let mut names = Vec::with_capacity(list.nodes.len());
-        for &param_idx in &list.nodes {
-            let param_node = self.ctx.arena.get(param_idx)?;
-            let param = self.ctx.arena.get_type_parameter(param_node)?;
-            let name_node = self.ctx.arena.get(param.name)?;
-            let ident = self.ctx.arena.get_identifier(name_node)?;
-            names.push(self.ctx.arena.resolve_identifier_text(ident).to_string());
+        if first_profile.len() != second_profile.len() {
+            return false;
         }
 
-        Some(names)
+        for i in 0..first_profile.len() {
+            let (first_name, first_constraint) = &first_profile[i];
+            let (second_name, second_constraint) = &second_profile[i];
+
+            if first_name != second_name {
+                return false;
+            }
+
+            if let (Some(first_constraint), Some(second_constraint)) =
+                (first_constraint, second_constraint)
+                && (!self.is_assignable_to(*first_constraint, *second_constraint)
+                    || !self.is_assignable_to(*second_constraint, *first_constraint))
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Collect interface type parameter names and constraint type ids.
+    fn interface_type_parameter_profile(
+        &mut self,
+        decl_idx: NodeIndex,
+    ) -> Option<Vec<(String, Option<TypeId>)>> {
+        let node = self.ctx.arena.get(decl_idx)?;
+        let interface = self.ctx.arena.get_interface(node)?;
+        let list = match interface.type_parameters.as_ref() {
+            Some(list) => list,
+            None => return Some(Vec::new()),
+        };
+
+        let mut profile = Vec::with_capacity(list.nodes.len());
+        for &param_idx in &list.nodes {
+            let param_node = self.ctx.arena.get(param_idx)?;
+            let type_param = self.ctx.arena.get_type_parameter(param_node)?;
+            let param_name_node = self.ctx.arena.get(type_param.name)?;
+            let param_name = self.ctx.arena.get_identifier(param_name_node)?;
+
+            let constraint = if type_param.constraint != NodeIndex::NONE {
+                Some(self.get_type_from_type_node(type_param.constraint))
+            } else {
+                None
+            };
+
+            profile.push((
+                self.ctx
+                    .arena
+                    .resolve_identifier_text(param_name)
+                    .to_string(),
+                constraint,
+            ));
+        }
+
+        Some(profile)
     }
 
     /// Verify that a declaration node actually has a name matching the expected symbol name.
@@ -3400,13 +3460,17 @@ impl<'a> CheckerState<'a> {
 
                     self.check_merged_interface_declaration_diagnostics(&decls_in_scope);
 
-                    let Some(baseline) = self.interface_type_parameter_names(decls_in_scope[0])
-                    else {
-                        continue;
-                    };
-                    let mismatch = decls_in_scope[1..].iter().any(|&decl_idx| {
-                        self.interface_type_parameter_names(decl_idx) != Some(baseline.clone())
-                    });
+                    let mismatch =
+                        decls_in_scope
+                            .as_slice()
+                            .split_first()
+                            .is_some_and(|(baseline, rest)| {
+                                rest.iter().any(|&decl_idx| {
+                                    !self.interface_type_parameters_are_merge_compatible(
+                                        *baseline, decl_idx,
+                                    )
+                                })
+                            });
                     if mismatch {
                         let message = format_message(
                             diagnostic_messages::ALL_DECLARATIONS_OF_MUST_HAVE_IDENTICAL_TYPE_PARAMETERS,
@@ -4104,13 +4168,11 @@ impl<'a> CheckerState<'a> {
             // Merge diagnostics only when interface type parameters are identical.
             // TS2428 is reported separately; once mismatched, compatibility checks
             // should not be compared across declarations in the same scope.
-            let Some(baseline_params) =
-                self.interface_type_parameter_names(declarations_in_scope[0])
-            else {
+            let Some(first_decl) = declarations_in_scope.first().copied() else {
                 continue;
             };
-            if declarations_in_scope[1..].iter().any(|&decl_idx| {
-                self.interface_type_parameter_names(decl_idx) != Some(baseline_params.clone())
+            if !declarations_in_scope[1..].iter().all(|&decl_idx| {
+                self.interface_type_parameters_are_merge_compatible(first_decl, decl_idx)
             }) {
                 continue;
             }
