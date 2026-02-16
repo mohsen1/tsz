@@ -2441,15 +2441,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Check if target is a Lazy(DefId) that resolves to a known intrinsic interface
-        // (like Function). We must check BEFORE evaluate_type() because evaluation
-        // resolves Lazy(DefId) → ObjectShape, losing the DefId identity needed to
+        // Check if target is the Function interface from lib.d.ts.
+        // We must check BEFORE evaluate_type() because evaluation resolves
+        // Lazy(DefId) → ObjectShape, losing the DefId identity needed to
         // recognize the type as an intrinsic interface.
         if !self.bypass_evaluation
-            && let Some(t_def) = lazy_def_id(self.interner, target)
-            && self
+            && (lazy_def_id(self.interner, target).is_some_and(|t_def| {
+                self.resolver
+                    .is_boxed_def_id(t_def, IntrinsicKind::Function)
+            }) || self
                 .resolver
-                .is_boxed_def_id(t_def, IntrinsicKind::Function)
+                .is_boxed_type_id(target, IntrinsicKind::Function))
         {
             let source_eval = self.evaluate_type(source);
             if self.is_callable_type(source_eval) {
@@ -2790,6 +2792,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         //    produce different TypeIds for the same Function interface)
         let is_function_target = intrinsic_kind(self.interner, target)
             == Some(IntrinsicKind::Function)
+            || self
+                .resolver
+                .is_boxed_type_id(target, IntrinsicKind::Function)
             || self
                 .resolver
                 .get_boxed_type(IntrinsicKind::Function)
