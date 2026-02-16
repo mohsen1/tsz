@@ -40,7 +40,8 @@
           }
         ]
       }
-    ]
+    ],
+    "PreToolUse": []
   },
   "enabledPlugins": {
     "explanatory-output-style@claude-plugins-official": true,

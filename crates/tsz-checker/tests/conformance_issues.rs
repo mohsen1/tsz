@@ -1536,3 +1536,116 @@ b({ callback: (x) => {} });
         "Should NOT emit TS7006 - 'x' should be contextually typed as number from Opts.callback.\nActual errors: {diagnostics:#?}"
     );
 }
+
+// TS7022: Variable implicitly has type 'any' because it does not have a type annotation
+// and is referenced directly or indirectly in its own initializer.
+
+/// TS7022 should fire for direct self-referencing object literals under noImplicitAny.
+/// From: recursiveObjectLiteral.ts
+#[test]
+fn test_ts7022_recursive_object_literal() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var a = { f: a };
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7022),
+        "Should emit TS7022 for self-referencing object literal.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire when noImplicitAny is off (like all 7xxx diagnostics).
+#[test]
+fn test_ts7022_not_emitted_without_no_implicit_any() {
+    let opts = CheckerOptions {
+        no_implicit_any: false,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var a = { f: a };
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 when noImplicitAny is off.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire when the self-reference is in a function body (deferred context).
+/// From: declFileTypeofFunction.ts
+#[test]
+fn test_ts7022_not_emitted_for_function_body_reference() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+var foo3 = function () {
+    return foo3;
+}
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for self-reference in function body (deferred context).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire for class expression initializers with method body references.
+/// From: classExpression4.ts
+#[test]
+fn test_ts7022_not_emitted_for_class_expression_body_reference() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+let C = class {
+    foo() {
+        return new C();
+    }
+};
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for self-reference in class method body (deferred context).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7022 should NOT fire for arrow function body self-references.
+/// From: simpleRecursionWithBaseCase3.ts
+#[test]
+fn test_ts7022_not_emitted_for_arrow_body_reference() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..Default::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+const fn1 = () => {
+  if (Math.random() > 0.5) {
+    return fn1()
+  }
+  return 0
+}
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7022),
+        "Should NOT emit TS7022 for self-reference in arrow function body (deferred context).\nActual errors: {diagnostics:#?}"
+    );
+}
