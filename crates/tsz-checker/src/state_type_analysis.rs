@@ -642,20 +642,48 @@ impl<'a> CheckerState<'a> {
             ty
         };
 
-        if !has_type_args
-            && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
-            && (expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                || expr_node.kind
-                    == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        if !has_type_args && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
+            // Handle QualifiedName (e.g. `typeof x.p`) by resolving as value property access.
+            // QualifiedName in typeof context means value.property, not namespace.member,
+            // so we can't send it through get_type_of_node which dispatches to resolve_qualified_name.
+            if expr_node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+                if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
+                    let left_idx = qn.left;
+                    let right_idx = qn.right;
+                    // Resolve the left side as a value expression (with flow narrowing)
+                    let prev_skip = self.ctx.skip_flow_narrowing;
+                    self.ctx.skip_flow_narrowing = false;
+                    let left_type = self.get_type_of_node(left_idx);
+                    self.ctx.skip_flow_narrowing = prev_skip;
+                    if left_type != TypeId::ANY && left_type != TypeId::ERROR {
+                        // Look up the right side as a property on the left type
+                        if let Some(right_node) = self.ctx.arena.get(right_idx)
+                            && let Some(ident) = self.ctx.arena.get_identifier(right_node)
+                        {
+                            let prop_name = ident.escaped_text.clone();
+                            let object_type = self.resolve_type_for_property_access(left_type);
+                            use tsz_solver::operations_property::PropertyAccessResult;
+                            match self.resolve_property_access_with_env(object_type, &prop_name) {
+                                PropertyAccessResult::Success { type_id, .. } => {
+                                    return type_id;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            } else if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                || expr_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || expr_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                 || expr_node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16
-                || expr_node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16)
-        {
-            // Prefer flow-aware value-space type at the query site.
-            // This keeps `typeof expr` aligned with control-flow narrowing.
-            let expr_type = flow_type_for_query_expr(self);
-            if expr_type != TypeId::ANY && expr_type != TypeId::ERROR {
-                return expr_type;
+                || expr_node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16
+            {
+                // Prefer flow-aware value-space type at the query site.
+                // This keeps `typeof expr` aligned with control-flow narrowing.
+                let expr_type = flow_type_for_query_expr(self);
+                if expr_type != TypeId::ANY && expr_type != TypeId::ERROR {
+                    return expr_type;
+                }
             }
         }
 
