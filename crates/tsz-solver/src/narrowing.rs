@@ -1616,12 +1616,12 @@ impl<'a> NarrowingContext<'a> {
                         if self.is_assignable_to(instance_type, member) {
                             return Some(instance_type);
                         }
-                        // Non-primitive members with no detected assignability
-                        // relation are still kept — they may be class instances
-                        // that could pass instanceof at runtime (e.g., Date with
-                        // instanceof Object). The is_assignable_to check can miss
-                        // some Ref type relationships.
-                        Some(member)
+                        // Neither direction holds — create intersection per tsc
+                        // semantics. This handles cases like Date instanceof Object
+                        // where assignability checks may miss the relationship.
+                        // The intersection preserves the member's shape while
+                        // constraining it to the instance type.
+                        Some(self.db.intersection2(member, instance_type))
                     })
                     .collect()
             };
