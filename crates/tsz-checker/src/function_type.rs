@@ -830,7 +830,23 @@ impl<'a> CheckerState<'a> {
                 self.ctx.iteration_depth = 0;
                 self.ctx.switch_depth = 0;
                 // Note: function_depth was already incremented at body entry
+                // For expression-bodied arrows (non-block bodies), propagate the
+                // contextual return type so nested expressions (object literals,
+                // lambdas) retain proper contextual typing during statement checking.
+                let prev_ctx_for_body = self.ctx.contextual_type;
+                if let Some(body_node) = self.ctx.arena.get(body)
+                    && body_node.kind != syntax_kind_ext::BLOCK
+                    && !has_type_annotation
+                {
+                    let body_return_context = ctx_helper
+                        .as_ref()
+                        .and_then(tsz_solver::ContextualTypeContext::get_return_type);
+                    if body_return_context.is_some() {
+                        self.ctx.contextual_type = body_return_context;
+                    }
+                }
                 self.check_statement(body);
+                self.ctx.contextual_type = prev_ctx_for_body;
                 // Restore control flow context
                 self.ctx.iteration_depth = saved_cf_context.0;
                 self.ctx.switch_depth = saved_cf_context.1;
