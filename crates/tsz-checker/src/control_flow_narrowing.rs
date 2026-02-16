@@ -522,7 +522,11 @@ impl<'a> FlowAnalyzer<'a> {
         // 1. Instance type narrowing
         // 2. Intersection fallback for interface vs class
         // 3. Object-like filtering for primitives
-        narrowing.narrow_type(type_id, &TypeGuard::Instanceof(instance_type), is_true_branch)
+        narrowing.narrow_type(
+            type_id,
+            &TypeGuard::Instanceof(instance_type),
+            is_true_branch,
+        )
     }
 
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {

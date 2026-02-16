@@ -1134,8 +1134,7 @@ impl<'a> NarrowingContext<'a> {
                 if narrowed_constraint != constraint {
                     trace!(
                         "Type parameter constraint narrowed from {} to {}, creating intersection",
-                        constraint.0,
-                        narrowed_constraint.0
+                        constraint.0, narrowed_constraint.0
                     );
                     return self.db.intersection2(source_type, narrowed_constraint);
                 }

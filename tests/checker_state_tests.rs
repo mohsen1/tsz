@@ -10521,7 +10521,6 @@ type Alias = Foo.Bar;
 ///
 /// NOTE: Currently ignored - see `test_checker_namespace_merges_with_class_element_access`.
 #[test]
-#[ignore = "Namespace-class merging not fully implemented"]
 fn test_checker_namespace_merges_with_class_value_exports() {
     use crate::parser::ParserState;
 
@@ -10560,14 +10559,17 @@ const direct = Foo.value;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const value = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging with class in reverse order
 ///
-/// NOTE: Currently ignored - see `test_checker_namespace_merges_with_class_element_access`.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-class merging not fully implemented"]
 fn test_checker_namespace_merges_with_class_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -10606,7 +10608,11 @@ const direct = Foo.value;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const value = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging across declarations for value access
@@ -10727,10 +10733,8 @@ const value: Merge.B = { y: 1 };
 
 /// Test namespace merging with function for value exports
 ///
-/// NOTE: Currently ignored - namespace-function merging is not fully implemented.
-/// Similar to namespace-class and namespace-enum merging issues.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-function merging not fully implemented"]
 fn test_checker_namespace_merges_with_function_value_exports() {
     use crate::parser::ParserState;
 
@@ -10769,14 +10773,17 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging with function in reverse order
 ///
-/// NOTE: Currently ignored - see `test_checker_namespace_merges_with_function_value_exports`.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-function merging not fully implemented"]
 fn test_checker_namespace_merges_with_function_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -10818,7 +10825,11 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 #[test]
@@ -10949,10 +10960,8 @@ type Alias = Merge.Extra;
 
 /// Test namespace merging with enum for value exports
 ///
-/// NOTE: Currently ignored - namespace-enum merging is not fully implemented.
-/// Similar to namespace-class merging issues.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-enum merging not fully implemented"]
 fn test_checker_namespace_merges_with_enum_value_exports() {
     use crate::parser::ParserState;
 
@@ -10993,14 +11002,17 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 /// Test namespace merging with enum in reverse order
 ///
-/// NOTE: Currently ignored - see `test_checker_namespace_merges_with_enum_value_exports`.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-enum merging not fully implemented"]
 fn test_checker_namespace_merges_with_enum_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -11044,7 +11056,11 @@ const direct = Merge.extra;
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const extra = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 #[test]
@@ -11179,11 +11195,8 @@ type Alias = Merge.Extra;
 
 /// Test namespace merging with class for element access
 ///
-/// NOTE: Currently ignored - namespace-class merging is not fully implemented.
-/// When a namespace and class with the same name are merged, element access
-/// should work correctly, but the type resolution doesn't handle this case properly.
+/// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "Namespace-class merging not fully implemented"]
 fn test_checker_namespace_merges_with_class_element_access() {
     use crate::parser::ParserState;
 
@@ -11222,7 +11235,11 @@ const direct = Foo["value"];
         .file_locals
         .get("direct")
         .expect("direct should exist");
-    assert_eq!(checker.get_type_of_symbol(direct_sym), TypeId::NUMBER);
+    // `export const value = 1` produces literal type `1`, not `number`
+    assert_eq!(
+        checker.get_type_of_symbol(direct_sym),
+        types.literal_number(1.0)
+    );
 }
 
 #[test]
