@@ -562,6 +562,13 @@ impl<'a> Printer<'a> {
                     if output.starts_with(&var_prefix) {
                         output = output[var_prefix.len()..].to_string();
                     }
+                } else if self.in_namespace_iife && !enum_name.is_empty() {
+                    // Inside namespace IIFE, use `let` instead of `var` for enum declarations
+                    let var_prefix = format!("var {enum_name};");
+                    let let_prefix = format!("let {enum_name};");
+                    if output.starts_with(&var_prefix) {
+                        output = format!("{let_prefix}{}", &output[var_prefix.len()..]);
+                    }
                 }
                 self.write(&output);
 
@@ -738,15 +745,16 @@ impl<'a> Printer<'a> {
     ) {
         let name = self.get_identifier_text_idx(module.name);
 
-        // Only emit var/let declaration if not already declared
-        if !self.declared_namespace_names.contains(&name) {
-            // Nested namespaces inside a namespace body use `let`
-            // Dotted namespaces (Foo.Bar) use `var` for the inner part
-            let keyword = if self.in_namespace_iife && parent_name.is_none() {
-                "let"
-            } else {
-                "var"
-            };
+        // Determine if we should emit a variable declaration for this namespace.
+        // Inside a namespace IIFE, always emit `let` (each IIFE creates a new function scope).
+        // At top level, skip `var` if name already declared by class/function/enum.
+        let should_declare = if self.in_namespace_iife {
+            true // Always need `let` inside IIFE body
+        } else {
+            !self.declared_namespace_names.contains(&name)
+        };
+        if should_declare {
+            let keyword = if self.in_namespace_iife { "let" } else { "var" };
             self.write(keyword);
             self.write(" ");
             self.write(&name);
