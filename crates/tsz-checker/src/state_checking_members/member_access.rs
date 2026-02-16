@@ -379,6 +379,9 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1212: Check interface name for strict mode reserved words
+        self.check_strict_mode_reserved_name_at(iface.name, stmt_idx);
+
         // Push type parameters BEFORE checking heritage clauses
         // This allows heritage clauses to reference the interface's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
