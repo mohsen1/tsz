@@ -1264,8 +1264,16 @@ impl<'a> CheckerState<'a> {
                 } else {
                     lowering.lower_interface_declarations_with_symbol(&symbol.declarations, sym_id)
                 };
-                let merged =
+                // First try the standard heritage merge (works for user-arena interfaces).
+                let mut merged =
                     self.merge_interface_heritage_types(&symbol.declarations, interface_type);
+                // If standard merge didn't propagate heritage (common for lib interfaces
+                // whose declarations live in lib arenas invisible to self.ctx.arena),
+                // fall back to the lib-aware heritage merge.
+                if merged == interface_type {
+                    let name = symbol.escaped_name.clone();
+                    merged = self.merge_lib_interface_heritage(merged, &name);
+                }
 
                 self.pop_type_parameters(updates);
 
