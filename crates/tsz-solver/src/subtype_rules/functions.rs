@@ -704,13 +704,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Return type is covariant
-        if !self
-            .check_return_compat(
-                source_instantiated.return_type,
-                target_instantiated.return_type,
-            )
-            .is_true()
-        {
+        let return_result = self.check_return_compat(
+            source_instantiated.return_type,
+            target_instantiated.return_type,
+        );
+        if !return_result.is_true() {
             return SubtypeResult::False;
         }
 

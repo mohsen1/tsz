@@ -688,7 +688,7 @@ pub(crate) fn resolve_module_specifier(
     } else if matches!(resolution, ModuleResolutionKind::Classic) {
         if options.base_url.is_some()
             && let Some(paths) = options.paths.as_ref()
-                && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
+            && let Some((mapping, wildcard)) = select_path_mapping(paths, &specifier)
         {
             path_mapping_attempted = true;
             let base = options.base_url.as_ref().expect("baseUrl present");
