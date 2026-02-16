@@ -1142,7 +1142,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         // For now, delegate to TypeLowering
-        // This will be expanded as we move more logic here
         let type_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
         let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
         let lowering = TypeLowering::with_resolvers(
