@@ -1174,6 +1174,8 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_solver::instantiate_type;
+        let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
+        let perf_start = perf_enabled.then(std::time::Instant::now);
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -1184,7 +1186,53 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the type of the callee
-        let mut callee_type = self.get_type_of_node(call.expression);
+        let callee_start = perf_enabled.then(std::time::Instant::now);
+        let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
+            if callee_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                let direct_symbol = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&call.expression.0)
+                    .copied();
+                let fast_symbol = direct_symbol
+                    .or_else(|| self.resolve_identifier_symbol(call.expression))
+                    .filter(|&sym_id| {
+                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                            symbol.escaped_name
+                                == self
+                                    .ctx
+                                    .arena
+                                    .get_identifier(callee_node)
+                                    .map(|ident| ident.escaped_text.as_str())
+                                    .unwrap_or_default()
+                                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                                && (symbol.decl_file_idx == u32::MAX
+                                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                        })
+                    });
+                if let Some(sym_id) = fast_symbol {
+                    self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.get_type_of_node(call.expression)
+                }
+            } else {
+                self.get_type_of_node(call.expression)
+            }
+        } else {
+            self.get_type_of_node(call.expression)
+        };
+        if let Some(start) = callee_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "call_callee",
+                args = call.arguments.as_ref().map_or(0, |a| a.nodes.len()),
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
         trace!(
             callee_type = ?callee_type,
             callee_expr = ?call.expression,
@@ -1208,6 +1256,7 @@ impl<'a> CheckerState<'a> {
             Some(a) => a.nodes.as_slice(),
             None => &[],
         };
+        let arg_collect_start = perf_enabled.then(std::time::Instant::now);
 
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
@@ -1535,8 +1584,17 @@ impl<'a> CheckerState<'a> {
                 None, // No skipping needed for single-pass
             )
         };
+        if let Some(start) = arg_collect_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "call_collect_args",
+                args = args.len(),
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
 
         // Delegate the call resolution to solver boundary helpers.
+        let prepare_start = perf_enabled.then(std::time::Instant::now);
         self.ensure_relation_input_ready(callee_type_for_resolution);
         self.ensure_relation_inputs_ready(&arg_types);
 
@@ -1582,7 +1640,16 @@ impl<'a> CheckerState<'a> {
         // Ensure relation preconditions (lazy refs + application symbols) for callee/args.
         self.ensure_relation_input_ready(callee_type_for_call);
         self.ensure_relation_inputs_ready(&arg_types);
+        if let Some(start) = prepare_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "call_prepare",
+                args = args.len(),
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
 
+        let resolve_start = perf_enabled.then(std::time::Instant::now);
         let result = {
             let env = self.ctx.type_env.borrow();
             // super() calls are constructor calls, not function calls.
@@ -1608,6 +1675,14 @@ impl<'a> CheckerState<'a> {
                 )
             }
         };
+        if let Some(start) = resolve_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "call_resolve",
+                args = args.len(),
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
 
         let call_context = CallResultContext {
             callee_expr: call.expression,
@@ -1618,7 +1693,25 @@ impl<'a> CheckerState<'a> {
             is_super_call,
             is_optional_chain: nullish_cause.is_some(),
         };
-        self.handle_call_result(result, call_context)
+        let handle_start = perf_enabled.then(std::time::Instant::now);
+        let final_type = self.handle_call_result(result, call_context);
+        if let Some(start) = handle_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "call_handle",
+                args = args.len(),
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        if let Some(start) = perf_start {
+            tracing::info!(
+                target: "wasm::perf",
+                phase = "call_expr",
+                args = args.len(),
+                ms = start.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        final_type
     }
 
     /// Handle the result of a call evaluation, emitting diagnostics for errors
