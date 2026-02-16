@@ -1116,13 +1116,24 @@ impl ParserState {
                 || self.is_token(SyntaxKind::OpenBracketToken);
 
             if !can_start_next {
-                // Next token cannot start a declaration - emit error for missing declaration
-                // and break to avoid consuming tokens that belong to the next statement
-                use tsz_common::diagnostics::diagnostic_codes;
-                if !self.is_token(SyntaxKind::SemicolonToken)
-                    && !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                // Trailing comma in variable declaration list — emit TS1009.
+                // This covers `var a,;`, `var a,}`, and `var a,` (EOF).
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                if self.is_token(SyntaxKind::SemicolonToken)
+                    || self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken)
                 {
+                    // Report at the comma position (one token back).
+                    // The comma was already consumed by parse_optional above.
+                    let end = self.token_pos();
+                    let start = end.saturating_sub(1);
+                    self.parse_error_at(
+                        start,
+                        1,
+                        diagnostic_messages::TRAILING_COMMA_NOT_ALLOWED,
+                        diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+                    );
+                } else {
                     self.parse_error_at_current_token(
                         "Variable declaration expected.",
                         diagnostic_codes::VARIABLE_DECLARATION_EXPECTED,
