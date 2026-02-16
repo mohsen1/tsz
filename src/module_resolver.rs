@@ -990,6 +990,7 @@ impl ModuleResolver {
     }
 
     /// Resolve an export/import value to a string path
+    #[allow(clippy::only_used_in_recursion)]
     fn resolve_export_target_to_string(
         &self,
         value: &PackageExports,
