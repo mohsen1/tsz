@@ -165,6 +165,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             count
         } else if let Some(TypeData::Literal(_)) = self.interner().lookup(type_id) {
             1
+        } else if let Some(TypeData::Enum(_, structural_type)) = self.interner().lookup(type_id) {
+            // Enum member types wrap a literal - delegate to the structural type
+            self.count_literal_members_impl(structural_type, depth + 1)
         } else if type_id == TypeId::STRING
             || type_id == TypeId::NUMBER
             || type_id == TypeId::BOOLEAN
@@ -257,6 +260,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     vec![self.interner().resolve_atom_ref(atom).to_string()]
                 }
             }
+        } else if let Some(TypeData::Enum(_, structural_type)) = self.interner().lookup(type_id) {
+            // Enum member types wrap a literal (e.g., AnimalType.cat wraps "cat").
+            // Delegate to the structural type to extract the underlying literal string.
+            self.extract_literal_strings_impl(structural_type, depth + 1)
         } else {
             // Not a literal type - can't extract string
             Vec::new()

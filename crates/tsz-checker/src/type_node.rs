@@ -140,6 +140,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             _ => {
                 use tsz_binder::symbol_flags;
                 use tsz_lowering::TypeLowering;
+                use tsz_parser::parser::syntax_kind_ext;
                 use tsz_solver::is_compiler_managed_type;
 
                 let type_param_bindings: Vec<(tsz_common::interner::Atom, TypeId)> = self
@@ -232,8 +233,34 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 // Create def_id_resolver to prefer Lazy(DefId) over Ref(SymbolRef)
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
-                    let sym_id = type_resolver(node_idx)?;
-                    Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+                    // Try identifier resolution first (existing path)
+                    if let Some(sym_id) = type_resolver(node_idx) {
+                        return Some(self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)));
+                    }
+
+                    // Handle qualified names (e.g., AnimalType.cat in template literal types).
+                    // When a qualified name appears inside `${...}` in a template literal type,
+                    // we need to resolve the left side to a symbol and look up the right member.
+                    let node = self.ctx.arena.get(node_idx)?;
+                    if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                        let qn = self.ctx.arena.get_qualified_name(node)?;
+
+                        // Resolve the left identifier to a symbol
+                        let left_sym_raw = type_resolver(qn.left)?;
+                        let left_sym_id = tsz_binder::SymbolId(left_sym_raw);
+                        let left_symbol = self.ctx.binder.get_symbol(left_sym_id)?;
+
+                        // Get the right identifier name
+                        let right_node = self.ctx.arena.get(qn.right)?;
+                        let right_ident = self.ctx.arena.get_identifier(right_node)?;
+                        let right_name = right_ident.escaped_text.as_str();
+
+                        // Look up the member in exports (handles enum members, namespace exports)
+                        let member_sym_id = left_symbol.exports.as_ref()?.get(right_name)?;
+                        return Some(self.ctx.get_or_create_def_id(member_sym_id));
+                    }
+
+                    None
                 };
 
                 let mut lowering = TypeLowering::with_hybrid_resolver(
