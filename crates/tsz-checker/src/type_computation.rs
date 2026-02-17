@@ -454,6 +454,9 @@ impl<'a> CheckerState<'a> {
         match unary.operator {
             // ! returns boolean — also check operand for always-truthy/falsy (TS2872/TS2873)
             k if k == SyntaxKind::ExclamationToken as u16 => {
+                // Type-check operand fully so inner expression diagnostics fire
+                // (e.g. TS18050 for `!(null + undefined)`).
+                self.get_type_of_node(unary.operand);
                 self.check_truthy_or_falsy(unary.operand);
                 TypeId::BOOLEAN
             }
