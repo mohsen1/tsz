@@ -619,6 +619,17 @@ fn process_test_file(
                     parsed.directives.options,
                 )
             }
+            tsz_conformance::text_decode::DecodedSourceText::TextWithOriginalBytes(content, _) => {
+                let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
+                if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
+                    return Ok(None);
+                }
+                (
+                    content,
+                    parsed.directives.filenames,
+                    parsed.directives.options,
+                )
+            }
             tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => (
                 String::from_utf8_lossy(&bytes).into_owned(),
                 Vec::new(),

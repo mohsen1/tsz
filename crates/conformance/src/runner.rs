@@ -759,6 +759,111 @@ impl Runner {
                     Ok(TestResult::Skipped("no TSC cache"))
                 }
             }
+            DecodedSourceText::TextWithOriginalBytes(_decoded_text, original_bytes) => {
+                // UTF-16 with BOM: directives were parsed from decoded text, but
+                // we write the original bytes so tsz detects the BOM and emits TS1490.
+                if print_test_files {
+                    println!("\n📄 Test file (UTF-16 BOM): {}", path.display());
+                    println!("{}", "-".repeat(60));
+                    println!(
+                        "(UTF-16 file: {} bytes, preserving original encoding)",
+                        original_bytes.len()
+                    );
+                    println!("{}", "-".repeat(60));
+                }
+
+                if let Some(tsc_result) = cache::lookup(&cache, &key) {
+                    let options: HashMap<String, String> = HashMap::new();
+                    let ext = path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("ts")
+                        .to_string();
+                    let prepared = tokio::task::spawn_blocking({
+                        let bytes = original_bytes.clone();
+                        let ext = ext.clone();
+                        let options = options.clone();
+                        move || tsz_wrapper::prepare_binary_test_dir(&bytes, &ext, &options)
+                    })
+                    .await??;
+
+                    let compile_result = if let Some(ref pool) = pool {
+                        let timeout_dur = if timeout_secs > 0 {
+                            Duration::from_secs(timeout_secs)
+                        } else {
+                            Duration::ZERO
+                        };
+                        match pool.compile(prepared.temp_dir.path(), timeout_dur).await? {
+                            BatchOutcome::Done(output) => tsz_wrapper::parse_batch_output(
+                                &output,
+                                prepared.temp_dir.path(),
+                                options,
+                            ),
+                            BatchOutcome::Crashed => return Ok(TestResult::Crashed),
+                            BatchOutcome::Timeout => return Ok(TestResult::Timeout),
+                        }
+                    } else {
+                        let child = tokio::process::Command::new(&tsz_binary)
+                            .arg("--project")
+                            .arg(prepared.temp_dir.path())
+                            .arg("--noEmit")
+                            .arg("--pretty")
+                            .arg("false")
+                            .stdout(std::process::Stdio::piped())
+                            .stderr(std::process::Stdio::piped())
+                            .kill_on_drop(true)
+                            .spawn()?;
+
+                        let output = if timeout_secs > 0 {
+                            match tokio::time::timeout(
+                                Duration::from_secs(timeout_secs),
+                                child.wait_with_output(),
+                            )
+                            .await
+                            {
+                                Ok(result) => result?,
+                                Err(_) => return Ok(TestResult::Timeout),
+                            }
+                        } else {
+                            child.wait_with_output().await?
+                        };
+
+                        tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
+                    };
+
+                    if compile_result.crashed {
+                        return Ok(TestResult::Crashed);
+                    }
+
+                    let tsc_codes: std::collections::HashSet<_> =
+                        tsc_result.error_codes.iter().cloned().collect();
+                    let tsz_codes: std::collections::HashSet<_> =
+                        compile_result.error_codes.iter().cloned().collect();
+
+                    let missing: Vec<_> = tsc_codes.difference(&tsz_codes).cloned().collect();
+                    let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
+
+                    if missing.is_empty() && extra.is_empty() {
+                        Ok(TestResult::Pass)
+                    } else {
+                        let mut expected = tsc_result.error_codes.clone();
+                        let mut actual = compile_result.error_codes.clone();
+                        expected.sort();
+                        actual.sort();
+                        Ok(TestResult::Fail {
+                            expected,
+                            actual,
+                            missing,
+                            extra,
+                            missing_fingerprints: vec![],
+                            extra_fingerprints: vec![],
+                            options: HashMap::new(),
+                        })
+                    }
+                } else {
+                    Ok(TestResult::Skipped("no TSC cache"))
+                }
+            }
             DecodedSourceText::Binary(binary) => {
                 if print_test_files {
                     println!("\n📄 Test file (binary): {}", path.display());
