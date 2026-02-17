@@ -487,6 +487,13 @@ impl<'a> CheckerState<'a> {
                         let resolved = self.get_type_of_symbol(base_sym_id);
                         if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                             base_type = Some(resolved);
+                            // Also retrieve type params so that substitution works correctly.
+                            // Without this, extending generic types from other files
+                            // (e.g., `interface Foo extends Array<number>`) would leave
+                            // type parameters unsubstituted in inherited members.
+                            if base_type_params.is_empty() {
+                                base_type_params = self.get_type_params_for_symbol(base_sym_id);
+                            }
                         }
                     }
 
