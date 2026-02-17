@@ -3630,7 +3630,8 @@ fn test_parser_await_type_in_async_context() {
 #[test]
 fn test_parser_arrow_function_missing_param_type() {
     // ArrowFunction1.ts: var v = (a: ) => {};
-    // Should emit TS1110 (Type expected), not TS1005
+    // TSC does NOT emit TS1110 here — `)` is a terminator that indicates a missing
+    // type, not an incorrect token. The parser silently creates a missing type node.
     let source = "var v = (a: ) => {};";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
@@ -3640,9 +3641,10 @@ fn test_parser_arrow_function_missing_param_type() {
         .iter()
         .map(|diag| diag.code)
         .collect();
+    // Should NOT emit TS1110 for delimiter tokens — tsc silently recovers
     assert!(
-        codes.contains(&diagnostic_codes::TYPE_EXPECTED),
-        "Expected TS1110 for missing parameter type: {:?}",
+        !codes.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Should not emit TS1110 for missing type before ')': {:?}",
         parser.get_diagnostics()
     );
     // Should not emit generic "identifier expected" TS1005
@@ -3656,7 +3658,7 @@ fn test_parser_arrow_function_missing_param_type() {
 #[test]
 fn test_parser_arrow_function_missing_param_type_paren() {
     // parserX_ArrowFunction1.ts: var v = (a: ) => {};
-    // Similar to above, ensure we emit TS1110
+    // TSC silently recovers — no TS1110 for missing type before ')'
     let source = "var v = (a: ) => { };";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
@@ -3667,8 +3669,8 @@ fn test_parser_arrow_function_missing_param_type_paren() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::TYPE_EXPECTED),
-        "Expected TS1110 for missing parameter type: {:?}",
+        !codes.contains(&diagnostic_codes::TYPE_EXPECTED),
+        "Should not emit TS1110 for missing type before ')': {:?}",
         parser.get_diagnostics()
     );
 }

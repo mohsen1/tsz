@@ -328,9 +328,14 @@ impl ParserState {
     pub(crate) fn parse_primary_type(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
-        // If we encounter a token that can't start a type, emit TS1110 instead of TS1005
+        // If we encounter a token that can't start a type, emit TS1110 (Type expected).
+        // However, suppress the error for delimiter/terminator tokens that indicate a
+        // *missing* type rather than an *incorrect* token used as a type. TSC silently
+        // creates a missing node for these cases (e.g., `(a: ) =>`, `x: ;`).
         if !self.can_token_start_type() {
-            self.error_type_expected();
+            if !self.is_type_terminator_token() {
+                self.error_type_expected();
+            }
             // Return a synthetic identifier node to allow parsing to continue
             return self.arena.add_identifier(
                 SyntaxKind::Identifier as u16,
