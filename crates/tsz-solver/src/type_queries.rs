@@ -2877,6 +2877,32 @@ pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     }
 }
 
+/// Check if a type is a "unit type" — a type with exactly one inhabitant.
+///
+/// Unit types: null, undefined, void, true, false, string/number/bigint literals.
+/// A union is a unit type if ALL its members are unit types (e.g. `"A" | "B" | null`).
+pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NULL
+        || type_id == TypeId::UNDEFINED
+        || type_id == TypeId::VOID
+        || type_id == TypeId::BOOLEAN_TRUE
+        || type_id == TypeId::BOOLEAN_FALSE
+    {
+        return true;
+    }
+
+    if crate::visitor::is_literal_type_db(db, type_id) {
+        return true;
+    }
+
+    if let Some(list_id) = crate::visitor::union_list_id(db, type_id) {
+        let members = db.type_list(list_id);
+        return members.iter().all(|&m| is_unit_type(db, m));
+    }
+
+    false
+}
+
 /// Extracts the return type from a callable type for declaration emit.
 ///
 /// For overloaded functions (Callable), returns the return type of the first signature.

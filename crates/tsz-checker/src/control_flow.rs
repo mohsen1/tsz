@@ -1309,18 +1309,6 @@ impl<'a> FlowAnalyzer<'a> {
         final_result
     }
 
-    /// Widen literal types to their primitive types for array destructuring.
-    ///
-    /// In array destructuring contexts, literals are widened to their base primitives:
-    /// - `1` -> `number`
-    /// - `"hello"` -> `string`
-    /// - `true` -> `boolean`
-    ///
-    /// This matches TypeScript's behavior where `[x] = [1]` narrows `x` to `number`, not literal `1`.
-    fn widen_to_primitive(&self, type_id: TypeId) -> TypeId {
-        tsz_solver::type_queries::widen_literal_to_primitive(self.interner, type_id)
-    }
-
     /// Check if an assignment node is a mutable variable declaration (let/var) without a type annotation.
     /// Used to determine when literal types should be widened to their base types.
     fn is_mutable_var_decl_without_annotation(&self, node: NodeIndex) -> bool {
@@ -1519,7 +1507,11 @@ impl<'a> FlowAnalyzer<'a> {
                             k if k == SyntaxKind::PlusEqualsToken as u16 => {
                                 // If RHS is a numeric literal, we can safely infer NUMBER
                                 if let Some(literal_type) = self.literal_type_from_node(bin.right)
-                                    && self.is_number_type(literal_type)
+                                    && (literal_type == TypeId::NUMBER
+                                        || tsz_solver::type_queries::is_number_literal(
+                                            self.interner,
+                                            literal_type,
+                                        ))
                                 {
                                     return Some(TypeId::NUMBER);
                                 }
@@ -1581,13 +1573,19 @@ impl<'a> FlowAnalyzer<'a> {
                 // Example: [x] = [1] widens to number, ({ x } = { x: 1 }) widens to number
                 // Also handles default values: [x = 2] = [] widens to number
                 if widen_literals_for_destructuring {
-                    return Some(self.widen_to_primitive(literal_type));
+                    return Some(tsz_solver::type_queries::widen_literal_to_primitive(
+                        self.interner,
+                        literal_type,
+                    ));
                 }
                 // For mutable variable declarations (let/var) without type annotations,
                 // widen literal types to their base types to match TypeScript behavior.
                 // Example: let x = "hi" -> string (not "hi"), let x = 42 -> number (not 42)
                 if self.is_mutable_var_decl_without_annotation(assignment_node) {
-                    return Some(self.widen_to_primitive(literal_type));
+                    return Some(tsz_solver::type_queries::widen_literal_to_primitive(
+                        self.interner,
+                        literal_type,
+                    ));
                 }
                 return Some(literal_type);
             }
@@ -1735,13 +1733,6 @@ impl<'a> FlowAnalyzer<'a> {
             k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => Some("??"),
             _ => None,
         }
-    }
-
-    /// Check if a type is a number type (NUMBER or number literal).
-    /// Used to infer result types for compound assignments when type checker results aren't available.
-    fn is_number_type(&self, type_id: TypeId) -> bool {
-        type_id == TypeId::NUMBER
-            || tsz_solver::type_queries::is_number_literal(self.interner, type_id)
     }
 
     pub(crate) fn assignment_rhs_for_reference(
@@ -2842,51 +2833,6 @@ impl<'a> FlowAnalyzer<'a> {
         (flags & node_flags::CONST) != 0
     }
 
-    /// Check if a type is a unit type (literal, null, undefined, or unique symbol).
-    ///
-    /// Unit types are types that represent exactly one value.
-    /// This is important for !== narrowing: we can only narrow by !== if
-    /// the other side is a unit type.
-    ///
-    /// Examples of unit types:
-    /// - Literals: "foo", 42, true, false, 0n
-    /// - Nullish: null, undefined, void
-    /// - Unions of unit types: "A" | "B" | null (all members are unit types)
-    ///
-    /// Non-unit types:
-    /// - Primitives with multiple values: string, number, boolean, bigint
-    /// - Objects, arrays, etc.
-    fn is_unit_type(&self, type_id: TypeId) -> bool {
-        // 1. Check intrinsics that are unit types
-        if type_id == TypeId::NULL
-            || type_id == TypeId::UNDEFINED
-            || type_id == TypeId::VOID
-            || type_id == TypeId::BOOLEAN_TRUE
-            || type_id == TypeId::BOOLEAN_FALSE
-        {
-            return true;
-        }
-
-        // 2. Check for Literal types (String/Number/BigInt literals)
-        use tsz_solver::visitor::is_literal_type_db;
-        if is_literal_type_db(self.interner, type_id) {
-            return true;
-        }
-
-        // 3. CRITICAL: Check Unions
-        // A union is a unit type if ALL its members are unit types
-        // e.g. "A" | "B" | null is a unit type
-        // This allows: if (x !== y) where y: "A" | "B" to narrow x correctly
-        use tsz_solver::visitor::union_list_id;
-        if let Some(list_id) = union_list_id(self.interner, type_id) {
-            let members = self.interner.type_list(list_id);
-            // Recursively check all members
-            return members.iter().all(|&m| self.is_unit_type(m));
-        }
-
-        false
-    }
-
     /// Narrow type based on a binary expression (===, !==, typeof checks, etc.)
     pub(crate) fn narrow_by_binary_expr(
         &self,
@@ -3057,7 +3003,7 @@ impl<'a> FlowAnalyzer<'a> {
                             &TypeGuard::LiteralEquality(right_type),
                             true,
                         );
-                    } else if self.is_unit_type(right_type) {
+                    } else if tsz_solver::type_queries::is_unit_type(self.interner, right_type) {
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
@@ -3077,7 +3023,7 @@ impl<'a> FlowAnalyzer<'a> {
                             &TypeGuard::LiteralEquality(left_type),
                             true,
                         );
-                    } else if self.is_unit_type(left_type) {
+                    } else if tsz_solver::type_queries::is_unit_type(self.interner, left_type) {
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),
