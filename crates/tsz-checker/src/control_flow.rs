@@ -312,16 +312,28 @@ impl<'a> FlowAnalyzer<'a> {
             //
             // This tells the recursive traversal: "If you hit this loop header again,
             // assume its type is current_type and stop"
+            //
+            // We inject under TWO keys: one with initial_type (for the outer check_flow's
+            // cache lookup) and one with current_type (for the inner back-edge traversal
+            // which uses current_type as its initial_type).
             if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
                 let key = (loop_flow_id, sym_id, initial_type);
                 cache.borrow_mut().insert(key, current_type);
+                if current_type != initial_type {
+                    let inner_key = (loop_flow_id, sym_id, current_type);
+                    cache.borrow_mut().insert(inner_key, current_type);
+                }
             }
 
             // Union entry type with all back-edge types (antecedents[1+])
             for &back_edge in loop_flow.antecedent.iter().skip(1) {
-                // Get the type at the back-edge point in the flow
-                // Thanks to the cache injection above, this won't infinitely recurse
-                let back_edge_type = self.get_flow_type(reference, initial_type, back_edge);
+                // Use current_type (the current loop assumption) as the initial type
+                // for back-edge traversal instead of the declared type. This ensures
+                // narrowing inside the loop body uses the loop's computed type, not
+                // the full declared type. E.g., if declared type is string|number|boolean
+                // but the loop only assigns string and number, narrowing typeof !== "number"
+                // should give string (not string|boolean).
+                let back_edge_type = self.get_flow_type(reference, current_type, back_edge);
 
                 // Union current type with back-edge type
                 current_type = self.interner.union(vec![current_type, back_edge_type]);
@@ -536,11 +548,11 @@ impl<'a> FlowAnalyzer<'a> {
                         // Antecedent already computed — use its narrowed type
                         (ant_type, ant)
                     } else if !visited.contains(&ant) {
-                        // Antecedent not yet computed — defer if it's a CONDITION
-                        // (else-if chain) or CALL (which carries assertion narrowing
-                        // or passes through the narrowed type from its own antecedent).
-                        // This ensures nested type guards chain correctly:
-                        //   if (hasLegs(x)) { if (hasWings(x)) { x.legs; } }
+                        // Antecedent not yet computed — defer if it produces a
+                        // meaningful narrowed type we need to wait for:
+                        //   CONDITION: else-if chains (nested type guards)
+                        //   CALL: assertion functions
+                        //   LOOP_LABEL: loop fixed-point analysis (incomplete types)
                         let ant_flags = self
                             .binder
                             .flow_nodes
@@ -548,7 +560,8 @@ impl<'a> FlowAnalyzer<'a> {
                             .map(|f| f.flags)
                             .unwrap_or(0);
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
-                            || (ant_flags & flow_flags::CALL) != 0;
+                            || (ant_flags & flow_flags::CALL) != 0
+                            || (ant_flags & flow_flags::LOOP_LABEL) != 0;
                         if ant_needs_defer {
                             if !in_worklist.contains(&ant) {
                                 worklist.push_front((ant, current_type));
@@ -1592,28 +1605,25 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 return Some(nullish_type);
             }
-            // Fall back to type checker's result for non-literal expressions
+            // For variable declarations with type annotations, preserve the declared
+            // type (return None) in two cases:
             //
-            // FIX: For variable declarations with type annotations where the RHS is a
-            // structural literal (object/array), the declared type should be preserved —
-            // don't let the initializer's structural type override the annotated type.
-            // Literal and nullish initializers (handled above) still narrow correctly,
-            // but object/array literals produce structural types that lose optional
-            // properties and interface identity.
+            // 1. Non-const (let/var) declarations: the declared type is the authoritative
+            //    flow type. E.g., `let x: string | number = "hello"` has flow type
+            //    `string | number`, not `"hello"`. Critical for loop fixed-point analysis.
             //
-            // Example: `var obj4: I<number,string> = { one: 1 };`
-            //   - Declared type: I<number, string> (includes two?: string)
-            //   - Initializer type: { one: number } (missing the optional property)
-            //   - Without this fix, flow uses { one: number } instead of I<number, string>
-            //
-            // We only apply this for object/array literals. Type assertions like
-            // `{} as any` and other expressions should still use the node_types result.
-            if self.is_var_decl_with_type_annotation(assignment_node)
-                && let Some(rhs_node) = self.arena.get(rhs)
-                && (rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                    || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
-            {
-                return None;
+            // 2. Object/array literal initializers (even const): the structural type
+            //    loses optional properties and interface/readonly modifiers.
+            //    E.g., `const xs: readonly number[] = [1, 2]` must keep `readonly number[]`.
+            if self.is_var_decl_with_type_annotation(assignment_node) {
+                let is_const = self.is_const_variable_declaration(assignment_node);
+                let is_structural_literal = self.arena.get(rhs).is_some_and(|rhs_node| {
+                    rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                        || rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                });
+                if !is_const || is_structural_literal {
+                    return None;
+                }
             }
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
