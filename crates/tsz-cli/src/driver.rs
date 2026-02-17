@@ -891,14 +891,15 @@ fn compile_inner(
 
     let disable_default_libs = resolved.lib_is_default && sources_have_no_default_lib(&sources);
     // `@noTypesAndSymbols` in source comments is a conformance-harness directive.
-    let no_types_and_symbols =
+    // It should not change CLI semantic compilation behavior (tsc ignores it when
+    // compiling files directly), so keep detection for harness plumbing only.
+    let _no_types_and_symbols =
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
-    let lib_paths: Vec<PathBuf> =
-        if resolved.checker.no_lib || disable_default_libs || no_types_and_symbols {
-            Vec::new()
-        } else {
-            resolved.lib_files.clone()
-        };
+    let lib_paths: Vec<PathBuf> = if resolved.checker.no_lib || disable_default_libs {
+        Vec::new()
+    } else {
+        resolved.lib_files.clone()
+    };
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
     // Load and bind each lib exactly once, then reuse for:
     // 1) user-file binding (global symbol availability during bind)
