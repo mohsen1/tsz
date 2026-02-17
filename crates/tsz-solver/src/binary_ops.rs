@@ -198,6 +198,18 @@ impl TypeVisitor for PrimitiveClassVisitor {
     }
 }
 
+/// Check if an intrinsic primitive type overlaps with a literal value.
+/// e.g., `string` overlaps with `"foo"`, `number` overlaps with `42`.
+const fn intrinsic_overlaps_literal(kind: IntrinsicKind, value: &LiteralValue) -> bool {
+    matches!(
+        (kind, value),
+        (IntrinsicKind::String, LiteralValue::String(_))
+            | (IntrinsicKind::Number, LiteralValue::Number(_))
+            | (IntrinsicKind::Boolean, LiteralValue::Boolean(_))
+            | (IntrinsicKind::Bigint, LiteralValue::BigInt(_))
+    )
+}
+
 /// Visitor to check type overlap for comparison operations.
 struct OverlapChecker<'a> {
     db: &'a dyn TypeDatabase,
@@ -268,17 +280,21 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
     }
 
     fn visit_literal(&mut self, value: &LiteralValue) -> Self::Output {
-        // Check if left is a literal with same value
+        // Check if left is a literal with same value, or a supertype of the literal
         match self.db.lookup(self.left) {
             Some(TypeData::Literal(left_lit)) => left_lit == *value,
             Some(TypeData::Union(members)) => {
-                // Check if left's union contains this literal
+                // Check if left's union contains this literal or a supertype
                 let members = self.db.type_list(members);
                 members.iter().any(|&m| match self.db.lookup(m) {
                     Some(TypeData::Literal(lit)) => lit == *value,
+                    Some(TypeData::Intrinsic(kind)) => intrinsic_overlaps_literal(kind, value),
                     _ => false,
                 })
             }
+            // An intrinsic primitive type overlaps with its corresponding literal type
+            // e.g., `string` overlaps with `"foo"`, `number` overlaps with `42`
+            Some(TypeData::Intrinsic(kind)) => intrinsic_overlaps_literal(kind, value),
             _ => false,
         }
     }
