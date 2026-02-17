@@ -868,6 +868,8 @@ fn compile_inner(
     for source in all_sources {
         if source.is_binary {
             // Emit TS1490 "File appears to be binary." for binary files
+            // Do NOT add binary files to sources - they should not be parsed/checked,
+            // which would produce spurious TS1127 ("Invalid character") errors.
             binary_file_diagnostics.push(Diagnostic::error(
                 source.path.to_string_lossy().into_owned(),
                 0,
@@ -875,8 +877,9 @@ fn compile_inner(
                 "File appears to be binary.".to_string(),
                 diagnostic_codes::FILE_APPEARS_TO_BE_BINARY,
             ));
+        } else {
+            sources.push(source);
         }
-        sources.push(source);
     }
 
     // Collect all files that were read (including dependencies) before sources is moved
