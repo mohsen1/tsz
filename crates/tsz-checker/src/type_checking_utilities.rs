@@ -929,6 +929,79 @@ impl<'a> CheckerState<'a> {
     ///     return 1;
     /// }
     /// ```
+    /// Lightweight AST scan: does the function body contain any `throw` statements?
+    /// This is used as a pre-check before the more expensive `function_body_falls_through`
+    /// to avoid triggering type evaluation in simple function bodies that obviously fall through.
+    fn body_contains_throw_or_never_call(&self, body_idx: NodeIndex) -> bool {
+        fn scan_stmts(arena: &tsz_parser::parser::NodeArena, stmts: &[NodeIndex]) -> bool {
+            use tsz_parser::parser::syntax_kind_ext;
+            for &idx in stmts {
+                let Some(node) = arena.get(idx) else {
+                    continue;
+                };
+                match node.kind {
+                    syntax_kind_ext::THROW_STATEMENT => return true,
+                    syntax_kind_ext::BLOCK => {
+                        if let Some(block) = arena.get_block(node)
+                            && scan_stmts(arena, &block.statements.nodes)
+                        {
+                            return true;
+                        }
+                    }
+                    syntax_kind_ext::IF_STATEMENT => {
+                        if let Some(if_data) = arena.get_if_statement(node) {
+                            if scan_stmts(arena, &[if_data.then_statement]) {
+                                return true;
+                            }
+                            if !if_data.else_statement.is_none()
+                                && scan_stmts(arena, &[if_data.else_statement])
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                    syntax_kind_ext::TRY_STATEMENT => {
+                        if let Some(try_data) = arena.get_try(node)
+                            && scan_stmts(arena, &[try_data.try_block])
+                        {
+                            return true;
+                        }
+                    }
+                    syntax_kind_ext::SWITCH_STATEMENT => {
+                        if let Some(switch_data) = arena.get_switch(node)
+                            && let Some(cb_node) = arena.get(switch_data.case_block)
+                            && let Some(cb) = arena.get_block(cb_node)
+                        {
+                            for &clause_idx in &cb.statements.nodes {
+                                if let Some(cn) = arena.get(clause_idx)
+                                    && let Some(clause) = arena.get_case_clause(cn)
+                                    && scan_stmts(arena, &clause.statements.nodes)
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    // Expression statements could contain never-returning calls,
+                    // but detecting those requires type checking. We conservatively
+                    // return false here; the full falls_through check will catch them.
+                    _ => {}
+                }
+            }
+            false
+        }
+
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.ctx.arena.get_block(body_node)
+        {
+            return scan_stmts(self.ctx.arena, &block.statements.nodes);
+        }
+        false
+    }
+
     pub fn function_body_falls_through(&mut self, body_idx: NodeIndex) -> bool {
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
             return true;
@@ -1213,7 +1286,18 @@ impl<'a> CheckerState<'a> {
         }
 
         if return_types.is_empty() {
-            return TypeId::VOID;
+            // No return statements found. Check if the body falls through:
+            // - If it does (normal implicit return), the return type is `void`
+            // - If it doesn't (all paths throw or call never), the return type is `never`
+            // Only call the (potentially expensive) fallthrough checker when the body
+            // could plausibly be non-falling-through, i.e. it contains throw statements.
+            // This avoids triggering unnecessary type evaluation in simple function bodies.
+            let may_not_fall_through = self.body_contains_throw_or_never_call(body_idx);
+            return if !may_not_fall_through || self.function_body_falls_through(body_idx) {
+                TypeId::VOID
+            } else {
+                TypeId::NEVER
+            };
         }
 
         if saw_empty || self.function_body_falls_through(body_idx) {
