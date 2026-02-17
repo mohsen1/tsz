@@ -377,8 +377,8 @@ impl TypeResolver for TypeInterner {
         None
     }
 
-    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
-        None
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        TypeInterner::get_boxed_type(self, kind)
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
@@ -411,6 +411,13 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
     /// store this in whichever backing stores they use so `T[]` methods/properties
     /// (e.g. `push`, `length`) resolve consistently.
     fn register_array_base_type(&self, _type_id: TypeId, _type_params: Vec<TypeParamInfo>) {}
+
+    /// Register a boxed interface type for a primitive intrinsic kind.
+    ///
+    /// Similar to `register_array_base_type`, this ensures that property access
+    /// resolution can find the correct interface type (e.g., String, Number) for
+    /// primitive types, regardless of which database backend is used.
+    fn register_boxed_type(&self, _kind: IntrinsicKind, _type_id: TypeId) {}
 
     fn evaluate_conditional(&self, cond: &ConditionalType) -> TypeId {
         crate::evaluate::evaluate_conditional(self.as_type_database(), cond)
@@ -693,6 +700,10 @@ impl QueryDatabase for TypeInterner {
 
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.set_array_base_type(type_id, type_params);
+    }
+
+    fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
+        TypeInterner::set_boxed_type(self, kind, type_id);
     }
 
     fn get_index_signatures(&self, type_id: TypeId) -> IndexInfo {
@@ -1423,8 +1434,8 @@ impl TypeResolver for QueryCache<'_> {
         None
     }
 
-    fn get_boxed_type(&self, _kind: IntrinsicKind) -> Option<TypeId> {
-        None
+    fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.interner.get_boxed_type(kind)
     }
 
     fn get_array_base_type(&self) -> Option<TypeId> {
@@ -1443,6 +1454,10 @@ impl QueryDatabase for QueryCache<'_> {
 
     fn register_array_base_type(&self, type_id: TypeId, type_params: Vec<TypeParamInfo>) {
         self.interner.set_array_base_type(type_id, type_params);
+    }
+
+    fn register_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
+        self.interner.set_boxed_type(kind, type_id);
     }
 
     fn evaluate_type(&self, type_id: TypeId) -> TypeId {

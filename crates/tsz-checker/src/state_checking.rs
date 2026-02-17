@@ -1476,7 +1476,6 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
-        }
 
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
         let var_type = self.get_type_of_node(initializer);
