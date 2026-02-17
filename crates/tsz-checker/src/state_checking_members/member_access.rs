@@ -930,6 +930,19 @@ impl<'a> CheckerState<'a> {
                         let lit = self.ctx.arena.get_literal(expr_node)?;
                         Some(Self::normalize_numeric_name(&lit.text))
                     }
+                    ek if ek == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                        // Handle well-known symbols like Symbol.hasInstance
+                        let access = self.ctx.arena.get_access_expr(expr_node)?;
+                        let obj_node = self.ctx.arena.get(access.expression)?;
+                        let obj_ident = self.ctx.arena.get_identifier(obj_node)?;
+                        if obj_ident.escaped_text.as_str() == "Symbol" {
+                            let prop_node = self.ctx.arena.get(access.name_or_argument)?;
+                            let prop_ident = self.ctx.arena.get_identifier(prop_node)?;
+                            Some(format!("[Symbol.{}]", prop_ident.escaped_text))
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 }
             }
@@ -1297,12 +1310,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Report TS2300 for duplicate accessors (e.g., two getters or two setters with same name)
+        // tsc only reports on subsequent (second+) declarations, not the first
         for indices in seen_accessors.values() {
             if indices.len() <= 1 {
                 continue;
             }
-            // Emit errors for ALL duplicate declarations (matching tsc behavior)
-            for &idx in indices {
+            for &idx in indices.iter().skip(1) {
                 self.report_duplicate_class_member_ts2300(idx);
             }
         }

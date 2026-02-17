@@ -1021,20 +1021,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         };
 
         // isDeclarationStatement || isVariableStatement
-        let is_declaration_or_variable = match stmt_node.kind {
-            // Declaration statements (TSC's isDeclarationStatementKind)
+        let is_declaration_or_variable = matches!(
+            stmt_node.kind,
             syntax_kind_ext::FUNCTION_DECLARATION
-            | syntax_kind_ext::CLASS_DECLARATION
-            | syntax_kind_ext::INTERFACE_DECLARATION
-            | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-            | syntax_kind_ext::ENUM_DECLARATION
-            | syntax_kind_ext::MODULE_DECLARATION
-            | syntax_kind_ext::IMPORT_DECLARATION
-            | syntax_kind_ext::EXPORT_DECLARATION => true,
-            // Variable statements (var, let, const, using — all of them)
-            syntax_kind_ext::VARIABLE_STATEMENT => true,
-            _ => false,
-        };
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::VARIABLE_STATEMENT
+        );
 
         if is_declaration_or_variable {
             self.error_at_node(
