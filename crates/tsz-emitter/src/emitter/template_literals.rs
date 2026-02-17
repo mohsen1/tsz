@@ -13,6 +13,7 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_expression(tagged.tag);
+        self.write_space();
         self.emit(tagged.template);
     }
 
