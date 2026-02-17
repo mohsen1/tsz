@@ -119,9 +119,9 @@ impl<'a> Printer<'a> {
         if !decl_list.declarations.nodes.is_empty() {
             self.write(" ");
             self.emit_comma_separated(&decl_list.declarations.nodes);
-        } else if !is_let && !is_const {
-            // TSC emits `var ;` (with space) for empty var declarations,
-            // but `let;` / `const;` (no space) for empty let/const.
+        } else if !is_let {
+            // TSC emits `var ;` and `const ;` (with space) for empty declarations,
+            // but `let;` (no space) for empty let declarations.
             self.write(" ");
         }
     }
@@ -840,9 +840,18 @@ impl<'a> Printer<'a> {
             self.declared_namespace_names.insert(name.clone());
         }
 
-        // Emit: (function (<name>) {
+        // Check if the IIFE parameter name conflicts with any declaration
+        // inside the namespace body. TSC renames the parameter (e.g., A → A_1)
+        // when there's a class/function/enum/namespace with the same name inside.
+        let iife_param = if self.namespace_body_has_name_conflict(module, &name) {
+            format!("{name}_1")
+        } else {
+            name.clone()
+        };
+
+        // Emit: (function (<iife_param>) {
         self.write("(function (");
-        self.write(&name);
+        self.write(&iife_param);
         self.write(") {");
         self.write_line();
         self.increase_indent();
@@ -868,8 +877,8 @@ impl<'a> Printer<'a> {
                 // inside don't conflict with those in other IIFEs for the same name.
                 let prev_declared = self.declared_namespace_names.clone();
                 self.in_namespace_iife = true;
-                self.current_namespace_name = Some(name.clone());
-                self.emit_namespace_body_statements(module, &name);
+                self.current_namespace_name = Some(iife_param.clone());
+                self.emit_namespace_body_statements(module, &iife_param);
                 self.in_namespace_iife = prev;
                 self.current_namespace_name = prev_ns_name;
                 self.declared_namespace_names = prev_declared;
@@ -898,6 +907,71 @@ impl<'a> Printer<'a> {
             self.write(" = {}));");
         }
         self.write_line();
+    }
+
+    /// Check if any declaration in the namespace body has the same name as the namespace.
+    /// TSC renames the IIFE parameter when this happens (e.g., `A` → `A_1`).
+    fn namespace_body_has_name_conflict(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+        ns_name: &str,
+    ) -> bool {
+        let Some(body_node) = self.arena.get(module.body) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            // Nested namespace (A.B) — check the inner module name
+            if let Some(inner) = self.arena.get_module(body_node) {
+                let inner_name = self.get_identifier_text_idx(inner.name);
+                return inner_name == ns_name;
+            }
+            return false;
+        }
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(ref stmts) = block.statements else {
+            return false;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // Check through export declarations
+            let check_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .map_or(stmt_idx, |e| e.export_clause)
+            } else {
+                stmt_idx
+            };
+            let Some(check_node) = self.arena.get(check_idx) else {
+                continue;
+            };
+            let decl_name = match check_node.kind {
+                k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                    .arena
+                    .get_class(check_node)
+                    .map(|c| self.get_identifier_text_idx(c.name)),
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .arena
+                    .get_function(check_node)
+                    .map(|f| self.get_identifier_text_idx(f.name)),
+                k if k == syntax_kind_ext::ENUM_DECLARATION => self
+                    .arena
+                    .get_enum(check_node)
+                    .map(|e| self.get_identifier_text_idx(e.name)),
+                k if k == syntax_kind_ext::MODULE_DECLARATION => self
+                    .arena
+                    .get_module(check_node)
+                    .map(|m| self.get_identifier_text_idx(m.name)),
+                _ => None,
+            };
+            if decl_name.as_deref() == Some(ns_name) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Emit body statements of a namespace IIFE, handling exports.
