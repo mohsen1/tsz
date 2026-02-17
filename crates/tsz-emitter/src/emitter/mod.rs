@@ -2288,8 +2288,8 @@ impl<'a> Printer<'a> {
         self.comment_emit_idx = 0;
 
         // Emit shebang line if present (must be the very first line of output)
-        if let Some(text) = self.source_text {
-            if text.starts_with("#!") {
+        if let Some(text) = self.source_text
+            && text.starts_with("#!") {
                 if let Some(newline_pos) = text.find('\n') {
                     self.write(text[..newline_pos].trim_end());
                 } else {
@@ -2297,7 +2297,6 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
             }
-        }
 
         // Emit "use strict" FIRST (before comments and helpers)
         // TypeScript emits "use strict" when:

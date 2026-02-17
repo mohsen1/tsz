@@ -739,6 +739,8 @@ impl<'a> FlowAnalyzer<'a> {
             }
             k if k == SyntaxKind::TrueKeyword as u16 => Some(self.interner.literal_boolean(true)),
             k if k == SyntaxKind::FalseKeyword as u16 => Some(self.interner.literal_boolean(false)),
+            k if k == SyntaxKind::NullKeyword as u16 => Some(TypeId::NULL),
+            k if k == SyntaxKind::UndefinedKeyword as u16 => Some(TypeId::UNDEFINED),
             k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
                 let unary = self.arena.get_unary_expr(node)?;
                 let op = unary.operator;
@@ -773,6 +775,12 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             }
             _ => {
+                // Handle `undefined` in value position (it's an Identifier, not UndefinedKeyword)
+                if let Some(ident) = self.arena.get_identifier(node)
+                    && ident.escaped_text == "undefined"
+                {
+                    return Some(TypeId::UNDEFINED);
+                }
                 // Fallback: look up the already-computed type for this expression.
                 // This handles enum member access (e.g., Types.Str), const enum members,
                 // and other expressions that evaluate to literal or enum types.
@@ -1788,12 +1796,11 @@ impl<'a> FlowAnalyzer<'a> {
             return Some((TypeGuard::NullishEquality, target, false));
         }
 
-        // Check for strict nullish comparison: x === null, x !== null, x === undefined, x !== undefined
-        if let Some(nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
-            return Some((TypeGuard::LiteralEquality(nullish_type), target, false));
-        }
-
-        // Check for discriminant comparison: x.kind === "circle" or x.payload.kind === "circle"
+        // Check for discriminant comparison BEFORE nullish comparison.
+        // This is critical for cases like `u.err === undefined` where the target is a
+        // property access: discriminant narrowing should narrow the base object `u`,
+        // not just the property `u.err`. If discriminant matching fails (e.g., `x === undefined`
+        // where `x` is a simple variable), we fall through to nullish comparison.
         if let Some((property_path, literal_type, is_optional, discriminant_base)) =
             self.discriminant_comparison(bin.left, bin.right, target)
         {
@@ -1805,6 +1812,11 @@ impl<'a> FlowAnalyzer<'a> {
                 discriminant_base, // Use the BASE of the property access, not the full access
                 is_optional,
             ));
+        }
+
+        // Check for strict nullish comparison: x === null, x !== null, x === undefined, x !== undefined
+        if let Some(nullish_type) = self.nullish_comparison(bin.left, bin.right, target) {
+            return Some((TypeGuard::LiteralEquality(nullish_type), target, false));
         }
 
         // Check for literal comparison: x === "foo", x === 42
