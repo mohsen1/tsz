@@ -2477,32 +2477,33 @@ impl<'a> CheckerState<'a> {
         // Handle type references (e.g., other interface names or type params)
         if node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = arena.get_type_ref(node)
-                && let Some(name) = arena.get_identifier_text(type_ref.type_name) {
-                    // Check primitive/keyword type names first
-                    match name {
-                        "string" => return TypeId::STRING,
-                        "number" => return TypeId::NUMBER,
-                        "boolean" => return TypeId::BOOLEAN,
-                        "void" => return TypeId::VOID,
-                        "undefined" => return TypeId::UNDEFINED,
-                        "null" => return TypeId::NULL,
-                        "never" => return TypeId::NEVER,
-                        "unknown" => return TypeId::UNKNOWN,
-                        "any" => return TypeId::ANY,
-                        "object" => return TypeId::OBJECT,
-                        "symbol" => return TypeId::SYMBOL,
-                        "bigint" => return TypeId::BIGINT,
-                        _ => {}
-                    }
-                    // Check type parameter scope
-                    if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
-                        return type_id;
-                    }
-                    // Try to resolve as a lib type
-                    if let Some(ty) = self.resolve_lib_type_by_name(name) {
-                        return ty;
-                    }
-                }
+            && let Some(name) = arena.get_identifier_text(type_ref.type_name)
+        {
+            // Check primitive/keyword type names first
+            match name {
+                "string" => return TypeId::STRING,
+                "number" => return TypeId::NUMBER,
+                "boolean" => return TypeId::BOOLEAN,
+                "void" => return TypeId::VOID,
+                "undefined" => return TypeId::UNDEFINED,
+                "null" => return TypeId::NULL,
+                "never" => return TypeId::NEVER,
+                "unknown" => return TypeId::UNKNOWN,
+                "any" => return TypeId::ANY,
+                "object" => return TypeId::OBJECT,
+                "symbol" => return TypeId::SYMBOL,
+                "bigint" => return TypeId::BIGINT,
+                _ => {}
+            }
+            // Check type parameter scope
+            if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
+                return type_id;
+            }
+            // Try to resolve as a lib type
+            if let Some(ty) = self.resolve_lib_type_by_name(name) {
+                return ty;
+            }
+        }
 
         // For identifiers, try resolving the name
         if let Some(name) = arena.get_identifier_text(node_idx) {
