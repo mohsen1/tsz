@@ -469,12 +469,12 @@ impl<'a> NarrowingContext<'a> {
     /// **NOTE**: Uses `resolve_property_access` which correctly handles optional properties.
     /// For optional properties that don't exist on a specific union member, returns
     /// `TypeId::UNDEFINED` to indicate the property could be undefined (not a definitive mismatch).
-    fn get_type_at_path(&self, mut type_id: TypeId, path: &[Atom]) -> Option<TypeId> {
-        let evaluator = match self.resolver {
-            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
-            None => PropertyAccessEvaluator::new(self.db),
-        };
-
+    fn get_type_at_path(
+        &self,
+        mut type_id: TypeId,
+        path: &[Atom],
+        evaluator: &PropertyAccessEvaluator<'_>,
+    ) -> Option<TypeId> {
         for (i, &prop_name) in path.iter().enumerate() {
             // Handle ANY - any property access on any returns any
             if type_id == TypeId::ANY {
@@ -490,7 +490,7 @@ impl<'a> NarrowingContext<'a> {
                 let remaining_path = &path[i..];
                 let prop_types: Vec<TypeId> = members
                     .iter()
-                    .filter_map(|&member| self.get_type_at_path(member, remaining_path))
+                    .filter_map(|&member| self.get_type_at_path(member, remaining_path, evaluator))
                     .collect();
 
                 if prop_types.is_empty() {
@@ -643,6 +643,10 @@ impl<'a> NarrowingContext<'a> {
         );
 
         let mut matching: Vec<TypeId> = Vec::new();
+        let property_evaluator = match self.resolver {
+            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
+            None => PropertyAccessEvaluator::new(self.db),
+        };
 
         for &member in members {
             // Special case: any and unknown always match
@@ -663,7 +667,11 @@ impl<'a> NarrowingContext<'a> {
             // Helper function to check if a type has a matching property at the path
             let check_member_for_property = |check_type_id: TypeId| -> bool {
                 // Get the type at the property path
-                let prop_type = match self.get_type_at_path(check_type_id, property_path) {
+                let prop_type = match self.get_type_at_path(
+                    check_type_id,
+                    property_path,
+                    &property_evaluator,
+                ) {
                     Some(t) => t,
                     None => {
                         // Property doesn't exist on this member
@@ -791,6 +799,10 @@ impl<'a> NarrowingContext<'a> {
         );
 
         let mut remaining: Vec<TypeId> = Vec::new();
+        let property_evaluator = match self.resolver {
+            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
+            None => PropertyAccessEvaluator::new(self.db),
+        };
 
         for &member in members {
             // Special case: any and unknown always kept (could have any property value)
@@ -814,7 +826,11 @@ impl<'a> NarrowingContext<'a> {
             // Returns true if member should be KEPT (not excluded)
             let should_keep_member = |check_type_id: TypeId| -> bool {
                 // Get the type at the property path
-                let prop_type = match self.get_type_at_path(check_type_id, property_path) {
+                let prop_type = match self.get_type_at_path(
+                    check_type_id,
+                    property_path,
+                    &property_evaluator,
+                ) {
                     Some(t) => t,
                     None => {
                         // Property doesn't exist - keep the member
