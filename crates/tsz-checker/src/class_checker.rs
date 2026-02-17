@@ -492,8 +492,58 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{TypeSubstitution, instantiate_type};
 
         // Find base class from heritage clauses (extends, not implements)
-        let Some(ref heritage_clauses) = class_data.heritage_clauses else {
-            return;
+        // If there are no heritage clauses, we still need to check for
+        // invalid `override` members (TS4112) since override requires extends.
+        let heritage_clauses = match class_data.heritage_clauses {
+            Some(ref hc) => hc,
+            None => {
+                // No heritage clauses — still check for override members (TS4112)
+                let derived_class_name = if !class_data.name.is_none() {
+                    self.ctx
+                        .arena
+                        .get(class_data.name)
+                        .and_then(|n| self.ctx.arena.get_identifier(n))
+                        .map_or_else(|| String::from("<anonymous>"), |id| id.escaped_text.clone())
+                } else {
+                    String::from("<anonymous>")
+                };
+                for &member_idx in &class_data.members.nodes {
+                    let Some(info) = self.extract_class_member_info(member_idx, false) else {
+                        continue;
+                    };
+                    if !info.has_override {
+                        continue;
+                    }
+                    if info.has_dynamic_name {
+                        self.error_at_node(
+                            info.name_idx,
+                            &crate::diagnostics::format_message(
+                                crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                                &[],
+                            ),
+                            crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_NAME_IS_DYNAMIC,
+                        );
+                        continue;
+                    }
+                    self.error_at_node(
+                        info.name_idx,
+                        &crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                            &[&derived_class_name],
+                        ),
+                        crate::diagnostics::diagnostic_codes::THIS_MEMBER_CANNOT_HAVE_AN_OVERRIDE_MODIFIER_BECAUSE_ITS_CONTAINING_CLASS_DOES_N,
+                    );
+                }
+                // Also check constructor parameter properties
+                self.check_constructor_parameter_property_overrides(
+                    class_data,
+                    None,
+                    &derived_class_name,
+                    &rustc_hash::FxHashSet::default(),
+                    self.ctx.no_implicit_override(),
+                );
+                return;
+            }
         };
 
         let mut base_class_idx: Option<NodeIndex> = None;

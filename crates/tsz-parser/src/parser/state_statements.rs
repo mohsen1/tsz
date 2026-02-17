@@ -3273,7 +3273,7 @@ impl ParserState {
                         diagnostic_codes::MODIFIER_ALREADY_SEEN,
                     );
                 }
-                if seen_accessor || seen_async {
+                if seen_accessor || seen_async || seen_readonly {
                     use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'override' modifier must precede current modifier.",
