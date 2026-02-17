@@ -2776,13 +2776,49 @@ impl BinderState {
             return;
         };
 
-        // Only track for functions and classes (not arbitrary variables, which may have
-        // type annotations that make expando assignments invalid — e.g. `let p: Person`)
+        // Track for functions and classes
         if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0 {
             self.expando_properties
                 .entry(obj_name.clone())
                 .or_default()
                 .insert(prop_name);
+            return;
+        }
+
+        // Also track for variables initialized with function/class/object-literal expressions
+        // (e.g. `var X = function(){}; X.prop = 1` or `var X = {}; X.prop = 1`)
+        // but NOT variables with explicit type annotations (e.g. `let p: Person`)
+        if (symbol.flags & symbol_flags::VARIABLE) != 0 {
+            let decl_idx = symbol.value_declaration;
+            if decl_idx.is_none() {
+                return;
+            }
+            let Some(decl_node) = arena.get(decl_idx) else {
+                return;
+            };
+            let Some(var_decl) = arena.get_variable_declaration(decl_node) else {
+                return;
+            };
+            // Skip if has explicit type annotation — expando doesn't apply
+            if !var_decl.type_annotation.is_none() {
+                return;
+            }
+            if var_decl.initializer.is_none() {
+                return;
+            }
+            let Some(init_node) = arena.get(var_decl.initializer) else {
+                return;
+            };
+            if init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || init_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            {
+                self.expando_properties
+                    .entry(obj_name.clone())
+                    .or_default()
+                    .insert(prop_name);
+            }
         }
     }
 
