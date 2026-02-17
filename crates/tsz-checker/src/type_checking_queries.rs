@@ -624,11 +624,13 @@ impl<'a> CheckerState<'a> {
                 return Some(symbol_name);
             }
             if let Some(expr_node) = self.ctx.arena.get(computed.expression) {
-                if expr_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                {
-                    return Some(ident.escaped_text.clone());
-                }
+                // NOTE: Do NOT return the identifier text for computed property names
+                // like `[e]`. The identifier `e` must go through the computed property
+                // checking path so its expression is type-checked (emitting TS2304 if
+                // undeclared). Returning the identifier text here would skip that check
+                // and produce the wrong property name (the variable name instead of its
+                // value). Only statically-known values (string/number literals, unique
+                // symbols) can be resolved here.
 
                 if matches!(
                     expr_node.kind,
