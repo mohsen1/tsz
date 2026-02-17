@@ -2275,7 +2275,11 @@ impl<'a> Printer<'a> {
         );
         let is_es_module_output = matches!(
             self.ctx.options.module,
-            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+            ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
         );
 
         // Check if source already has "use strict" directive
