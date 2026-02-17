@@ -251,26 +251,37 @@ for crate in $AFFECTED; do
     CLIPPY_PKGS="$CLIPPY_PKGS -p $crate"
 done
 
-# Also include root crate if root files changed
-if [ "$ROOT_CHANGED" = "true" ]; then
-    CLIPPY_PKGS="$CLIPPY_PKGS -p tsz"
-fi
+# Match CI: check all targets (lib + tests + benches), not just --lib.
+# This catches lint errors that only appear in test code.
+# Note: root crate (tsz) is checked separately with --lib only because its
+# integration tests have many format-string warnings that are not actionable.
+CLIPPY_TARGETS="--all-targets"
 
 # Try auto-fix first, then verify
-if ! cargo clippy $CLIPPY_PKGS --lib --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
+if ! cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS --fix --allow-dirty --allow-staged -- -D warnings 2>/dev/null; then
     echo ""
     echo "ERROR: Clippy found warnings/errors that could not be auto-fixed:"
     echo ""
-    cargo clippy $CLIPPY_PKGS --lib -- -D warnings 2>&1 | tail -50
+    cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1 | tail -50
     exit 1
 fi
 
-CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS --lib -- -D warnings 2>&1) || {
+CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1) || {
     echo ""
     echo "ERROR: Clippy warnings remain after auto-fix. Please fix manually:"
     echo "$CLIPPY_OUTPUT" | tail -20
     exit 1
 }
+
+# Also lint root crate lib if root files changed (--lib only to avoid test fixture noise)
+if [ "$ROOT_CHANGED" = "true" ]; then
+    ROOT_OUTPUT=$(cargo clippy -p tsz --lib -- -D warnings 2>&1) || {
+        echo ""
+        echo "ERROR: Clippy warnings in root crate. Please fix manually:"
+        echo "$ROOT_OUTPUT" | tail -20
+        exit 1
+    }
+fi
 echo "  Clippy passed (zero warnings)"
 
 # ─── 4.5. Architecture guardrail (checker boundary) ──────────────────────────
