@@ -117,13 +117,11 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
 ///
 /// Some harness directives (e.g. module, moduleResolution) represent multiple runs.
 pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<String, String>> {
-    const MULTI_VALUE_KEYS: &[&str] = &[
-        "module",
-        "moduleresolution",
-        "target",
-        "jsx",
-        "alwaysstrict",
-    ];
+    // NOTE: "target" is intentionally excluded. The cache generator
+    // (generate-tsc-cache.rs / generate-tsc-cache-fast.mjs) takes only the
+    // first comma-separated value for non-list options like target, so the
+    // runner must do the same to produce matching error-code sets.
+    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "jsx", "alwaysstrict"];
 
     let mut variants = vec![options.clone()];
     for key in MULTI_VALUE_KEYS {

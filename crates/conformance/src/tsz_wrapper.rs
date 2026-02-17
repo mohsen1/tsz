@@ -516,11 +516,16 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
                 .map(|s| serde_json::Value::String(s.trim().to_string()))
                 .collect();
             serde_json::Value::Array(items)
-        } else if let Ok(num) = value.parse::<i64>() {
-            // Handle numeric options (e.g., maxNodeModuleJsDepth)
-            serde_json::Value::Number(num.into())
         } else {
-            serde_json::Value::String(value.clone())
+            // For non-list options, take only the first comma-separated value
+            // to match the cache generator behavior.
+            let effective_value = value.split(',').next().unwrap_or(value).trim();
+            if let Ok(num) = effective_value.parse::<i64>() {
+                // Handle numeric options (e.g., maxNodeModuleJsDepth)
+                serde_json::Value::Number(num.into())
+            } else {
+                serde_json::Value::String(effective_value.to_string())
+            }
         };
 
         opts.insert(canonical_key.to_string(), json_value);
