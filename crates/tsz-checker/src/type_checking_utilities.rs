@@ -735,7 +735,7 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn is_array_like_type(&self, object_type: TypeId) -> bool {
         // Check for array/tuple types directly
-        if self.is_mutable_array_type(object_type) {
+        if self.is_array_type(object_type) {
             return true;
         }
 
