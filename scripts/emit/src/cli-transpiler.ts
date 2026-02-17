@@ -90,6 +90,7 @@ function moduleToCliArg(module: number): string {
     99: 'esnext',
     100: 'node16',
     199: 'nodenext',
+    200: 'preserve',
   };
   return modules[module] || 'none';
 }
