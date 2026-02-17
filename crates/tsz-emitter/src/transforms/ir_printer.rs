@@ -1579,7 +1579,12 @@ impl<'a> IRPrinter<'a> {
 
     fn emit_block(&mut self, stmts: &[IRNode]) {
         if stmts.is_empty() {
-            self.write("{ }");
+            // TSC emits empty blocks as multiline for synthetic/generated code.
+            // Block statements in IR are always synthetic (from transforms), so use multiline.
+            self.write("{");
+            self.write_line();
+            self.write_indent();
+            self.write("}");
             return;
         }
 
@@ -1661,9 +1666,11 @@ impl<'a> IRPrinter<'a> {
         // Check if the body was single-line in the source
         let is_body_source_single_line = self.is_body_source_single_line(body_source_range);
 
-        // Empty body with no defaults: emit as single-line { } if source was single-line
+        // Empty body with no defaults: emit as single-line { } only if source was single-line.
+        // Synthetic code (body_source_range is None) always uses multiline, matching TSC's
+        // isSingleLineEmptyBlock which returns false when there's no source range.
         if !has_defaults && body.is_empty() {
-            if !force_multiline_empty_body {
+            if !force_multiline_empty_body && is_body_source_single_line {
                 self.write("{ }");
             } else {
                 self.write("{");
