@@ -509,6 +509,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     crate::diagnostics::diagnostic_messages::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
                     crate::diagnostics::diagnostic_codes::A_DEFAULT_EXPORT_CAN_ONLY_BE_USED_IN_AN_ECMASCRIPT_STYLE_MODULE,
                 );
+                // tsc does not further resolve the exported expression when
+                // the export default is invalid in a namespace context.
+                return;
             }
 
             // TS1194: `export { ... }` / `export ... from` forms are not valid inside namespaces.

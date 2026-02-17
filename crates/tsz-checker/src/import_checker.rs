@@ -805,20 +805,57 @@ impl<'a> CheckerState<'a> {
 
     /// Check a module body for statements and function implementations.
     pub(crate) fn check_module_body(&mut self, body_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
         let Some(body_node) = self.ctx.arena.get(body_idx) else {
             return;
         };
+
+        tracing::trace!(
+            "check_module_body: body_kind={} MODULE_BLOCK={}",
+            body_node.kind,
+            syntax_kind_ext::MODULE_BLOCK
+        );
 
         if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
             if let Some(block) = self.ctx.arena.get_module_block(body_node)
                 && let Some(ref statements) = block.statements
             {
                 for &stmt_idx in &statements.nodes {
+                    // TS1063: export assignment cannot be used in a namespace.
+                    // Emit the error and skip further checking of the statement
+                    // (tsc does not resolve the expression when it's invalid).
+                    let is_export_assign = self
+                        .ctx
+                        .arena
+                        .get(stmt_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT);
+                    if is_export_assign {
+                        self.error_at_node(
+                            stmt_idx,
+                            diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
+                            diagnostic_codes::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
+                        );
+                        continue;
+                    }
                     self.check_statement(stmt_idx);
                 }
                 self.check_function_implementations(&statements.nodes);
                 // Check for duplicate export assignments (TS2300) and conflicts (TS2309)
-                self.check_export_assignment(&statements.nodes);
+                // Filter out export assignments in namespace bodies since they're already
+                // flagged with TS1063 and shouldn't trigger TS2304/TS2309 follow-up errors.
+                let non_export_assign: Vec<NodeIndex> = statements
+                    .nodes
+                    .iter()
+                    .copied()
+                    .filter(|&idx| {
+                        self.ctx
+                            .arena
+                            .get(idx)
+                            .is_none_or(|n| n.kind != syntax_kind_ext::EXPORT_ASSIGNMENT)
+                    })
+                    .collect();
+                self.check_export_assignment(&non_export_assign);
             }
         } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
             self.check_statement(body_idx);
