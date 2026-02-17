@@ -438,15 +438,23 @@ impl<'a> CheckerState<'a> {
 
         // In ES5 mode (without downlevelIteration), for-of only works with arrays and strings.
         // - Emit TS2802 if the type has Symbol.iterator (iterable but requires ES2015/downlevelIteration).
+        // - Emit TS2461 if the type contains a string constituent but the remaining non-string
+        //   type is not array-like (TSC strips strings from union before checking array-likeness).
         // - Emit TS2495 if the type is neither an array nor a string (not iterable at all).
         if self.ctx.compiler_options.target.is_es5() {
             if self.is_array_or_tuple_or_string(expr_type) {
                 return true;
             }
+            // Mirror TSC's logic: strip string-like members from union types.
+            // If there were string members, the "remaining" non-string type still needs to be
+            // array-like, and the error message changes from TS2495 → TS2461 (no "or string type"
+            // suffix because the string part is already accounted for).
+            let has_string_constituent = self.has_string_constituent(expr_type);
+            let allows_strings = !has_string_constituent;
             if let Some((start, end)) = self.get_node_span(expr_idx) {
                 let type_str = self.format_type(expr_type);
                 // Check if the type has Symbol.iterator (iterable but not usable in ES5 for-of
-                // without downlevelIteration). These emit TS2802 instead of TS2495.
+                // without downlevelIteration). These emit TS2802 instead of TS2495/TS2461.
                 if self.is_iterable_type(expr_type) {
                     let message = format_message(
                         diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
@@ -458,7 +466,8 @@ impl<'a> CheckerState<'a> {
                         message,
                         diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
                     );
-                } else {
+                } else if allows_strings {
+                    // No string in union: "Type is not an array type or a string type" (TS2495)
                     let message = format_message(
                         diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
                         &[&type_str],
@@ -468,6 +477,18 @@ impl<'a> CheckerState<'a> {
                         end.saturating_sub(start),
                         message,
                         diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                    );
+                } else {
+                    // Has string constituent but non-string part is not array-like: TS2461
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
                     );
                 }
             }
@@ -721,6 +742,23 @@ impl<'a> CheckerState<'a> {
             return members
                 .iter()
                 .all(|&member| self.is_array_or_tuple_type(member));
+        }
+        false
+    }
+
+    /// Check if a type contains a string-like constituent (for ES5 for-of error discrimination).
+    ///
+    /// This mirrors TSC's `hasStringConstituent` check: when a union type contains a string
+    /// member alongside non-array types, the error changes from TS2495 to TS2461.
+    fn has_string_constituent(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::STRING || is_string_type(self.ctx.types, type_id) {
+            return true;
+        }
+        if is_string_literal_type(self.ctx.types, type_id) {
+            return true;
+        }
+        if let Some(members) = union_members_for_type(self.ctx.types, type_id) {
+            return members.iter().any(|&m| self.has_string_constituent(m));
         }
         false
     }
