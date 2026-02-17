@@ -57,3 +57,10 @@ pub(crate) fn classify_for_union_members(
 ) -> UnionMembersKind {
     tsz_solver::type_queries::classify_for_union_members(db, type_id)
 }
+
+pub(crate) fn get_intersection_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<TypeId>> {
+    tsz_solver::type_queries::get_intersection_members(db, type_id)
+}
