@@ -308,6 +308,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
         use tsz_solver::CallResult;
 
         let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
@@ -319,8 +320,55 @@ impl<'a> CheckerState<'a> {
             return early;
         }
 
-        // Get the type of the constructor expression
-        let mut constructor_type = self.get_type_of_node(new_expr.expression);
+        // Get the type of the constructor expression.
+        // Fast path for local class identifiers: avoid full identifier typing
+        // machinery after `check_new_expression_target` has already validated
+        // type-only/abstract constructor errors for this `new` target.
+        let mut constructor_type = if let Some(expr_node) = self.ctx.arena.get(new_expr.expression)
+        {
+            if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                let identifier_text = self
+                    .ctx
+                    .arena
+                    .get_identifier(expr_node)
+                    .map(|ident| ident.escaped_text.as_str())
+                    .unwrap_or_default();
+                let direct_symbol = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&new_expr.expression.0)
+                    .copied();
+                let fast_symbol = direct_symbol
+                    .or_else(|| self.resolve_identifier_symbol(new_expr.expression))
+                    .filter(|&sym_id| {
+                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                            let is_single_class_decl = symbol.declarations.len() == 1
+                                && !symbol.value_declaration.is_none()
+                                && self.ctx.arena.get(symbol.value_declaration).is_some_and(
+                                    |decl| decl.kind == syntax_kind_ext::CLASS_DECLARATION,
+                                );
+                            symbol.escaped_name == identifier_text
+                                && is_single_class_decl
+                                && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                                && (symbol.decl_file_idx == u32::MAX
+                                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                        })
+                    });
+                if let Some(sym_id) = fast_symbol {
+                    self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.get_type_of_node(new_expr.expression)
+                }
+            } else {
+                self.get_type_of_node(new_expr.expression)
+            }
+        } else {
+            self.get_type_of_node(new_expr.expression)
+        };
         if let Some(export_equals_ctor) =
             self.new_expression_export_equals_constructor_type(new_expr.expression)
         {
