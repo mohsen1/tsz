@@ -55,6 +55,14 @@ impl ParserState {
             } else {
                 self.parse_identifier_name()
             }
+        } else if self.is_token(SyntaxKind::OpenBraceToken) {
+            // TS1438: Interface must be given a name (e.g., `interface { }`)
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::INTERFACE_MUST_BE_GIVEN_A_NAME,
+                diagnostic_codes::INTERFACE_MUST_BE_GIVEN_A_NAME,
+            );
+            NodeIndex::NONE
         } else {
             self.parse_identifier()
         };
@@ -957,6 +965,9 @@ impl ParserState {
             } else if self.is_token(SyntaxKind::NumericLiteral) {
                 // Parse numeric literal as name for recovery (checker emits TS2452)
                 self.parse_numeric_literal()
+            } else if self.is_token(SyntaxKind::BigIntLiteral) {
+                // Parse bigint literal as name for recovery (checker emits TS2452)
+                self.parse_bigint_literal()
             } else if self.is_token(SyntaxKind::PrivateIdentifier) {
                 self.parse_error_at_current_token(
                     "An enum member cannot be named with a private identifier.",
@@ -987,6 +998,7 @@ impl ParserState {
                     let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
                         || self.is_token(SyntaxKind::StringLiteral)
                         || self.is_token(SyntaxKind::NumericLiteral)
+                        || self.is_token(SyntaxKind::BigIntLiteral)
                         || self.is_token(SyntaxKind::PrivateIdentifier)
                         || self.is_identifier_or_keyword();
                     if starts_member {
@@ -996,6 +1008,7 @@ impl ParserState {
                     let starts_member = self.is_token(SyntaxKind::OpenBracketToken)
                         || self.is_token(SyntaxKind::StringLiteral)
                         || self.is_token(SyntaxKind::NumericLiteral)
+                        || self.is_token(SyntaxKind::BigIntLiteral)
                         || self.is_token(SyntaxKind::PrivateIdentifier)
                         || self.is_identifier_or_keyword();
                     if starts_member {
