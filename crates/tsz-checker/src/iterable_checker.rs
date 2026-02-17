@@ -437,23 +437,39 @@ impl<'a> CheckerState<'a> {
         }
 
         // In ES5 mode (without downlevelIteration), for-of only works with arrays and strings.
-        // Emit TS2495 if the type is neither an array nor a string.
+        // - Emit TS2802 if the type has Symbol.iterator (iterable but requires ES2015/downlevelIteration).
+        // - Emit TS2495 if the type is neither an array nor a string (not iterable at all).
         if self.ctx.compiler_options.target.is_es5() {
             if self.is_array_or_tuple_or_string(expr_type) {
                 return true;
             }
             if let Some((start, end)) = self.get_node_span(expr_idx) {
                 let type_str = self.format_type(expr_type);
-                let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
-                    &[&type_str],
-                );
-                self.error(
-                    start,
-                    end.saturating_sub(start),
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
-                );
+                // Check if the type has Symbol.iterator (iterable but not usable in ES5 for-of
+                // without downlevelIteration). These emit TS2802 instead of TS2495.
+                if self.is_iterable_type(expr_type) {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE_OR_A_STRING_TYPE,
+                    );
+                }
             }
             return false;
         }
