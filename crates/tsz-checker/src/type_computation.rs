@@ -1776,14 +1776,28 @@ impl<'a> CheckerState<'a> {
                         // Number op enum => number
                         TypeId::NUMBER
                     } else {
-                        // Don't emit errors if either operand is ERROR - prevents cascading errors
-                        if left != TypeId::ERROR && right != TypeId::ERROR {
-                            // Use original types for error messages (more informative)
-                            self.emit_binary_operator_error(
-                                node_idx, left_idx, right_idx, left_type, right_type, op,
-                            );
+                        // For relational operators (<, >, <=, >=), tsc allows comparison
+                        // when the types are comparable (assignable in either direction).
+                        // This covers object types and other non-primitive comparisons.
+                        let is_relational = matches!(
+                            op_str,
+                            "<" | ">" | "<=" | ">=" | "==" | "!=" | "===" | "!=="
+                        );
+                        let is_comparable =
+                            is_relational && self.is_type_comparable_to(eval_left, eval_right);
+
+                        if is_comparable {
+                            TypeId::BOOLEAN
+                        } else {
+                            // Don't emit errors if either operand is ERROR - prevents cascading errors
+                            if left != TypeId::ERROR && right != TypeId::ERROR {
+                                // Use original types for error messages (more informative)
+                                self.emit_binary_operator_error(
+                                    node_idx, left_idx, right_idx, left_type, right_type, op,
+                                );
+                            }
+                            TypeId::UNKNOWN
                         }
-                        TypeId::UNKNOWN
                     }
                 }
             };
