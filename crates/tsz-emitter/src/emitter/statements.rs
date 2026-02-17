@@ -103,7 +103,12 @@ impl<'a> Printer<'a> {
             None
         };
 
-        for &stmt_idx in &block.statements.nodes {
+        // Pre-collect statement indices so we can look up the next statement's
+        // position as an upper bound for trailing comment scanning. Our parser sets
+        // stmt_node.end past the statement boundary into the next statement's tokens,
+        // so using next_stmt.pos as the scan limit prevents over-scanning.
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
             // Emit leading comments before this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 let defer_for_of_comments = self.ctx.target_es5
@@ -141,10 +146,25 @@ impl<'a> Printer<'a> {
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len {
-                // Emit trailing comments on the same line as the statement
-                // (e.g., `foo(); // comment` should keep `// comment` on the same line)
-                if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                // Emit trailing same-line comments (e.g. `foo(); // comment`).
+                // Use the next statement's pos as the scan upper bound: stmt_node.end
+                // extends into the next statement, which would cause
+                // find_token_end_before_trivia to return a position inside the next
+                // statement and incorrectly skip between-statement comments.
+                let (stmt_pos, upper_bound) = {
+                    let cur = self.arena.get(stmt_idx);
+                    let next_pos = stmts
+                        .get(stmt_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map(|n| n.pos);
+                    if let Some(sn) = cur {
+                        (sn.pos, next_pos.unwrap_or(sn.end))
+                    } else {
+                        (0, 0)
+                    }
+                };
+                if upper_bound > 0 {
+                    let token_end = self.find_token_end_before_trivia(stmt_pos, upper_bound);
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
