@@ -2609,11 +2609,8 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
-                    if !skip_duplicate_check
-                        && self.ctx.compiler_options.target.is_es5()
-                        && properties.contains_key(&name_atom)
-                    {
+                    // TS1117: tsc emits this for all targets
+                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -2794,11 +2791,8 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
-                    if !skip_duplicate_check
-                        && self.ctx.compiler_options.target.is_es5()
-                        && properties.contains_key(&name_atom)
-                    {
+                    // TS1117: tsc emits this for all targets
+                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -2865,11 +2859,8 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
-                    if !skip_duplicate_check
-                        && self.ctx.compiler_options.target.is_es5()
-                        && properties.contains_key(&name_atom)
-                    {
+                    // TS1117: tsc emits this for all targets
+                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -3069,9 +3060,8 @@ impl<'a> CheckerState<'a> {
                     } else {
                         getter_names.contains(&name_atom) && !setter_names.contains(&name_atom)
                     };
-                    // TS1117 only applies to ES5 and below; ES2015+ allows duplicate properties
+                    // TS1117: tsc emits this for all targets
                     if !skip_duplicate_check
-                        && self.ctx.compiler_options.target.is_es5()
                         && properties.contains_key(&name_atom)
                         && !is_complementary_pair
                     {
