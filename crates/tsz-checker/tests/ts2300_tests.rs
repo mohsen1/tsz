@@ -295,6 +295,26 @@ class C236 {
     );
 }
 
+/// Test that duplicate Symbol computed properties are detected.
+/// tsc only reports TS2300 on the second (subsequent) occurrence.
+#[test]
+fn test_duplicate_symbol_computed_property() {
+    let source = r#"
+class C {
+    get [Symbol.hasInstance]() { return ""; }
+    get [Symbol.hasInstance]() { return ""; }
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert_eq!(
+        ts2300_errors.len(),
+        1,
+        "Should have 1 TS2300 for duplicate [Symbol.hasInstance] getter (only second), got: {:?}",
+        ts2300_errors
+    );
+}
+
 /// Test that duplicate `import =` alias declarations emit TS2300.
 #[test]
 fn test_duplicate_import_equals_alias_emits_ts2300() {
