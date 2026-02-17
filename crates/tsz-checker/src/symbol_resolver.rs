@@ -673,6 +673,11 @@ impl<'a> CheckerState<'a> {
             if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
                 && symbol.flags & symbol_flags::ALIAS != 0
             {
+                // Mark the local alias as referenced (for unused-import tracking).
+                // When we follow the alias chain below, only the target gets returned
+                // and inserted into referenced_symbols by the caller. Without this,
+                // imports used only in type positions appear unused (false TS6133).
+                self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
                 let mut visited_aliases = Vec::new();
                 if let Some(target_sym_id) = self.resolve_alias_symbol(sym_id, &mut visited_aliases)
                 {

@@ -19,6 +19,11 @@ pub trait StatementCheckCallbacks {
     /// Get the type of a node (expression or type annotation).
     fn get_type_of_node(&mut self, idx: NodeIndex) -> TypeId;
 
+    /// Get the type of a node without flow narrowing.
+    /// Used for switch discriminants where tsc uses the declared/widened type,
+    /// not the flow-narrowed type (avoids false TS2678).
+    fn get_type_of_node_no_narrowing(&mut self, idx: NodeIndex) -> TypeId;
+
     /// Check a variable statement.
     fn check_variable_statement(&mut self, stmt_idx: NodeIndex);
 
@@ -424,7 +429,11 @@ impl StatementChecker {
                 };
 
                 if let Some((expression, case_block)) = switch_data {
-                    let switch_type = state.get_type_of_node(expression);
+                    // Use the declared/widened type (no flow narrowing) for the switch
+                    // discriminant. tsc's checkExpression returns the non-narrowed type,
+                    // preventing false TS2678 when flow narrows the discriminant
+                    // (e.g., `const x: number = 0` narrowed to `0` would reject `case 1`).
+                    let switch_type = state.get_type_of_node_no_narrowing(expression);
 
                     // Extract case clauses
                     let clauses = {

@@ -19,6 +19,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::get_type_of_node(self, idx)
     }
 
+    fn get_type_of_node_no_narrowing(&mut self, idx: NodeIndex) -> TypeId {
+        let prev = self.ctx.skip_flow_narrowing;
+        self.ctx.skip_flow_narrowing = true;
+        let ty = CheckerState::get_type_of_node(self, idx);
+        self.ctx.skip_flow_narrowing = prev;
+        ty
+    }
+
     fn check_variable_statement(&mut self, stmt_idx: NodeIndex) {
         CheckerState::check_variable_statement(self, stmt_idx);
     }
