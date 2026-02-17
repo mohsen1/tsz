@@ -336,6 +336,16 @@ run_benchmark() {
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB"
 
+    # Benchmark fixtures must be valid TypeScript for the reference compiler.
+    # If tsc fails, treat the fixture as invalid benchmark input and skip it.
+    local tsc_check=$($TSC --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
+    if [ "$tsc_check" -ne 0 ]; then
+        local tsc_error=$($TSC --noEmit $extra_args "$file" 2>&1 | head -1)
+        echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
+        echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+        return
+    fi
+
     # Pre-validate: record errors in summary table instead of skipping
     local tsz_check=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
     local tsgo_check=$($TSGO --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
@@ -365,14 +375,7 @@ run_benchmark() {
             echo -e "  ${CYAN}tsgo error:${NC} $tsgo_error" >&2
         fi
 
-        local tsc_check=$($TSC --noEmit $extra_args "$file" >/dev/null 2>&1; echo $?)
-        if [ "$tsc_check" -ne 0 ]; then
-            status="${status:+${status}; }tsc error"
-            local tsc_error=$($TSC --noEmit $extra_args "$file" 2>&1 | head -1)
-            echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
-        else
-            status="${status:+${status}; }tsc ok"
-        fi
+        status="${status:+${status}; }tsc ok"
 
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"
         return
@@ -444,6 +447,18 @@ run_project_benchmark() {
     local kb=$((bytes / 1024))
     local info="${lines} lines, ${kb}KB (project)"
 
+    # For project fixtures (except nextjs, which is currently tsgo-only), require
+    # a clean tsc pass before benchmarking.
+    if [ "$name" != "nextjs" ]; then
+        local tsc_check=$($TSC --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
+        if [ "$tsc_check" -ne 0 ]; then
+            local tsc_error=$($TSC --noEmit -p "$tsconfig" 2>&1 | head -1)
+            echo -e "${YELLOW}$name${NC} - ${YELLOW}SKIP${NC} (tsc fixture error)"
+            echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
+            return
+        fi
+    fi
+
     # Pre-validate: record errors in summary table instead of skipping
     local tsz_check=$(TSZ_LIB_DIR="$TSZ_LIB_DIR" $TSZ --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
     local tsgo_check=$($TSGO --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
@@ -474,14 +489,7 @@ run_project_benchmark() {
         fi
 
         if [ "$name" != "nextjs" ]; then
-            local tsc_check=$($TSC --noEmit -p "$tsconfig" >/dev/null 2>&1; echo $?)
-            if [ "$tsc_check" -ne 0 ]; then
-                status="${status:+${status}; }tsc error"
-                local tsc_error=$($TSC --noEmit -p "$tsconfig" 2>&1 | head -1)
-                echo -e "  ${CYAN}tsc error:${NC} $tsc_error" >&2
-            else
-                status="${status:+${status}; }tsc ok"
-            fi
+            status="${status:+${status}; }tsc ok"
         fi
 
         RESULTS_CSV="${RESULTS_CSV}${name},${lines},${kb},${tsz_ms},${tsgo_ms},${tsz_lps},${tsgo_lps},${winner},${ratio},${status}\n"

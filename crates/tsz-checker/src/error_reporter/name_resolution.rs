@@ -407,37 +407,35 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Skip TS2304 for nodes/ancestors that have parse errors, but only when
+        // Skip TS2304 for nodes that directly have parse errors, but only when
         // the file has real syntax parse errors (not just conflict markers TS1185).
         // Conflict markers are treated as trivia in TS and should not suppress
         // semantic "Cannot find name" diagnostics.
         // Exception: computed property name expressions — tsc always emits TS2304 for these.
+        //
+        // Only check the identifier itself and its direct parent — NOT distant
+        // ancestors. Distant ancestor errors (e.g., enum declaration with TS1164)
+        // should not suppress TS2304 for unrelated child expressions.
         if self.has_syntax_parse_errors() && !is_in_computed_property {
-            let mut current = idx;
-            let mut walk_guard = 0;
-            while !current.is_none() {
-                walk_guard += 1;
-                if walk_guard > 256 {
-                    break;
+            if let Some(node) = self.ctx.arena.get(idx) {
+                let flags = node.flags as u32;
+                if !force_emit_for_ambiguous_generic
+                    && (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                {
+                    return;
                 }
-                if let Some(node) = self.ctx.arena.get(current) {
-                    let flags = node.flags as u32;
-                    if !force_emit_for_ambiguous_generic
-                        && ((flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                            || (flags & node_flags::THIS_NODE_OR_ANY_SUB_NODES_HAS_ERROR) != 0)
-                    {
-                        return;
-                    }
-                } else {
-                    break;
+            }
+            // Check immediate parent
+            if let Some(ext) = self.ctx.arena.get_extended(idx)
+                && !ext.parent.is_none()
+                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            {
+                let flags = parent_node.flags as u32;
+                if !force_emit_for_ambiguous_generic
+                    && (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
+                {
+                    return;
                 }
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                if ext.parent.is_none() {
-                    break;
-                }
-                current = ext.parent;
             }
         }
 
