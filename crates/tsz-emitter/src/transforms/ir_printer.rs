@@ -58,6 +58,9 @@ pub struct IRPrinter<'a> {
     /// When true, the next `FunctionExpr` emit will force multiline for empty bodies.
     /// Set by `CallExpr` when emitting an IIFE callee.
     force_iife_multiline_empty: bool,
+    /// When true, we are inside a namespace IIFE body.
+    /// Nested namespace variable declarations use `let` instead of `var` in ES2015+ targets.
+    in_namespace_iife_body: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -186,6 +189,7 @@ impl<'a> IRPrinter<'a> {
             suppress_function_trailing_extraction: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
+            in_namespace_iife_body: false,
         }
     }
 
@@ -201,6 +205,7 @@ impl<'a> IRPrinter<'a> {
             suppress_function_trailing_extraction: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
+            in_namespace_iife_body: false,
         }
     }
 
@@ -216,6 +221,7 @@ impl<'a> IRPrinter<'a> {
             suppress_function_trailing_extraction: false,
             current_class_iife_name: None,
             force_iife_multiline_empty: false,
+            in_namespace_iife_body: false,
         }
     }
 
@@ -1460,9 +1466,17 @@ impl<'a> IRPrinter<'a> {
             current_name.as_str()
         };
 
-        // Emit var declaration only for the outermost namespace and if flag is true
+        // Emit var/let declaration only for the outermost namespace and if flag is true.
+        // Inside a namespace IIFE body, use `let` (ES2015+ semantics for nested namespaces).
+        // At the outermost level, use `var` (needed for declaration merging across files).
         if index == 0 && context.should_declare_var {
-            self.write("var ");
+            let decl_keyword = if self.in_namespace_iife_body {
+                "let"
+            } else {
+                "var"
+            };
+            self.write(decl_keyword);
+            self.write(" ");
             self.write(current_name);
             self.write(";");
             self.write_line();
@@ -1480,7 +1494,10 @@ impl<'a> IRPrinter<'a> {
         self.increase_indent();
 
         if is_last {
-            // Emit body with trailing comment peek-ahead
+            // Emit body with trailing comment peek-ahead.
+            // Set in_namespace_iife_body so nested namespace declarations use `let`.
+            let prev_in_ns_body = self.in_namespace_iife_body;
+            self.in_namespace_iife_body = true;
             let mut i = 0;
             while i < body.len() {
                 // Skip standalone TrailingComment nodes (consumed by peek-ahead)
@@ -1513,11 +1530,20 @@ impl<'a> IRPrinter<'a> {
                 self.write_line();
                 i += 1;
             }
+            // Restore in_namespace_iife_body after emitting this namespace's body
+            self.in_namespace_iife_body = prev_in_ns_body;
         } else {
-            // Emit var declaration for nested namespace
+            // Emit var/let declaration for nested namespace (dotted namespaces: A.B.C)
+            // Use `let` inside namespace bodies (ES2015+ semantics).
             let next_name = &name_parts[index + 1];
             self.write_indent();
-            self.write("var ");
+            let nested_decl_keyword = if self.in_namespace_iife_body {
+                "let"
+            } else {
+                "var"
+            };
+            self.write(nested_decl_keyword);
+            self.write(" ");
             self.write(next_name);
             self.write(";");
             self.write_line();
