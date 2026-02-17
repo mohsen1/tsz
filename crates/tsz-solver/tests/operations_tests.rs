@@ -1704,18 +1704,14 @@ fn test_call_generic_argument_type_mismatch_with_default() {
         is_method: false,
     });
 
+    // Call foo<T = number>(x: T | number) with "hello".
+    // In TypeScript, defaults are fallbacks when no inference candidates exist,
+    // not constraints that prevent inference. T is inferred as string from the
+    // argument, so x: string | number, and string is assignable → success.
     let result = evaluator.resolve_call(func, &[TypeId::STRING]);
     match result {
-        CallResult::ArgumentTypeMismatch {
-            index,
-            expected,
-            actual,
-        } => {
-            assert_eq!(index, 0);
-            assert_eq!(expected, TypeId::NUMBER);
-            assert_eq!(actual, TypeId::STRING);
-        }
-        _ => panic!("Expected ArgumentTypeMismatch, got {result:?}"),
+        CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
+        _ => panic!("Expected Success with T=string, got {result:?}"),
     }
 }
 

@@ -2560,38 +2560,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 if placeholder_count == 1
                     && let Some(member) = placeholder_member
-                    && !self.defaulted_placeholders.contains(&member)
                 {
+                    // Single placeholder-containing member in a union like
+                    // `T | undefined | null` — constrain source against it.
+                    // Defaults don't prevent inference; they're used as fallback
+                    // during resolution when no candidates are found.
                     self.constrain_types(ctx, var_map, source, member, priority);
                 } else if placeholder_count > 1 {
                     // Multiple placeholder-containing members: constrain against each.
                     // For example, when source is `number` and target is
                     // `TResult | PromiseLike<TResult>`, we should try constraining
                     // against both members so TResult gets `number` as a candidate.
-                    tracing::trace!(
-                        placeholder_count,
-                        source = source.0,
-                        target = target.0,
-                        "constrain_types_impl: multi-placeholder union target"
-                    );
                     let t_members_copy = t_members.to_vec();
-                    for member in &t_members_copy {
-                        member_visited.clear();
-                        let has_ph =
-                            self.type_contains_placeholder(*member, var_map, &mut member_visited);
-                        let is_defaulted = self.defaulted_placeholders.contains(member);
-                        tracing::trace!(
-                            member = member.0,
-                            has_ph,
-                            is_defaulted,
-                            "multi-placeholder union: checking member"
-                        );
-                    }
                     for member in t_members_copy {
                         member_visited.clear();
-                        if self.type_contains_placeholder(member, var_map, &mut member_visited)
-                            && !self.defaulted_placeholders.contains(&member)
-                        {
+                        if self.type_contains_placeholder(member, var_map, &mut member_visited) {
                             self.constrain_types(ctx, var_map, source, member, priority);
                         }
                     }
