@@ -1698,11 +1698,15 @@ impl<'a> IRPrinter<'a> {
         // Check if the body was single-line in the source
         let is_body_source_single_line = self.is_body_source_single_line(body_source_range);
 
-        // Empty body with no defaults: emit as single-line { } only if source was single-line.
-        // Synthetic code (body_source_range is None) always uses multiline, matching TSC's
-        // isSingleLineEmptyBlock which returns false when there's no source range.
+        // Empty body with no defaults: emit as single-line `{ }` if:
+        // - source was single-line, OR
+        // - there's no source range (synthetic/generated code like abstract accessor transforms).
+        // TSC preserves multiline formatting from source but uses single-line for generated code.
+        // Exception: IIFE constructors (force_multiline_empty_body) always need multiline.
         if !has_defaults && body.is_empty() {
-            if !force_multiline_empty_body && is_body_source_single_line {
+            let use_single_line = !force_multiline_empty_body
+                && (is_body_source_single_line || body_source_range.is_none());
+            if use_single_line {
                 self.write("{ }");
             } else {
                 self.write("{");
