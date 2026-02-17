@@ -142,10 +142,13 @@ impl<'a> CheckerState<'a> {
         // Relational operators (<, >, <=, >=) also emit TS18050, but only for literal null/undefined.
         // For now, we only handle arithmetic/bitwise/+ since our evaluator doesn't distinguish
         // literal values from variables typed as null/undefined.
-        let should_emit_nullish_error = matches!(
-            op,
-            "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
-        );
+        // TS18050 only applies under strictNullChecks — without it, null/undefined are in
+        // every type's domain and should not trigger this error.
+        let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
+            && matches!(
+                op,
+                "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+            );
 
         // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
         if left_is_nullish && should_emit_nullish_error {
