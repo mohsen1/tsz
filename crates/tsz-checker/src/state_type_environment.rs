@@ -419,8 +419,17 @@ impl<'a> CheckerState<'a> {
                 let evaluated = self.evaluate_type_with_resolution(operand);
                 self.get_keyof_type(evaluated)
             }
-            query::MappedConstraintKind::Resolved | query::MappedConstraintKind::Other => {
-                constraint
+            query::MappedConstraintKind::Resolved => constraint,
+            query::MappedConstraintKind::Other => {
+                // Resolve Lazy(DefId) and other unresolved constraint types.
+                // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a
+                // Lazy(DefId) constraint that must be resolved to get `"a" | "b"`.
+                let resolved = self.evaluate_type_with_resolution(constraint);
+                if resolved != constraint {
+                    resolved
+                } else {
+                    constraint
+                }
             }
         }
     }
