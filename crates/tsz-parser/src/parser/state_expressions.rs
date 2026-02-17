@@ -258,14 +258,11 @@ impl ParserState {
         // Check for line break before =>
         let has_line_break = self.scanner.has_preceding_line_break();
 
-        // Check for optional return type annotation
-        let is_arrow = if has_line_break {
-            // Line break before => — still parse as arrow function but TS1200 will
-            // be emitted during actual parsing. Parenthesized params `(x, y)` followed
-            // by `=>` are unambiguously arrow function params even with line breaks.
-            self.is_token(SyntaxKind::EqualsGreaterThanToken)
-                || self.is_token(SyntaxKind::OpenBraceToken)
-        } else if self.is_token(SyntaxKind::ColonToken) {
+        // Check for optional return type annotation.
+        // Important: check for `:` (return type) BEFORE checking has_line_break.
+        // `(params): type =>` is unambiguously an arrow function regardless of
+        // line breaks — TS1200 handles line terminator errors separately.
+        let is_arrow = if self.is_token(SyntaxKind::ColonToken) {
             // When we see `:` after `)`, it could be either:
             // 1. A return type annotation for an arrow function: (x): T => body
             // 2. The else separator of a conditional: a ? (x) : y
@@ -274,9 +271,12 @@ impl ParserState {
             let saved_arena_len = self.arena.nodes.len();
             let saved_diagnostics_len = self.parse_diagnostics.len();
             let _ = self.parse_return_type();
-            let mut result = !self.scanner.has_preceding_line_break()
-                && (self.is_token(SyntaxKind::EqualsGreaterThanToken)
-                    || self.is_token(SyntaxKind::OpenBraceToken));
+            // After parsing the return type, check for `=>` or `{`. Line breaks
+            // between the return type and `=>` are allowed here — TS1200 will be
+            // emitted during actual parsing. The `(params): type` prefix is
+            // unambiguous, so we don't need the line break check.
+            let mut result = self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                || self.is_token(SyntaxKind::OpenBraceToken);
 
             // In the true branch of a conditional expression, only accept
             // `(x): T => ...` as an arrow function when the simulated body
@@ -306,6 +306,12 @@ impl ParserState {
             self.parse_diagnostics.truncate(saved_diagnostics_len);
 
             result
+        } else if has_line_break {
+            // Line break before => — still parse as arrow function but TS1200 will
+            // be emitted during actual parsing. Parenthesized params `(x, y)` followed
+            // by `=>` are unambiguously arrow function params even with line breaks.
+            self.is_token(SyntaxKind::EqualsGreaterThanToken)
+                || self.is_token(SyntaxKind::OpenBraceToken)
         } else {
             // Check for => or { (error recovery: user forgot =>)
             self.is_token(SyntaxKind::EqualsGreaterThanToken)
@@ -318,8 +324,9 @@ impl ParserState {
 
     /// Look ahead to see if identifier is followed by => (simple arrow function)
     ///
-    /// ASI Rule: If there's a line break between the identifier and =>, it's NOT an arrow function.
-    /// Example: `x\n=> y` should NOT be parsed as an arrow function.
+    /// If there's a line break between the identifier and =>, this is still
+    /// recognized as an arrow function but TS1200 will be emitted during parsing.
+    /// `=>` cannot start a statement, so there is no ASI ambiguity.
     pub(crate) fn look_ahead_is_simple_arrow_function(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -327,11 +334,9 @@ impl ParserState {
         // Skip identifier
         self.next_token();
 
-        // Check if => is immediately after identifier (no line break)
-        // If there's a line break, ASI applies and this is not an arrow function
-        let is_arrow = if self.scanner.has_preceding_line_break() {
-            false
-        } else if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
+        // Check if => follows the identifier. Line breaks before => are
+        // allowed here — TS1200 will be emitted during actual parsing.
+        let is_arrow = if self.is_token(SyntaxKind::EqualsGreaterThanToken) {
             true
         } else if self.is_token(SyntaxKind::ColonToken)
             && (self.context_flags & CONTEXT_FLAG_IN_CONDITIONAL_TRUE) == 0
