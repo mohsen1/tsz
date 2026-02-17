@@ -1174,15 +1174,17 @@ impl<'a> Printer<'a> {
         // For JavaScript: Skip property declarations without initializers
         // (they are TypeScript-only declarations: typed props, bare props)
         // Exception: Private fields (#name) are always emitted — they are runtime declarations.
+        // Exception: `accessor` fields are always emitted — they are ES2024 auto-accessors.
         let is_private = self
             .arena
             .get(prop.name)
             .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-        if prop.initializer.is_none() && !is_private {
+        let has_accessor = self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
+        if prop.initializer.is_none() && !is_private && !has_accessor {
             return;
         }
 
-        // Emit modifiers (static only for JavaScript)
+        // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
 
         self.emit(prop.name);
@@ -1197,14 +1199,15 @@ impl<'a> Printer<'a> {
         self.write_semicolon();
     }
 
-    /// Emit class member modifiers for JavaScript (only static is valid)
+    /// Emit class member modifiers for JavaScript (static and accessor are valid)
     pub(super) fn emit_class_member_modifiers_js(&mut self, modifiers: &Option<NodeList>) {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
-                    // Only emit 'static' for JavaScript - skip private/readonly/public/protected
                     if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
                         self.write("static ");
+                    } else if mod_node.kind == SyntaxKind::AccessorKeyword as u16 {
+                        self.write("accessor ");
                     }
                 }
             }
