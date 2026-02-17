@@ -1866,27 +1866,29 @@ impl ParserState {
     /// Uses look-ahead to distinguish `(static x: number)` (modifier) from
     /// `(async: boolean)` (parameter name).
     pub(crate) fn is_parameter_modifier(&mut self) -> bool {
-        if self.is_valid_parameter_modifier() {
-            return true;
-        }
-        if !matches!(
-            self.current_token,
-            SyntaxKind::StaticKeyword
-                | SyntaxKind::ExportKeyword
-                | SyntaxKind::DeclareKeyword
-                | SyntaxKind::AsyncKeyword
-                | SyntaxKind::AbstractKeyword
-                | SyntaxKind::AccessorKeyword
-                | SyntaxKind::ConstKeyword
-                | SyntaxKind::DefaultKeyword
-                | SyntaxKind::InKeyword
-                | SyntaxKind::OutKeyword
-        ) {
+        if !self.is_valid_parameter_modifier()
+            && !matches!(
+                self.current_token,
+                SyntaxKind::StaticKeyword
+                    | SyntaxKind::ExportKeyword
+                    | SyntaxKind::DeclareKeyword
+                    | SyntaxKind::AsyncKeyword
+                    | SyntaxKind::AbstractKeyword
+                    | SyntaxKind::AccessorKeyword
+                    | SyntaxKind::ConstKeyword
+                    | SyntaxKind::DefaultKeyword
+                    | SyntaxKind::InKeyword
+                    | SyntaxKind::OutKeyword
+            )
+        {
             return false;
         }
         // Look ahead: if the next token can follow a modifier (identifier/keyword,
         // string/number literal, [, {, *, ...), then this keyword is being used as
-        // a modifier. Otherwise it's a parameter name (e.g., `async: boolean`).
+        // a modifier. Otherwise it's a parameter name (e.g., `(readonly)` or
+        // `(async: boolean)`). This applies to ALL modifier keywords including
+        // valid ones like `readonly` — when `readonly` is followed by `)` it's
+        // a parameter name, not a modifier.
         // This mirrors tsc's canFollowModifier() + isLiteralPropertyName() check.
         let snapshot = self.scanner.save_state();
         let saved_token = self.current_token;
