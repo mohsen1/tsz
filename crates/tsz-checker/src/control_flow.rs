@@ -2552,6 +2552,23 @@ impl<'a> FlowAnalyzer<'a> {
                         return narrowed;
                     }
 
+                    // Handle boolean comparison: `expr === true`, `expr === false`,
+                    // `expr !== true`, `expr !== false`, and reversed variants.
+                    // TypeScript treats comparing a type guard result to true/false as
+                    // preserving/inverting the type guard:
+                    //   if (x instanceof Error === false) { ... }
+                    //   if (isString(x) === true) { ... }
+                    if let Some(narrowed) = self.narrow_by_boolean_comparison(
+                        type_id,
+                        bin,
+                        target,
+                        is_true_branch,
+                        antecedent_id,
+                        visited_aliases,
+                    ) {
+                        return narrowed;
+                    }
+
                     // CRITICAL: Use Solver-First architecture for other binary expressions
                     // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
                     if let Some((guard, guard_target, _is_optional)) =
@@ -3077,6 +3094,90 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         type_id
+    }
+
+    /// Handle boolean comparison narrowing: `expr === true`, `expr === false`,
+    /// `expr !== true`, `expr !== false`, and their reversed variants.
+    ///
+    /// When a type guard expression is compared to `true` or `false`, TypeScript
+    /// preserves the narrowing. For example:
+    ///   - `x instanceof Error === false` → same as `!(x instanceof Error)`
+    ///   - `isString(x) === true` → same as `isString(x)`
+    ///   - `x instanceof Error !== false` → same as `x instanceof Error`
+    fn narrow_by_boolean_comparison(
+        &self,
+        type_id: TypeId,
+        bin: &tsz_parser::parser::node::BinaryExprData,
+        target: NodeIndex,
+        is_true_branch: bool,
+        antecedent_id: FlowNodeId,
+        visited_aliases: &mut Vec<SymbolId>,
+    ) -> Option<TypeId> {
+        // Only handle strict/loose equality/inequality operators
+        let is_strict_eq = bin.operator_token == SyntaxKind::EqualsEqualsEqualsToken as u16;
+        let is_strict_neq = bin.operator_token == SyntaxKind::ExclamationEqualsEqualsToken as u16;
+        let is_loose_eq = bin.operator_token == SyntaxKind::EqualsEqualsToken as u16;
+        let is_loose_neq = bin.operator_token == SyntaxKind::ExclamationEqualsToken as u16;
+
+        if !is_strict_eq && !is_strict_neq && !is_loose_eq && !is_loose_neq {
+            return None;
+        }
+
+        // Check for true/false on either side
+        let (guard_expr, is_compared_to_true) = if self.is_boolean_literal(bin.right) {
+            (bin.left, self.is_true_literal(bin.right))
+        } else if self.is_boolean_literal(bin.left) {
+            (bin.right, self.is_true_literal(bin.left))
+        } else {
+            return None;
+        };
+
+        // Determine effective sense:
+        // `expr === true` in true branch → narrow as if expr is true
+        // `expr === false` in true branch → narrow as if expr is false
+        // `expr !== true` in true branch → narrow as if expr is false
+        // `expr !== false` in true branch → narrow as if expr is true
+        let is_negated = is_strict_neq || is_loose_neq;
+        let effective_sense = if is_compared_to_true {
+            if is_negated {
+                !is_true_branch
+            } else {
+                is_true_branch
+            }
+        } else {
+            // compared to false — invert
+            if is_negated {
+                is_true_branch
+            } else {
+                !is_true_branch
+            }
+        };
+
+        // Recursively narrow based on the guard expression
+        Some(self.narrow_type_by_condition_inner(
+            type_id,
+            guard_expr,
+            target,
+            effective_sense,
+            antecedent_id,
+            visited_aliases,
+        ))
+    }
+
+    /// Check if a node is the literal `true` or `false`.
+    fn is_boolean_literal(&self, node: NodeIndex) -> bool {
+        let node = self.skip_parenthesized(node);
+        self.arena.get(node).is_some_and(|n| {
+            n.kind == SyntaxKind::TrueKeyword as u16 || n.kind == SyntaxKind::FalseKeyword as u16
+        })
+    }
+
+    /// Check if a node is the literal `true`.
+    fn is_true_literal(&self, node: NodeIndex) -> bool {
+        let node = self.skip_parenthesized(node);
+        self.arena
+            .get(node)
+            .is_some_and(|n| n.kind == SyntaxKind::TrueKeyword as u16)
     }
 
     pub(crate) fn narrow_by_logical_expr(
