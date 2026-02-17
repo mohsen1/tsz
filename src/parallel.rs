@@ -1154,13 +1154,18 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                     continue;
                 }
 
-                // Check if this symbol is from a nested scope by looking up its declaration's scope
-                let is_nested_symbol = sym
-                    .declarations
-                    .first()
-                    .and_then(|first_decl| result.node_scope_ids.get(&first_decl.0))
-                    .and_then(|scope_id| result.scopes.get(scope_id.0 as usize))
-                    .is_some_and(|scope| scope.parent != ScopeId::NONE);
+                // Check if this symbol is from a nested scope.
+                // We check whether this symbol ID appears in the ROOT scope table
+                // (ScopeId(0) = SourceFile scope). This is more reliable than checking
+                // node_scope_ids because not all declaration types create scopes
+                // (e.g., InterfaceDeclaration does not create a scope, so its node
+                // won't appear in node_scope_ids, causing false negatives).
+                let is_nested_symbol = !result.scopes.first().is_some_and(|root_scope| {
+                    root_scope
+                        .table
+                        .get(&sym.escaped_name)
+                        .is_some_and(|root_sym_id| root_sym_id == old_id)
+                });
 
                 // Check if symbol already exists in globals (cross-file merging)
                 // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
