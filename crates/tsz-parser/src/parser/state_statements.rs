@@ -4376,7 +4376,24 @@ impl ParserState {
                 NodeIndex::NONE
             };
 
+            // TS1442: Expected '=' for property initializer.
+            // When a class property has a type annotation and the next token is
+            // an expression start (not '=', ';', '}', or EOF), emit TS1442 and
+            // treat the expression as the initializer for recovery.
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+                self.parse_assignment_expression()
+            } else if type_annotation != NodeIndex::NONE
+                && !self.is_token(SyntaxKind::SemicolonToken)
+                && !self.is_token(SyntaxKind::CloseBraceToken)
+                && !self.is_token(SyntaxKind::EndOfFileToken)
+                && (self.is_token(SyntaxKind::StringLiteral)
+                    || self.is_token(SyntaxKind::NumericLiteral))
+            {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Expected '=' for property initializer.",
+                    diagnostic_codes::EXPECTED_FOR_PROPERTY_INITIALIZER,
+                );
                 self.parse_assignment_expression()
             } else {
                 NodeIndex::NONE
