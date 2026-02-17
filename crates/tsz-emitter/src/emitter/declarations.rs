@@ -1346,6 +1346,8 @@ impl<'a> Printer<'a> {
             // Keep parse-recovery emit for invalid generator member `*() {}`.
             if method.asterisk_token && has_recovery_missing_name {
                 self.write("*() { }");
+            } else {
+                self.skip_comments_for_erased_node(node);
             }
             return;
         }
@@ -1404,6 +1406,7 @@ impl<'a> Printer<'a> {
 
         // Skip abstract property declarations (they don't exist at runtime)
         if self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16) {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
@@ -1417,6 +1420,7 @@ impl<'a> Printer<'a> {
             .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
         let has_accessor = self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
         if prop.initializer.is_none() && !is_private && !has_accessor {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
