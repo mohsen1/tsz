@@ -266,6 +266,9 @@ impl ParserState {
                 | SyntaxKind::PublicKeyword
                 | SyntaxKind::StaticKeyword
                 | SyntaxKind::AccessorKeyword
+                | SyntaxKind::OverrideKeyword
+                | SyntaxKind::AbstractKeyword
+                | SyntaxKind::DeclareKeyword
         ) && !self.look_ahead_is_property_name_after_keyword()
             && !self.look_ahead_has_line_break_after_keyword()
         {
