@@ -1,38 +1,11 @@
 //! Optional Chaining Type Checking
 //!
-//! This module provides utilities for type checking optional chaining expressions (`?.`).
-//!
-//! ## Optional Chaining Semantics
-//!
-//! Optional chaining short-circuits when the base is nullish (null | undefined):
-//!
-//! ```typescript
-//! // Property access
-//! obj?.prop     // T | undefined if obj is T | null | undefined
-//!
-//! // Element access
-//! arr?.[0]      // T | undefined if arr is T[] | null | undefined
-//!
-//! // Call expression
-//! func?.()      // ReturnType<T> | undefined if func is T | null | undefined
-//! ```
-//!
-//! ## Nested Chains
-//!
-//! Nested chains propagate undefined from any point:
-//! ```typescript
-//! a?.b?.c?.d    // Returns undefined if any part is nullish
-//! ```
-//!
-//! ## Type Narrowing
-//!
-//! The result type is always `T | undefined` where T is the non-nullish result type.
+//! Provides AST-level utilities for detecting optional chaining expressions (`?.`).
+//! Solver-level nullish type utilities live in `tsz_solver`.
 
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
-use tsz_solver as solver_narrowing;
-use tsz_solver::{TypeDatabase, TypeId as SolverTypeId};
 
 /// Maximum depth for optional chain traversal to prevent infinite loops
 const MAX_OPTIONAL_CHAIN_DEPTH: usize = 1000;
@@ -95,8 +68,6 @@ pub fn analyze_optional_chain(arena: &NodeArena, idx: NodeIndex) -> OptionalChai
             }
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = arena.get_call_expr(node) {
-                    // Check if this is an optional call (has OptionalChain flag)
-                    // For now, we check if the callee has optional chaining
                     root = call.expression;
                     current = call.expression;
                 } else {
@@ -146,55 +117,6 @@ pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
         }
         _ => false,
     }
-}
-
-/// Gets the result type for an optional chain expression
-///
-/// If the expression is an optional chain and the base can be nullish,
-/// the result is T | undefined
-pub fn get_optional_chain_type(
-    types: &dyn TypeDatabase,
-    _base_type: SolverTypeId,
-    access_type: SolverTypeId,
-    is_optional: bool,
-) -> SolverTypeId {
-    if !is_optional {
-        return access_type;
-    }
-
-    // For optional chains, result is always T | undefined
-    // unless it already includes undefined
-    if access_type == SolverTypeId::UNDEFINED {
-        return SolverTypeId::UNDEFINED;
-    }
-
-    // Check if access_type already contains undefined
-    if type_contains_undefined(types, access_type) {
-        return access_type;
-    }
-
-    // Create union T | undefined
-    types.union(vec![access_type, SolverTypeId::UNDEFINED])
-}
-
-/// Checks if a type contains undefined
-pub fn type_contains_undefined(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
-    solver_narrowing::type_contains_undefined(types, type_id)
-}
-
-/// Removes null and undefined from a type for optional chain narrowing
-pub fn get_non_nullish_type(types: &dyn TypeDatabase, type_id: SolverTypeId) -> SolverTypeId {
-    solver_narrowing::remove_nullish(types, type_id)
-}
-
-/// Checks if a type is nullish (null or undefined)
-pub fn is_nullish_type(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
-    solver_narrowing::is_nullish_type(types, type_id)
-}
-
-/// Checks if a type can be nullish (contains null or undefined)
-pub fn can_be_nullish(types: &dyn TypeDatabase, type_id: SolverTypeId) -> bool {
-    solver_narrowing::can_be_nullish(types, type_id)
 }
 
 #[cfg(test)]
