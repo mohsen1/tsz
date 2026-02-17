@@ -2798,6 +2798,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if self.is_boxed_primitive_subtype(s_kind, target) {
                 return SubtypeResult::True;
             }
+            // `object` keyword is structurally equivalent to `{}` (empty object).
+            // It's assignable to any object type where all properties are optional,
+            // since no required properties need to be satisfied.
+            if s_kind == IntrinsicKind::Object {
+                let target_shape = object_shape_id(self.interner, target)
+                    .or_else(|| object_with_index_shape_id(self.interner, target));
+                if let Some(t_shape_id) = target_shape {
+                    let t_shape = self.interner.object_shape(t_shape_id);
+                    if t_shape.properties.iter().all(|p| p.optional) {
+                        return SubtypeResult::True;
+                    }
+                }
+            }
             // Trace: Intrinsic type mismatch (boxed primitive check failed)
             if let Some(tracer) = &mut self.tracer
                 && !tracer.on_mismatch_dyn(SubtypeFailureReason::TypeMismatch {
