@@ -1196,8 +1196,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             let ty = self.normalize_inferred_placeholder_type(ty, &infer_subst);
 
             final_subst.insert(tp.name, ty);
+        }
 
+        // Constraint checking is deferred until ALL type parameters are resolved.
+        // This handles cases like `<T extends U, U>` where T's constraint references
+        // U, which may not be in final_subst until later iterations.
+        for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             if let Some(constraint) = tp.constraint {
+                let ty = final_subst.get(tp.name).unwrap_or(TypeId::ERROR);
                 let constraint_ty = instantiate_type(self.interner, constraint, &final_subst);
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
