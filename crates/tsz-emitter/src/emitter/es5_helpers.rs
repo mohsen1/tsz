@@ -1180,6 +1180,21 @@ impl<'a> Printer<'a> {
         }
 
         // ES2015 path: __awaiter + function* with yield
+
+        // Check if the body is empty and was single-line in source for compact formatting
+        let body_is_empty_single_line = self
+            .arena
+            .get(body)
+            .and_then(|n| {
+                let block = self.arena.get_block(n)?;
+                if block.statements.nodes.is_empty() {
+                    Some(self.is_single_line(n))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+
         self.write(") {");
         self.write_line();
         self.increase_indent();
@@ -1193,10 +1208,24 @@ impl<'a> Printer<'a> {
             self.ctx.emit_await_as_yield = true;
             self.emit_function_parameters_js(params);
             self.ctx.emit_await_as_yield = saved;
-            self.write(") {");
+            if body_is_empty_single_line {
+                self.write(") { });");
+            } else {
+                self.write(") {");
+            }
+        } else if body_is_empty_single_line {
+            self.write(", void 0, void 0, function* () { });");
         } else {
             self.write(", void 0, void 0, function* () {");
         }
+
+        if body_is_empty_single_line {
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
+
         self.write_line();
         self.increase_indent();
 

@@ -152,15 +152,36 @@ impl<'a> Printer<'a> {
         // Arrow functions don't have their own `this`, so TSC passes `void 0`
         // as the this-arg to __awaiter. The arrow captures `this` lexically from
         // the enclosing scope, but __awaiter doesn't need it.
+
+        let body_node = self.arena.get(func.body);
+        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+
+        // Check if body is empty and single-line in source for compact formatting
+        let body_is_empty_single_line = is_block
+            && self
+                .arena
+                .get(func.body)
+                .and_then(|n| {
+                    let block = self.arena.get_block(n)?;
+                    if block.statements.nodes.is_empty() {
+                        Some(self.is_single_line(n))
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(false);
+
+        if body_is_empty_single_line {
+            self.write(" => __awaiter(void 0, void 0, void 0, function* () { })");
+            return;
+        }
+
         self.write(" => __awaiter(void 0, void 0, void 0, function* () {");
         self.write_line();
         self.increase_indent();
 
         // Emit body with await→yield substitution
         self.ctx.emit_await_as_yield = true;
-
-        let body_node = self.arena.get(func.body);
-        let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
 
         if is_block {
             // Block body: emit statements directly

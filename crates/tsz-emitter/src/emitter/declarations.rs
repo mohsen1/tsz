@@ -937,8 +937,9 @@ impl<'a> Printer<'a> {
                                     self.write(";");
                                     self.write_line();
                                 }
-                            } else if inner_kind != syntax_kind_ext::MODULE_DECLARATION {
+                            } else if emitted && inner_kind != syntax_kind_ext::MODULE_DECLARATION {
                                 // Don't write extra newline for namespaces - they already call write_line()
+                                // Also don't write newline if emit produced nothing (e.g., non-instantiated import alias)
                                 self.write_line();
                             }
                         }
