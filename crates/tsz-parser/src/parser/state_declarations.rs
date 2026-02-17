@@ -2173,6 +2173,16 @@ impl ParserState {
             | SyntaxKind::AwaitKeyword => self.parse_variable_statement(),
             SyntaxKind::ConstKeyword => self.parse_export_const_or_variable(),
             SyntaxKind::AtToken => self.parse_export_decorated_declaration(),
+            // Duplicate 'export' modifier (e.g., `export export class Foo {}`)
+            SyntaxKind::ExportKeyword => {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    &format!("'{}' modifier already seen.", "export"),
+                    diagnostic_codes::MODIFIER_ALREADY_SEEN,
+                );
+                self.next_token();
+                self.parse_exported_declaration(start_pos)
+            }
             _ => {
                 self.error_statement_expected();
                 self.parse_expression_statement()
