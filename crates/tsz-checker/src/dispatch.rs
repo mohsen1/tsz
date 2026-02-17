@@ -684,6 +684,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         expr_type
                     } else {
+                        // Check for duplicate properties in type literal nodes (TS2300)
+                        self.checker
+                            .check_type_for_parameter_properties(assertion.type_node);
+
                         let asserted_type =
                             self.checker.get_type_from_type_node(assertion.type_node);
 
