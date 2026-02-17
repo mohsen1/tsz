@@ -2321,11 +2321,51 @@ impl<'a> Printer<'a> {
                 | ModuleKind::NodeNext
         );
 
-        // Check if source already has "use strict" directive
-        let source_has_use_strict = self.source_text.is_some_and(|text| {
-            let trimmed = text.trim_start();
-            trimmed.starts_with("\"use strict\"") || trimmed.starts_with("'use strict'")
-        });
+        // Check if source already has "use strict" as a prologue directive.
+        // Prologue directives are string literal expression statements that appear
+        // BEFORE any non-string-literal statements. Once a non-string-literal
+        // statement is seen, the prologue zone ends.
+        // We must check the AST rather than raw text because there may be comments
+        // before the prologue that would fool a text-based check.
+        let source_has_use_strict = {
+            let mut found = false;
+            for &idx in &source.statements.nodes {
+                let Some(stmt_node) = self.arena.get(idx) else {
+                    break;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    break; // non-expression-statement ends the prologue zone
+                }
+                let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
+                    break;
+                };
+                let Some(expr_node) = self.arena.get(expr_stmt.expression) else {
+                    break;
+                };
+                if expr_node.kind != tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                    break; // non-string-literal ends the prologue zone
+                }
+                // Check the literal text
+                let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
+                    lit.text == "use strict"
+                } else if let Some(text) = self.source_text {
+                    let s = crate::printer::safe_slice::slice(
+                        text,
+                        expr_node.pos as usize,
+                        expr_node.end as usize,
+                    );
+                    s == "\"use strict\"" || s == "'use strict'"
+                } else {
+                    false
+                };
+                if is_use_strict {
+                    found = true;
+                    break;
+                }
+                // Other string literal prologue — continue scanning
+            }
+            found
+        };
 
         // TypeScript emits "use strict" when:
         // 1. CommonJS/AMD/UMD AND the file is actually an ES module (has import/export).
@@ -2543,17 +2583,32 @@ impl<'a> Printer<'a> {
                 if is_erased {
                     // Skip erased declarations. Their leading comments were already
                     // filtered out of all_comments during initialization.
-                    // Also defensively consume any remaining leading comments for this
-                    // erased statement so they are not attached to the next emitted node.
+                    // Also consume trailing same-line comments for the erased statement
+                    // (e.g., `declare var a: boolean; // comment` should be erased too).
+                    // We use the end-of-line of the last token as the boundary:
+                    //   - Comments on the same line as the last token → consume (erase)
+                    //   - Comments on subsequent lines → keep for the next statement
+                    let stmt_token_end =
+                        self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    let line_end = if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let mut pos = stmt_token_end as usize;
+                        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                            pos += 1;
+                        }
+                        pos as u32
+                    } else {
+                        stmt_token_end
+                    };
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_end = self.all_comments[self.comment_emit_idx].end;
-                        if c_end <= stmt_node.end {
+                        if c_end <= line_end {
                             self.comment_emit_idx += 1;
                         } else {
                             break;
                         }
                     }
-                    last_erased_stmt_end = Some(stmt_node.end);
+                    last_erased_stmt_end = Some(line_end);
                     continue;
                 }
 
