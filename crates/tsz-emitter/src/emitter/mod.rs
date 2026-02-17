@@ -1816,6 +1816,11 @@ impl<'a> Printer<'a> {
                 self.emit_class_declaration(node, idx);
             }
 
+            // Class expression (e.g., `return class extends Base { ... }`)
+            k if k == syntax_kind_ext::CLASS_EXPRESSION => {
+                self.emit_class_declaration(node, idx);
+            }
+
             // Property assignment
             k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
                 self.emit_property_assignment(node);
