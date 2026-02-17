@@ -113,6 +113,11 @@ impl<'a> CheckerState<'a> {
                         .is_class_derived_from(current_class_idx, access_info.declaring_class_idx)
                     {
                         false
+                    } else if is_static {
+                        // Static protected members: the current class extends the
+                        // declaring class, which is sufficient. No receiver check
+                        // needed because static access is through the class itself.
+                        true
                     } else {
                         let receiver_class_idx =
                             self.resolve_receiver_class_for_access(object_expr, object_type);
