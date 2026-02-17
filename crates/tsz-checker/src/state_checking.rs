@@ -137,6 +137,9 @@ impl<'a> CheckerState<'a> {
     pub fn check_source_file(&mut self, root_idx: NodeIndex) {
         let _span = span!(Level::INFO, "check_source_file", idx = ?root_idx).entered();
 
+        // Reset per-file flags
+        self.ctx.is_in_ambient_declaration_file = false;
+
         let Some(node) = self.ctx.arena.get(root_idx) else {
             return;
         };
@@ -206,7 +209,22 @@ impl<'a> CheckerState<'a> {
             // premature TS7006 errors. The checking phase ensures contextual types are available.
             self.ctx.is_checking_statements = true;
             let stmt_start = Instant::now();
+
+            // In .d.ts files, emit TS1036 for non-declaration top-level statements.
+            // The entire file is an ambient context, so statements like break, continue,
+            // return, debugger, if, while, for, etc. are not allowed.
+            let is_dts = self.ctx.file_name.ends_with(".d.ts")
+                || self.ctx.file_name.ends_with(".d.tsx")
+                || self.ctx.file_name.ends_with(".d.mts")
+                || self.ctx.file_name.ends_with(".d.cts");
+            if is_dts {
+                self.ctx.is_in_ambient_declaration_file = true;
+            }
+
             for &stmt_idx in &sf.statements.nodes {
+                if is_dts {
+                    self.check_dts_statement_in_ambient_context(stmt_idx);
+                }
                 self.check_statement(stmt_idx);
             }
 
@@ -1171,6 +1189,48 @@ impl<'a> CheckerState<'a> {
                 5,
                 "Identifier expected. 'await' is a reserved word at the top-level of a module.",
                 ts1262_code,
+            );
+        }
+    }
+
+    /// Emit TS1036 for non-declaration statements in .d.ts files.
+    /// In .d.ts files the entire file is implicitly ambient, so non-declaration
+    /// statements (break, continue, return, if, while, for, debugger, etc.) are not allowed.
+    fn check_dts_statement_in_ambient_context(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            return;
+        };
+
+        let is_non_declaration = matches!(
+            node.kind,
+            k if k == syntax_kind_ext::EXPRESSION_STATEMENT
+                || k == syntax_kind_ext::EMPTY_STATEMENT
+                || k == syntax_kind_ext::IF_STATEMENT
+                || k == syntax_kind_ext::DO_STATEMENT
+                || k == syntax_kind_ext::WHILE_STATEMENT
+                || k == syntax_kind_ext::FOR_STATEMENT
+                || k == syntax_kind_ext::FOR_IN_STATEMENT
+                || k == syntax_kind_ext::FOR_OF_STATEMENT
+                || k == syntax_kind_ext::BREAK_STATEMENT
+                || k == syntax_kind_ext::CONTINUE_STATEMENT
+                || k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::WITH_STATEMENT
+                || k == syntax_kind_ext::SWITCH_STATEMENT
+                || k == syntax_kind_ext::THROW_STATEMENT
+                || k == syntax_kind_ext::TRY_STATEMENT
+                || k == syntax_kind_ext::DEBUGGER_STATEMENT
+                || k == syntax_kind_ext::LABELED_STATEMENT
+        );
+
+        if is_non_declaration && let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
+            self.ctx.error(
+                pos,
+                end - pos,
+                diagnostic_messages::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS.to_string(),
+                diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
             );
         }
     }

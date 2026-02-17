@@ -714,6 +714,20 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
+            // TS1035: Only ambient modules can use quoted names.
+            // `module "Foo" {}` without `declare` is invalid.
+            if !has_declare
+                && is_string_named
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+            {
+                self.ctx.error(
+                    name_node.pos,
+                    name_node.end - name_node.pos,
+                    diagnostic_messages::ONLY_AMBIENT_MODULES_CAN_USE_QUOTED_NAMES.to_string(),
+                    diagnostic_codes::ONLY_AMBIENT_MODULES_CAN_USE_QUOTED_NAMES,
+                );
+            }
+
             // TS2435: Ambient modules cannot be nested in other modules or namespaces
             // Check if this is an ambient external module (declare module "string")
             // inside another namespace/module

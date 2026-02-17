@@ -793,13 +793,16 @@ impl<'a> CheckerState<'a> {
         };
 
         // TS1108: A 'return' statement can only be used within a function body.
+        // In .d.ts files, TS1036 is emitted instead of TS1108.
         if self.current_return_type().is_none() {
-            use crate::diagnostics::diagnostic_codes;
-            self.error_at_node(
-                stmt_idx,
-                "A 'return' statement can only be used within a function body.",
-                diagnostic_codes::A_RETURN_STATEMENT_CAN_ONLY_BE_USED_WITHIN_A_FUNCTION_BODY,
-            );
+            if !self.ctx.is_in_ambient_declaration_file {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    stmt_idx,
+                    "A 'return' statement can only be used within a function body.",
+                    diagnostic_codes::A_RETURN_STATEMENT_CAN_ONLY_BE_USED_WITHIN_A_FUNCTION_BODY,
+                );
+            }
             return;
         }
 
