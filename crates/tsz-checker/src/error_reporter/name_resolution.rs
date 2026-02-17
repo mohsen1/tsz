@@ -322,6 +322,10 @@ impl<'a> CheckerState<'a> {
                 Some(true)
             })
             .is_some();
+        // When there are parse errors, modifier keywords appearing as identifiers
+        // are parser-recovery artifacts. Suppress TS2304 for these to avoid cascades.
+        // Exception: computed property name expressions like `[public]` — tsc emits
+        // TS2304 for these even in parse-error contexts (but not in enums).
         if self.has_parse_errors()
             && !is_in_computed_property
             && matches!(
@@ -337,29 +341,7 @@ impl<'a> CheckerState<'a> {
                     | "accessor"
             )
         {
-            let mut current = idx;
-            let mut guard = 0;
-            while !current.is_none() {
-                guard += 1;
-                if guard > 256 {
-                    break;
-                }
-                let Some(node) = self.ctx.arena.get(current) else {
-                    break;
-                };
-                if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                {
-                    return;
-                }
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                if ext.parent.is_none() {
-                    break;
-                }
-                current = ext.parent;
-            }
+            return;
         }
 
         // In parse-error files, identifiers inside class member bodies are often
