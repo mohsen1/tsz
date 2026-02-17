@@ -483,13 +483,35 @@ impl<'a> CheckerState<'a> {
             |sym_id: SymbolId| ignore_libs && self.ctx.symbol_is_from_lib(sym_id);
         let mut value_only_candidate = None;
 
+        // Check if this name exists in a local scope (namespace/module) that would shadow
+        // the global lib symbol. If so, we skip the early lib_contexts check and let the
+        // binder's scope-based resolution find the local symbol first.
+        let name_in_local_scope = if !ignore_libs {
+            self.ctx
+                .binder
+                .resolve_identifier_with_filter(
+                    self.ctx.arena,
+                    idx,
+                    &lib_binders,
+                    |_| true, // accept any symbol
+                )
+                .is_some_and(|found_sym_id| {
+                    // Check if this symbol is different from the file_locals symbol.
+                    // If it's different, it was found in a more local scope (namespace, etc.)
+                    self.ctx.binder.file_locals.get(name) != Some(found_sym_id)
+                })
+        } else {
+            false
+        };
+
         // IMPORTANT: Check lib_contexts directly BEFORE calling binder's resolve_identifier_with_filter.
         // The binder's method has a bug where it only queries lib_binders when lib_symbols_merged is FALSE.
         // After lib symbols are merged into the main binder, lib_symbols_merged is set to TRUE,
         // causing the binder to skip lib lookup entirely. By checking lib_contexts.file_locals
         // directly here, we bypass that bug and ensure global type symbols are always resolved.
-        // This matches the pattern used successfully in generators.rs (lookup_global_type).
-        if !ignore_libs {
+        // However, skip this early check when the name is declared in a local scope (namespace, etc.)
+        // so that local symbols can shadow global ones.
+        if !ignore_libs && !name_in_local_scope {
             for lib_ctx in &self.ctx.lib_contexts {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
                     // After lib merge, the file binder has the same symbols with
