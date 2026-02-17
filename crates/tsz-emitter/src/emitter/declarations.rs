@@ -105,6 +105,9 @@ impl<'a> Printer<'a> {
         if !func.name.is_none() {
             self.write_space();
             self.emit(func.name);
+        } else {
+            // Space before ( for anonymous functions: `function ()` not `function()`
+            self.write(" ");
         }
 
         // Parameters - only emit names, not types for JavaScript
