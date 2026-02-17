@@ -841,6 +841,80 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check that consecutive method declarations with the same name have consistent
+    /// static/instance modifiers (TS2387/TS2388).
+    ///
+    /// TSC rule: for each consecutive pair of same-name method declarations within
+    /// an overload group, if their static-ness differs, emit an error on the second:
+    /// - TS2387 if it's instance but should be static
+    /// - TS2388 if it's static but shouldn't be
+    ///
+    /// An overload group ends when we encounter an implementation (method with body).
+    /// After an implementation, the next declaration starts a new group even if
+    /// it has the same name.
+    pub(crate) fn check_static_instance_overload_consistency(&mut self, members: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let mut prev_name: Option<String> = None;
+        let mut prev_is_static = false;
+        let mut prev_had_body = false;
+
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                prev_name = None;
+                prev_had_body = false;
+                continue;
+            };
+
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                prev_name = None;
+                prev_had_body = false;
+                continue;
+            }
+
+            let Some(method) = self.ctx.arena.get_method_decl(node) else {
+                prev_name = None;
+                prev_had_body = false;
+                continue;
+            };
+
+            let cur_name = self.get_method_name_from_node(member_idx);
+            let cur_is_static = self.has_static_modifier(&method.modifiers);
+            let cur_has_body = method.body.is_some();
+
+            // Only compare within the same overload group.
+            // After an implementation (body), start a new group.
+            if !prev_had_body {
+                if let (Some(prev), Some(cur)) = (&prev_name, &cur_name) {
+                    if prev == cur && cur_is_static != prev_is_static {
+                        let error_node = if !method.name.is_none() {
+                            method.name
+                        } else {
+                            member_idx
+                        };
+                        if cur_is_static {
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::FUNCTION_OVERLOAD_MUST_NOT_BE_STATIC,
+                                diagnostic_codes::FUNCTION_OVERLOAD_MUST_NOT_BE_STATIC,
+                            );
+                        } else {
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::FUNCTION_OVERLOAD_MUST_BE_STATIC,
+                                diagnostic_codes::FUNCTION_OVERLOAD_MUST_BE_STATIC,
+                            );
+                        }
+                    }
+                }
+            }
+
+            prev_name = cur_name;
+            prev_is_static = cur_is_static;
+            prev_had_body = cur_has_body;
+        }
+    }
+
     pub(crate) fn maybe_report_implicit_any_parameter(
         &mut self,
         param: &tsz_parser::parser::node::ParameterData,
