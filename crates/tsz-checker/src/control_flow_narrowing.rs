@@ -1178,6 +1178,11 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Check cache first to avoid O(N²) repeated comparisons
         let key = (a.0.min(b.0), a.0.max(b.0)); // Normalize order for symmetric lookup
+        if let Some(shared) = self.shared_reference_match_cache
+            && let Some(&cached) = shared.borrow().get(&key)
+        {
+            return cached;
+        }
         if let Some(&cached) = self.reference_match_cache.borrow().get(&key) {
             return cached;
         }
@@ -1186,6 +1191,9 @@ impl<'a> FlowAnalyzer<'a> {
 
         let result = self.is_matching_reference_uncached(a, b);
 
+        if let Some(shared) = self.shared_reference_match_cache {
+            shared.borrow_mut().insert(key, result);
+        }
         self.reference_match_cache.borrow_mut().insert(key, result);
         result
     }
@@ -1509,6 +1517,34 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let node = self.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+            && let Some(decl) = self.arena.get_variable_declaration(node)
+        {
+            return self.reference_symbol_inner(decl.name, visited);
+        }
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            && let Some(func) = self.arena.get_function(node)
+            && !func.name.is_none()
+        {
+            return self.reference_symbol_inner(func.name, visited);
+        }
+
+        if node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class_decl) = self.arena.get_class(node)
+            && !class_decl.name.is_none()
+        {
+            return self.reference_symbol_inner(class_decl.name, visited);
+        }
+
+        if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            && let Some(list) = self.arena.get_variable(node)
+            && list.declarations.nodes.len() == 1
+            && let Some(&decl_idx) = list.declarations.nodes.first()
+        {
+            return self.reference_symbol_inner(decl_idx, visited);
+        }
+
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
             let bin = self.arena.get_binary_expr(node)?;
             if self.is_assignment_operator(bin.operator_token) {

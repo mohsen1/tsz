@@ -802,6 +802,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
+        if let Some(result) = self.resolve_trivial_single_type_param_call(func, arg_types) {
+            return result;
+        }
+
         let mut infer_ctx = InferenceContext::new(self.interner.as_type_database());
         let mut substitution = TypeSubstitution::new();
         let mut var_map: FxHashMap<TypeId, crate::infer::InferenceVar> = FxHashMap::default();
@@ -929,6 +933,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let rest_tuple_inference =
             self.rest_tuple_inference_target(&instantiated_params, arg_types, &var_map);
         let rest_tuple_start = rest_tuple_inference.as_ref().map(|(start, _, _)| *start);
+        let mut has_context_sensitive_args = false;
 
         // === Round 1: Process non-contextual arguments ===
         // These are arguments like arrays, primitives, and objects that don't need
@@ -946,43 +951,50 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
             // Skip contextually sensitive arguments (will process in Round 2)
             if self.is_contextually_sensitive(arg_type) {
+                has_context_sensitive_args = true;
                 continue;
             }
 
-            placeholder_visited.clear();
-            if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited) {
-                // No placeholder in target_type - check assignability directly
-                if !self.checker.is_assignable_to(arg_type, target_type)
-                    && !self.is_function_union_compat(arg_type, target_type)
+            // Direct placeholders (inference variables) are validated by final
+            // constraint resolution below. Skipping eager checks here avoids
+            // duplicate expensive assignability work on hot generic-call paths.
+            if !var_map.contains_key(&target_type) {
+                placeholder_visited.clear();
+                if !self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited)
                 {
-                    return CallResult::ArgumentTypeMismatch {
-                        index: i,
-                        expected: target_type,
-                        actual: arg_type,
-                    };
-                }
-            } else {
-                // Target type contains placeholders - check against their constraints
-                if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
-                    && let Some(constraint) = tp.constraint
-                {
-                    let inst_constraint =
-                        instantiate_type(self.interner, constraint, &substitution);
-                    placeholder_visited.clear();
-                    if !self.type_contains_placeholder(
-                        inst_constraint,
-                        &var_map,
-                        &mut placeholder_visited,
-                    ) {
-                        // Constraint is fully concrete - safe to check now
-                        if !self.checker.is_assignable_to(arg_type, inst_constraint)
-                            && !self.is_function_union_compat(arg_type, inst_constraint)
-                        {
-                            return CallResult::ArgumentTypeMismatch {
-                                index: i,
-                                expected: inst_constraint,
-                                actual: arg_type,
-                            };
+                    // No placeholder in target_type - check assignability directly
+                    if !self.checker.is_assignable_to(arg_type, target_type)
+                        && !self.is_function_union_compat(arg_type, target_type)
+                    {
+                        return CallResult::ArgumentTypeMismatch {
+                            index: i,
+                            expected: target_type,
+                            actual: arg_type,
+                        };
+                    }
+                } else {
+                    // Target type contains placeholders - check against their constraints
+                    if let Some(TypeData::TypeParameter(tp)) = self.interner.lookup(target_type)
+                        && let Some(constraint) = tp.constraint
+                    {
+                        let inst_constraint =
+                            instantiate_type(self.interner, constraint, &substitution);
+                        placeholder_visited.clear();
+                        if !self.type_contains_placeholder(
+                            inst_constraint,
+                            &var_map,
+                            &mut placeholder_visited,
+                        ) {
+                            // Constraint is fully concrete - safe to check now
+                            if !self.checker.is_assignable_to(arg_type, inst_constraint)
+                                && !self.is_function_union_compat(arg_type, inst_constraint)
+                            {
+                                return CallResult::ArgumentTypeMismatch {
+                                    index: i,
+                                    expected: inst_constraint,
+                                    actual: arg_type,
+                                };
+                            }
                         }
                     }
                 }
@@ -1012,7 +1024,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // === Fixing: Resolve variables with enough information ===
         // This "fixes" type variables that have candidates from Round 1,
         // preventing Round 2 from overriding them with lower-priority constraints.
-        if infer_ctx.fix_current_variables().is_err() {
+        if has_context_sensitive_args && infer_ctx.fix_current_variables().is_err() {
             // Fixing failed - this might indicate a constraint conflict
             // Continue with partial fixing, final resolution will detect errors
         }
@@ -1021,89 +1033,93 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // These are arguments like lambdas that need contextual typing.
         // Now that non-contextual arguments have been processed, we can provide
         // proper contextual types to lambdas based on fixed type variables.
-        for (i, &arg_type) in arg_types.iter().enumerate() {
-            if rest_tuple_start.is_some_and(|start| i >= start) {
-                continue;
-            }
-            let Some(target_type) =
-                self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
-            else {
-                break;
-            };
-
-            // Only process contextually sensitive arguments in Round 2
-            if !self.is_contextually_sensitive(arg_type) {
-                continue;
-            }
-
-            // Check if target_type contains placeholders BEFORE any re-instantiation
-            placeholder_visited.clear();
-            let target_has_placeholders =
-                self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
-
-            if !target_has_placeholders {
-                // No placeholders in target - direct assignability check
-                if !self.checker.is_assignable_to(arg_type, target_type)
-                    && !self.is_function_union_compat(arg_type, target_type)
-                {
-                    return CallResult::ArgumentTypeMismatch {
-                        index: i,
-                        expected: target_type,
-                        actual: arg_type,
-                    };
+        if has_context_sensitive_args {
+            for (i, &arg_type) in arg_types.iter().enumerate() {
+                if rest_tuple_start.is_some_and(|start| i >= start) {
+                    continue;
                 }
-            } else {
-                // Target has placeholders - collect constraints using the original target_type
-                // This preserves the connection to inference variables (e.g., U in (x: T) => U)
-                // IMPORTANT: Use target_type directly, not contextual_target, to maintain
-                // the placeholder connection for unresolved type parameters
-                self.constrain_types(
-                    &mut infer_ctx,
-                    &var_map,
-                    arg_type,
-                    target_type,
-                    crate::types::InferencePriority::ReturnType,
-                );
+                let Some(target_type) =
+                    self.param_type_for_arg_index(&instantiated_params, i, arg_types.len())
+                else {
+                    break;
+                };
 
-                // Special case: If target_type is a function with rest param type parameter,
-                // and arg_type is a function, infer the tuple type from function parameters.
-                // Example: test<A>((x: string) => {}) where A extends any[]
-                // Should infer A = [string]
-                if let Some(TypeData::Function(target_fn_id)) = self.interner.lookup(target_type) {
-                    let target_fn = self.interner.function_shape(target_fn_id);
-                    if let Some(t_last) = target_fn.params.last()
-                        && t_last.rest
-                        && var_map.contains_key(&t_last.type_id)
-                        && let Some(TypeData::Function(source_fn_id)) =
-                            self.interner.lookup(arg_type)
+                // Only process contextually sensitive arguments in Round 2
+                if !self.is_contextually_sensitive(arg_type) {
+                    continue;
+                }
+
+                // Check if target_type contains placeholders BEFORE any re-instantiation
+                placeholder_visited.clear();
+                let target_has_placeholders =
+                    self.type_contains_placeholder(target_type, &var_map, &mut placeholder_visited);
+
+                if !target_has_placeholders {
+                    // No placeholders in target - direct assignability check
+                    if !self.checker.is_assignable_to(arg_type, target_type)
+                        && !self.is_function_union_compat(arg_type, target_type)
                     {
-                        let source_fn = self.interner.function_shape(source_fn_id);
-                        // Create tuple from source function's parameters
-                        use crate::type_queries::unpack_tuple_rest_parameter;
-                        let params_unpacked: Vec<ParamInfo> = source_fn
-                            .params
-                            .iter()
-                            .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
-                            .collect();
+                        return CallResult::ArgumentTypeMismatch {
+                            index: i,
+                            expected: target_type,
+                            actual: arg_type,
+                        };
+                    }
+                } else {
+                    // Target has placeholders - collect constraints using the original target_type
+                    // This preserves the connection to inference variables (e.g., U in (x: T) => U)
+                    // IMPORTANT: Use target_type directly, not contextual_target, to maintain
+                    // the placeholder connection for unresolved type parameters
+                    self.constrain_types(
+                        &mut infer_ctx,
+                        &var_map,
+                        arg_type,
+                        target_type,
+                        crate::types::InferencePriority::ReturnType,
+                    );
 
-                        let tuple_elements: Vec<TupleElement> = params_unpacked
-                            .iter()
-                            .map(|p| TupleElement {
-                                type_id: p.type_id,
-                                name: p.name,
-                                optional: p.optional,
-                                rest: p.rest,
-                            })
-                            .collect();
-                        let param_tuple = self.interner.tuple(tuple_elements);
+                    // Special case: If target_type is a function with rest param type parameter,
+                    // and arg_type is a function, infer the tuple type from function parameters.
+                    // Example: test<A>((x: string) => {}) where A extends any[]
+                    // Should infer A = [string]
+                    if let Some(TypeData::Function(target_fn_id)) =
+                        self.interner.lookup(target_type)
+                    {
+                        let target_fn = self.interner.function_shape(target_fn_id);
+                        if let Some(t_last) = target_fn.params.last()
+                            && t_last.rest
+                            && var_map.contains_key(&t_last.type_id)
+                            && let Some(TypeData::Function(source_fn_id)) =
+                                self.interner.lookup(arg_type)
+                        {
+                            let source_fn = self.interner.function_shape(source_fn_id);
+                            // Create tuple from source function's parameters
+                            use crate::type_queries::unpack_tuple_rest_parameter;
+                            let params_unpacked: Vec<ParamInfo> = source_fn
+                                .params
+                                .iter()
+                                .flat_map(|p| unpack_tuple_rest_parameter(self.interner, p))
+                                .collect();
 
-                        // Infer: A = [string, number]
-                        if let Some(&var) = var_map.get(&t_last.type_id) {
-                            infer_ctx.add_candidate(
-                                var,
-                                param_tuple,
-                                crate::types::InferencePriority::NakedTypeVariable,
-                            );
+                            let tuple_elements: Vec<TupleElement> = params_unpacked
+                                .iter()
+                                .map(|p| TupleElement {
+                                    type_id: p.type_id,
+                                    name: p.name,
+                                    optional: p.optional,
+                                    rest: p.rest,
+                                })
+                                .collect();
+                            let param_tuple = self.interner.tuple(tuple_elements);
+
+                            // Infer: A = [string, number]
+                            if let Some(&var) = var_map.get(&t_last.type_id) {
+                                infer_ctx.add_candidate(
+                                    var,
+                                    param_tuple,
+                                    crate::types::InferencePriority::NakedTypeVariable,
+                                );
+                            }
                         }
                     }
                 }
@@ -1119,6 +1135,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let mut final_subst = TypeSubstitution::new();
+        let mut infer_subst_cache: Option<TypeSubstitution> = None;
         for (tp, &var) in func.type_params.iter().zip(type_param_vars.iter()) {
             let constraints = infer_ctx.get_constraints(var);
             let has_constraints = matches!(&constraints, Some(c) if !c.is_empty());
@@ -1203,8 +1220,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // Generic source contextual instantiation can produce temporary placeholders
             // (e.g. `__infer_src_*`) while collecting constraints for callback arguments.
             // Those placeholders must never leak into final instantiated signatures.
-            let infer_subst = infer_ctx.get_current_substitution();
-            let ty = self.normalize_inferred_placeholder_type(ty, &infer_subst);
+            let ty = if has_context_sensitive_args {
+                let infer_subst = if let Some(ref cached) = infer_subst_cache {
+                    cached
+                } else {
+                    infer_subst_cache = Some(infer_ctx.get_current_substitution());
+                    infer_subst_cache
+                        .as_ref()
+                        .expect("inference substitution cache just initialized")
+                };
+                self.normalize_inferred_placeholder_type(ty, infer_subst)
+            } else {
+                ty
+            };
 
             final_subst.insert(tp.name, ty);
         }
@@ -1331,6 +1359,56 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
         CallResult::Success(return_type)
+    }
+
+    /// Fast path for identity-style generic calls:
+    /// `<T extends C>(x: T) => T` with a single non-rest argument.
+    ///
+    /// This shape is common in constraint-heavy code and does not require full
+    /// multi-pass inference machinery. We can infer `T` directly from the argument,
+    /// validate the constraint once, and return the argument type.
+    fn resolve_trivial_single_type_param_call(
+        &mut self,
+        func: &FunctionShape,
+        arg_types: &[TypeId],
+    ) -> Option<CallResult> {
+        if func.type_params.len() != 1 || func.params.len() != 1 || arg_types.len() != 1 {
+            return None;
+        }
+        if func.params[0].rest || func.params[0].optional {
+            return None;
+        }
+        if func.this_type.is_some() || func.type_predicate.is_some() {
+            return None;
+        }
+
+        let tp = &func.type_params[0];
+        let param_ty = func.params[0].type_id;
+        let return_ty = func.return_type;
+
+        let is_tp = |ty: TypeId| {
+            matches!(
+                self.interner.lookup(ty),
+                Some(TypeData::TypeParameter(info)) if info.name == tp.name
+            )
+        };
+        if !is_tp(param_ty) || !is_tp(return_ty) {
+            return None;
+        }
+
+        let arg_ty = arg_types[0];
+        if let Some(constraint) = tp.constraint
+            && !self.checker.is_assignable_to(arg_ty, constraint)
+            && !self.is_function_union_compat(arg_ty, constraint)
+        {
+            return Some(CallResult::TypeParameterConstraintViolation {
+                inferred_type: arg_ty,
+                constraint_type: constraint,
+                return_type: arg_ty,
+            });
+        }
+
+        Some(CallResult::Success(arg_ty))
     }
 
     /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.

@@ -483,17 +483,7 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(&arg_types);
 
         // Delegate to Solver for constructor resolution
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            call_checker::resolve_new_with_context(
-                self.ctx.types,
-                &self.ctx,
-                &env,
-                constructor_type,
-                &arg_types,
-                false,
-            )
-        };
+        let result = self.resolve_new_with_checker_adapter(constructor_type, &arg_types, false);
 
         match result {
             CallResult::Success(return_type) => return_type,
@@ -1611,7 +1601,6 @@ impl<'a> CheckerState<'a> {
         };
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
-        self.ensure_relation_inputs_ready(&arg_types);
 
         // Evaluate application types to resolve Ref bases to actual Callable types
         // This is needed for cases like `GenericCallable<string>` where the type is
@@ -1654,32 +1643,22 @@ impl<'a> CheckerState<'a> {
 
         // Ensure relation preconditions (lazy refs + application symbols) for callee/args.
         self.ensure_relation_input_ready(callee_type_for_call);
-        self.ensure_relation_inputs_ready(&arg_types);
 
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            // super() calls are constructor calls, not function calls.
-            // Use resolve_new() which checks construct signatures instead of call signatures.
-            if is_super_call {
-                call_checker::resolve_new_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    callee_type_for_call,
-                    &arg_types,
-                    force_bivariant_callbacks,
-                )
-            } else {
-                call_checker::resolve_call_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    callee_type_for_call,
-                    &arg_types,
-                    force_bivariant_callbacks,
-                    self.ctx.contextual_type,
-                )
-            }
+        // super() calls are constructor calls, not function calls.
+        // Use resolve_new() which checks construct signatures instead of call signatures.
+        let result = if is_super_call {
+            self.resolve_new_with_checker_adapter(
+                callee_type_for_call,
+                &arg_types,
+                force_bivariant_callbacks,
+            )
+        } else {
+            self.resolve_call_with_checker_adapter(
+                callee_type_for_call,
+                &arg_types,
+                force_bivariant_callbacks,
+                self.ctx.contextual_type,
+            )
         };
 
         let call_context = CallResultContext {

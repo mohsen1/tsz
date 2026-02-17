@@ -18,6 +18,24 @@ struct JsdocTypedefInfo {
     properties: Vec<(String, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PrimitiveOverlapKind {
+    String,
+    Number,
+    BigInt,
+    Boolean,
+    Symbol,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum SimpleOverlapType {
+    Primitive(PrimitiveOverlapKind),
+    StringLiteral(tsz_common::interner::Atom),
+    NumberLiteral(f64),
+    BigIntLiteral(tsz_common::interner::Atom),
+    BooleanLiteral(bool),
+}
+
 impl<'a> CheckerState<'a> {
     // ============================================================================
     // Section 52: Parameter Type Utilities
@@ -3187,6 +3205,73 @@ impl<'a> CheckerState<'a> {
         query::is_invalid_index_type(self.ctx.types, type_id)
     }
 
+    fn classify_simple_overlap_type(&self, type_id: TypeId) -> Option<SimpleOverlapType> {
+        use query::LiteralTypeKind;
+
+        let primitive = match type_id {
+            TypeId::STRING => Some(PrimitiveOverlapKind::String),
+            TypeId::NUMBER => Some(PrimitiveOverlapKind::Number),
+            TypeId::BIGINT => Some(PrimitiveOverlapKind::BigInt),
+            TypeId::BOOLEAN => Some(PrimitiveOverlapKind::Boolean),
+            TypeId::SYMBOL => Some(PrimitiveOverlapKind::Symbol),
+            _ => None,
+        };
+        if let Some(kind) = primitive {
+            return Some(SimpleOverlapType::Primitive(kind));
+        }
+
+        match query::classify_literal_type(self.ctx.types, type_id) {
+            LiteralTypeKind::String(atom) => Some(SimpleOverlapType::StringLiteral(atom)),
+            LiteralTypeKind::Number(value) => Some(SimpleOverlapType::NumberLiteral(value)),
+            LiteralTypeKind::BigInt(atom) => Some(SimpleOverlapType::BigIntLiteral(atom)),
+            LiteralTypeKind::Boolean(value) => Some(SimpleOverlapType::BooleanLiteral(value)),
+            LiteralTypeKind::NotLiteral => None,
+        }
+    }
+
+    fn simple_overlap_types_overlap(
+        &self,
+        left: SimpleOverlapType,
+        right: SimpleOverlapType,
+    ) -> bool {
+        use PrimitiveOverlapKind as P;
+        use SimpleOverlapType as T;
+
+        match (left, right) {
+            (T::Primitive(a), T::Primitive(b)) => a == b,
+            (T::Primitive(P::String), T::StringLiteral(_))
+            | (T::StringLiteral(_), T::Primitive(P::String))
+            | (T::Primitive(P::Number), T::NumberLiteral(_))
+            | (T::NumberLiteral(_), T::Primitive(P::Number))
+            | (T::Primitive(P::BigInt), T::BigIntLiteral(_))
+            | (T::BigIntLiteral(_), T::Primitive(P::BigInt))
+            | (T::Primitive(P::Boolean), T::BooleanLiteral(_))
+            | (T::BooleanLiteral(_), T::Primitive(P::Boolean)) => true,
+            (T::StringLiteral(a), T::StringLiteral(b))
+            | (T::BigIntLiteral(a), T::BigIntLiteral(b)) => a == b,
+            (T::NumberLiteral(a), T::NumberLiteral(b)) => a == b,
+            (T::BooleanLiteral(a), T::BooleanLiteral(b)) => a == b,
+            _ => false,
+        }
+    }
+
+    fn union_overlap_fast_path(&self, members: &[TypeId], other: TypeId) -> Option<bool> {
+        let other_simple = self.classify_simple_overlap_type(other)?;
+        for &member in members {
+            let member_simple = self.classify_simple_overlap_type(member)?;
+            if self.simple_overlap_types_overlap(member_simple, other_simple) {
+                return Some(true);
+            }
+        }
+        Some(false)
+    }
+
+    fn simple_overlap_fast_path(&self, left: TypeId, right: TypeId) -> Option<bool> {
+        let left_simple = self.classify_simple_overlap_type(left)?;
+        let right_simple = self.classify_simple_overlap_type(right)?;
+        Some(self.simple_overlap_types_overlap(left_simple, right_simple))
+    }
+
     /// Check if two types have no overlap (for TS2367 validation).
     /// Returns true if the types can never be equal in a comparison.
     pub(crate) fn types_have_no_overlap(&mut self, left: TypeId, right: TypeId) -> bool {
@@ -3252,10 +3337,20 @@ impl<'a> CheckerState<'a> {
             "effective types for overlap check"
         );
 
+        // Fast path for primitive/literal combinations without recursive relation checks.
+        if let Some(has_overlap) = self.simple_overlap_fast_path(effective_left, effective_right) {
+            return !has_overlap;
+        }
+
         // Check union types: if any member of one union overlaps with the other, they overlap
         if let query::UnionMembersKind::Union(left_members) =
             query::classify_for_union_members(self.ctx.types, effective_left)
         {
+            if let Some(has_overlap) = self.union_overlap_fast_path(&left_members, effective_right)
+            {
+                return !has_overlap;
+            }
+
             tracing::trace!("effective_left is union");
             for &left_member in &left_members {
                 tracing::trace!(?left_member, ?effective_right, "checking union member");
@@ -3271,6 +3366,11 @@ impl<'a> CheckerState<'a> {
         if let query::UnionMembersKind::Union(right_members) =
             query::classify_for_union_members(self.ctx.types, effective_right)
         {
+            if let Some(has_overlap) = self.union_overlap_fast_path(&right_members, effective_left)
+            {
+                return !has_overlap;
+            }
+
             tracing::trace!("effective_right is union");
             for &right_member in &right_members {
                 if !self.types_have_no_overlap(effective_left, right_member) {
@@ -3302,19 +3402,27 @@ impl<'a> CheckerState<'a> {
         }
 
         // If either is assignable to the other, they overlap
-        let left_type_str = self.format_type(effective_left);
-        let right_type_str = self.format_type(effective_right);
+        let trace_enabled = tracing::enabled!(tracing::Level::TRACE);
         let left_to_right = self.is_assignable_to(effective_left, effective_right);
-        let right_to_left = self.is_assignable_to(effective_right, effective_left);
-        tracing::trace!(
-            ?effective_left,
-            ?effective_right,
-            %left_type_str,
-            %right_type_str,
-            left_to_right,
-            right_to_left,
-            "assignability check"
-        );
+        let right_to_left = if left_to_right {
+            false
+        } else {
+            self.is_assignable_to(effective_right, effective_left)
+        };
+
+        if trace_enabled {
+            let left_type_str = self.format_type(effective_left);
+            let right_type_str = self.format_type(effective_right);
+            tracing::trace!(
+                ?effective_left,
+                ?effective_right,
+                %left_type_str,
+                %right_type_str,
+                left_to_right,
+                right_to_left,
+                "assignability check"
+            );
+        }
         if left_to_right || right_to_left {
             return false;
         }

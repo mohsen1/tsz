@@ -29,13 +29,15 @@
 
 use crate::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::subtype::{SubtypeChecker, TypeResolver, is_subtype_of};
-use crate::type_queries::{UnionMembersKind, classify_for_union_members};
+use crate::type_queries::{
+    LiteralValueKind, UnionMembersKind, classify_for_literal_value, classify_for_union_members,
+};
 use crate::types::Visibility;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    FunctionShape, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo, PropertyInfo, TypeData,
-    TypeId, TypeListId, TypeParamInfo,
+    FunctionShape, IntrinsicKind, LiteralValue, ObjectShapeId, ParamInfo, PropertyInfo,
+    PropertyLookup, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils::{TypeIdExt, intersection_or_single, union_or_single};
 use crate::visitor::{
@@ -212,6 +214,15 @@ pub enum TypeGuard {
         /// The type to narrow array elements to
         element_type: TypeId,
     },
+}
+
+#[inline]
+fn union_or_single_preserve(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId {
+    match types.len() {
+        0 => TypeId::NEVER,
+        1 => types[0],
+        _ => db.union_preserve_members(types),
+    }
 }
 
 /// Result of a narrowing operation.
@@ -540,6 +551,119 @@ impl<'a> NarrowingContext<'a> {
         Some(type_id)
     }
 
+    /// Fast path for top-level property lookup on object members.
+    ///
+    /// This avoids `PropertyAccessEvaluator` for the common discriminant pattern
+    /// `x.kind === "..."` where we only need a direct property read from object-like
+    /// union members. Falls back to the general path for complex structures.
+    fn get_top_level_property_type_fast(
+        &self,
+        mut type_id: TypeId,
+        property: Atom,
+    ) -> Option<TypeId> {
+        type_id = self.resolve_type(type_id);
+
+        // Keep this fast path conservative: intersections and complex wrappers
+        // should use the full evaluator-based path for correctness.
+        if intersection_list_id(self.db, type_id).is_some() {
+            return None;
+        }
+
+        let shape_id = object_shape_id(self.db, type_id)
+            .or_else(|| object_with_index_shape_id(self.db, type_id))?;
+        let shape = self.db.object_shape(shape_id);
+
+        let prop = match self.db.object_property_index(shape_id, property) {
+            PropertyLookup::Found(idx) => shape.properties.get(idx),
+            PropertyLookup::NotFound => None,
+            PropertyLookup::Uncached => {
+                // Properties are sorted by Atom id.
+                shape
+                    .properties
+                    .binary_search_by_key(&property, |p| p.name)
+                    .ok()
+                    .and_then(|idx| shape.properties.get(idx))
+            }
+        }?;
+
+        Some(if prop.optional {
+            self.db.union2(prop.type_id, TypeId::UNDEFINED)
+        } else {
+            prop.type_id
+        })
+    }
+
+    /// Fast literal-only subtype check used by discriminant hot paths.
+    ///
+    /// Returns `None` when either side is non-literal (or not a string/number
+    /// literal) so callers can fall back to the full subtype relation.
+    #[inline]
+    fn literal_subtype_fast(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        if source == target {
+            return Some(true);
+        }
+
+        match (
+            classify_for_literal_value(self.db, source),
+            classify_for_literal_value(self.db, target),
+        ) {
+            (LiteralValueKind::String(a), LiteralValueKind::String(b)) => Some(a == b),
+            (LiteralValueKind::Number(a), LiteralValueKind::Number(b)) => Some(a == b),
+            (LiteralValueKind::String(_), LiteralValueKind::Number(_))
+            | (LiteralValueKind::Number(_), LiteralValueKind::String(_)) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// Fast narrowing for `x.<prop> === literal` / `!== literal` over union members.
+    ///
+    /// Returns `None` to request fallback to the general evaluator-based implementation
+    /// when the structure is too complex for this direct path.
+    fn fast_narrow_top_level_discriminant(
+        &self,
+        original_union_type: TypeId,
+        members: &[TypeId],
+        property: Atom,
+        literal_value: TypeId,
+        keep_matching: bool,
+    ) -> Option<TypeId> {
+        let mut kept = Vec::with_capacity(members.len());
+
+        for &member in members {
+            if member.is_any_or_unknown() {
+                kept.push(member);
+                continue;
+            }
+
+            let prop_type = self.get_top_level_property_type_fast(member, property)?;
+            let resolved_prop_type = self.resolve_type(prop_type);
+
+            let should_keep = if keep_matching {
+                // true branch: keep members where literal <: property_type
+                self.literal_subtype_fast(literal_value, resolved_prop_type)
+                    .unwrap_or_else(|| is_subtype_of(self.db, literal_value, resolved_prop_type))
+            } else {
+                // false branch: exclude members where property_type <: excluded_literal
+                !self
+                    .literal_subtype_fast(resolved_prop_type, literal_value)
+                    .unwrap_or_else(|| is_subtype_of(self.db, resolved_prop_type, literal_value))
+            };
+
+            if should_keep {
+                kept.push(member);
+            }
+        }
+
+        if keep_matching && kept.is_empty() {
+            return Some(TypeId::NEVER);
+        }
+        if keep_matching && kept.len() == members.len() {
+            return Some(original_union_type);
+        }
+
+        Some(union_or_single_preserve(self.db, kept))
+    }
+
     /// Narrow a union type based on a discriminant property check.
     ///
     /// Example: `action.type === "add"` narrows `Action` to `{ type: "add", value: number }`
@@ -641,6 +765,18 @@ impl<'a> NarrowingContext<'a> {
             "Narrowing union with {} members by discriminant property",
             members.len()
         );
+
+        if property_path.len() == 1
+            && let Some(fast_result) = self.fast_narrow_top_level_discriminant(
+                union_type,
+                members,
+                property_path[0],
+                literal_value,
+                true,
+            )
+        {
+            return fast_result;
+        }
 
         let mut matching: Vec<TypeId> = Vec::new();
         let property_evaluator = match self.resolver {
@@ -798,6 +934,18 @@ impl<'a> NarrowingContext<'a> {
             members.len()
         );
 
+        if property_path.len() == 1
+            && let Some(fast_result) = self.fast_narrow_top_level_discriminant(
+                union_type,
+                members,
+                property_path[0],
+                excluded_value,
+                false,
+            )
+        {
+            return fast_result;
+        }
+
         let mut remaining: Vec<TypeId> = Vec::new();
         let property_evaluator = match self.resolver {
             Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
@@ -883,7 +1031,7 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        union_or_single(self.db, remaining)
+        union_or_single_preserve(self.db, remaining)
     }
 
     /// Narrow a type based on a typeof check.

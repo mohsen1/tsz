@@ -817,6 +817,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Create a FlowAnalyzer to check exhaustiveness
         let analyzer =
             crate::control_flow::FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types)
+                .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
                 .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         // Create a narrowing context
