@@ -2,7 +2,6 @@ use tsz_solver::{CallableShape, ObjectShapeId, TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries_extended::{
     AbstractClassCheckKind, CallSignaturesKind, ClassDeclTypeKind, LazyTypeKind,
-    StringLiteralKeyKind,
 };
 
 pub(crate) fn classify_for_abstract_check(
@@ -35,20 +34,6 @@ pub(crate) fn type_parameter_info(
     type_id: TypeId,
 ) -> Option<tsz_solver::TypeParamInfo> {
     tsz_solver::type_queries::get_type_parameter_info(db, type_id)
-}
-
-pub(crate) fn classify_for_string_literal_keys(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> StringLiteralKeyKind {
-    tsz_solver::type_queries_extended::classify_for_string_literal_keys(db, type_id)
-}
-
-pub(crate) fn string_literal_value(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_common::interner::Atom> {
-    tsz_solver::type_queries_extended::get_string_literal_value(db, type_id)
 }
 
 pub(crate) fn classify_for_class_decl(db: &dyn TypeDatabase, type_id: TypeId) -> ClassDeclTypeKind {

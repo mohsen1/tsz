@@ -1017,38 +1017,6 @@ impl<'a> CheckerState<'a> {
     /// Extract string literal keys from a union or single literal type.
     ///
     /// Given a type that may be a union of string literal types or a single string literal,
-    /// extracts the actual string atoms.
-    ///
-    /// ## Behavior:
-    /// - String literal: Returns vec with that string
-    /// - Union of string literals: Returns vec with all strings
-    /// - Other types: Returns empty vec
-    ///
-    /// ## TypeScript Examples:
-    /// ```typescript
-    /// // Single literal
-    /// extractKeys<"hello">() // ["hello"]
-    ///
-    /// // Union of literals
-    /// extractKeys<"a" | "b" | "c">() // ["a", "b", "c"]
-    ///
-    /// // Non-literal
-    /// extractKeys<string>() // []
-    /// ```
-    pub(crate) fn extract_string_literal_keys(
-        &self,
-        type_id: TypeId,
-    ) -> Vec<tsz_common::interner::Atom> {
-        match query::classify_for_string_literal_keys(self.ctx.types, type_id) {
-            query::StringLiteralKeyKind::SingleString(name) => vec![name],
-            query::StringLiteralKeyKind::Union(members) => members
-                .iter()
-                .filter_map(|&member| query::string_literal_value(self.ctx.types, member))
-                .collect(),
-            query::StringLiteralKeyKind::NotStringLiteral => Vec::new(),
-        }
-    }
-
     /// Get the class declaration node from a `TypeId`.
     ///
     /// This function attempts to find the class declaration for a given type
