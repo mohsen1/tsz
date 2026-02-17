@@ -1054,6 +1054,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// # Arguments
     /// * `idx` - The node index of the expression
+    #[allow(dead_code)]
     pub(crate) fn report_never_type_usage(&mut self, idx: NodeIndex) {
         self.error_value_cannot_be_used_here_at("never", idx);
     }
