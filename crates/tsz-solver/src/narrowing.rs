@@ -642,9 +642,14 @@ impl<'a> NarrowingContext<'a> {
                     }
                 };
 
+                // CRITICAL: Resolve Lazy types in property type before comparison.
+                // Property types like `E.A` may be stored as Lazy(DefId) references
+                // that need to be resolved to their actual enum literal types.
+                let resolved_prop_type = self.resolve_type(prop_type);
+
                 // CRITICAL: Use is_subtype_of(literal_value, property_type)
                 // NOT the reverse! This was the bug in the reverted commit.
-                let matches = is_subtype_of(self.db, literal_value, prop_type);
+                let matches = is_subtype_of(self.db, literal_value, resolved_prop_type);
 
                 if matches {
                     trace!(
@@ -785,10 +790,13 @@ impl<'a> NarrowingContext<'a> {
                     }
                 };
 
+                // CRITICAL: Resolve Lazy types in property type before comparison.
+                let resolved_prop_type = self.resolve_type(prop_type);
+
                 // Exclude member ONLY if property type is subtype of excluded value
                 // This means the property is ALWAYS the excluded value
                 // REVERSE of narrow_by_discriminant logic
-                let should_exclude = is_subtype_of(self.db, prop_type, excluded_value);
+                let should_exclude = is_subtype_of(self.db, resolved_prop_type, excluded_value);
 
                 if should_exclude {
                     trace!(
