@@ -780,9 +780,11 @@ impl<'a> CheckerState<'a> {
                         {
                             continue;
                         }
-                        // Abstract methods don't need implementations (they're meant for derived classes)
+                        // Abstract methods don't need implementations (they're meant for derived classes).
+                        // Optional methods (g?(): T) also don't need implementations —
+                        // they are standalone declarations, not overload signatures.
                         let is_abstract = self.has_abstract_modifier(&method.modifiers);
-                        if method.body.is_none() && !is_abstract {
+                        if method.body.is_none() && !is_abstract && !method.question_token {
                             // Method overload signature - check for implementation
                             let method_name = self.get_method_name_from_node(member_idx);
                             // TSC reports at the method name node, not the declaration
