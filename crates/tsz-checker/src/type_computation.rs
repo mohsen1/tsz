@@ -1246,6 +1246,113 @@ impl<'a> CheckerState<'a> {
             let right_idx = binary.right;
             let op_kind = binary.operator_token;
 
+            // TS5076: Check for mixing ?? with || or && without parentheses.
+            // Only check on first visit to avoid duplicates from the stack-based iteration.
+            if !visited {
+                let is_nullish_coalescing = op_kind == SyntaxKind::QuestionQuestionToken as u16;
+                let is_logical = op_kind == SyntaxKind::BarBarToken as u16
+                    || op_kind == SyntaxKind::AmpersandAmpersandToken as u16;
+
+                if is_nullish_coalescing || is_logical {
+                    // Check left operand: is it a binary expr with a conflicting operator?
+                    if let Some(left_node) = self.ctx.arena.get(left_idx)
+                        && left_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(left_binary) = self.ctx.arena.get_binary_expr(left_node)
+                    {
+                        let left_op = left_binary.operator_token;
+                        let left_is_nullish = left_op == SyntaxKind::QuestionQuestionToken as u16;
+                        let left_is_logical = left_op == SyntaxKind::BarBarToken as u16
+                            || left_op == SyntaxKind::AmpersandAmpersandToken as u16;
+
+                        if (is_nullish_coalescing && left_is_logical)
+                            || (is_logical && left_is_nullish)
+                        {
+                            // Determine operator names for the error message
+                            let left_op_str = if left_is_nullish {
+                                "??"
+                            } else if left_op == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            let right_op_str = if is_nullish_coalescing {
+                                "??"
+                            } else if op_kind == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            if let Some(loc) = self.get_source_location(left_idx) {
+                                use crate::diagnostics::{
+                                    Diagnostic, DiagnosticCategory, diagnostic_codes,
+                                    diagnostic_messages, format_message,
+                                };
+                                self.ctx.diagnostics.push(Diagnostic {
+                                    code: diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                    category: DiagnosticCategory::Error,
+                                    message_text: format_message(
+                                        diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                        &[left_op_str, right_op_str],
+                                    ),
+                                    file: self.ctx.file_name.clone(),
+                                    start: loc.start,
+                                    length: loc.length(),
+                                    related_information: Vec::new(),
+                                });
+                            }
+                        }
+                    }
+
+                    // Check right operand
+                    if let Some(right_node) = self.ctx.arena.get(right_idx)
+                        && right_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(right_binary) = self.ctx.arena.get_binary_expr(right_node)
+                    {
+                        let right_op = right_binary.operator_token;
+                        let right_is_nullish = right_op == SyntaxKind::QuestionQuestionToken as u16;
+                        let right_is_logical = right_op == SyntaxKind::BarBarToken as u16
+                            || right_op == SyntaxKind::AmpersandAmpersandToken as u16;
+
+                        if (is_nullish_coalescing && right_is_logical)
+                            || (is_logical && right_is_nullish)
+                        {
+                            let outer_op_str = if is_nullish_coalescing {
+                                "??"
+                            } else if op_kind == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            let inner_op_str = if right_is_nullish {
+                                "??"
+                            } else if right_op == SyntaxKind::BarBarToken as u16 {
+                                "||"
+                            } else {
+                                "&&"
+                            };
+                            if let Some(loc) = self.get_source_location(right_idx) {
+                                use crate::diagnostics::{
+                                    Diagnostic, DiagnosticCategory, diagnostic_codes,
+                                    diagnostic_messages, format_message,
+                                };
+                                self.ctx.diagnostics.push(Diagnostic {
+                                    code: diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                    category: DiagnosticCategory::Error,
+                                    message_text: format_message(
+                                        diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
+                                        &[inner_op_str, outer_op_str],
+                                    ),
+                                    file: self.ctx.file_name.clone(),
+                                    start: loc.start,
+                                    length: loc.length(),
+                                    related_information: Vec::new(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+
             if !visited {
                 if self.is_assignment_operator(op_kind) {
                     let assign_type = if op_kind == SyntaxKind::EqualsToken as u16 {
