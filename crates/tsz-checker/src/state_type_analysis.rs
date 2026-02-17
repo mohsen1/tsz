@@ -609,6 +609,7 @@ impl<'a> CheckerState<'a> {
     /// ```
     pub(crate) fn get_type_from_type_query(&mut self, idx: NodeIndex) -> TypeId {
         use tsz_solver::SymbolRef;
+        trace!(idx = idx.0, "ENTER get_type_from_type_query");
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
@@ -679,8 +680,14 @@ impl<'a> CheckerState<'a> {
             {
                 // Prefer flow-aware value-space type at the query site.
                 // This keeps `typeof expr` aligned with control-flow narrowing.
+                // BUT skip Lazy types - those indicate circular reference (e.g., `typeof A`
+                // inside class A's body). Lazy types resolve to the instance type via
+                // resolve_lazy, but typeof needs the constructor type. Fall through to
+                // create a TypeQuery(SymbolRef) which resolves correctly.
                 let expr_type = flow_type_for_query_expr(self);
-                if expr_type != TypeId::ANY && expr_type != TypeId::ERROR {
+                let is_lazy =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, expr_type).is_some();
+                if expr_type != TypeId::ANY && expr_type != TypeId::ERROR && !is_lazy {
                     return expr_type;
                 }
             }
@@ -700,12 +707,19 @@ impl<'a> CheckerState<'a> {
             if !has_type_args {
                 // Prefer flow-aware type at the query site for `typeof expr` in narrowed scopes
                 // (e.g. inside `if (x.p === "A")`, `typeof x.p` should be `"A"`).
+                // Skip Lazy types - they indicate circular reference and would resolve to
+                // the instance type instead of the constructor type needed for typeof.
                 let flow_resolved = flow_type_for_query_expr(self);
-                if flow_resolved != TypeId::ANY && flow_resolved != TypeId::ERROR {
+                let flow_is_lazy =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, flow_resolved)
+                        .is_some();
+                if flow_resolved != TypeId::ANY && flow_resolved != TypeId::ERROR && !flow_is_lazy {
                     trace!(flow_resolved = ?flow_resolved, "=> returning flow-resolved type directly");
                     return flow_resolved;
                 }
-                if resolved != TypeId::ANY && resolved != TypeId::ERROR {
+                let resolved_is_lazy =
+                    tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved).is_some();
+                if resolved != TypeId::ANY && resolved != TypeId::ERROR && !resolved_is_lazy {
                     // Fall back to symbol type when flow result is unavailable.
                     trace!("=> returning symbol-resolved type directly");
                     return resolved;

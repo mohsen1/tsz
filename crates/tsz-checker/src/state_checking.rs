@@ -3079,6 +3079,11 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         prop_name: &str,
     ) -> tsz_solver::operations_property::PropertyAccessResult {
+        // Resolve TypeQuery types (typeof X) before property access.
+        // The solver-internal evaluator has no TypeResolver, so TypeQuery types
+        // can't be resolved there. Resolve them here using the checker's environment.
+        let object_type = self.resolve_type_query_type(object_type);
+
         // Ensure preconditions are ready in the environment
         self.ensure_relation_input_ready(object_type);
 
