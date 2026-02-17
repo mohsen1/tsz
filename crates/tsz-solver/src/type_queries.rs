@@ -3193,6 +3193,30 @@ fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -
         }
         return other == TypeId::BIGINT;
     }
+    // Two literals of the same primitive kind are comparable (e.g. "foo" ~ "baz",  1 ~ 2).
+    // In tsc, comparability checks the "base constraint" — both widen to the same primitive.
+    if let Some(TypeData::Literal(lit_a)) = db.lookup(base) {
+        if let Some(TypeData::Literal(lit_b)) = db.lookup(other) {
+            return std::mem::discriminant(&lit_a) == std::mem::discriminant(&lit_b);
+        }
+        // literal vs its base primitive: "foo" ~ string, 1 ~ number
+        return match lit_a {
+            crate::types::LiteralValue::String(_) => other == TypeId::STRING,
+            crate::types::LiteralValue::Number(_) => other == TypeId::NUMBER,
+            crate::types::LiteralValue::BigInt(_) => other == TypeId::BIGINT,
+            crate::types::LiteralValue::Boolean(_) => {
+                other == TypeId::BOOLEAN
+                    || other == TypeId::BOOLEAN_TRUE
+                    || other == TypeId::BOOLEAN_FALSE
+            }
+        };
+    }
+    // true/false are comparable to each other
+    if (base == TypeId::BOOLEAN_TRUE || base == TypeId::BOOLEAN_FALSE)
+        && (other == TypeId::BOOLEAN_TRUE || other == TypeId::BOOLEAN_FALSE)
+    {
+        return true;
+    }
     false
 }
 
