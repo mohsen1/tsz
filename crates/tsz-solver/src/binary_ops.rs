@@ -157,6 +157,58 @@ impl<'a> TypeVisitor for SymbolLikeVisitor<'a> {
     }
 }
 
+/// Visitor that checks if all union members are orderable (string/number/bigint-like).
+/// Used for relational operator validation on mixed unions.
+struct OrderableVisitor<'a> {
+    _db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for OrderableVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool {
+        matches!(
+            kind,
+            IntrinsicKind::String | IntrinsicKind::Number | IntrinsicKind::Bigint
+        )
+    }
+
+    fn visit_literal(&mut self, value: &LiteralValue) -> bool {
+        matches!(
+            value,
+            LiteralValue::String(_) | LiteralValue::Number(_) | LiteralValue::BigInt(_)
+        )
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> bool {
+        let members = self._db.type_list(TypeListId(list_id));
+        !members.is_empty() && members.iter().all(|&m| self.visit_type(self._db, m))
+    }
+
+    fn visit_enum(&mut self, _def_id: u32, member_type: TypeId) -> bool {
+        self.visit_type(self._db, member_type)
+    }
+
+    fn visit_template_literal(&mut self, _template_id: u32) -> bool {
+        true // Template literals are string-like
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> bool {
+        let members = self._db.type_list(TypeListId(list_id));
+        members.iter().any(|&m| self.visit_type(self._db, m))
+    }
+
+    fn visit_type_parameter(&mut self, info: &crate::types::TypeParamInfo) -> bool {
+        info.constraint
+            .map(|c| self.visit_type(self._db, c))
+            .unwrap_or(false)
+    }
+
+    fn default_output() -> bool {
+        false
+    }
+}
+
 /// Visitor to extract primitive class from a type.
 struct PrimitiveClassVisitor;
 
@@ -531,6 +583,13 @@ impl<'a> BinaryOpEvaluator<'a> {
             return BinaryOpResult::Success(TypeId::BOOLEAN);
         }
 
+        // Mixed orderable unions: unions of string/number/bigint are valid for
+        // relational operators. e.g., ("ABC" | number) < ("XYZ" | number) is valid
+        // because each member is individually orderable.
+        if self.is_orderable(left) && self.is_orderable(right) {
+            return BinaryOpResult::Success(TypeId::BOOLEAN);
+        }
+
         // Mismatch - emit TS2365
         BinaryOpResult::TypeError {
             left,
@@ -569,6 +628,21 @@ impl<'a> BinaryOpEvaluator<'a> {
             return true;
         }
         let mut visitor = BigIntLikeVisitor { _db: self.interner };
+        visitor.visit_type(self.interner, type_id)
+    }
+
+    /// Check if a type is orderable for relational operators (<, >, <=, >=).
+    /// A type is orderable if all its union members are string-like, number-like,
+    /// or bigint-like. This allows mixed unions like `string | number` to be compared.
+    fn is_orderable(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ANY
+            || type_id == TypeId::NUMBER
+            || type_id == TypeId::STRING
+            || type_id == TypeId::BIGINT
+        {
+            return true;
+        }
+        let mut visitor = OrderableVisitor { _db: self.interner };
         visitor.visit_type(self.interner, type_id)
     }
 
