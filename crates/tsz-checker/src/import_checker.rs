@@ -1877,6 +1877,101 @@ impl<'a> CheckerState<'a> {
     // Import Declaration Validation
     // =========================================================================
 
+    /// TS1214: Check import binding names for strict-mode reserved words.
+    /// Import declarations make the file a module (always strict mode), so TS1214 applies.
+    fn check_import_binding_reserved_words(&mut self, import_clause_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::state_checking::is_strict_mode_reserved_name;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(import_clause_idx) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        // Check default import name: `import package from "./mod"`
+        if !clause.name.is_none() {
+            if let Some(name_node) = self.ctx.arena.get(clause.name) {
+                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    if is_strict_mode_reserved_name(&ident.escaped_text) {
+                        let message = format_message(
+                            diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                            &[&ident.escaped_text],
+                        );
+                        self.error_at_node(
+                            clause.name,
+                            &message,
+                            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Check named bindings (namespace import or named imports)
+        if clause.named_bindings.is_none() {
+            return;
+        }
+        let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings) else {
+            return;
+        };
+
+        if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            // `import * as package from "./mod"` — check the alias name
+            if let Some(ns_data) = self.ctx.arena.get_named_imports(bindings_node) {
+                if !ns_data.name.is_none() {
+                    if let Some(name_node) = self.ctx.arena.get(ns_data.name) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            if is_strict_mode_reserved_name(&ident.escaped_text) {
+                                let message = format_message(
+                                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                                    &[&ident.escaped_text],
+                                );
+                                self.error_at_node(
+                                    ns_data.name,
+                                    &message,
+                                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS {
+            // `import { foo as package } from "./mod"` — check each specifier's local name
+            if let Some(named_data) = self.ctx.arena.get_named_imports(bindings_node) {
+                let elements: Vec<_> = named_data.elements.nodes.iter().copied().collect();
+                for elem_idx in elements {
+                    let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
+                        continue;
+                    };
+                    let Some(spec) = self.ctx.arena.get_specifier(elem_node) else {
+                        continue;
+                    };
+                    // The local binding name is `spec.name`
+                    let name_to_check = spec.name;
+                    if let Some(name_node) = self.ctx.arena.get(name_to_check) {
+                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                            if is_strict_mode_reserved_name(&ident.escaped_text) {
+                                let message = format_message(
+                                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                                    &[&ident.escaped_text],
+                                );
+                                self.error_at_node(
+                                    name_to_check,
+                                    &message,
+                                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// TS2823: Check that import attributes are only used with supported module options.
     pub(crate) fn check_import_attributes_module_option(&mut self, attributes_idx: NodeIndex) {
         use tsz_common::common::ModuleKind;
@@ -1915,6 +2010,10 @@ impl<'a> CheckerState<'a> {
 
         // TS2823: Import attributes require specific module options
         self.check_import_attributes_module_option(import.attributes);
+
+        // TS1214/TS1212: Check import binding names for strict mode reserved words.
+        // Import declarations make the file a module, so it's always strict mode → TS1214.
+        self.check_import_binding_reserved_words(import.import_clause);
 
         if !self.ctx.report_unresolved_imports {
             return;
