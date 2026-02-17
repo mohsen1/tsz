@@ -2007,6 +2007,7 @@ impl ParserState {
                 let first_token = self.token();
                 let first_token_is_identifier_or_keyword =
                     first_token == SyntaxKind::Identifier || self.is_identifier_or_keyword();
+                let first_token_is_reserved = self.is_reserved_word();
                 let first_name_start = self.token_pos();
                 let first_name_end = self.token_end();
                 let first_name = self.parse_property_name();
@@ -2014,17 +2015,15 @@ impl ParserState {
                 let (property_name, name) = if self.parse_optional(SyntaxKind::ColonToken) {
                     // propertyName: name
                     let name_is_reserved = self.is_reserved_word();
-                    let name_start = self.token_pos();
-                    let name_end = self.token_end();
                     let name = self.parse_binding_element_name();
                     if name.is_none() {
                         // Emit TS1109 for missing property binding element: {prop: missing}
                         self.error_expression_expected();
                     }
                     if name_is_reserved {
-                        self.parse_error_at(
-                            name_start,
-                            name_end.saturating_sub(name_start),
+                        // Emit TS1005 at current position (after the reserved word)
+                        // to avoid suppression from TS1359 emitted at the same position
+                        self.parse_error_at_current_token(
                             "':' expected.",
                             tsz_common::diagnostics::diagnostic_codes::EXPECTED,
                         );
@@ -2032,7 +2031,9 @@ impl ParserState {
                     (first_name, name)
                 } else {
                     // Just name (shorthand)
-                    if !first_token_is_identifier_or_keyword {
+                    if !first_token_is_identifier_or_keyword || first_token_is_reserved {
+                        // Reserved words (while, for, if, etc.) can be property names
+                        // but cannot be used in shorthand form — require ':'
                         self.parse_error_at(
                             first_name_start,
                             first_name_end.saturating_sub(first_name_start),
