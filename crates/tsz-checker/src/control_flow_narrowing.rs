@@ -15,9 +15,8 @@ use tsz_solver::{
     NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
     TypeofKind,
     type_queries::{
-        LiteralValueKind, PredicateSignatureKind, TypeParameterConstraintKind,
-        classify_for_literal_value, classify_for_predicate_signature,
-        classify_for_type_parameter_constraint, is_narrowing_literal,
+        LiteralValueKind, PredicateSignatureKind, classify_for_literal_value,
+        classify_for_predicate_signature, is_narrowing_literal,
     },
 };
 
@@ -601,14 +600,6 @@ impl<'a> FlowAnalyzer<'a> {
         self.literal_atom_and_kind_from_node_or_type(idx)
     }
 
-    pub(crate) fn union_types(&self, left: TypeId, right: TypeId) -> TypeId {
-        if left == right {
-            left
-        } else {
-            self.interner.union(vec![left, right])
-        }
-    }
-
     pub(crate) fn skip_parenthesized(&self, mut idx: NodeIndex) -> NodeIndex {
         loop {
             let Some(node) = self.arena.get(idx) else {
@@ -968,38 +959,6 @@ impl<'a> FlowAnalyzer<'a> {
             self.is_matching_reference(base, access.expression)
         } else {
             false
-        }
-    }
-
-    pub(crate) fn narrow_by_discriminant_for_type(
-        &self,
-        type_id: TypeId,
-        prop_path: &[Atom],
-        literal_type: TypeId,
-        is_true_branch: bool,
-        narrowing: &NarrowingContext,
-    ) -> TypeId {
-        if let TypeParameterConstraintKind::TypeParameter {
-            constraint: Some(constraint),
-        } = classify_for_type_parameter_constraint(self.interner, type_id)
-            && constraint != type_id
-        {
-            let narrowed_constraint = if is_true_branch {
-                narrowing.narrow_by_discriminant(constraint, prop_path, literal_type)
-            } else {
-                narrowing.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
-            };
-            if narrowed_constraint != constraint {
-                return self
-                    .interner
-                    .intersection(vec![type_id, narrowed_constraint]);
-            }
-        }
-
-        if is_true_branch {
-            narrowing.narrow_by_discriminant(type_id, prop_path, literal_type)
-        } else {
-            narrowing.narrow_by_excluding_discriminant(type_id, prop_path, literal_type)
         }
     }
 

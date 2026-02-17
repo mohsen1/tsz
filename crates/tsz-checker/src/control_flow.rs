@@ -2947,12 +2947,11 @@ impl<'a> FlowAnalyzer<'a> {
                         let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
                         base_type = narrowing.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
                     }
-                    return self.narrow_by_discriminant_for_type(
+                    return narrowing.narrow_by_discriminant_for_type(
                         base_type,
                         &property_path,
                         literal_type,
                         effective_truth,
-                        narrowing,
                     );
                 }
                 // For property access targets or aliased let-bound variables, skip discriminant narrowing
@@ -3093,7 +3092,10 @@ impl<'a> FlowAnalyzer<'a> {
                 antecedent_id,
                 visited_aliases,
             );
-            return Some(self.union_types(left_false, right_false));
+            return Some(tsz_solver::utils::union_or_single(
+                self.interner,
+                vec![left_false, right_false],
+            ));
         }
 
         if operator == SyntaxKind::BarBarToken as u16 {
@@ -3122,7 +3124,10 @@ impl<'a> FlowAnalyzer<'a> {
                     antecedent_id,
                     visited_aliases,
                 );
-                return Some(self.union_types(left_true, right_true));
+                return Some(tsz_solver::utils::union_or_single(
+                    self.interner,
+                    vec![left_true, right_true],
+                ));
             }
 
             let left_false = self.narrow_type_by_condition_inner(
