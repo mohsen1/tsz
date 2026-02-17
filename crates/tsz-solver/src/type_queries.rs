@@ -687,13 +687,15 @@ where
             TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Error
-            | TypeData::ThisType
             | TypeData::Lazy(_)
             | TypeData::Recursive(_)
-            | TypeData::BoundParameter(_)
             | TypeData::TypeQuery(_)
             | TypeData::UniqueSymbol(_)
             | TypeData::ModuleNamespace(_) => false,
+            // ThisType is polymorphic (`this`) and cannot be resolved at the
+            // definition site, so it should be treated as containing type params.
+            // BoundParameter is a type parameter bound to a generic signature index.
+            TypeData::ThisType | TypeData::BoundParameter(_) => true,
             TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.db.object_shape(*shape_id);
                 shape.properties.iter().any(|p| self.check(p.type_id))
