@@ -563,6 +563,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Use visitor helper for data extraction (North Star Rule 3)
                     if let Some(s) = crate::visitor::literal_string(self.interner(), member) {
                         keys.string_literals.push(s);
+                    } else if let Some(n) = crate::visitor::literal_number(self.interner(), member)
+                    {
+                        // Numeric literals become string property names (e.g., 0 → "0").
+                        // This handles enum member values like `enum E { A = 0 }`.
+                        let s = self.interner().intern_string(
+                            &crate::subtype_rules::literals::format_number_for_template(n.0),
+                        );
+                        keys.string_literals.push(s);
                     } else {
                         // Non-literal in union - can't fully evaluate
                         return None;
@@ -585,6 +593,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Intrinsic(IntrinsicKind::Never) => {
                 // Mapped over `never` yields an empty object.
                 Some(keys)
+            }
+            TypeData::Enum(_def_id, members) => {
+                // Enum used as mapped type constraint: extract keys from member union.
+                // For `enum E { A, B }`, members is the union `0 | 1`, and the keys
+                // are the enum values. Recursively extract from the members type.
+                self.extract_mapped_keys(members)
             }
             // Can't extract literals from other types
             _ => None,
