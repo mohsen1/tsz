@@ -307,7 +307,19 @@ impl<'a> CheckerState<'a> {
         // E.g., `{ [public]: 0 }` should emit TS1212 in strict mode.
         self.check_strict_mode_reserved_name_at(computed.expression, name_idx);
 
-        let expr_type = self.get_type_of_node(computed.expression);
+        // Contextual keywords (public, private, protected, etc.) are parsed as keyword
+        // tokens, not Identifier nodes. The type dispatch table doesn't route them to
+        // get_type_of_identifier, so they silently return ERROR without emitting TS2304.
+        // Detect this case and explicitly resolve them as identifiers.
+        let expr_type = if let Some(expr_node) = self.ctx.arena.get(computed.expression)
+            && expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
+            && self.ctx.arena.get_identifier(expr_node).is_some()
+        {
+            // Keyword token with identifier data — resolve as identifier for TS2304
+            self.get_type_of_identifier(computed.expression)
+        } else {
+            self.get_type_of_node(computed.expression)
+        };
 
         // Skip error types to avoid cascading diagnostics
         if expr_type == tsz_solver::TypeId::ERROR {

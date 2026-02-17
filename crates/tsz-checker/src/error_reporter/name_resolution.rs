@@ -301,7 +301,29 @@ impl<'a> CheckerState<'a> {
         // In parse-recovery inside class bodies, contextual modifier keywords
         // can appear as pseudo-identifiers (e.g. `static f = 3` in a ctor).
         // Suppress TS2304 for those to avoid cascades after the primary syntax error.
+        // Exception: computed property name expressions like `[public]` — tsc emits
+        // TS2304 for these even in class/object-literal contexts with parse errors.
+        // But NOT in enum contexts — tsc only emits TS1164 for enum computed names.
+        let is_in_computed_property = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| {
+                let parent = self.ctx.arena.get(ext.parent)?;
+                if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    return None;
+                }
+                // Exclude enum member context — tsc doesn't emit TS2304 for enum computed names
+                let gp_ext = self.ctx.arena.get_extended(ext.parent)?;
+                let gp = self.ctx.arena.get(gp_ext.parent)?;
+                if gp.kind == syntax_kind_ext::ENUM_MEMBER {
+                    return None;
+                }
+                Some(true)
+            })
+            .is_some();
         if self.has_parse_errors()
+            && !is_in_computed_property
             && matches!(
                 name,
                 "static"
@@ -343,7 +365,8 @@ impl<'a> CheckerState<'a> {
         // In parse-error files, identifiers inside class member bodies are often
         // parser-recovery artifacts (e.g. malformed `static` statements in ctors).
         // Suppress TS2304 there to avoid cascades from the primary syntax error.
-        if self.has_syntax_parse_errors() {
+        // Exception: computed property name expressions — tsc always emits TS2304 for these.
+        if self.has_syntax_parse_errors() && !is_in_computed_property {
             let mut current = idx;
             let mut guard = 0;
             let mut in_class = false;
@@ -388,7 +411,8 @@ impl<'a> CheckerState<'a> {
         // the file has real syntax parse errors (not just conflict markers TS1185).
         // Conflict markers are treated as trivia in TS and should not suppress
         // semantic "Cannot find name" diagnostics.
-        if self.has_syntax_parse_errors() {
+        // Exception: computed property name expressions — tsc always emits TS2304 for these.
+        if self.has_syntax_parse_errors() && !is_in_computed_property {
             let mut current = idx;
             let mut walk_guard = 0;
             while !current.is_none() {
@@ -419,7 +443,9 @@ impl<'a> CheckerState<'a> {
 
         // Also suppress TS2304 for identifiers that appear shortly after a parse error.
         // These identifiers are likely artifacts of error recovery.
+        // Exception: computed property name expressions — tsc always emits TS2304 for these.
         if !force_emit_for_ambiguous_generic
+            && !is_in_computed_property
             && !self.ctx.syntax_parse_error_positions.is_empty()
             && let Some(node) = self.ctx.arena.get(idx)
         {
