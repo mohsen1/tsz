@@ -229,17 +229,29 @@ impl<'a> Printer<'a> {
     }
 
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
-    /// Advances `comment_emit_idx` past any comments whose end position falls within the node's range.
+    /// Advances `comment_emit_idx` past any comments whose end position falls within the node's range,
+    /// including trailing same-line comments (e.g. `// ERROR` after a constructor overload).
     pub(super) fn skip_comments_for_erased_node(&mut self, node: &Node) {
         // Find the actual end of the node's code content, excluding trailing trivia.
-        // This prevents us from skipping comments that appear after the closing brace/token
-        // but before the next statement (which should be emitted as leading comments for
-        // that next statement).
         let actual_end = self.find_token_end_before_trivia(node.pos, node.end);
+
+        // Also find the end of the line containing the node's last token.
+        // This lets us skip trailing same-line comments (like `// ERROR` after `;`)
+        // that are beyond node.end but logically belong to the erased construct.
+        let line_end = if let Some(text) = self.source_text {
+            let bytes = text.as_bytes();
+            let mut pos = actual_end as usize;
+            while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                pos += 1;
+            }
+            pos as u32
+        } else {
+            actual_end
+        };
 
         while self.comment_emit_idx < self.all_comments.len() {
             let c = &self.all_comments[self.comment_emit_idx];
-            if c.end <= actual_end {
+            if c.end <= line_end {
                 self.comment_emit_idx += 1;
             } else {
                 break;
