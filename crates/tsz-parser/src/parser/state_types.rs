@@ -2328,15 +2328,15 @@ impl ParserState {
             self.arena
                 .add_token(SyntaxKind::ThisKeyword as u16, pos, end_pos)
         } else {
-            if self.is_token(SyntaxKind::Identifier) {
-                self.scanner.scan_jsx_identifier();
-            }
-            let name = self.parse_identifier();
+            // scan_jsx_identifier handles both identifiers and keywords,
+            // extending the token to include hyphens (e.g., public-foo)
+            self.scanner.scan_jsx_identifier();
+            let name = self.parse_identifier_name();
 
             // Check for namespaced name (a:b)
             if self.is_token(SyntaxKind::ColonToken) {
                 self.next_token(); // consume :
-                let local_name = self.parse_identifier();
+                let local_name = self.parse_identifier_name();
                 let end_pos = self.token_end();
                 return self.arena.add_jsx_namespaced_name(
                     syntax_kind_ext::JSX_NAMESPACED_NAME,
