@@ -3196,6 +3196,27 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // For intersection types (e.g., `string & { $Brand: any }`), check if
+        // ANY member of the intersection overlaps with the other type. A branded
+        // string type overlaps with a string literal since the `string` member does.
+        if let Some(left_members) = query::get_intersection_members(self.ctx.types, effective_left)
+        {
+            for member in &left_members {
+                if !self.types_have_no_overlap(*member, effective_right) {
+                    return false;
+                }
+            }
+        }
+        if let Some(right_members) =
+            query::get_intersection_members(self.ctx.types, effective_right)
+        {
+            for member in &right_members {
+                if !self.types_have_no_overlap(effective_left, *member) {
+                    return false;
+                }
+            }
+        }
+
         // If either is assignable to the other, they overlap
         let left_type_str = self.format_type(effective_left);
         let right_type_str = self.format_type(effective_right);

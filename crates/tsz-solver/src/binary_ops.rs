@@ -295,6 +295,16 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
             // An intrinsic primitive type overlaps with its corresponding literal type
             // e.g., `string` overlaps with `"foo"`, `number` overlaps with `42`
             Some(TypeData::Intrinsic(kind)) => intrinsic_overlaps_literal(kind, value),
+            // Intersection types: if ANY member overlaps with the literal, the
+            // intersection overlaps. e.g., `string & { $Brand: any }` overlaps with `""`.
+            Some(TypeData::Intersection(members)) => {
+                let members = self.db.type_list(members);
+                members.iter().any(|&m| match self.db.lookup(m) {
+                    Some(TypeData::Literal(lit)) => lit == *value,
+                    Some(TypeData::Intrinsic(kind)) => intrinsic_overlaps_literal(kind, value),
+                    _ => false,
+                })
+            }
             _ => false,
         }
     }
