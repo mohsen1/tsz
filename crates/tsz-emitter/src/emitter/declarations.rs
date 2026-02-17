@@ -377,6 +377,33 @@ impl<'a> Printer<'a> {
                 continue; // Skip - lowered to constructor or after class
             }
 
+            // Skip abstract members - they have no runtime representation
+            if let Some(member_node) = self.arena.get(member_idx) {
+                let is_abstract = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        self.arena.get_function(member_node).is_some_and(|f| {
+                            self.has_modifier(&f.modifiers, SyntaxKind::AbstractKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena.get_accessor(member_node).is_some_and(|a| {
+                            self.has_modifier(&a.modifiers, SyntaxKind::AbstractKeyword as u16)
+                        })
+                    }
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        self.arena.get_property_decl(member_node).is_some_and(|p| {
+                            self.has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword as u16)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_abstract {
+                    continue;
+                }
+            }
+
             // Emit leading comments before this member
             if let Some(member_node) = self.arena.get(member_idx) {
                 self.emit_comments_before_pos(member_node.pos);
@@ -1268,7 +1295,88 @@ impl<'a> Printer<'a> {
             self.emit_function_body_hoisted_temps();
         }
 
-        // Emit parameter property assignments: this.<name> = <name>;
+        let has_prologue = !param_props.is_empty() || !field_inits.is_empty();
+
+        // Find the super() call index so we can emit prologue after it.
+        // In derived class constructors, super() must be called before
+        // accessing `this`, so param property and field init assignments
+        // go after the super() call.
+        let super_call_idx = if has_prologue {
+            block.statements.nodes.iter().position(|&stmt_idx| {
+                self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                    stmt_node.kind == syntax_kind_ext::EXPRESSION_STATEMENT
+                        && self
+                            .arena
+                            .get_expression_statement(stmt_node)
+                            .is_some_and(|expr_stmt| {
+                                self.arena
+                                    .get(expr_stmt.expression)
+                                    .is_some_and(|expr_node| {
+                                        expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
+                                            && self.arena.get_call_expr(expr_node).is_some_and(
+                                                |call| {
+                                                    self.arena.get(call.expression).is_some_and(
+                                                        |callee| {
+                                                            callee.kind
+                                                == tsz_scanner::SyntaxKind::SuperKeyword as u16
+                                                        },
+                                                    )
+                                                },
+                                            )
+                                    })
+                            })
+                })
+            })
+        } else {
+            None
+        };
+
+        // Emit original body statements, inserting prologue after super() if present
+        let mut prologue_emitted = !has_prologue;
+        for (stmt_i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
+
+            // If no super() call exists, emit prologue before first body statement
+            if !prologue_emitted && super_call_idx.is_none() && stmt_i == 0 {
+                self.emit_constructor_prologue(param_props, field_inits);
+                prologue_emitted = true;
+            }
+
+            let before_len = self.writer.len();
+            self.emit(stmt_idx);
+            if self.writer.len() > before_len {
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    self.emit_trailing_comments(token_end);
+                }
+                self.write_line();
+            }
+
+            // Emit prologue after super() call
+            if !prologue_emitted && super_call_idx == Some(stmt_i) {
+                self.emit_constructor_prologue(param_props, field_inits);
+                prologue_emitted = true;
+            }
+        }
+
+        // If we never emitted the prologue (empty body or no super), emit it now
+        if !prologue_emitted {
+            self.emit_constructor_prologue(param_props, field_inits);
+        }
+
+        self.decrease_indent();
+        self.write("}");
+    }
+
+    /// Emit parameter property and field initializer assignments (constructor prologue).
+    fn emit_constructor_prologue(
+        &mut self,
+        param_props: &[String],
+        field_inits: &[(String, NodeIndex)],
+    ) {
         for name in param_props {
             self.write("this.");
             self.write(name);
@@ -1277,8 +1385,6 @@ impl<'a> Printer<'a> {
             self.write(";");
             self.write_line();
         }
-
-        // Emit class field initializer assignments: this.<name> = <init>;
         for (name, init_idx) in field_inits {
             if self.ctx.options.use_define_for_class_fields {
                 self.write("Object.defineProperty(this, ");
@@ -1306,27 +1412,6 @@ impl<'a> Printer<'a> {
             }
             self.write_line();
         }
-
-        // Emit original body statements
-        for &stmt_idx in &block.statements.nodes {
-            if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
-                self.emit_comments_before_pos(actual_start);
-            }
-
-            let before_len = self.writer.len();
-            self.emit(stmt_idx);
-            if self.writer.len() > before_len {
-                if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
-                    self.emit_trailing_comments(token_end);
-                }
-                self.write_line();
-            }
-        }
-
-        self.decrease_indent();
-        self.write("}");
     }
 
     fn estimate_assignment_destructuring_temps_in_constructor(&self, node: &Node) -> usize {
