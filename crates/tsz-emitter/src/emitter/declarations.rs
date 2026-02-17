@@ -429,15 +429,21 @@ impl<'a> Printer<'a> {
                 && !prop.initializer.is_none()
                 && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
             {
-                continue; // Skip - lowered to constructor or after class
+                // Skip - lowered to constructor or after class
+                if let Some(member_node) = self.arena.get(member_idx) {
+                    self.skip_comments_for_erased_node(member_node);
+                }
+                continue;
             }
 
-            // Skip abstract members - they have no runtime representation
+            // Check if this member is erased (no runtime representation)
             if let Some(member_node) = self.arena.get(member_idx) {
-                let is_abstract = match member_node.kind {
+                let is_erased = match member_node.kind {
+                    // Abstract methods and bodyless overloads are erased
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
                         self.arena.get_function(member_node).is_some_and(|f| {
                             self.has_modifier(&f.modifiers, SyntaxKind::AbstractKeyword as u16)
+                                || f.body.is_none()
                         })
                     }
                     k if k == syntax_kind_ext::GET_ACCESSOR
@@ -448,13 +454,36 @@ impl<'a> Printer<'a> {
                         })
                     }
                     k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                        self.arena.get_property_decl(member_node).is_some_and(|p| {
-                            self.has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword as u16)
-                        })
+                        if let Some(p) = self.arena.get_property_decl(member_node) {
+                            // Abstract properties: erased
+                            if self.has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword as u16) {
+                                true
+                            } else {
+                                // Type-only properties (no initializer, not private, not accessor): erased
+                                let is_private = self.arena.get(p.name).is_some_and(|n| {
+                                    n.kind == SyntaxKind::PrivateIdentifier as u16
+                                });
+                                let has_accessor = self
+                                    .has_modifier(&p.modifiers, SyntaxKind::AccessorKeyword as u16);
+                                p.initializer.is_none() && !is_private && !has_accessor
+                            }
+                        } else {
+                            false
+                        }
                     }
+                    // Bodyless constructor overloads are erased
+                    k if k == syntax_kind_ext::CONSTRUCTOR => self
+                        .arena
+                        .get_function(member_node)
+                        .is_some_and(|f| f.body.is_none()),
+                    // Index signatures are TypeScript-only
+                    k if k == syntax_kind_ext::INDEX_SIGNATURE => true,
+                    // Semicolon class elements produce no output
+                    k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => true,
                     _ => false,
                 };
-                if is_abstract {
+                if is_erased {
+                    self.skip_comments_for_erased_node(member_node);
                     continue;
                 }
             }
