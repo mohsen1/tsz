@@ -305,7 +305,11 @@ impl<'a> CheckerState<'a> {
 
         // TS1212/TS1213: Check if the computed expression is a strict mode reserved word.
         // E.g., `{ [public]: 0 }` should emit TS1212 in strict mode.
-        self.check_strict_mode_reserved_name_at(computed.expression, name_idx);
+        // Only emit if the parser didn't already handle it (the parser emits TS1213
+        // for class member computed property names with contextual keywords).
+        if !self.has_parse_errors() {
+            self.check_strict_mode_reserved_name_at(computed.expression, name_idx);
+        }
 
         // Contextual keywords (public, private, protected, etc.) are parsed as keyword
         // tokens, not Identifier nodes. The type dispatch table doesn't route them to
