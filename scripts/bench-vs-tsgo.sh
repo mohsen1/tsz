@@ -59,6 +59,7 @@ NEXTJS_DIR="$EXTERNAL_BENCH_DIR/next.js"
 # Parse arguments
 QUICK_MODE=false
 JSON_OUTPUT=false
+JSON_FILE=""
 FILTER=""
 FORCE_REBUILD=false
 NEXTJS_BENCHMARK_ENABLED="${NEXTJS_BENCHMARK_ENABLED:-0}"
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         --quick) QUICK_MODE=true; shift ;;
         --json) JSON_OUTPUT=true; shift ;;
+        --json-file) JSON_OUTPUT=true; JSON_FILE="$2"; shift 2 ;;
         --filter) FILTER="$2"; shift 2 ;;
         --rebuild) FORCE_REBUILD=true; shift ;;
         --help|-h)
@@ -73,7 +75,8 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --quick     Quick smoke test (fewer runs, fewer files)"
-            echo "  --json      Export results to JSON"
+            echo "  --json      Export results to JSON (default path: artifacts/bench-vs-tsgo-<timestamp>.json)"
+            echo "  --json-file Write JSON results to a specific path"
             echo "  --filter    Run only tests matching regex (e.g., --filter 'BCT|CFA')"
             echo "  --rebuild   Force rebuild of tsz binary (ensures fresh optimized build)"
             echo "  --help      Show this help"
@@ -538,6 +541,86 @@ run_project_benchmark() {
         fi
     fi
     rm -f "$json_file"
+}
+
+export_results_json() {
+    [ "$JSON_OUTPUT" != true ] && return
+    [ -z "$RESULTS_CSV" ] && return
+
+    local default_file="$PROJECT_ROOT/artifacts/bench-vs-tsgo-$(date +%Y%m%d-%H%M%S).json"
+    local out_file="${JSON_FILE:-$default_file}"
+    mkdir -p "$(dirname "$out_file")"
+
+    local expanded_csv
+    expanded_csv="$(echo -e "$RESULTS_CSV")"
+
+    RESULTS_CSV_EXPANDED="$expanded_csv" \
+    QUICK_MODE_VALUE="$QUICK_MODE" \
+    FILTER_VALUE="$FILTER" \
+    TSZ_BIN_VALUE="$TSZ" \
+    TSGO_BIN_VALUE="$TSGO" \
+    TSC_BIN_VALUE="$TSC" \
+    BENCHMARKS_RUN_VALUE="$BENCHMARKS_RUN" \
+    node - "$out_file" <<'NODE'
+const fs = require("node:fs");
+const outFile = process.argv[2];
+
+const csv = process.env.RESULTS_CSV_EXPANDED || "";
+const rows = csv
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+  .filter(Boolean)
+  .map((line) => {
+    const parts = line.split(",");
+    while (parts.length < 10) parts.push("");
+    const [name, lines, kb, tszMs, tsgoMs, tszLps, tsgoLps, winner, factor, status] = parts;
+    const toNumber = (value) => {
+      if (!value || value === "N/A" || value === "ERR") return null;
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    return {
+      name,
+      lines: toNumber(lines),
+      kb: toNumber(kb),
+      tsz_ms: toNumber(tszMs),
+      tsgo_ms: toNumber(tsgoMs),
+      tsz_lps: toNumber(tszLps),
+      tsgo_lps: toNumber(tsgoLps),
+      winner: winner || null,
+      factor: toNumber(factor),
+      status: status || null,
+    };
+  });
+
+const tszWins = rows.filter((row) => row.winner === "tsz").length;
+const tsgoWins = rows.filter((row) => row.winner === "tsgo").length;
+const errorCases = rows.filter((row) => row.status).length;
+
+const payload = {
+  generated_at: new Date().toISOString(),
+  benchmark_runner: "scripts/bench-vs-tsgo.sh",
+  quick_mode: process.env.QUICK_MODE_VALUE === "true",
+  filter: process.env.FILTER_VALUE || null,
+  binaries: {
+    tsz: process.env.TSZ_BIN_VALUE || null,
+    tsgo: process.env.TSGO_BIN_VALUE || null,
+    tsc: process.env.TSC_BIN_VALUE || null,
+  },
+  totals: {
+    benchmarks_run: Number(process.env.BENCHMARKS_RUN_VALUE || rows.length),
+    rows: rows.length,
+    tsz_wins: tszWins,
+    tsgo_wins: tsgoWins,
+    error_cases: errorCases,
+  },
+  results: rows,
+};
+
+fs.writeFileSync(outFile, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+NODE
+
+    echo -e "${GREEN}JSON results written:${NC} $out_file"
 }
 
 is_benchmark_selected() {
@@ -2020,6 +2103,8 @@ main() {
         echo
         echo -e "${YELLOW}No benchmark results recorded.${NC}"
     fi
+
+    export_results_json
 }
 
 main "$@"
