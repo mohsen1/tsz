@@ -1500,9 +1500,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // Logical OR: `a || b`
-            // In TypeScript, the result type is the truthy parts of `a` unioned with `b`.
-            // When `a` is `boolean`, the truthy part is `true` which is `boolean`, so
-            // we keep the full union.
+            // In TypeScript, the result type depends on whether `a` can be falsy:
+            // - If `a` has no falsy parts: result is just `a`
+            // - Otherwise: result is `removeDefinitelyFalsyTypes(a) | b`
             if op_kind == SyntaxKind::BarBarToken as u16 {
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
@@ -1510,7 +1510,19 @@ impl<'a> CheckerState<'a> {
                 }
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
                 self.check_truthy_or_falsy(left_idx);
-                type_stack.push(factory.union(vec![left_type, right_type]));
+
+                // Remove definitely-falsy types (null, undefined, void, false, 0, "")
+                // from the left side.
+                let truthy_left =
+                    tsz_solver::remove_definitely_falsy_types(self.ctx.types, left_type);
+                let result = if truthy_left == left_type {
+                    left_type
+                } else if truthy_left == TypeId::NEVER {
+                    right_type
+                } else {
+                    factory.union(vec![truthy_left, right_type])
+                };
+                type_stack.push(result);
                 continue;
             }
 
