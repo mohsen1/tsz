@@ -69,6 +69,13 @@ pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Op
     tsz_solver::type_queries::get_intersection_members(db, type_id)
 }
 
+pub(crate) fn get_conditional_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<std::sync::Arc<tsz_solver::ConditionalType>> {
+    tsz_solver::type_queries::get_conditional_type(db, type_id)
+}
+
 #[cfg(test)]
 #[path = "../../tests/state_type_environment.rs"]
 mod tests;

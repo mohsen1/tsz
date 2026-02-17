@@ -38,6 +38,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         loop {
             let cond = &current_cond;
+
+            // Pre-evaluation Application-level infer matching.
+            // When both check and extends are Applications (e.g., Promise<string> vs
+            // Promise<infer U>), match type arguments directly before expanding.
+            // After evaluation, Application types become structural Object/Callable types,
+            // which may fail structural infer matching for complex interfaces like Promise.
+            if let Some(result) = self.try_application_infer_match(cond) {
+                return result;
+            }
+
             let check_type = self.evaluate(cond.check_type);
             let extends_type = self.evaluate(cond.extends_type);
 
@@ -947,5 +957,63 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let true_inst = instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
         self.evaluate(true_inst)
+    }
+
+    /// Try to match conditional types at the Application level before structural expansion.
+    ///
+    /// When both `check_type` and `extends_type` are Applications with the same base type
+    /// (e.g., `Promise<string>` vs `Promise<infer U>`), we can match type arguments
+    /// directly without expanding the interface structure. This is critical for complex
+    /// generic interfaces like Promise, Map, Set where structural expansion makes the
+    /// infer pattern matching fail.
+    fn try_application_infer_match(&mut self, cond: &ConditionalType) -> Option<TypeId> {
+        // Only proceed if extends_type is an Application containing infer.
+        // Keep extends_type as-is (unevaluated) so match_infer_pattern can handle
+        // it at the Application level. This is critical for complex generic interfaces
+        // like Promise, Map, Set where structural expansion loses the ability to
+        // match type arguments directly.
+        let Some(TypeData::Application(_)) = self.interner().lookup(cond.extends_type) else {
+            return None;
+        };
+
+        if !self.type_contains_infer(cond.extends_type) {
+            return None;
+        }
+
+        // Use the raw (unevaluated) check_type — it may still be an Application
+        // which enables Application-vs-Application matching in match_infer_pattern.
+        let check_type = cond.check_type;
+
+        // Skip for special types
+        if check_type == TypeId::ANY || check_type == TypeId::NEVER {
+            return None;
+        }
+        if matches!(
+            self.interner().lookup(check_type),
+            Some(TypeData::TypeParameter(_))
+        ) {
+            return None;
+        }
+
+        // Try infer pattern matching with unevaluated types.
+        // match_infer_pattern handles Application vs Application matching
+        // by comparing base types and recursing on type arguments.
+        let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+        checker.allow_bivariant_rest = true;
+        let mut bindings = FxHashMap::default();
+        let mut visited = FxHashSet::default();
+        if self.match_infer_pattern(
+            check_type,
+            cond.extends_type,
+            &mut bindings,
+            &mut visited,
+            &mut checker,
+        ) && !bindings.is_empty()
+        {
+            let substituted_true = self.substitute_infer(cond.true_type, &bindings);
+            return Some(self.evaluate(substituted_true));
+        }
+
+        None
     }
 }
