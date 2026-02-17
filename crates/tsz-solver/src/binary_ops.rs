@@ -119,7 +119,7 @@ primitive_visitor!(NumberLikeVisitor, IntrinsicKind::Number,
 
 primitive_visitor!(StringLikeVisitor, IntrinsicKind::String,
     LiteralValue::String(_) => true,
-    check_constraint, recurse_enum, match_template_literal, check_intersection_any);
+    check_union_all, check_constraint, recurse_enum, match_template_literal, check_intersection_any);
 
 primitive_visitor!(BigIntLikeVisitor, IntrinsicKind::Bigint,
     LiteralValue::BigInt(_) => true,
