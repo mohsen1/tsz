@@ -2498,6 +2498,21 @@ impl<'a> CheckerState<'a> {
         (parent_node.flags as u32) & node_flags::CONST != 0
     }
 
+    /// Check if an initializer expression is an `as const` assertion.
+    /// For `let x = "div" as const`, the initializer is the `"div" as const` expression.
+    /// TypeScript preserves literal types for `as const` even on mutable bindings.
+    pub(crate) fn is_const_assertion_initializer(&self, init_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(init_idx) else {
+            return false;
+        };
+        if let Some(assertion) = self.ctx.arena.get_type_assertion(node)
+            && let Some(type_node) = self.ctx.arena.get(assertion.type_node)
+        {
+            return type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16;
+        }
+        false
+    }
+
     /// Check if an initializer is a valid const initializer for ambient contexts.
     /// Valid initializers are string/numeric/bigint literals and enum references.
     pub(crate) fn is_valid_ambient_const_initializer(&self, init_idx: NodeIndex) -> bool {
