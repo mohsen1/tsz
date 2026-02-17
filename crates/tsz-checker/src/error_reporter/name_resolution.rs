@@ -471,47 +471,64 @@ impl<'a> CheckerState<'a> {
         }
 
         // In parse-error files, identifiers inside class member bodies are often
-        // parser-recovery artifacts (e.g. malformed `static` statements in ctors).
-        // Suppress TS2304 there to avoid cascades from the primary syntax error.
-        // Exception: computed property name expressions — tsc always emits TS2304 for these.
-        if self.has_syntax_parse_errors() && !is_in_computed_property {
-            let mut current = idx;
-            let mut guard = 0;
-            let mut in_class = false;
-            let mut in_class_member_body = false;
-            while !current.is_none() {
-                guard += 1;
-                if guard > 256 {
-                    break;
+        // secondary errors from a primary parse error (e.g. `yield foo` in a non-generator
+        // constructor — TSC emits TS1163 but not TS2304 for `foo`).
+        // Suppress TS2304 when there is a parse error at or just before the identifier
+        // (within ~10 chars) AND the identifier is in a class member body.
+        // This targets cases like `yield foo` where the error (on `yield`) immediately
+        // precedes the identifier (foo). It does NOT suppress cases like `if (a` where
+        // the parse error (missing `)`) comes AFTER the identifier `a`.
+        if self.has_syntax_parse_errors()
+            && !is_in_computed_property
+            && !force_emit_for_ambiguous_generic
+            && !self.ctx.syntax_parse_error_positions.is_empty()
+            && let Some(node) = self.ctx.arena.get(idx)
+        {
+            let ident_pos = node.pos;
+            let has_nearby_preceding_error =
+                self.ctx
+                    .syntax_parse_error_positions
+                    .iter()
+                    .any(|&err_pos| {
+                        // Error must be BEFORE the identifier (not after) and within 10 chars
+                        err_pos <= ident_pos && (ident_pos - err_pos) <= 10
+                    });
+            if has_nearby_preceding_error {
+                let mut current = idx;
+                let mut guard = 0;
+                let mut in_class = false;
+                let mut in_class_member_body = false;
+                while !current.is_none() {
+                    guard += 1;
+                    if guard > 256 {
+                        break;
+                    }
+                    let Some(inner_node) = self.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if inner_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || inner_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    {
+                        in_class = true;
+                    }
+                    if inner_node.kind == syntax_kind_ext::CONSTRUCTOR
+                        || inner_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                        || inner_node.kind == syntax_kind_ext::GET_ACCESSOR
+                        || inner_node.kind == syntax_kind_ext::SET_ACCESSOR
+                    {
+                        in_class_member_body = true;
+                    }
+                    let Some(ext) = self.ctx.arena.get_extended(current) else {
+                        break;
+                    };
+                    if ext.parent.is_none() {
+                        break;
+                    }
+                    current = ext.parent;
                 }
-                let Some(node) = self.ctx.arena.get(current) else {
-                    break;
-                };
-                if node.kind == syntax_kind_ext::CLASS_DECLARATION
-                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                {
-                    in_class = true;
+                if in_class && in_class_member_body {
+                    return;
                 }
-                if node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || node.kind == syntax_kind_ext::SET_ACCESSOR
-                {
-                    in_class_member_body = true;
-                }
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                if ext.parent.is_none() {
-                    break;
-                }
-                current = ext.parent;
-            }
-            if in_class && in_class_member_body {
-                if is_primitive_type_keyword {
-                    self.error_type_only_value_at(name, idx);
-                }
-                return;
             }
         }
 
