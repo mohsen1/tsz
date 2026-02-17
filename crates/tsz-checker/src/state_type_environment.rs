@@ -1368,16 +1368,18 @@ impl<'a> CheckerState<'a> {
 
     /// Create a union type from multiple types.
     ///
+    /// Handles empty (→ NEVER), single (→ that type), and multi-member cases.
     /// Automatically normalizes: flattens nested unions, deduplicates, sorts.
     pub fn get_union_type(&self, types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.factory().union(types)
+        tsz_solver::utils::union_or_single(self.ctx.types, types)
     }
 
     /// Create an intersection type from multiple types.
     ///
+    /// Handles empty (→ NEVER), single (→ that type), and multi-member cases.
     /// Automatically normalizes: flattens nested intersections, deduplicates, sorts.
     pub fn get_intersection_type(&self, types: Vec<TypeId>) -> TypeId {
-        self.ctx.types.factory().intersection(types)
+        tsz_solver::utils::intersection_or_single(self.ctx.types, types)
     }
 
     // =========================================================================

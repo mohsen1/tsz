@@ -2072,10 +2072,11 @@ impl<'a> CheckerState<'a> {
 
         if found_types.is_empty() {
             None
-        } else if found_types.len() == 1 {
-            Some(found_types[0])
         } else {
-            Some(self.ctx.types.factory().union(found_types))
+            Some(tsz_solver::utils::union_or_single(
+                self.ctx.types,
+                found_types,
+            ))
         }
     }
 

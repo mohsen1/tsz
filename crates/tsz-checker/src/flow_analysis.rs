@@ -1692,10 +1692,7 @@ impl<'a> CheckerState<'a> {
         if result_types.is_empty() {
             return declared_type;
         }
-        if result_types.len() == 1 {
-            return result_types[0];
-        }
-        self.ctx.types.factory().union(result_types)
+        tsz_solver::utils::union_or_single(self.ctx.types, result_types)
     }
 
     /// Get the symbol for an identifier node.
