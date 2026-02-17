@@ -432,7 +432,19 @@ impl<'a> Printer<'a> {
                             .nodes
                             .get(member_i + 1)
                             .and_then(|&idx| self.arena.get(idx))
-                            .map_or(node.end as usize, |n| n.pos as usize);
+                            .map_or_else(
+                                || {
+                                    // Last member: find the closing `}` of the class body.
+                                    // Don't use node.end which may extend past `}` to include
+                                    // semicolons from the outer statement (e.g., `let C = class { ... };`).
+                                    let search_start = start;
+                                    let search_end = std::cmp::min(node.end as usize, text.len());
+                                    text[search_start..search_end]
+                                        .rfind('}')
+                                        .map_or(search_end, |pos| search_start + pos)
+                                },
+                                |n| n.pos as usize,
+                            );
                         let end = std::cmp::min(end, text.len());
                         start < end && text[start..end].contains(';')
                     });
@@ -441,10 +453,19 @@ impl<'a> Printer<'a> {
 
                 // Some parser recoveries include the semicolon in member.end without
                 // creating a separate SEMICOLON_CLASS_ELEMENT; preserve it from source.
+                // Only check this for methods/accessors that DON'T have a body (i.e., the
+                // member text ends with `;` directly, not with `}` from a function body).
                 if self.source_text.is_some_and(|text| {
                     let start = std::cmp::min(member_node.pos as usize, text.len());
                     let end = std::cmp::min(member_node.end as usize, text.len());
-                    start < end && text[start..end].trim_end().ends_with(';')
+                    if start >= end {
+                        return false;
+                    }
+                    let member_text = text[start..end].trim_end();
+                    // Only trigger for members whose outermost structure ends with `;`
+                    // (not from a statement inside a function body).
+                    // Methods/accessors with bodies end with `}`, not `;`.
+                    member_text.ends_with(';') && !member_text.ends_with('}')
                 }) {
                     emit_standalone_class_semicolon = true;
                 }
