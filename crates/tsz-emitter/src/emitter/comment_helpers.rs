@@ -33,8 +33,17 @@ impl<'a> Printer<'a> {
 
             // Comment must start at or after end_pos
             if c_pos < end_pos {
-                // This comment is before our position — it should have been
-                // emitted already. Skip it to avoid stalling.
+                // If there's a line break between c_pos and end_pos, the comment is
+                // on a different line — don't skip it; the next statement's leading
+                // comment loop will pick it up.
+                let gap_end = std::cmp::min(end_pos as usize, bytes.len());
+                if bytes[c_pos as usize..gap_end]
+                    .iter()
+                    .any(|&b| b == b'\n' || b == b'\r')
+                {
+                    break;
+                }
+                // Same line — skip to avoid double emission.
                 self.comment_emit_idx += 1;
                 continue;
             }
