@@ -119,6 +119,10 @@ impl<'a> Printer<'a> {
         if !decl_list.declarations.nodes.is_empty() {
             self.write(" ");
             self.emit_comma_separated(&decl_list.declarations.nodes);
+        } else if !is_let && !is_const {
+            // TSC emits `var ;` (with space) for empty var declarations,
+            // but `let;` / `const;` (no space) for empty let/const.
+            self.write(" ");
         }
     }
 
@@ -424,49 +428,78 @@ impl<'a> Printer<'a> {
                     .and_then(|&idx| self.arena.get(idx))
                     .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
 
+                // Check if the member has a body (method/accessor with `{}`).
+                let member_has_body_for_semi = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|m| !m.body.is_none()),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .is_some_and(|a| !a.body.is_none())
+                    }
+                    _ => false,
+                };
                 if !next_is_semicolon_member {
                     let has_source_semicolon = self.source_text.is_some_and(|text| {
-                        let start = std::cmp::min(member_node.end as usize, text.len());
-                        let end = class
-                            .members
-                            .nodes
-                            .get(member_i + 1)
-                            .and_then(|&idx| self.arena.get(idx))
-                            .map_or_else(
-                                || {
-                                    // Last member: find the closing `}` of the class body.
-                                    // Don't use node.end which may extend past `}` to include
-                                    // semicolons from the outer statement (e.g., `let C = class { ... };`).
-                                    let search_start = start;
-                                    let search_end = std::cmp::min(node.end as usize, text.len());
-                                    text[search_start..search_end]
-                                        .rfind('}')
-                                        .map_or(search_end, |pos| search_start + pos)
-                                },
-                                |n| n.pos as usize,
-                            );
-                        let end = std::cmp::min(end, text.len());
-                        start < end && text[start..end].contains(';')
+                        let member_end = std::cmp::min(member_node.end as usize, text.len());
+                        // For members WITHOUT bodies, check the gap after the member.
+                        if !member_has_body_for_semi {
+                            let gap_end = class
+                                .members
+                                .nodes
+                                .get(member_i + 1)
+                                .and_then(|&idx| self.arena.get(idx))
+                                .map_or_else(
+                                    || {
+                                        let search_end =
+                                            std::cmp::min(node.end as usize, text.len());
+                                        text[member_end..search_end]
+                                            .rfind('}')
+                                            .map_or(search_end, |pos| member_end + pos)
+                                    },
+                                    |n| n.pos as usize,
+                                );
+                            let gap_end = std::cmp::min(gap_end, text.len());
+                            if member_end < gap_end && text[member_end..gap_end].contains(';') {
+                                return true;
+                            }
+                        }
+                        // For members WITH bodies, the parser may absorb trailing `;`
+                        // into the member span (e.g., `get x() { ... };`).
+                        // Check if the member source ends with `} ;` pattern.
+                        if member_has_body_for_semi && member_end >= 2 {
+                            let tail = &text[member_node.pos as usize..member_end];
+                            let trimmed = tail.trim_end();
+                            if let Some(before_semi) = trimmed.strip_suffix(';')
+                                && before_semi.trim_end().ends_with('}')
+                            {
+                                return true;
+                            }
+                        }
+                        false
                     });
                     emit_standalone_class_semicolon = has_source_semicolon;
                 }
 
                 // Some parser recoveries include the semicolon in member.end without
                 // creating a separate SEMICOLON_CLASS_ELEMENT; preserve it from source.
-                // Only check this for methods/accessors that DON'T have a body (i.e., the
-                // member text ends with `;` directly, not with `}` from a function body).
-                if self.source_text.is_some_and(|text| {
-                    let start = std::cmp::min(member_node.pos as usize, text.len());
-                    let end = std::cmp::min(member_node.end as usize, text.len());
-                    if start >= end {
-                        return false;
-                    }
-                    let member_text = text[start..end].trim_end();
-                    // Only trigger for members whose outermost structure ends with `;`
-                    // (not from a statement inside a function body).
-                    // Methods/accessors with bodies end with `}`, not `;`.
-                    member_text.ends_with(';') && !member_text.ends_with('}')
-                }) {
+                // Only check this for methods/accessors that DON'T have a body (i.e.,
+                // abstract methods or overload signatures like `foo(): void;`).
+                if !member_has_body_for_semi
+                    && self.source_text.is_some_and(|text| {
+                        let start = std::cmp::min(member_node.pos as usize, text.len());
+                        let end = std::cmp::min(member_node.end as usize, text.len());
+                        if start >= end {
+                            return false;
+                        }
+                        let member_text = text[start..end].trim_end();
+                        member_text.ends_with(';')
+                    })
+                {
                     emit_standalone_class_semicolon = true;
                 }
             }
