@@ -1524,17 +1524,17 @@ impl<'a> CheckerState<'a> {
         // Check the first (and typically only) declaration
         if let Some(&first_decl_idx) = var_data.declarations.nodes.first()
             && let Some(decl_node) = arena.get(first_decl_idx)
-                && let Some(var_decl) = arena.get_variable_declaration(decl_node)
-                    && let Some(name_node) = arena.get(var_decl.name)
-                        && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-                        {
-                            self.error_at_node(
+            && let Some(var_decl) = arena.get_variable_declaration(decl_node)
+            && let Some(name_node) = arena.get(var_decl.name)
+            && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+        {
+            self.error_at_node(
                                 var_decl.name,
                                 "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
                                 crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
                             );
-                        }
+        }
     }
 
     /// TS2491: The left-hand side of a 'for...in' statement cannot be a destructuring pattern.
@@ -1544,13 +1544,13 @@ impl<'a> CheckerState<'a> {
         if let Some(init_node) = arena.get(initializer)
             && (init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
                 || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
-            {
-                self.error_at_node(
+        {
+            self.error_at_node(
                     initializer,
                     "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
                     crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
                 );
-            }
+        }
     }
 
     /// Check a single variable declaration.
