@@ -59,7 +59,19 @@ impl<'a> CheckerState<'a> {
                             if let Some(args) = &type_ref.type_arguments
                                 && !self.is_inside_type_parameter_declaration(idx)
                             {
-                                self.validate_type_reference_type_arguments(sym_id, args);
+                                // Suppress TS2315 cascading errors when the left side
+                                // of the qualified name is an unresolved import
+                                // (e.g., `React.Component<P>` where 'react' module
+                                // couldn't be resolved).
+                                if let Some(qn) =
+                                    self.ctx.arena.get_qualified_name_at(type_name_idx)
+                                {
+                                    if !self.is_unresolved_import_symbol(qn.left) {
+                                        self.validate_type_reference_type_arguments(sym_id, args);
+                                    }
+                                } else {
+                                    self.validate_type_reference_type_arguments(sym_id, args);
+                                }
                             }
                             return self.type_reference_symbol_type(sym_id);
                         }
