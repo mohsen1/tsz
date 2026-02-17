@@ -1007,22 +1007,45 @@ impl<'a> Printer<'a> {
                 continue;
             };
             let decl_name = match check_node.kind {
-                k if k == syntax_kind_ext::CLASS_DECLARATION => self
-                    .arena
-                    .get_class(check_node)
-                    .map(|c| self.get_identifier_text_idx(c.name)),
-                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
-                    .arena
-                    .get_function(check_node)
-                    .map(|f| self.get_identifier_text_idx(f.name)),
-                k if k == syntax_kind_ext::ENUM_DECLARATION => self
-                    .arena
-                    .get_enum(check_node)
-                    .map(|e| self.get_identifier_text_idx(e.name)),
-                k if k == syntax_kind_ext::MODULE_DECLARATION => self
-                    .arena
-                    .get_module(check_node)
-                    .map(|m| self.get_identifier_text_idx(m.name)),
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    self.arena.get_class(check_node).and_then(|c| {
+                        if self.has_declare_modifier(&c.modifiers) {
+                            None
+                        } else {
+                            Some(self.get_identifier_text_idx(c.name))
+                        }
+                    })
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    self.arena.get_function(check_node).and_then(|f| {
+                        if self.has_declare_modifier(&f.modifiers) {
+                            None
+                        } else {
+                            Some(self.get_identifier_text_idx(f.name))
+                        }
+                    })
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    self.arena.get_enum(check_node).and_then(|e| {
+                        if self.has_declare_modifier(&e.modifiers) {
+                            None
+                        } else {
+                            Some(self.get_identifier_text_idx(e.name))
+                        }
+                    })
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    self.arena.get_module(check_node).and_then(|m| {
+                        // Skip ambient (declare) and non-instantiated modules
+                        if self.has_declare_modifier(&m.modifiers)
+                            || !self.is_instantiated_module(m.body)
+                        {
+                            None
+                        } else {
+                            Some(self.get_identifier_text_idx(m.name))
+                        }
+                    })
+                }
                 _ => None,
             };
             if decl_name.as_deref() == Some(ns_name) {

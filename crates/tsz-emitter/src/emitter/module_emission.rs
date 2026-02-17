@@ -398,13 +398,22 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.write_var_or_const();
-        self.emit(import.import_clause);
-        self.write(" = ");
-
         let Some(module_node) = self.arena.get(import.module_specifier) else {
             return;
         };
+
+        let is_external = module_node.kind == SyntaxKind::StringLiteral as u16
+            || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+
+        // `import X = require("module")` uses const/var based on target.
+        // `import X = Y` (entity name) always uses `var` per TSC behavior.
+        if is_external {
+            self.write_var_or_const();
+        } else {
+            self.write("var ");
+        }
+        self.emit(import.import_clause);
+        self.write(" = ");
 
         if module_node.kind == SyntaxKind::StringLiteral as u16 {
             if let Some(lit) = self.arena.get_literal(module_node) {
@@ -1269,7 +1278,16 @@ impl<'a> Printer<'a> {
         };
 
         if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
-            return self.import_equals_has_external_module(import_decl.module_specifier);
+            // For `import X = require("module")`, check if it has an external module.
+            // For `import X = Y` (qualified name), always treat as runtime value
+            // since it produces `var X = Y;` at runtime.
+            if let Some(spec_node) = self.arena.get(import_decl.module_specifier) {
+                return spec_node.kind == SyntaxKind::StringLiteral as u16
+                    || spec_node.kind == SyntaxKind::Identifier as u16
+                    || spec_node.kind == syntax_kind_ext::QUALIFIED_NAME
+                    || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+            }
+            return false;
         }
 
         let Some(clause) = self.arena.get_import_clause(clause_node) else {
@@ -1316,18 +1334,6 @@ impl<'a> Printer<'a> {
         }
 
         false
-    }
-
-    pub(super) fn import_equals_has_external_module(&self, module_specifier: NodeIndex) -> bool {
-        if module_specifier.is_none() {
-            return false;
-        }
-
-        let Some(node) = self.arena.get(module_specifier) else {
-            return false;
-        };
-
-        node.kind == SyntaxKind::StringLiteral as u16
     }
 
     pub(super) fn export_decl_has_runtime_value(
