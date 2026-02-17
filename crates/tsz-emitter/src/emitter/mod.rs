@@ -2351,7 +2351,8 @@ impl<'a> Printer<'a> {
             .and_then(|&idx| self.arena.get(idx))
             .map_or(node.end, |n| self.skip_trivia_forward(n.pos, n.end));
 
-        let mut deferred_reference_comments: Vec<(String, bool)> = Vec::new();
+        let mut deferred_header_comments: Vec<(String, bool)> = Vec::new();
+        let is_commonjs = self.ctx.is_commonjs();
         if let Some(text) = self.source_text {
             while self.comment_emit_idx < self.all_comments.len() {
                 let c_end = self.all_comments[self.comment_emit_idx].end;
@@ -2360,10 +2361,13 @@ impl<'a> Printer<'a> {
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    let is_reference_comment =
-                        comment_text.trim_start().starts_with("/// <reference");
-                    if self.ctx.is_commonjs() && is_reference_comment {
-                        deferred_reference_comments.push((comment_text.to_string(), c_trailing));
+                    // In CommonJS mode, defer single-line (//) comments to after the
+                    // preamble (ODP + exports.X = void 0). Block comments (/* */) stay
+                    // before the preamble since they're often copyright/license headers
+                    // that TSC preserves at the top.
+                    let is_line_comment = comment_text.starts_with("//");
+                    if is_commonjs && is_line_comment {
+                        deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
                         self.write_comment(comment_text);
                         if c_trailing {
@@ -2451,10 +2455,10 @@ impl<'a> Printer<'a> {
             }
         }
 
-        if !deferred_reference_comments.is_empty() {
-            for (comment, has_trailing_new_line) in deferred_reference_comments {
-                self.write_comment(&comment);
-                if has_trailing_new_line {
+        if !deferred_header_comments.is_empty() {
+            for (comment, has_trailing_new_line) in &deferred_header_comments {
+                self.write_comment(comment);
+                if *has_trailing_new_line {
                     self.write_line();
                 }
             }
