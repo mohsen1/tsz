@@ -1310,14 +1310,14 @@ impl<'a> CheckerState<'a> {
                 // TSC emits TS2404 and skips the assignability check for for-in loops.
                 // TS2483: The left-hand side of a 'for...of' statement cannot use a type annotation
                 // Only check with single declaration (TSC suppresses when TS1188 is reported)
-                if is_for_in {
+                if is_for_in && single_declaration {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         var_decl.type_annotation,
                         diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                         diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_USE_A_TYPE_ANNOTATION,
                     );
-                } else if single_declaration {
+                } else if !is_for_in && single_declaration {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.error_at_node(
                         var_decl.type_annotation,
