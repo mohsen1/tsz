@@ -302,14 +302,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(cond.clone());
             }
 
-            // If extends_type is a bare type parameter, the conditional cannot be
-            // resolved — defer it. Example: `number extends T ? X : Y` must be
-            // deferred when T is an unresolved type parameter, since T could be
-            // `number` (true branch) or `string` (false branch).
-            if let Some(TypeData::TypeParameter(_)) = self.interner().lookup(extends_type) {
-                return self.interner().conditional(cond.clone());
-            }
-
             // Step 3: Perform subtype check or infer pattern matching
             let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
             checker.allow_bivariant_rest = true;
