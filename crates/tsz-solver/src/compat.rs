@@ -1480,23 +1480,37 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Special case: Source union -> Target enum
         // When assigning a union to an enum, ALL enum members in the union must match the target enum.
         // This handles cases like: (EnumA | EnumB) assigned to EnumC
+        // And allows: (Choice.Yes | Choice.No) assigned to Choice (subset of same enum)
         if let Some((t_def, _)) = visitor::enum_components(self.interner, target)
             && type_queries::is_union_type(self.interner, source)
         {
             let union_members = type_queries::get_union_members(self.interner, source)?;
 
-            // Check if any union member is an enum with a different DefId
+            let mut all_same_enum = true;
+            let mut has_non_enum = false;
             for &member in &union_members {
-                if let Some((member_def, _)) = visitor::enum_components(self.interner, member)
-                    && member_def != t_def
-                {
-                    // Found an enum in the source union with a different DefId than target
-                    // This makes the union NOT assignable to the target enum
-                    return Some(false);
+                if let Some((member_def, _)) = visitor::enum_components(self.interner, member) {
+                    // Check if this member belongs to the target enum.
+                    // Members have their own DefIds (different from parent enum's DefId),
+                    // so we must also check the parent relationship.
+                    let member_parent = self.subtype.resolver.get_enum_parent_def_id(member_def);
+                    if member_def != t_def && member_parent != Some(t_def) {
+                        // Found an enum member from a different enum than target
+                        return Some(false);
+                    }
+                } else {
+                    all_same_enum = false;
+                    has_non_enum = true;
                 }
             }
-            // All enums in the union match the target enum DefId.
-            // Fall through to structural check to verify non-enum union members.
+
+            // If ALL union members are enum members from the same enum as the target,
+            // the union is a subset of the enum and therefore assignable.
+            // This handles: `type YesNo = Choice.Yes | Choice.No` assignable to `Choice`.
+            if all_same_enum && !has_non_enum && !union_members.is_empty() {
+                return Some(true);
+            }
+            // Otherwise fall through to structural check for non-enum union members.
         }
 
         // BUG FIX: String enums SHOULD be assignable to string (like numeric enums are to number)
