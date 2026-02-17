@@ -796,10 +796,14 @@ impl<'a> Printer<'a> {
         // Check if body is another MODULE_DECLARATION (nested: namespace Foo.Bar)
         if let Some(body_node) = self.arena.get(module.body) {
             if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                // Nested namespace
+                // Nested namespace (e.g., namespace X.Y.Z expands to nested IIFEs).
+                // Save/restore declared_namespace_names so names declared in nested
+                // IIFEs don't leak to sibling IIFEs at the same level.
                 if let Some(inner_module) = self.arena.get_module(body_node) {
                     let inner_module = inner_module.clone();
+                    let prev_declared = self.declared_namespace_names.clone();
                     self.emit_namespace_iife(&inner_module, Some(&name));
+                    self.declared_namespace_names = prev_declared;
                 }
             } else {
                 // MODULE_BLOCK: emit body statements
