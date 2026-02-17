@@ -289,8 +289,12 @@ check_prerequisites() {
         echo -e "${YELLOW}Binary not found, building...${NC}"
         need_rebuild=true
     else
-        # Verify binary is recent (rebuilt if source is newer than binary)
-        local newest_src=$(find "$PROJECT_ROOT/src" -name "*.rs" -newer "$TSZ" 2>/dev/null | head -1)
+        # Verify binary is recent (rebuilt if any Rust source in the workspace
+        # changed since the last benchmark build).
+        local newest_src
+        newest_src="$(find "$PROJECT_ROOT" \
+            \( -path "$BENCH_TARGET_DIR" -o -path "$PROJECT_ROOT/.git" \) -prune -o \
+            -type f -name "*.rs" -newer "$TSZ" -print -quit 2>/dev/null)"
         if [ -n "$newest_src" ]; then
             echo -e "${YELLOW}Source changed since last build, rebuilding...${NC}"
             need_rebuild=true
