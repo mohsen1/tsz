@@ -1266,28 +1266,10 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
         }
 
-        // Check for never type - emit TS18050 "The value 'never' cannot be used here"
+        // Calling `never` returns `never` (bottom type propagation).
+        // TSC does not emit TS18050 for calling `never` — the result is simply `never`.
         if callee_type == TypeId::NEVER {
-            // Check arguments even for never type to catch other errors
-            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
-            let check_excess_properties = false;
-            self.collect_call_argument_types_with_context(
-                args,
-                |_i, _arg_count| None,
-                check_excess_properties,
-                None,
-            );
-
-            // Emit TS18050 for calling never type
-            if (node.flags as u32) & node_flags::OPTIONAL_CHAIN == 0 {
-                self.report_never_type_usage(call.expression);
-            }
-
-            return if (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0 {
-                TypeId::UNDEFINED
-            } else {
-                TypeId::ERROR
-            };
+            return TypeId::NEVER;
         }
 
         let mut nullish_cause = None;
