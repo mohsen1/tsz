@@ -530,27 +530,12 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // Emit trailing comments after the last parameter (e.g., `...rest /* comment */`).
-        // We use the name node's end position, not the parameter node's end, because
-        // the parameter node's end may extend past the comment (including trivia).
-        if let Some(&last_param) = params.last()
-            && let Some(last_node) = self.arena.get(last_param)
-            && let Some(last_param) = self.arena.get_parameter(last_node)
-        {
-            // Use the end of the last thing we emitted (initializer or name)
-            let scan_pos = if !last_param.initializer.is_none() {
-                if let Some(init_node) = self.arena.get(last_param.initializer) {
-                    init_node.end
-                } else {
-                    last_node.end
-                }
-            } else if let Some(name_node) = self.arena.get(last_param.name) {
-                name_node.end
-            } else {
-                last_node.end
-            };
-            self.emit_trailing_comments(scan_pos);
-        }
+        // NOTE: Do NOT emit trailing comments here. Comments after the last
+        // parameter (e.g., `p3:any // OK`) appear on the same source line but
+        // logically follow the closing `)`. Since type annotations are erased,
+        // scanning from name_node.end would place these comments INSIDE the
+        // parameter list. The caller (statement-level comment emission) handles
+        // trailing comments after the whole function declaration.
     }
 
     pub(super) fn emit_parameter(&mut self, node: &Node) {

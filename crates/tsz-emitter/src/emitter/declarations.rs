@@ -1458,6 +1458,7 @@ impl<'a> Printer<'a> {
         // Skip declaration-only constructors (no body).
         // These are overload signatures or ambient declarations, not emitted in JS.
         if ctor.body.is_none() {
+            self.skip_comments_for_erased_node(node);
             return;
         }
 
