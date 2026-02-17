@@ -855,11 +855,45 @@ impl<'a> CheckerState<'a> {
 
     /// Check if two types are comparable (overlap).
     ///
-    /// Corresponds to TypeScript's `isTypeComparableTo`: returns true if source is
-    /// assignable to target OR target is assignable to source. This is the correct
-    /// check for switch/case comparability (TS2678), equality narrowing, etc.
+    /// Corresponds to TypeScript's `isTypeComparableTo`: returns true if the types
+    /// have any overlap. TSC's comparableRelation differs from assignability:
+    /// - For union sources: uses `someTypeRelatedToType` (ANY member suffices)
+    /// - For union targets: also checks per-member overlap
+    ///
+    /// Used for switch/case comparability (TS2678), equality narrowing, etc.
     pub(crate) fn is_type_comparable_to(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.is_assignable_to(source, target) || self.is_assignable_to(target, source)
+        // Fast path: direct bidirectional assignability
+        if self.is_assignable_to(source, target) || self.is_assignable_to(target, source) {
+            return true;
+        }
+
+        // TSC's comparable relation decomposes unions and checks if ANY member
+        // is related to the other type. This handles cases like:
+        // - `User.A | User.B` comparable to `User.A` (User.A member matches)
+        // - `string & Brand` comparable to `"a"` (string member of intersection)
+        use crate::query_boundaries::dispatch as query;
+
+        // Decompose source union: check if any member is assignable in either direction
+        if let Some(members) = query::union_members(self.ctx.types, source) {
+            for member in &members {
+                if self.is_assignable_to(*member, target) || self.is_assignable_to(target, *member)
+                {
+                    return true;
+                }
+            }
+        }
+
+        // Decompose target union: check if any member is assignable in either direction
+        if let Some(members) = query::union_members(self.ctx.types, target) {
+            for member in &members {
+                if self.is_assignable_to(source, *member) || self.is_assignable_to(*member, source)
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Check if source object literal has properties that don't exist in target.
