@@ -297,10 +297,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 && expected_yield_type != TypeId::ERROR
                 && expected_yield_type != TypeId::VOID  // Allow bare yield for void
                 && !syntactic_yield_allows_undefined
-                && !self.checker.type_includes_undefined(expected_yield_type)
-                && !self
-                    .checker
-                    .type_includes_undefined(resolved_expected_yield_type);
+                && !tsz_solver::type_queries::type_includes_undefined(self.checker.ctx.types, expected_yield_type)
+                && !tsz_solver::type_queries::type_includes_undefined(self.checker.ctx.types, resolved_expected_yield_type);
 
             // TS delegates nuanced `yield*` compatibility through iterator protocols.
             // Avoid direct TS2322 checks here to prevent false positives.

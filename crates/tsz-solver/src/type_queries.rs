@@ -2903,6 +2903,20 @@ pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     false
 }
 
+/// Check if a union type contains a specific member type.
+pub fn union_contains(db: &dyn TypeDatabase, type_id: TypeId, target: TypeId) -> bool {
+    if let Some(members) = get_union_members(db, type_id) {
+        members.contains(&target)
+    } else {
+        false
+    }
+}
+
+/// Check if a type is or contains `undefined` (directly or as a union member).
+pub fn type_includes_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id == TypeId::UNDEFINED || union_contains(db, type_id, TypeId::UNDEFINED)
+}
+
 /// Extract string literal key names from a type (single literal, or union of literals).
 ///
 /// Returns an empty Vec if the type doesn't contain string literals.

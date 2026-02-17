@@ -2696,29 +2696,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a type includes undefined (directly or in a union).
-    ///
-    /// Returns true if `type_id` is UNDEFINED or a union containing UNDEFINED.
-    pub(crate) fn type_includes_undefined(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::UNDEFINED {
-            return true;
-        }
-
-        // Check if the type is a union containing undefined
-        self.union_contains(type_id, TypeId::UNDEFINED)
-    }
-
-    /// Check if a union type contains a specific type.
-    ///
-    /// Returns true if `type_id` is a union and contains `target_type`.
-    pub(crate) fn union_contains(&self, type_id: TypeId, target_type: TypeId) -> bool {
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            members.contains(&target_type)
-        } else {
-            false
-        }
-    }
-
     /// Find the constructor body in a class member list.
     ///
     /// Returns the body node of the first constructor member that has a body.

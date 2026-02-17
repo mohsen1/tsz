@@ -4823,10 +4823,10 @@ impl<'a> CheckerState<'a> {
         if is_derived_class {
             // In derived classes, properties without definite assignment assertions
             // need initialization unless they include undefined in their type
-            return !self.type_includes_undefined(prop_type);
+            return !tsz_solver::type_queries::type_includes_undefined(self.ctx.types, prop_type);
         }
 
-        !self.type_includes_undefined(prop_type)
+        !tsz_solver::type_queries::type_includes_undefined(self.ctx.types, prop_type)
     }
 
     // Note: class_has_base, type_includes_undefined, find_constructor_body are in type_checking.rs

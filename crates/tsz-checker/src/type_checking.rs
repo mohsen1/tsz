@@ -719,7 +719,7 @@ impl<'a> CheckerState<'a> {
             // the property can be missing/undefined. Skip assignability checks for required
             // properties to match TypeScript's control-flow behavior.
             && (pattern_kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || self.type_includes_undefined(element_type))
+                || tsz_solver::type_queries::type_includes_undefined(self.ctx.types, element_type))
         {
             // Set contextual type when the initializer is a function expression or arrow
             // so that parameter types can be inferred from the expected element type.
