@@ -1241,10 +1241,26 @@ impl<'a> ContextualTypeContext<'a> {
                     let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
                     return ctx.get_property_type(name);
                 }
-                // If evaluation deferred (e.g. { [K in keyof P]: P[K] } where P is a type
-                // parameter), fall back to the constraint of the mapped type's source.
-                // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
+                // If evaluation deferred (e.g. { [K in keyof T]: TakeString } where T is a type
+                // parameter), use the mapped type's template as the contextual property type
+                // IF the template doesn't reference the mapped type's bound parameter.
+                // For example, { [P in keyof T]: TakeString } has template=TakeString which
+                // is independent of P, so it's safe to use directly. But { [P in K]: T[P] }
+                // has template=T[P] which depends on P, so we can't use it.
                 let mapped = self.interner.mapped_type(mapped_id);
+                if mapped.template != TypeId::ANY
+                    && mapped.template != TypeId::ERROR
+                    && mapped.template != TypeId::NEVER
+                    && !crate::visitor::contains_type_matching(
+                        self.interner,
+                        mapped.template,
+                        |key| matches!(key, TypeData::BoundParameter(_)),
+                    )
+                {
+                    return Some(mapped.template);
+                }
+                // Fall back to the constraint of the mapped type's source.
+                // For `keyof P` where `P extends Props`, use `Props` as the contextual type.
                 if let Some(TypeData::KeyOf(operand)) = self.interner.lookup(mapped.constraint) {
                     // The operand may be a Lazy type wrapping a type parameter — resolve it
                     let resolved_operand = crate::evaluate::evaluate_type(self.interner, operand);
