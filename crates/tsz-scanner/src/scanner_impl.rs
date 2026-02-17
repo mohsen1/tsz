@@ -1996,9 +1996,10 @@ impl ScannerState {
     /// In JSX, identifiers can contain hyphens (like `data-testid`).
     #[wasm_bindgen(js_name = scanJsxIdentifier)]
     pub fn scan_jsx_identifier(&mut self) -> SyntaxKind {
-        if self.token == SyntaxKind::Identifier {
-            // Continue scanning to include any hyphenated parts
-            // JSX identifiers can be like: foo-bar-baz
+        if crate::token_is_identifier_or_keyword(self.token) {
+            // Continue scanning to include any hyphenated parts.
+            // JSX identifiers can be like: foo-bar-baz, class-id, etc.
+            // Keywords like `class` can also start JSX attribute names.
             while self.pos < self.end {
                 let ch = self.char_code_unchecked(self.pos);
                 if ch == CharacterCodes::MINUS {
@@ -2024,6 +2025,8 @@ impl ScannerState {
                 .interner
                 .intern(&self.source[self.token_start..self.pos]);
             self.token_value.clear();
+            // After extending with hyphens, the token becomes an Identifier
+            self.token = SyntaxKind::Identifier;
         }
         self.token
     }
