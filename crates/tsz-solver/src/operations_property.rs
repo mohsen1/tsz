@@ -725,10 +725,15 @@ impl<'a> PropertyAccessEvaluator<'a> {
             return Some(PropertyAccessResult::IsUnknown);
         }
 
-        // Reconstruct obj_type for error messages
-        let obj_type = self
-            .interner()
-            .union(self.interner().type_list(TypeListId(list_id)).to_vec());
+        // Reconstructing the union can be expensive for large unions. Delay it
+        // until we actually need it for an error/index-signature fallback path.
+        let mut obj_type_cache: Option<TypeId> = None;
+        let mut obj_type_for_error = || {
+            *obj_type_cache.get_or_insert_with(|| {
+                self.interner()
+                    .union(self.interner().type_list(TypeListId(list_id)).to_vec())
+            })
+        };
 
         let prop_atom = match prop_atom {
             Some(atom) => atom,
@@ -775,7 +780,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 // PropertyNotFound: if ANY member is missing the property, the property does not exist on the Union
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     return Some(PropertyAccessResult::PropertyNotFound {
-                        type_id: obj_type,
+                        type_id: obj_type_for_error(),
                         property_name: prop_atom,
                     });
                 }
@@ -790,6 +795,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         if valid_results.is_empty() && nullable_causes.is_empty() {
             // Before giving up, check union-level index signatures
             let resolver = IndexSignatureResolver::new(self.interner());
+            let obj_type = obj_type_for_error();
 
             if resolver.has_index_signature(obj_type, IndexKind::String)
                 && let Some(value_type) = resolver.resolve_string_index(obj_type)

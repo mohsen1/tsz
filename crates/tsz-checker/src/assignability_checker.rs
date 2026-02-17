@@ -404,7 +404,6 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
-        self.ensure_relation_input_ready(source);
         self.ensure_relation_input_ready(target);
 
         // Substitute `ThisType` in the target with the class instance type.
@@ -482,6 +481,56 @@ impl<'a> CheckerState<'a> {
         result
     }
 
+    /// Check assignability with strict function-parameter variance.
+    ///
+    /// This keeps the same checker gateway (resolver + overrides + caches) as
+    /// `is_assignable_to`, but forces the strict-function-types relation flag.
+    pub fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.ensure_relation_input_ready(target);
+
+        let target = self.substitute_this_type_if_needed(target);
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+
+        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
+            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
+        let flags = self.ctx.pack_relation_flags() | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+
+        if is_cacheable {
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
+                return cached;
+            }
+        }
+
+        let overrides = CheckerOverrideProvider::new(self, None);
+        let result = is_assignable_with_overrides(
+            &AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            },
+            &overrides,
+        );
+
+        if is_cacheable {
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            self.ctx.types.insert_assignability_cache(cache_key, result);
+        }
+
+        trace!(
+            source = source.0,
+            target = target.0,
+            result,
+            "is_assignable_to_strict"
+        );
+        result
+    }
+
     /// Check if `source` type is assignable to `target` type, resolving Ref types.
     ///
     /// Uses the provided `TypeEnvironment` to resolve type references.
@@ -518,7 +567,6 @@ impl<'a> CheckerState<'a> {
         // CRITICAL: Ensure all Ref types are resolved before assignability check.
         // This fixes intersection type assignability where `type AB = A & B` needs
         // A and B in type_env before we can check if a type is assignable to the intersection.
-        self.ensure_relation_input_ready(source);
         self.ensure_relation_input_ready(target);
 
         let source = self.evaluate_type_for_assignability(source);

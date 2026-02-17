@@ -2,7 +2,8 @@ use tsz_solver::{TupleListId, TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries::{TypeParameterConstraintKind, UnionMembersKind};
 pub(crate) use tsz_solver::type_queries_extended::{
-    ArrayLikeKind, ElementIndexableKind, IndexKeyKind, LiteralKeyKind, TypeQueryKind,
+    ArrayLikeKind, ElementIndexableKind, IndexKeyKind, LiteralKeyKind, LiteralTypeKind,
+    TypeQueryKind,
 };
 
 pub(crate) fn tuple_list_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TupleListId> {
@@ -15,6 +16,10 @@ pub(crate) fn application_base(db: &dyn TypeDatabase, type_id: TypeId) -> Option
 
 pub(crate) fn literal_key_kind(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralKeyKind {
     tsz_solver::type_queries_extended::classify_literal_key(db, type_id)
+}
+
+pub(crate) fn classify_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> LiteralTypeKind {
+    tsz_solver::type_queries_extended::classify_literal_type(db, type_id)
 }
 
 pub(crate) fn classify_array_like(db: &dyn TypeDatabase, type_id: TypeId) -> ArrayLikeKind {

@@ -338,6 +338,81 @@ impl<'a> CheckerState<'a> {
         CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
     }
 
+    fn should_apply_flow_narrowing_for_identifier(&self, idx: NodeIndex) -> bool {
+        use tsz_binder::symbol_flags;
+        use tsz_scanner::SyntaxKind;
+
+        if self.ctx.skip_flow_narrowing {
+            return false;
+        }
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        }
+
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        if (symbol.flags & symbol_flags::VARIABLE) == 0 {
+            return false;
+        }
+
+        let mut value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return true;
+        }
+
+        let Some(mut decl_node) = self.ctx.arena.get(value_decl) else {
+            return true;
+        };
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && !ext.parent.is_none()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            value_decl = ext.parent;
+            decl_node = parent_node;
+        }
+
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return true;
+        }
+        if !self.is_const_variable_declaration(value_decl) {
+            return true;
+        }
+
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return true;
+        };
+        if !var_decl.type_annotation.is_none() || var_decl.initializer.is_none() {
+            return true;
+        }
+
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return true;
+        };
+        !(init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+    }
+
     /// Check if we are currently inside a cross-arena delegation.
     /// Used to skip position-based checks (like TDZ) that compare node positions
     /// from different arenas.
@@ -790,11 +865,7 @@ impl<'a> CheckerState<'a> {
             // x should have the narrowed type "string".
             //
             // Only apply narrowing if skip_flow_narrowing is false (respects testing/special contexts)
-            let should_narrow = !self.ctx.skip_flow_narrowing
-                && self.ctx.arena.get(idx).is_some_and(|node| {
-                    use tsz_scanner::SyntaxKind;
-                    node.kind == SyntaxKind::Identifier as u16
-                });
+            let should_narrow = self.should_apply_flow_narrowing_for_identifier(idx);
 
             if should_narrow {
                 // Apply flow narrowing to get the context-specific type
@@ -853,12 +924,7 @@ impl<'a> CheckerState<'a> {
         // but get_type_of_node applies flow narrowing when returning cached identifier types
         self.ctx.node_types.insert(idx.0, result);
 
-        let should_narrow_computed = !self.ctx.skip_flow_narrowing
-            && self.ctx.arena.get(idx).is_some_and(|node| {
-                use tsz_scanner::SyntaxKind;
-                node.kind == SyntaxKind::Identifier as u16
-                    || node.kind == SyntaxKind::ThisKeyword as u16
-            });
+        let should_narrow_computed = self.should_apply_flow_narrowing_for_identifier(idx);
 
         if should_narrow_computed {
             let mut narrowed = self.apply_flow_narrowing(idx, result);
