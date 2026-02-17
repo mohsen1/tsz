@@ -2437,6 +2437,47 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
             (_, Some(TypeData::Mapped(mapped_id))) => {
                 let mapped = self.interner.mapped_type(mapped_id);
+                // When source is an object and target is a mapped type with
+                // inference placeholders, infer directly from the object's
+                // properties rather than trying to evaluate the mapped type
+                // (which can't expand when its constraint is a placeholder).
+                // e.g., source { a: "hello" } against { [P in K]: T }
+                //   -> K = "a", T = string
+                if let Some(TypeData::Object(source_shape)) = self.interner.lookup(source) {
+                    let source_obj = self.interner.object_shape(source_shape);
+                    if !source_obj.properties.is_empty() {
+                        // Infer constraint (K) from property name literals
+                        let name_literals: Vec<TypeId> = source_obj
+                            .properties
+                            .iter()
+                            .map(|p| self.interner.literal_string_atom(p.name))
+                            .collect();
+                        let names_union = if name_literals.len() == 1 {
+                            name_literals[0]
+                        } else {
+                            self.interner.union(name_literals)
+                        };
+                        self.constrain_types(
+                            ctx,
+                            var_map,
+                            names_union,
+                            mapped.constraint,
+                            priority,
+                        );
+
+                        // Infer template (T) from property value types
+                        for prop in &source_obj.properties {
+                            self.constrain_types(
+                                ctx,
+                                var_map,
+                                prop.type_id,
+                                mapped.template,
+                                priority,
+                            );
+                        }
+                        return;
+                    }
+                }
                 let evaluated = self.interner.evaluate_mapped(mapped.as_ref());
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
