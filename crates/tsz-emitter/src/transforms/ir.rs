@@ -401,9 +401,11 @@ pub enum IRNode {
     // Enum / Namespace IR Nodes
     // =========================================================================
     /// Enum IIFE: `(function (E) { ... })(E || (E = {}))`
+    /// When `namespace_export` is set, emits: `(E = NS.E || (NS.E = {}))`
     EnumIIFE {
         name: String,
         members: Vec<EnumMember>,
+        namespace_export: Option<String>,
     },
 
     /// Namespace IIFE: `(function (NS) { ... })(NS || (NS = {}))`

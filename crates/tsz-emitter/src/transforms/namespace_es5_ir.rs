@@ -1074,37 +1074,36 @@ impl<'a> NamespaceES5Transformer<'a> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
-        let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         let is_exported = has_export_modifier(self.arena, &enum_data.modifiers);
 
-        let enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
-        let mut result = vec![enum_ir];
+        let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
-        if is_exported {
-            result.push(IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: enum_name.clone(),
-                value: Box::new(IRNode::Identifier(enum_name)),
-            });
+        // For exported enums, fold the namespace export into the IIFE closing:
+        // `(Color = A.Color || (A.Color = {}))` instead of separate `A.Color = Color;`
+        if is_exported
+            && let IRNode::EnumIIFE {
+                namespace_export, ..
+            } = &mut enum_ir
+        {
+            *namespace_export = Some(ns_name.to_string());
         }
 
-        Some(IRNode::Sequence(result))
+        Some(enum_ir)
     }
 
     /// Transform an exported enum
     fn transform_enum_exported(&self, ns_name: &str, enum_idx: NodeIndex) -> Option<IRNode> {
-        let enum_node = self.arena.get(enum_idx)?;
-        let enum_data = self.arena.get_enum(enum_node)?;
+        let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
-        let enum_name = get_identifier_text(self.arena, enum_data.name)?;
-        Some(IRNode::Sequence(vec![
-            transform_enum_to_ir(self.arena, enum_idx)?,
-            IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: enum_name.clone(),
-                value: Box::new(IRNode::Identifier(enum_name)),
-            },
-        ]))
+        // Fold namespace export into IIFE closing
+        if let IRNode::EnumIIFE {
+            namespace_export, ..
+        } = &mut enum_ir
+        {
+            *namespace_export = Some(ns_name.to_string());
+        }
+
+        Some(enum_ir)
     }
 
     /// Transform a nested namespace
@@ -1598,21 +1597,20 @@ impl<'a> NamespaceTransformContext<'a> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
-        let enum_name = get_identifier_text(self.arena, enum_data.name)?;
         let is_exported = has_export_modifier(self.arena, &enum_data.modifiers);
 
-        let enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
-        let mut result = vec![enum_ir];
+        let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
-        if is_exported {
-            result.push(IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: enum_name.clone(),
-                value: Box::new(IRNode::Identifier(enum_name)),
-            });
+        // For exported enums, fold the namespace export into the IIFE closing
+        if is_exported
+            && let IRNode::EnumIIFE {
+                namespace_export, ..
+            } = &mut enum_ir
+        {
+            *namespace_export = Some(ns_name.to_string());
         }
 
-        Some(IRNode::Sequence(result))
+        Some(enum_ir)
     }
 
     /// Transform an exported enum in namespace
@@ -1621,18 +1619,17 @@ impl<'a> NamespaceTransformContext<'a> {
         ns_name: &str,
         enum_idx: NodeIndex,
     ) -> Option<IRNode> {
-        let enum_node = self.arena.get(enum_idx)?;
-        let enum_data = self.arena.get_enum(enum_node)?;
+        let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
-        let enum_name = get_identifier_text(self.arena, enum_data.name)?;
-        Some(IRNode::Sequence(vec![
-            transform_enum_to_ir(self.arena, enum_idx)?,
-            IRNode::NamespaceExport {
-                namespace: ns_name.to_string(),
-                name: enum_name.clone(),
-                value: Box::new(IRNode::Identifier(enum_name)),
-            },
-        ]))
+        // Fold namespace export into IIFE closing
+        if let IRNode::EnumIIFE {
+            namespace_export, ..
+        } = &mut enum_ir
+        {
+            *namespace_export = Some(ns_name.to_string());
+        }
+
+        Some(enum_ir)
     }
 
     /// Transform a nested namespace

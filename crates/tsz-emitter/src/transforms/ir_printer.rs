@@ -68,7 +68,7 @@ impl<'a> IRPrinter<'a> {
         first: &'b IRNode,
         second: &'b IRNode,
     ) -> Option<(&'b str, &'b Vec<EnumMember>, &'b str)> {
-        let IRNode::EnumIIFE { name, members } = first else {
+        let IRNode::EnumIIFE { name, members, .. } = first else {
             return None;
         };
         let IRNode::NamespaceExport {
@@ -1341,33 +1341,41 @@ impl<'a> IRPrinter<'a> {
             }
 
             // Enum Transform Specific
-            IRNode::EnumIIFE { name, members } => {
-                // var E;
-                self.write("var ");
-                self.write(name);
-                self.write(";");
-                self.write_line();
-                self.write_indent();
-                self.write("(function (");
-                self.write(name);
-                self.write(") {");
-                self.write_line();
-                self.increase_indent();
-
-                // Emit members
-                for member in members {
-                    self.write_indent();
-                    self.emit_enum_member(name, member);
+            IRNode::EnumIIFE {
+                name,
+                members,
+                namespace_export,
+            } => {
+                if let Some(ns) = namespace_export {
+                    self.emit_namespace_bound_enum_iife(name, members, ns);
+                } else {
+                    // var E;
+                    self.write("var ");
+                    self.write(name);
+                    self.write(";");
                     self.write_line();
-                }
+                    self.write_indent();
+                    self.write("(function (");
+                    self.write(name);
+                    self.write(") {");
+                    self.write_line();
+                    self.increase_indent();
 
-                self.decrease_indent();
-                self.write_indent();
-                self.write("})(");
-                self.write(name);
-                self.write(" || (");
-                self.write(name);
-                self.write(" = {}));");
+                    // Emit members
+                    for member in members {
+                        self.write_indent();
+                        self.emit_enum_member(name, member);
+                        self.write_line();
+                    }
+
+                    self.decrease_indent();
+                    self.write_indent();
+                    self.write("})(");
+                    self.write(name);
+                    self.write(" || (");
+                    self.write(name);
+                    self.write(" = {}));");
+                }
             }
 
             // Namespace Transform Specific

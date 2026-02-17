@@ -1,11 +1,62 @@
 use super::{Printer, ScriptTarget};
 use crate::transforms::ClassES5Emitter;
 use crate::transforms::enum_es5::EnumES5Transformer;
+use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
+
+/// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
+/// for exported enums in namespaces.
+fn rewrite_enum_iife_for_namespace_export(ir: &mut IRNode, enum_name: &str, ns_name: &str) {
+    // The IR from EnumES5Transformer is:
+    //   Sequence([VarDecl { name }, ExpressionStatement(CallExpr { callee, arguments: [iife_arg] })])
+    // where iife_arg is: LogicalOr { left: Identifier(E), right: BinaryExpr(E = {}) }
+    //
+    // We need to transform it to:
+    //   iife_arg = BinaryExpr(E = LogicalOr { left: NS.E, right: BinaryExpr(NS.E = {}) })
+    let IRNode::Sequence(stmts) = ir else {
+        return;
+    };
+
+    // Find the ExpressionStatement containing the CallExpr
+    let Some(expr_stmt) = stmts.iter_mut().find_map(|s| match s {
+        IRNode::ExpressionStatement(inner) => Some(inner),
+        _ => None,
+    }) else {
+        return;
+    };
+
+    let IRNode::CallExpr { arguments, .. } = expr_stmt.as_mut() else {
+        return;
+    };
+
+    if arguments.len() != 1 {
+        return;
+    }
+
+    // Build the namespace-qualified property access: NS.E
+    let ns_prop = || IRNode::PropertyAccess {
+        object: Box::new(IRNode::Identifier(ns_name.to_string())),
+        property: enum_name.to_string(),
+    };
+
+    // Replace the IIFE argument: E || (E = {}) → E = NS.E || (NS.E = {})
+    arguments[0] = IRNode::BinaryExpr {
+        left: Box::new(IRNode::Identifier(enum_name.to_string())),
+        operator: "=".to_string(),
+        right: Box::new(IRNode::LogicalOr {
+            left: Box::new(ns_prop()),
+            right: Box::new(IRNode::BinaryExpr {
+                left: Box::new(ns_prop()),
+                operator: "=".to_string(),
+                right: Box::new(IRNode::empty_object()),
+            }),
+        }),
+    };
+}
 
 impl<'a> Printer<'a> {
     // =========================================================================
@@ -625,7 +676,7 @@ impl<'a> Printer<'a> {
         // Transform enum to IIFE pattern for all targets
         {
             let mut transformer = EnumES5Transformer::new(self.arena);
-            if let Some(ir) = transformer.transform_enum(idx) {
+            if let Some(mut ir) = transformer.transform_enum(idx) {
                 let mut printer = IRPrinter::with_arena(self.arena);
                 printer.set_indent_level(self.writer.indent_level());
                 if let Some(source_text) = self.source_text_for_map() {
@@ -636,6 +687,13 @@ impl<'a> Printer<'a> {
                 } else {
                     String::new()
                 };
+
+                // Fold namespace export into IIFE closing when emitting exported enums
+                // in a namespace: `(Color = A.Color || (A.Color = {}))` instead of
+                // separate `A.Color = Color;` statement.
+                if let Some(ns_name) = self.enum_namespace_export.take() {
+                    rewrite_enum_iife_for_namespace_export(&mut ir, &enum_name, &ns_name);
+                }
 
                 let mut output = printer.emit(&ir).to_string();
                 if !enum_name.is_empty() && self.declared_namespace_names.contains(&enum_name) {
@@ -1021,6 +1079,14 @@ impl<'a> Printer<'a> {
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
+
+                            // For exported enums in namespace, fold the export into the
+                            // IIFE closing pattern instead of emitting a separate assignment.
+                            let is_enum = inner_kind == syntax_kind_ext::ENUM_DECLARATION;
+                            if is_enum {
+                                self.enum_namespace_export = Some(ns_name.clone());
+                            }
+
                             let before_len = self.writer.len();
                             self.emit(inner_idx);
                             let emitted = self.writer.len() > before_len;
@@ -1031,7 +1097,11 @@ impl<'a> Printer<'a> {
                                 self.emit_trailing_comments(token_end);
                             }
 
-                            if !export_names.is_empty() {
+                            // If the enum absorbed the namespace export into its IIFE,
+                            // skip the separate assignment statement.
+                            let skip_export = is_enum && self.enum_namespace_export.is_none();
+
+                            if !export_names.is_empty() && !skip_export {
                                 if !self.writer.is_at_line_start() {
                                     self.write_line();
                                 }
@@ -1049,6 +1119,8 @@ impl<'a> Printer<'a> {
                                 // Also don't write newline if emit produced nothing (e.g., non-instantiated import alias)
                                 self.write_line();
                             }
+                            // Clean up in case the enum emitter didn't consume it
+                            self.enum_namespace_export = None;
                         }
                     }
                 } else if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
