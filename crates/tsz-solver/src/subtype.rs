@@ -708,7 +708,15 @@ impl TypeResolver for TypeEnvironment {
         if let Some(&instance_type) = self.class_instance_types.get(&def_id.0) {
             return Some(instance_type);
         }
-        self.get_def(def_id)
+        self.get_def(def_id).or_else(|| {
+            // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
+            // where N is the raw SymbolId. Look up the real DefId via symbol_to_def.
+            let real_def = self.symbol_to_def.get(&def_id.0)?;
+            if let Some(&instance_type) = self.class_instance_types.get(&real_def.0) {
+                return Some(instance_type);
+            }
+            self.get_def(*real_def)
+        })
     }
 
     fn get_type_params(&self, symbol: SymbolRef) -> Option<Vec<TypeParamInfo>> {
@@ -716,7 +724,11 @@ impl TypeResolver for TypeEnvironment {
     }
 
     fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
-        self.get_def_params(def_id).cloned()
+        self.get_def_params(def_id).cloned().or_else(|| {
+            // Fallback: resolve raw SymbolId-based DefIds to real DefIds
+            let real_def = self.symbol_to_def.get(&def_id.0)?;
+            self.get_def_params(*real_def).cloned()
+        })
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {

@@ -13,7 +13,7 @@ use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
     NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
-    TypeofKind,
+    TypeResolver, TypeofKind,
     type_queries::{
         LiteralValueKind, PredicateSignatureKind, classify_for_literal_value,
         classify_for_predicate_signature, is_narrowing_literal,
@@ -1978,6 +1978,19 @@ impl<'a> FlowAnalyzer<'a> {
         Some((TypeGuard::Array, arg))
     }
 
+    /// Resolve a `SymbolRef` to a proper `Lazy(DefId)` `TypeId` via the `TypeEnvironment`.
+    ///
+    /// The `TypeEnvironment` maintains the checker's symbol→`DefId` mapping, which
+    /// assigns sequential `DefIds` (e.g. 55, 56) different from raw `SymbolIds`.
+    /// Using `interner.reference(symbol_ref)` creates `Lazy(DefId(symbol_id))`
+    /// which is unresolvable; this method returns the correct `Lazy(DefId)`.
+    fn resolve_symbol_to_lazy(&self, symbol_ref: SymbolRef) -> Option<TypeId> {
+        let env = self.type_environment.as_ref()?;
+        let env_borrowed = env.borrow();
+        let def_id = env_borrowed.symbol_to_def_id(symbol_ref)?;
+        Some(self.interner.lazy(def_id))
+    }
+
     /// Check if a call is `ArrayBuffer.isView(x)` and return a predicate guard.
     fn check_array_buffer_is_view(&self, call: &CallExprData) -> Option<(TypeGuard, NodeIndex)> {
         let callee_node = self.arena.get(call.expression)?;
@@ -2014,24 +2027,28 @@ impl<'a> FlowAnalyzer<'a> {
                 .and_then(|signature| signature.predicate.type_id);
         }
 
-        if let Some(sym_id) = self.binder.get_global_type("ArrayBufferView") {
+        // Only fall back to manual type construction if the type predicate
+        // didn't provide a resolved type. The predicate path (above) gives us
+        // a properly-resolved TypeId from the checker. For the manual path, we
+        // must look up DefIds through the TypeEnvironment (which has the checker's
+        // symbol→DefId mappings), not through the interner's `reference()` which
+        // creates Lazy(DefId(symbol_id)) — a DefId that doesn't exist in the
+        // definition store.
+        if type_id.is_none()
+            && let Some(sym_id) = self.binder.get_global_type("ArrayBufferView")
+        {
             let symbol_ref = SymbolRef(sym_id.0);
-            let mut view_type = if let Some(def_id) = self.interner.symbol_to_def_id(symbol_ref) {
-                self.interner.lazy(def_id)
-            } else {
-                self.interner.reference(symbol_ref)
-            };
+            let mut view_type = self
+                .resolve_symbol_to_lazy(symbol_ref)
+                .unwrap_or_else(|| self.interner.reference(symbol_ref));
 
             // ArrayBuffer.isView narrows to ArrayBufferView with the default
             // type argument (`ArrayBufferLike`) in TypeScript's lib.
             if let Some(array_buffer_like_sym) = self.binder.get_global_type("ArrayBufferLike") {
                 let array_buffer_like_ref = SymbolRef(array_buffer_like_sym.0);
-                let array_buffer_like =
-                    if let Some(def_id) = self.interner.symbol_to_def_id(array_buffer_like_ref) {
-                        self.interner.lazy(def_id)
-                    } else {
-                        self.interner.reference(array_buffer_like_ref)
-                    };
+                let array_buffer_like = self
+                    .resolve_symbol_to_lazy(array_buffer_like_ref)
+                    .unwrap_or_else(|| self.interner.reference(array_buffer_like_ref));
 
                 view_type = self
                     .interner
