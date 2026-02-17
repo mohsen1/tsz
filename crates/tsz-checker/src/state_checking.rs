@@ -1207,7 +1207,6 @@ impl<'a> CheckerState<'a> {
         let is_non_declaration = matches!(
             node.kind,
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT
-                || k == syntax_kind_ext::EMPTY_STATEMENT
                 || k == syntax_kind_ext::IF_STATEMENT
                 || k == syntax_kind_ext::DO_STATEMENT
                 || k == syntax_kind_ext::WHILE_STATEMENT
