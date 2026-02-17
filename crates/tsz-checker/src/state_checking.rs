@@ -2571,6 +2571,14 @@ impl<'a> CheckerState<'a> {
             for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
                 let Some(shape) = query::object_shape(self.ctx.types, resolved_member) else {
+                    // If a union member has no object shape and is a type parameter
+                    // or the `object` intrinsic, it conceptually accepts any properties,
+                    // so excess property checking should not apply at all.
+                    if tsz_solver::type_queries::is_type_parameter(self.ctx.types, resolved_member)
+                        || resolved_member == TypeId::OBJECT
+                    {
+                        return;
+                    }
                     continue;
                 };
 
