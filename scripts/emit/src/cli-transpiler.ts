@@ -38,17 +38,27 @@ interface OutputPaths {
 }
 
 function dedupeUseStrictPreamble(text: string): string {
+  // Only deduplicate "use strict" directives that appear in the leading preamble
+  // (before any non-empty, non-directive content). Inner "use strict" inside
+  // function bodies must be preserved as-is.
   const lines = text.split('\n');
   const out: string[] = [];
-  let seen = false;
+  let seenInPreamble = false;
+  let preambleDone = false;
   for (const line of lines) {
     const trimmed = line.trim();
-    if (trimmed === '"use strict";' || trimmed === "'use strict';") {
-      if (!seen) {
+    const isUseStrict = trimmed === '"use strict";' || trimmed === "'use strict';";
+    if (!preambleDone && isUseStrict) {
+      if (!seenInPreamble) {
         out.push(line);
-        seen = true;
+        seenInPreamble = true;
       }
+      // Skip subsequent "use strict" lines only while still in preamble
       continue;
+    }
+    // Once we see any non-"use strict" non-empty content, the preamble is done
+    if (trimmed !== '') {
+      preambleDone = true;
     }
     out.push(line);
   }
