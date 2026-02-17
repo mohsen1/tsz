@@ -2661,12 +2661,20 @@ impl ParserState {
         // Check for import.meta
         if self.is_token(SyntaxKind::DotToken) {
             self.next_token(); // consume '.'
-            // Create import keyword node first (before borrowing arena again)
+            // Create import keyword node
             let import_node =
                 self.arena
                     .add_token(SyntaxKind::ImportKeyword as u16, start_pos, start_pos + 6);
-            // Parse 'meta'
+            // Check if identifier after '.' is 'meta'; emit TS1005 if not
+            let is_meta =
+                self.is_identifier_or_keyword() && self.scanner.get_token_value_ref() == "meta";
             let name = self.parse_identifier_name();
+            if !is_meta {
+                // import.X where X != meta: emit TS1005 "'(' expected."
+                // TSC reports this error after the identifier
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            }
             let end_pos = self.token_end();
 
             return self.arena.add_access_expr(
