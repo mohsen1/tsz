@@ -26,7 +26,7 @@ impl<'a> Printer<'a> {
         self.write("<");
         self.emit(jsx.tag_name);
         self.emit(jsx.attributes);
-        self.write(" />");
+        self.write("/>");
     }
 
     pub(super) fn emit_jsx_opening_element(&mut self, node: &Node) {
