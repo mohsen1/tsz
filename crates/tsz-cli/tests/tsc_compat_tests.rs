@@ -63,7 +63,7 @@ fn run_tsc(cwd: &Path, args: &[&str]) -> Option<String> {
     Some(normalize_output(&combined))
 }
 
-/// Run tsz and return its stderr output with ANSI codes stripped.
+/// Run tsz and return its diagnostic output with ANSI codes stripped.
 fn run_tsz(cwd: &Path, args: &[&str]) -> Option<String> {
     let tsz_bin = find_tsz_binary()?;
     let output = Command::new(&tsz_bin)
@@ -72,8 +72,15 @@ fn run_tsz(cwd: &Path, args: &[&str]) -> Option<String> {
         .output()
         .ok()?;
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    Some(normalize_output(&stderr))
+    // tsz currently writes diagnostics to stdout in plain mode.
+    let combined = if !stdout.is_empty() {
+        stdout.into_owned()
+    } else {
+        stderr.into_owned()
+    };
+    Some(normalize_output(&combined))
 }
 
 /// Find the tsz binary in the target directory.

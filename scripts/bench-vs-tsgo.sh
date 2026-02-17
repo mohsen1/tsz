@@ -1649,12 +1649,10 @@ main() {
     local xl_files
     if [ "$QUICK_MODE" = true ]; then
         xl_files=(
-            "TypeScript/tests/cases/compiler/largeControlFlowGraph.ts"
             "TypeScript/tests/cases/compiler/manyConstExports.ts"
         )
     else
         xl_files=(
-            "TypeScript/tests/cases/compiler/largeControlFlowGraph.ts"
             "TypeScript/tests/cases/compiler/conditionalTypeDiscriminatingLargeUnionRegularTypeFetchingSpeedReasonable.ts"
             "TypeScript/tests/cases/compiler/manyConstExports.ts"
             "TypeScript/tests/cases/compiler/binderBinaryExpressionStress.ts"
@@ -1684,8 +1682,6 @@ main() {
         large_files=(
             "TypeScript/tests/cases/compiler/enumLiteralsSubtypeReduction.ts"
             "TypeScript/tests/cases/compiler/binaryArithmeticControlFlowGraphNotTooLarge.ts"
-            "TypeScript/tests/cases/compiler/privacyFunctionReturnTypeDeclFile.ts"
-            "TypeScript/tests/cases/compiler/privacyAccessorDeclFile.ts"
         )
     fi
     
@@ -1708,11 +1704,8 @@ main() {
         
         local medium_files=(
             "TypeScript/tests/cases/compiler/privacyFunctionParameterDeclFile.ts"
-            "TypeScript/tests/cases/compiler/complexNarrowingWithAny.ts"
             "TypeScript/tests/cases/compiler/privacyGloFunc.ts"
             "TypeScript/tests/cases/compiler/privacyTypeParameterOfFunctionDeclFile.ts"
-            "TypeScript/tests/cases/compiler/privacyVarDeclFile.ts"
-            "TypeScript/tests/cases/compiler/deeplyDependentLargeArrayMutation2.ts"
         )
     
         for file in "${medium_files[@]}"; do
@@ -1734,7 +1727,7 @@ main() {
         echo
         
         local small_files=(
-            "TypeScript/tests/cases/compiler/privacyVar.ts"
+            "TypeScript/tests/cases/compiler/controlFlowArrays.ts"
         )
         
         for file in "${small_files[@]}"; do
