@@ -5,6 +5,7 @@
 //! the syntax node kind.
 
 use crate::query_boundaries::dispatch as query;
+use crate::query_boundaries::generic_checker as generic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -740,11 +741,15 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 && asserted_type != TypeId::UNKNOWN
                                 && expr_type != TypeId::NEVER
                                 && asserted_type != TypeId::NEVER
-                                && !query::is_type_parameter_type(
+                                // Skip TS2352 when either type contains type parameters
+                                // (not just *is* a type parameter). TSC's comparableRelation
+                                // erases generics and resolves constraints, so assertions like
+                                // `x as <T>(x: T) => T` or `key as keyof T` are allowed.
+                                && !generic_query::contains_type_parameters(
                                     self.checker.ctx.types,
                                     expr_type,
                                 )
-                                && !query::is_type_parameter_type(
+                                && !generic_query::contains_type_parameters(
                                     self.checker.ctx.types,
                                     asserted_type,
                                 );
