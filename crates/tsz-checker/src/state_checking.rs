@@ -3561,7 +3561,14 @@ impl<'a> CheckerState<'a> {
                                     sigs.iter().any(|sig| !sig.type_params.is_empty())
                                 });
 
+                            // Also check declaration directly (catches cross-arena lib types)
+                            let has_type_params_in_decl =
+                                self.symbol_declaration_has_type_parameters(heritage_sym);
+
                             if !has_generic_construct_signature
+                                && !has_type_params_in_decl
+                                && symbol_type != TypeId::ERROR
+                                && symbol_type != TypeId::ANY
                                 && let Some(&arg_idx) = type_args.nodes.first()
                             {
                                 let name = self
@@ -3769,7 +3776,16 @@ impl<'a> CheckerState<'a> {
                         && expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
                     {
                         let expr_type = self.get_type_of_node(expr_idx);
+                        let has_generic_construct_sig =
+                            tsz_solver::type_queries::get_construct_signatures(
+                                self.ctx.types,
+                                expr_type,
+                            )
+                            .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()));
                         if !tsz_solver::type_queries::is_generic_type(self.ctx.types, expr_type)
+                            && !has_generic_construct_sig
+                            && expr_type != TypeId::ERROR
+                            && expr_type != TypeId::ANY
                             && let Some(&arg_idx) = type_args.nodes.first()
                         {
                             let name = self

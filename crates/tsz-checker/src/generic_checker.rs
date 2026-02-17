@@ -186,7 +186,13 @@ impl<'a> CheckerState<'a> {
             // different arena. In that case, check the declaration directly to avoid
             // false positives.
             let has_type_params_in_decl = self.symbol_declaration_has_type_parameters(sym_id);
-            if !has_type_params_in_decl && let Some(&arg_idx) = type_args_list.nodes.first() {
+            // Suppress TS2315 for symbols from unresolved modules (type is ERROR)
+            let symbol_type = self.get_type_of_symbol(sym_id);
+            if !has_type_params_in_decl
+                && symbol_type != TypeId::ERROR
+                && symbol_type != TypeId::ANY
+                && let Some(&arg_idx) = type_args_list.nodes.first()
+            {
                 let lib_binders = self.get_lib_binders();
                 let name = self
                     .ctx
@@ -337,7 +343,10 @@ impl<'a> CheckerState<'a> {
 
     /// Check if a symbol's declaration has type parameters, even if they couldn't be
     /// resolved via `get_type_params_for_symbol` (e.g., cross-arena lib types).
-    fn symbol_declaration_has_type_parameters(&self, sym_id: tsz_binder::SymbolId) -> bool {
+    pub(crate) fn symbol_declaration_has_type_parameters(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> bool {
         let lib_binders = self.get_lib_binders();
         let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders);
         let Some(symbol) = symbol else {
