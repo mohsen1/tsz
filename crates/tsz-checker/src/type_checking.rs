@@ -2629,6 +2629,99 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a declaration is inside a `declare namespace` or `declare module` context.
+    /// This is different from `is_ambient_declaration` which also treats interfaces and type
+    /// aliases as implicitly ambient.
+    pub(crate) fn is_in_declare_namespace_or_module(&self, decl_idx: NodeIndex) -> bool {
+        let mut current = decl_idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                if let Some(module) = self.ctx.arena.get_module(parent_node) {
+                    if self.has_declare_modifier(&module.modifiers) {
+                        return true;
+                    }
+                }
+            }
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return false;
+            }
+            current = parent;
+        }
+    }
+
+    /// Check if any declaration node is exported (has export keyword).
+    /// Handles all declaration kinds: function, class, interface, enum, type alias,
+    /// module/namespace, and variable declarations.
+    /// The parser wraps `export <decl>` as `ExportDeclaration → <inner decl>`, so
+    /// we check both the node's own modifiers and whether its parent is ExportDeclaration.
+    pub(crate) fn is_declaration_exported(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+
+        // Helper: check if this node's direct parent is an ExportDeclaration wrapper.
+        let parent_is_export_decl = || {
+            self.ctx
+                .arena
+                .get_extended(decl_idx)
+                .and_then(|ext| self.ctx.arena.get(ext.parent))
+                .is_some_and(|parent| parent.kind == syntax_kind_ext::EXPORT_DECLARATION)
+        };
+
+        match node.kind {
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                self.ctx.arena.get_function(node).is_some_and(|func| {
+                    self.ctx
+                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword as u16)
+                }) || parent_is_export_decl()
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                self.ctx.arena.get_class(node).is_some_and(|class| {
+                    self.ctx
+                        .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword as u16)
+                }) || parent_is_export_decl()
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                self.ctx.arena.get_interface(node).is_some_and(|iface| {
+                    self.ctx
+                        .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword as u16)
+                }) || parent_is_export_decl()
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.ctx.arena.get_enum(node).is_some_and(|enm| {
+                    self.ctx
+                        .has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword as u16)
+                }) || parent_is_export_decl()
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                self.ctx.arena.get_type_alias(node).is_some_and(|alias| {
+                    self.ctx
+                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword as u16)
+                }) || parent_is_export_decl()
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.ctx.arena.get_module(node).is_some_and(|module| {
+                    self.ctx
+                        .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword as u16)
+                }) || parent_is_export_decl()
+            }
+            k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                self.is_exported_variable_declaration(decl_idx)
+            }
+            _ => false,
+        }
+    }
+
     /// Check if a function declaration has the declare modifier (is ambient).
     pub(crate) fn is_ambient_function_declaration(&self, decl_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -3465,6 +3558,129 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // TS2395: Individual declarations in merged declaration must be all exported or all local.
+            // When TS2395 fires, we skip the TS2300/TS2323 check for those declarations since
+            // the root cause is export visibility mismatch, not a true duplicate name.
+            let mut has_ts2395 = false;
+            // Uses "declaration spaces" (Type=1, Value=2, Namespace=4) to determine if exported
+            // and non-exported declarations overlap in the same semantic space.
+            // Declarations must be grouped by their enclosing namespace body (or file scope)
+            // since declarations in different namespace blocks of a merged namespace are separate.
+            // Skip for ambient contexts (declare namespace, .d.ts) and pure function overloads.
+            {
+                const SPACE_TYPE: u32 = 1;
+                const SPACE_VALUE: u32 = 2;
+                const SPACE_NAMESPACE: u32 = 4;
+
+                // Skip if any declaration is in an ambient context — ambient declarations
+                // (declare namespace, declare module, .d.ts files) allow mixed export visibility.
+                // We check specifically for declare namespace/module ancestors, not the general
+                // is_ambient_declaration which also treats interfaces/type aliases as ambient.
+                let any_in_declare_context = self.ctx.file_name.ends_with(".d.ts")
+                    || declarations
+                        .iter()
+                        .any(|&(decl_idx, _)| self.is_in_declare_namespace_or_module(decl_idx));
+
+                let mut error_nodes: Vec<NodeIndex> = Vec::new();
+
+                if !any_in_declare_context {
+                    // Pre-compute declaration spaces, export status, and enclosing scope
+                    let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
+                        .iter()
+                        .map(|&(decl_idx, flags)| {
+                            let space = if (flags & symbol_flags::INTERFACE) != 0
+                                || (flags & symbol_flags::TYPE_ALIAS) != 0
+                            {
+                                SPACE_TYPE
+                            } else if (flags
+                                & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
+                                != 0
+                            {
+                                if self.is_namespace_declaration_instantiated(decl_idx) {
+                                    SPACE_NAMESPACE | SPACE_VALUE
+                                } else {
+                                    SPACE_NAMESPACE
+                                }
+                            } else if (flags & symbol_flags::CLASS) != 0
+                                || (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM))
+                                    != 0
+                            {
+                                SPACE_TYPE | SPACE_VALUE
+                            } else if (flags & symbol_flags::VARIABLE) != 0
+                                || (flags & symbol_flags::FUNCTION) != 0
+                            {
+                                SPACE_VALUE
+                            } else {
+                                0
+                            };
+                            let exported = self.is_declaration_exported(decl_idx);
+                            let scope = self.get_enclosing_namespace(decl_idx);
+                            (decl_idx, flags, space, exported, scope)
+                        })
+                        .collect();
+
+                    // Group by enclosing scope and check each group
+                    let mut scope_groups: FxHashMap<NodeIndex, Vec<(NodeIndex, u32, u32, bool)>> =
+                        FxHashMap::default();
+                    for &(decl_idx, flags, space, exported, scope) in &decl_info {
+                        scope_groups
+                            .entry(scope)
+                            .or_default()
+                            .push((decl_idx, flags, space, exported));
+                    }
+
+                    for group in scope_groups.values() {
+                        if group.len() <= 1 {
+                            continue;
+                        }
+                        // Skip groups where all declarations are functions — mixed export
+                        // on function overloads is handled by TS2383-2386 instead.
+                        let all_functions = group
+                            .iter()
+                            .all(|&(_, flags, _, _)| (flags & symbol_flags::FUNCTION) != 0);
+                        if all_functions {
+                            continue;
+                        }
+                        let mut exported_spaces: u32 = 0;
+                        let mut non_exported_spaces: u32 = 0;
+                        for &(_, _, space, exported) in group {
+                            if exported {
+                                exported_spaces |= space;
+                            } else {
+                                non_exported_spaces |= space;
+                            }
+                        }
+                        let common_spaces = exported_spaces & non_exported_spaces;
+                        if common_spaces != 0 {
+                            has_ts2395 = true;
+                            for &(decl_idx, _, space, _) in group {
+                                if (space & common_spaces) != 0 {
+                                    let error_node = self
+                                        .get_declaration_name_node(decl_idx)
+                                        .unwrap_or(decl_idx);
+                                    error_nodes.push(error_node);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if has_ts2395 {
+                    let name = symbol.escaped_name.clone();
+                    let message = format_message(
+                        diagnostic_messages::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                        &[&name],
+                    );
+                    for error_node in error_nodes {
+                        self.error_at_node(
+                            error_node,
+                            &message,
+                            diagnostic_codes::INDIVIDUAL_DECLARATIONS_IN_MERGED_DECLARATION_MUST_BE_ALL_EXPORTED_OR_ALL_LOCAL,
+                        );
+                    }
+                }
+            }
+
             // TS2428: interface merges must have identical type parameters.
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
@@ -3911,53 +4127,7 @@ impl<'a> CheckerState<'a> {
                     && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
             });
 
-            let decl_is_exported = |decl_idx: NodeIndex| {
-                let Some(node) = self.ctx.arena.get(decl_idx) else {
-                    return false;
-                };
-                match node.kind {
-                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                        self.ctx.arena.get_function(node).is_some_and(|func| {
-                            self.ctx
-                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword as u16)
-                        })
-                    }
-                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                        self.ctx.arena.get_class(node).is_some_and(|class| {
-                            self.ctx
-                                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword as u16)
-                        })
-                    }
-                    k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                        self.ctx.arena.get_interface(node).is_some_and(|iface| {
-                            self.ctx
-                                .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword as u16)
-                        })
-                    }
-                    k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                        self.ctx.arena.get_enum(node).is_some_and(|enm| {
-                            self.ctx
-                                .has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword as u16)
-                        })
-                    }
-                    k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                        self.ctx.arena.get_type_alias(node).is_some_and(|alias| {
-                            self.ctx
-                                .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword as u16)
-                        })
-                    }
-                    k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                        self.ctx.arena.get_module(node).is_some_and(|module| {
-                            self.ctx
-                                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword as u16)
-                        })
-                    }
-                    k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                        self.is_exported_variable_declaration(decl_idx)
-                    }
-                    _ => false,
-                }
-            };
+            let decl_is_exported = |decl_idx: NodeIndex| self.is_declaration_exported(decl_idx);
 
             let has_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
                 conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) != 0
@@ -4000,6 +4170,11 @@ impl<'a> CheckerState<'a> {
                 )
             } else {
                 // Mixed or non-block-scoped duplicates emit TS2300
+                // When TS2395 already fired for this symbol, skip TS2300 — the root cause
+                // is export visibility mismatch, not a true duplicate name.
+                if has_ts2395 {
+                    continue;
+                }
                 (
                     format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]),
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
