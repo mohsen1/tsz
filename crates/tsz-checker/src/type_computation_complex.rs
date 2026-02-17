@@ -308,6 +308,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn get_type_of_new_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
         use tsz_solver::CallResult;
 
         let Some(new_expr) = self.ctx.arena.get_call_expr_at(idx) else {
@@ -319,8 +320,55 @@ impl<'a> CheckerState<'a> {
             return early;
         }
 
-        // Get the type of the constructor expression
-        let mut constructor_type = self.get_type_of_node(new_expr.expression);
+        // Get the type of the constructor expression.
+        // Fast path for local class identifiers: avoid full identifier typing
+        // machinery after `check_new_expression_target` has already validated
+        // type-only/abstract constructor errors for this `new` target.
+        let mut constructor_type = if let Some(expr_node) = self.ctx.arena.get(new_expr.expression)
+        {
+            if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                let identifier_text = self
+                    .ctx
+                    .arena
+                    .get_identifier(expr_node)
+                    .map(|ident| ident.escaped_text.as_str())
+                    .unwrap_or_default();
+                let direct_symbol = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&new_expr.expression.0)
+                    .copied();
+                let fast_symbol = direct_symbol
+                    .or_else(|| self.resolve_identifier_symbol(new_expr.expression))
+                    .filter(|&sym_id| {
+                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                            let is_single_class_decl = symbol.declarations.len() == 1
+                                && !symbol.value_declaration.is_none()
+                                && self.ctx.arena.get(symbol.value_declaration).is_some_and(
+                                    |decl| decl.kind == syntax_kind_ext::CLASS_DECLARATION,
+                                );
+                            symbol.escaped_name == identifier_text
+                                && is_single_class_decl
+                                && (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                                && (symbol.decl_file_idx == u32::MAX
+                                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                        })
+                    });
+                if let Some(sym_id) = fast_symbol {
+                    self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.get_type_of_node(new_expr.expression)
+                }
+            } else {
+                self.get_type_of_node(new_expr.expression)
+            }
+        } else {
+            self.get_type_of_node(new_expr.expression)
+        };
         if let Some(export_equals_ctor) =
             self.new_expression_export_equals_constructor_type(new_expr.expression)
         {
@@ -435,17 +483,7 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_inputs_ready(&arg_types);
 
         // Delegate to Solver for constructor resolution
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            call_checker::resolve_new_with_context(
-                self.ctx.types,
-                &self.ctx,
-                &env,
-                constructor_type,
-                &arg_types,
-                false,
-            )
-        };
+        let result = self.resolve_new_with_checker_adapter(constructor_type, &arg_types, false);
 
         match result {
             CallResult::Success(return_type) => return_type,
@@ -1170,19 +1208,41 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.resolve_identifier_symbol(call.expression))
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            let is_plain_function_decl =
-                                symbol.declarations.len() == 1
-                                    && !symbol.value_declaration.is_none()
-                                    && self.ctx.arena.get(symbol.value_declaration).is_some_and(
-                                        |decl| {
-                                            decl.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                                                && self.ctx.arena.get_function(decl).is_some_and(
-                                                    |func| func.type_annotation.is_none(),
-                                                )
-                                        },
-                                    );
+                            let decl_idx = if !symbol.value_declaration.is_none() {
+                                Some(symbol.value_declaration)
+                            } else if symbol.declarations.len() == 1 {
+                                symbol.declarations.first().copied()
+                            } else {
+                                None
+                            };
+                            let is_fast_path_function_decl = symbol.declarations.len() == 1
+                                && decl_idx
+                                    .and_then(|idx| self.ctx.arena.get(idx))
+                                    .is_some_and(|decl| {
+                                        if decl.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                                            return false;
+                                        }
+                                        self.ctx.arena.get_function(decl).is_some_and(|func| {
+                                            // Original safe fast path: local implementations
+                                            // without explicit return annotations.
+                                            let is_unannotated_impl =
+                                                func.type_annotation.is_none();
+
+                                            // Additional constrained path for ambient signatures.
+                                            // Keep this strict to avoid bypassing value/type
+                                            // diagnostics for non-local or indirectly-resolved
+                                            // symbols.
+                                            let is_local_ambient_signature = func.body.is_none()
+                                                && direct_symbol == Some(sym_id)
+                                                && (symbol.decl_file_idx
+                                                    == self.ctx.current_file_idx as u32
+                                                    || symbol.decl_file_idx == u32::MAX);
+
+                                            is_unannotated_impl || is_local_ambient_signature
+                                        })
+                                    });
                             symbol.escaped_name == identifier_text
-                                && is_plain_function_decl
+                                && is_fast_path_function_decl
                                 && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
                                 && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
                                 && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
@@ -1192,9 +1252,10 @@ impl<'a> CheckerState<'a> {
                     });
                 if let Some(sym_id) = fast_symbol {
                     // Fast path intentionally skips identifier-side diagnostic probes
-                    // (e.g. type-only import/value checks). The guard requires a local,
-                    // plain function declaration without explicit return annotation to
-                    // avoid those semantic/diagnostic-sensitive callee forms.
+                    // (e.g. type-only import/value checks). The guard allows local,
+                    // non-aliased function declarations in two cases:
+                    // - implementation declarations without explicit return annotations
+                    // - current-file direct ambient/overload signatures (no body)
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
                     self.get_type_of_symbol(sym_id)
                 } else {
@@ -1540,7 +1601,6 @@ impl<'a> CheckerState<'a> {
         };
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
-        self.ensure_relation_inputs_ready(&arg_types);
 
         // Evaluate application types to resolve Ref bases to actual Callable types
         // This is needed for cases like `GenericCallable<string>` where the type is
@@ -1583,32 +1643,22 @@ impl<'a> CheckerState<'a> {
 
         // Ensure relation preconditions (lazy refs + application symbols) for callee/args.
         self.ensure_relation_input_ready(callee_type_for_call);
-        self.ensure_relation_inputs_ready(&arg_types);
 
-        let result = {
-            let env = self.ctx.type_env.borrow();
-            // super() calls are constructor calls, not function calls.
-            // Use resolve_new() which checks construct signatures instead of call signatures.
-            if is_super_call {
-                call_checker::resolve_new_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    callee_type_for_call,
-                    &arg_types,
-                    force_bivariant_callbacks,
-                )
-            } else {
-                call_checker::resolve_call_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    callee_type_for_call,
-                    &arg_types,
-                    force_bivariant_callbacks,
-                    self.ctx.contextual_type,
-                )
-            }
+        // super() calls are constructor calls, not function calls.
+        // Use resolve_new() which checks construct signatures instead of call signatures.
+        let result = if is_super_call {
+            self.resolve_new_with_checker_adapter(
+                callee_type_for_call,
+                &arg_types,
+                force_bivariant_callbacks,
+            )
+        } else {
+            self.resolve_call_with_checker_adapter(
+                callee_type_for_call,
+                &arg_types,
+                force_bivariant_callbacks,
+                self.ctx.contextual_type,
+            )
         };
 
         let call_context = CallResultContext {
