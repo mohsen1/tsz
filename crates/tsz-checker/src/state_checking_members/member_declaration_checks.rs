@@ -886,26 +886,28 @@ impl<'a> CheckerState<'a> {
             // After an implementation (body), start a new group.
             if !prev_had_body
                 && let (Some(prev), Some(cur)) = (&prev_name, &cur_name)
-                    && prev == cur && cur_is_static != prev_is_static {
-                        let error_node = if !method.name.is_none() {
-                            method.name
-                        } else {
-                            member_idx
-                        };
-                        if cur_is_static {
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::FUNCTION_OVERLOAD_MUST_NOT_BE_STATIC,
-                                diagnostic_codes::FUNCTION_OVERLOAD_MUST_NOT_BE_STATIC,
-                            );
-                        } else {
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::FUNCTION_OVERLOAD_MUST_BE_STATIC,
-                                diagnostic_codes::FUNCTION_OVERLOAD_MUST_BE_STATIC,
-                            );
-                        }
-                    }
+                && prev == cur
+                && cur_is_static != prev_is_static
+            {
+                let error_node = if !method.name.is_none() {
+                    method.name
+                } else {
+                    member_idx
+                };
+                if cur_is_static {
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::FUNCTION_OVERLOAD_MUST_NOT_BE_STATIC,
+                        diagnostic_codes::FUNCTION_OVERLOAD_MUST_NOT_BE_STATIC,
+                    );
+                } else {
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::FUNCTION_OVERLOAD_MUST_BE_STATIC,
+                        diagnostic_codes::FUNCTION_OVERLOAD_MUST_BE_STATIC,
+                    );
+                }
+            }
 
             prev_name = cur_name;
             prev_is_static = cur_is_static;

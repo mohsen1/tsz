@@ -3756,14 +3756,12 @@ impl<'a> CheckerState<'a> {
                     // Two exported `var` declarations with the same name conflict (TS2323).
                     // Regular `var` redeclarations are legal in JS, but exported vars
                     // create ambiguity in module export bindings.
-                    if decl_is_var
+                    if (decl_is_var
                         && other_is_var
                         && self.is_exported_variable_declaration(decl_idx)
-                        && self.is_exported_variable_declaration(other_idx)
+                        && self.is_exported_variable_declaration(other_idx))
+                        || Self::declarations_conflict(decl_flags, other_flags)
                     {
-                        conflicts.insert(decl_idx);
-                        conflicts.insert(other_idx);
-                    } else if Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
                     }
