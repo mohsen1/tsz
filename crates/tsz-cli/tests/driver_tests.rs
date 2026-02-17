@@ -6126,3 +6126,42 @@ fn test_has_no_types_and_symbols_directive_semicolon_terminated() {
 async function f(x, y = z) {}"#;
     assert!(has_no_types_and_symbols_directive(source));
 }
+
+#[test]
+fn test_no_types_and_symbols_directive_does_not_disable_default_libs() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noEmit": true
+          },
+          "include": ["src/**/*.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("src/index.ts"),
+        r#"// @noTypesAndSymbols: true
+const value = 1;
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let ts2318_errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_FIND_GLOBAL_TYPE)
+        .collect();
+    assert!(
+        ts2318_errors.is_empty(),
+        "Expected @noTypesAndSymbols not to disable libs, got TS2318 diagnostics: {:?}",
+        ts2318_errors
+            .iter()
+            .map(|d| d.message_text.as_str())
+            .collect::<Vec<_>>()
+    );
+}
