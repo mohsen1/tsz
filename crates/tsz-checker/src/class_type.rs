@@ -1121,7 +1121,10 @@ impl<'a> CheckerState<'a> {
                         }
                         init_type
                     } else {
-                        TypeId::UNKNOWN
+                        // Static properties without type annotation or initializer
+                        // get implicit 'any' type (same as instance properties).
+                        // TS7008 is emitted separately when noImplicitAny is on.
+                        TypeId::ANY
                     };
 
                     let visibility = self.get_visibility_from_modifiers(&prop.modifiers);
