@@ -192,6 +192,10 @@ pub struct BinderState {
     pub(crate) scope_stack: Vec<SymbolTable>,
     /// File-level locals (for module resolution)
     pub file_locals: SymbolTable,
+    /// Expando property assignments: maps identifier name → set of property names
+    /// that were assigned via `X.prop = value` patterns (single-level property access).
+    /// Used to suppress false TS2339 errors on read-side property accesses.
+    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
     /// Ambient module declarations by specifier (e.g. "pkg", "./types")
     pub declared_modules: FxHashSet<String>,
     /// Whether the current source file is an external module (has top-level import/export).
@@ -369,6 +373,7 @@ pub struct BinderStateScopeInputs {
     pub flow_nodes: FlowNodeArena,
     pub node_flow: FxHashMap<u32, FlowNodeId>,
     pub switch_clause_to_switch: FxHashMap<u32, NodeIndex>,
+    pub expando_properties: FxHashMap<String, FxHashSet<String>>,
 }
 
 impl BinderStateScopeInputs {
@@ -399,6 +404,7 @@ impl BinderState {
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
             file_locals: SymbolTable::new(),
+            expando_properties: FxHashMap::default(),
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
@@ -454,6 +460,7 @@ impl BinderState {
         self.current_scope.clear();
         self.scope_stack.clear();
         self.file_locals.clear();
+        self.expando_properties.clear();
         self.declared_modules.clear();
         self.is_external_module = false;
         self.is_strict_scope = false;
@@ -576,6 +583,7 @@ impl BinderState {
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
             file_locals,
+            expando_properties: FxHashMap::default(),
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,
@@ -668,6 +676,7 @@ impl BinderState {
             flow_nodes,
             node_flow,
             switch_clause_to_switch,
+            expando_properties,
         } = inputs;
 
         // Find the unreachable flow node in the existing flow_nodes, or create a new one
@@ -682,6 +691,7 @@ impl BinderState {
             current_scope: SymbolTable::new(),
             scope_stack: Vec::new(),
             file_locals,
+            expando_properties,
             declared_modules: FxHashSet::default(),
             is_external_module: false,
             is_strict_scope: false,

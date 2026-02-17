@@ -1648,6 +1648,11 @@ impl<'a> CheckerState<'a> {
                     {
                         return TypeId::ANY;
                     }
+                    // Check for expando property reads: X.prop where X.prop = value was assigned
+                    // Returns `any` type for properties that were assigned via expando pattern.
+                    if self.is_expando_property_read(access.expression, property_name) {
+                        return TypeId::ANY;
+                    }
                     // Check for expando function pattern: func.prop = value
                     // TypeScript allows property assignments to function/class declarations
                     // without emitting TS2339. The assigned properties become part of the
@@ -2154,6 +2159,24 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// Check if a property access reads an expando property assigned via `X.prop = value`.
+    fn is_expando_property_read(&self, object_expr_idx: NodeIndex, property_name: &str) -> bool {
+        let Some(expr_node) = self.ctx.arena.get(object_expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let Some(ident) = self.ctx.arena.get_identifier(expr_node) else {
+            return false;
+        };
+        self.ctx
+            .binder
+            .expando_properties
+            .get(&ident.escaped_text)
+            .is_some_and(|props| props.contains(property_name))
     }
 
     fn strict_bind_call_apply_method_type(

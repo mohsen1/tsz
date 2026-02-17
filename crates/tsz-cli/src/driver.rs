@@ -1289,6 +1289,7 @@ fn build_program_with_cache(
                     node_flow: Default::default(),
                     switch_clause_to_switch: Default::default(),
                     is_external_module: false, // Default to false for missing files
+                    expando_properties: Default::default(),
                 }
             }
         };
@@ -3419,6 +3420,7 @@ fn create_binder_from_bound_file(
             flow_nodes: file.flow_nodes.clone(),
             node_flow: file.node_flow.clone(),
             switch_clause_to_switch: file.switch_clause_to_switch.clone(),
+            expando_properties: file.expando_properties.clone(),
         },
     );
 

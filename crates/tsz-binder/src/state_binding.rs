@@ -2587,6 +2587,10 @@ impl BinderState {
                     self.bind_expression(arena, bin.right);
                     let flow = self.create_flow_assignment(idx);
                     self.current_flow = flow;
+                    // Detect expando property assignments (X.prop = value)
+                    if bin.operator_token == SyntaxKind::EqualsToken as u16 {
+                        self.detect_expando_assignment(arena, bin.left);
+                    }
                     return;
                 }
 
@@ -2728,6 +2732,58 @@ impl BinderState {
         }
 
         self.bind_node(arena, idx);
+    }
+
+    /// Detect expando property assignments of the form `X.prop = value`.
+    /// Only tracks single-level property accesses where `X` is a simple identifier
+    /// bound to a function, class, or variable in `file_locals`.
+    fn detect_expando_assignment(&mut self, arena: &NodeArena, lhs: NodeIndex) {
+        let Some(lhs_node) = arena.get(lhs) else {
+            return;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return;
+        }
+        let Some(access) = arena.get_access_expr(lhs_node) else {
+            return;
+        };
+        // Get the property name from the name_or_argument (must be an identifier)
+        let Some(name_node) = arena.get(access.name_or_argument) else {
+            return;
+        };
+        let Some(name_ident) = arena.get_identifier(name_node) else {
+            return;
+        };
+        let prop_name = name_ident.escaped_text.clone();
+
+        // Check that the object expression is a simple identifier (single-level only)
+        let Some(obj_node) = arena.get(access.expression) else {
+            return;
+        };
+        if obj_node.kind != SyntaxKind::Identifier as u16 {
+            return;
+        }
+        let Some(obj_ident) = arena.get_identifier(obj_node) else {
+            return;
+        };
+        let obj_name = &obj_ident.escaped_text;
+
+        // Look up the identifier in file_locals (covers hoisted vars/functions)
+        let Some(sym_id) = self.file_locals.get(obj_name) else {
+            return;
+        };
+        let Some(symbol) = self.symbols.get(sym_id) else {
+            return;
+        };
+
+        // Only track for functions and classes (not arbitrary variables, which may have
+        // type annotations that make expando assignments invalid — e.g. `let p: Person`)
+        if (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0 {
+            self.expando_properties
+                .entry(obj_name.clone())
+                .or_default()
+                .insert(prop_name);
+        }
     }
 
     /// Run post-binding validation checks on the symbol table.
