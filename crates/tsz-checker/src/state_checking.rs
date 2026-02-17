@@ -1436,6 +1436,50 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // For-in specific LHS checks (TS2491, TS2406, TS2405)
+        if !is_for_of {
+            if let Some(init_node) = self.ctx.arena.get(initializer) {
+                let init_kind = init_node.kind;
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                use tsz_parser::parser::syntax_kind_ext;
+
+                // TS2491: The left-hand side of a 'for...in' statement cannot be a destructuring pattern.
+                if init_kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    || init_kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                {
+                    self.error_at_node(
+                        initializer,
+                        diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
+                        diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
+                    );
+                }
+                // TS2406: The left-hand side of a 'for...in' statement must be a variable or a property access.
+                else if init_kind != SyntaxKind::Identifier as u16
+                    && init_kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && init_kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+                {
+                    if init_kind == syntax_kind_ext::CALL_EXPRESSION
+                        || init_kind == syntax_kind_ext::NEW_EXPRESSION
+                    {
+                        self.error_at_node(
+                            initializer,
+                            diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
+                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_A_VARIABLE_OR_A_PROPERTY_ACCESS,
+                        );
+                    }
+                    // TS2405: The left-hand side of a 'for...in' statement must be of type 'string' or 'any'.
+                    // Applies to other expression types (BinaryExpression like `a=1`, `this`, etc.)
+                    else {
+                        self.error_at_node(
+                            initializer,
+                            diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                            diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                        );
+                    }
+                }
+            }
+        }
+
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
         let var_type = self.get_type_of_node(initializer);
         let target_type = if is_for_of
