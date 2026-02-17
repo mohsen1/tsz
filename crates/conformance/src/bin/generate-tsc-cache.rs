@@ -300,6 +300,22 @@ fn process_test_file(
                 None,
             )
         }
+        tsz_conformance::text_decode::DecodedSourceText::TextWithOriginalBytes(
+            content,
+            original,
+        ) => {
+            // UTF-16 decoded text: parse directives from decoded text, preserve original bytes
+            let parsed = tsz_conformance::test_parser::parse_test_file(&content)?;
+            if tsz_conformance::test_parser::should_skip_test(&parsed.directives).is_some() {
+                return Ok(None);
+            }
+            (
+                Some(content),
+                parsed.directives.filenames,
+                parsed.directives.options,
+                Some(original),
+            )
+        }
         tsz_conformance::text_decode::DecodedSourceText::Binary(bytes) => {
             (None, Vec::new(), HashMap::new(), Some(bytes))
         }

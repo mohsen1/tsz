@@ -8,6 +8,10 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DecodedSourceText {
     Text(String),
+    /// Text decoded from a non-UTF-8 encoding (e.g. UTF-16 with BOM).
+    /// The decoded text is available for directive parsing, but the original
+    /// bytes should be written to disk so the compiler can detect the encoding.
+    TextWithOriginalBytes(String, Vec<u8>),
     Binary(Vec<u8>),
 }
 
@@ -29,7 +33,7 @@ pub fn decode_source_text(bytes: &[u8]) -> DecodedSourceText {
     if bytes.starts_with(&[0xFF, 0xFE]) {
         return decode_utf16_with_endianness(&bytes[2..], true).map_or_else(
             |_| DecodedSourceText::Binary(bytes.to_vec()),
-            DecodedSourceText::Text,
+            |text| DecodedSourceText::TextWithOriginalBytes(text, bytes.to_vec()),
         );
     }
 
@@ -37,7 +41,7 @@ pub fn decode_source_text(bytes: &[u8]) -> DecodedSourceText {
     if bytes.starts_with(&[0xFE, 0xFF]) {
         return decode_utf16_with_endianness(&bytes[2..], false).map_or_else(
             |_| DecodedSourceText::Binary(bytes.to_vec()),
-            DecodedSourceText::Text,
+            |text| DecodedSourceText::TextWithOriginalBytes(text, bytes.to_vec()),
         );
     }
 
