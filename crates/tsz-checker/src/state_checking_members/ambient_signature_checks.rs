@@ -153,6 +153,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // TS1039: Initializers are not allowed in ambient contexts.
+        // A class property with `declare` modifier or in a `declare class` is ambient.
+        if !prop.initializer.is_none() {
+            let has_declare = self.has_declare_modifier(&prop.modifiers);
+            let in_declared_class = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| c.is_declared);
+            if has_declare || in_declared_class {
+                self.error_at_node(
+                    prop.initializer,
+                    diagnostic_messages::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                    diagnostic_codes::INITIALIZERS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
+                );
+            }
+        }
+
         // Check for await expressions in the initializer (TS1308)
         if !prop.initializer.is_none() {
             self.check_await_expression(prop.initializer);
