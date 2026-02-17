@@ -133,20 +133,18 @@ impl<'a> CheckerState<'a> {
         }
 
         // Track nullish operands for proper error reporting
-        // NOTE: TSC emits TS2365 for '+' operator with null/undefined, but TS18050 for other arithmetic operators
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
-        // TS18050 is only emitted for strictly-arithmetic and bitwise operators with null/undefined operands.
-        // The `+` operator is NOT included: tsc emits TS2365 for `null + null`, not TS18050,
-        // because `+` can be string concatenation and has its own type-checking path.
+        // TS18050 is emitted for null/undefined operands in arithmetic, bitwise, AND `+` operations.
+        // tsc emits TS18050 per-operand for each null/undefined value, not TS2365 for the expression.
         // Relational operators (<, >, <=, >=) also emit TS18050, but only for literal null/undefined.
-        // For now, we only handle arithmetic/bitwise since our evaluator doesn't distinguish
+        // For now, we only handle arithmetic/bitwise/+ since our evaluator doesn't distinguish
         // literal values from variables typed as null/undefined.
         let should_emit_nullish_error = matches!(
             op,
-            "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+            "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
         );
 
         // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
@@ -292,23 +290,25 @@ impl<'a> CheckerState<'a> {
         let right_is_valid_arithmetic =
             !right_is_symbol && evaluator.is_arithmetic_operand(eval_right);
 
-        // For + operator, TSC always emits TS2365 ("Operator '+' cannot be applied to types"),
-        // never TS2362/TS2363. This is because + can be either string concatenation or arithmetic,
-        // so TSC uses the general error regardless of the operand types.
+        // For + operator, TSC emits TS2365 ("Operator '+' cannot be applied to types"),
+        // never TS2362/TS2363. But if null/undefined operands already got TS18050,
+        // don't also emit TS2365 - tsc only emits the per-operand TS18050 errors.
         if op == "+" {
-            if let Some(loc) = self.get_source_location(node_idx) {
-                let message = format!(
-                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-                );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+            if !emitted_nullish_error {
+                if let Some(loc) = self.get_source_location(node_idx) {
+                    let message = format!(
+                        "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
             }
             return;
         }
