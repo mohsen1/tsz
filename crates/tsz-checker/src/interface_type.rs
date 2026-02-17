@@ -411,95 +411,51 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    let mut base_type_params = Vec::new();
-                    let mut base_param_updates = Vec::new();
+                    // Resolve the base type and its type params.  We use
+                    // get_type_of_symbol (which caches) for the type, and
+                    // get_type_params_for_symbol (which also caches) for params.
+                    // This ensures the TypeParam TypeIds in base_type_params match
+                    // the TypeIds embedded in the base type's member signatures,
+                    // which is critical for substitution to work correctly.
                     let mut base_type = None;
 
+                    // Try class instance type first (needs special handling)
                     for &base_decl_idx in &base_symbol.declarations {
                         let Some(base_node) = self.ctx.arena.get(base_decl_idx) else {
                             continue;
                         };
-                        if let Some(base_iface) = self.ctx.arena.get_interface(base_node) {
-                            let (params, updates) =
-                                self.push_type_parameters(&base_iface.type_parameters);
-                            base_type_params = params;
-                            base_param_updates = updates;
-                            base_type = Some(self.get_type_of_symbol(base_sym_id));
-                            break;
-                        }
-                        if let Some(base_alias) = self.ctx.arena.get_type_alias(base_node) {
-                            let (params, updates) =
-                                self.push_type_parameters(&base_alias.type_parameters);
-                            base_type_params = params;
-                            base_param_updates = updates;
-                            base_type = Some(self.get_type_of_symbol(base_sym_id));
-                            break;
-                        }
                         if let Some(base_class) = self.ctx.arena.get_class(base_node) {
-                            let (params, updates) =
-                                self.push_type_parameters(&base_class.type_parameters);
-                            base_type_params = params;
-                            base_param_updates = updates;
-
-                            // get_class_instance_type_inner has its own cycle detection
-                            // via class_instance_resolution_set, so just call it directly.
                             base_type =
                                 Some(self.get_class_instance_type(base_decl_idx, base_class));
                             break;
                         }
                     }
-
                     if base_type.is_none() && !base_symbol.value_declaration.is_none() {
                         let base_decl_idx = base_symbol.value_declaration;
-                        if let Some(base_node) = self.ctx.arena.get(base_decl_idx) {
-                            if let Some(base_iface) = self.ctx.arena.get_interface(base_node) {
-                                let (params, updates) =
-                                    self.push_type_parameters(&base_iface.type_parameters);
-                                base_type_params = params;
-                                base_param_updates = updates;
-                                base_type = Some(self.get_type_of_symbol(base_sym_id));
-                            } else if let Some(base_alias) =
-                                self.ctx.arena.get_type_alias(base_node)
-                            {
-                                let (params, updates) =
-                                    self.push_type_parameters(&base_alias.type_parameters);
-                                base_type_params = params;
-                                base_param_updates = updates;
-                                base_type = Some(self.get_type_of_symbol(base_sym_id));
-                            } else if let Some(base_class) = self.ctx.arena.get_class(base_node) {
-                                let (params, updates) =
-                                    self.push_type_parameters(&base_class.type_parameters);
-                                base_type_params = params;
-                                base_param_updates = updates;
-
-                                // get_class_instance_type_inner has its own cycle detection
-                                // via class_instance_resolution_set, so just call it directly.
+                        if let Some(base_node) = self.ctx.arena.get(base_decl_idx)
+                            && let Some(base_class) = self.ctx.arena.get_class(base_node) {
                                 base_type =
                                     Some(self.get_class_instance_type(base_decl_idx, base_class));
                             }
-                        }
                     }
 
-                    // Cross-file fallback: if the base class/interface declaration node
-                    // is not in the current file's arena, resolve its type through the
-                    // symbol's type (which uses cross-arena delegation).
+                    // For interfaces/type aliases, resolve through symbol type
                     if base_type.is_none() {
                         let resolved = self.get_type_of_symbol(base_sym_id);
                         if resolved != TypeId::ERROR && resolved != TypeId::UNKNOWN {
                             base_type = Some(resolved);
-                            // Also retrieve type params so that substitution works correctly.
-                            // Without this, extending generic types from other files
-                            // (e.g., `interface Foo extends Array<number>`) would leave
-                            // type parameters unsubstituted in inherited members.
-                            if base_type_params.is_empty() {
-                                base_type_params = self.get_type_params_for_symbol(base_sym_id);
-                            }
                         }
                     }
 
                     let Some(mut base_type) = base_type else {
                         continue;
                     };
+
+                    // Use get_type_params_for_symbol to get the ORIGINAL TypeParam
+                    // TypeIds that match the ones in base_type's member signatures.
+                    // Previously we used push_type_parameters which creates NEW
+                    // TypeIds that don't match, causing substitution to be a no-op.
+                    let base_type_params = self.get_type_params_for_symbol(base_sym_id);
 
                     if type_args.len() < base_type_params.len() {
                         for param in base_type_params.iter().skip(type_args.len()) {
@@ -517,8 +473,6 @@ impl<'a> CheckerState<'a> {
                     let substitution =
                         TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                     base_type = instantiate_type(self.ctx.types, base_type, &substitution);
-
-                    self.pop_type_parameters(base_param_updates);
 
                     derived_type = self.merge_interface_types(derived_type, base_type);
                 }

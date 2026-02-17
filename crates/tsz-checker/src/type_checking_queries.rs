@@ -2289,13 +2289,21 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
 
+        // Guard against infinite recursion in recursive generic hierarchies
+        // (e.g., interface B<T extends B<T,S>> extends A<B<T,S>, B<T,S>>)
+        if !self.ctx.enter_recursion() {
+            return derived_type;
+        }
+
         let lib_contexts = self.ctx.lib_contexts.clone();
 
         // Look up the symbol and its declarations
         let Some(sym_id) = self.ctx.binder.file_locals.get(name) else {
+            self.ctx.leave_recursion();
             return derived_type;
         };
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            self.ctx.leave_recursion();
             return derived_type;
         };
 
@@ -2323,8 +2331,14 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
 
-        // Collect base type names first, then resolve them (avoids borrow conflicts)
-        let mut base_names: Vec<String> = Vec::new();
+        // Collect base type info: name and type argument node indices with their arena.
+        // We collect these first to avoid borrow conflicts during resolution.
+        struct HeritageBase<'a> {
+            name: String,
+            type_arg_indices: Vec<NodeIndex>,
+            arena: &'a NodeArena,
+        }
+        let mut bases: Vec<HeritageBase<'_>> = Vec::new();
 
         for &(decl_idx, arena) in &decls_with_arenas {
             let Some(node) = arena.get(decl_idx) else {
@@ -2353,32 +2367,154 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
 
-                    // Extract the base type name from the heritage expression
-                    let expr_idx = if let Some(eta) = arena.get_expr_type_args(type_node) {
-                        eta.expression
-                    } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
-                        arena
-                            .get_type_ref(type_node)
-                            .map_or(type_idx, |tr| tr.type_name)
-                    } else {
-                        type_idx
-                    };
+                    // Extract the base type name and type arguments
+                    let (expr_idx, type_arguments) =
+                        if let Some(eta) = arena.get_expr_type_args(type_node) {
+                            (eta.expression, eta.type_arguments.as_ref())
+                        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                            if let Some(tr) = arena.get_type_ref(type_node) {
+                                (tr.type_name, tr.type_arguments.as_ref())
+                            } else {
+                                (type_idx, None)
+                            }
+                        } else {
+                            (type_idx, None)
+                        };
 
                     if let Some(base_name) = arena.get_identifier_text(expr_idx) {
-                        base_names.push(base_name.to_string());
+                        let type_arg_indices = type_arguments
+                            .map(|args| args.nodes.clone())
+                            .unwrap_or_default();
+                        bases.push(HeritageBase {
+                            name: base_name.to_string(),
+                            type_arg_indices,
+                            arena,
+                        });
                     }
                 }
             }
         }
 
-        // Now resolve each base type and merge
-        for base_name in &base_names {
-            if let Some(base_type) = self.resolve_lib_type_by_name(base_name) {
+        // Now resolve each base type and merge, applying type argument substitution
+        for base in &bases {
+            if let Some(mut base_type) = self.resolve_lib_type_by_name(&base.name) {
+                // If there are type arguments, resolve them and substitute
+                if !base.type_arg_indices.is_empty() {
+                    let base_sym = self.ctx.binder.file_locals.get(&base.name);
+                    if let Some(base_sym_id) = base_sym {
+                        let base_params = self.get_type_params_for_symbol(base_sym_id);
+                        if !base_params.is_empty() {
+                            let mut type_args = Vec::new();
+                            for &arg_idx in &base.type_arg_indices {
+                                // Resolve type arguments from the lib arena.
+                                // Heritage type args are typically simple type
+                                // references (e.g., `string`, `number`).
+                                let ty = self.resolve_lib_heritage_type_arg(arg_idx, base.arena);
+                                type_args.push(ty);
+                            }
+                            // Pad/truncate args to match params
+                            while type_args.len() < base_params.len() {
+                                let param = &base_params[type_args.len()];
+                                type_args.push(
+                                    param
+                                        .default
+                                        .or(param.constraint)
+                                        .unwrap_or(TypeId::UNKNOWN),
+                                );
+                            }
+                            type_args.truncate(base_params.len());
+
+                            let substitution = tsz_solver::TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_params,
+                                &type_args,
+                            );
+                            base_type = tsz_solver::instantiate_type(
+                                self.ctx.types,
+                                base_type,
+                                &substitution,
+                            );
+                        }
+                    }
+                }
                 derived_type = self.merge_interface_types(derived_type, base_type);
             }
         }
 
+        self.ctx.leave_recursion();
         derived_type
+    }
+
+    /// Resolve a type argument node from a lib arena to a TypeId.
+    /// Handles simple keyword types (string, number, etc.), type references
+    /// to other lib types, and the derived interface's own type parameters.
+    fn resolve_lib_heritage_type_arg(&mut self, node_idx: NodeIndex, arena: &NodeArena) -> TypeId {
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = arena.get(node_idx) else {
+            return TypeId::UNKNOWN;
+        };
+
+        // Handle keyword types (string, number, boolean, etc.)
+        match node.kind {
+            k if k == SyntaxKind::StringKeyword as u16 => return TypeId::STRING,
+            k if k == SyntaxKind::NumberKeyword as u16 => return TypeId::NUMBER,
+            k if k == SyntaxKind::BooleanKeyword as u16 => return TypeId::BOOLEAN,
+            k if k == SyntaxKind::VoidKeyword as u16 => return TypeId::VOID,
+            k if k == SyntaxKind::UndefinedKeyword as u16 => return TypeId::UNDEFINED,
+            k if k == SyntaxKind::NullKeyword as u16 => return TypeId::NULL,
+            k if k == SyntaxKind::NeverKeyword as u16 => return TypeId::NEVER,
+            k if k == SyntaxKind::UnknownKeyword as u16 => return TypeId::UNKNOWN,
+            k if k == SyntaxKind::AnyKeyword as u16 => return TypeId::ANY,
+            k if k == SyntaxKind::ObjectKeyword as u16 => return TypeId::OBJECT,
+            k if k == SyntaxKind::SymbolKeyword as u16 => return TypeId::SYMBOL,
+            k if k == SyntaxKind::BigIntKeyword as u16 => return TypeId::BIGINT,
+            _ => {}
+        }
+
+        // Handle type references (e.g., other interface names or type params)
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = arena.get_type_ref(node)
+                && let Some(name) = arena.get_identifier_text(type_ref.type_name) {
+                    // Check primitive/keyword type names first
+                    match name {
+                        "string" => return TypeId::STRING,
+                        "number" => return TypeId::NUMBER,
+                        "boolean" => return TypeId::BOOLEAN,
+                        "void" => return TypeId::VOID,
+                        "undefined" => return TypeId::UNDEFINED,
+                        "null" => return TypeId::NULL,
+                        "never" => return TypeId::NEVER,
+                        "unknown" => return TypeId::UNKNOWN,
+                        "any" => return TypeId::ANY,
+                        "object" => return TypeId::OBJECT,
+                        "symbol" => return TypeId::SYMBOL,
+                        "bigint" => return TypeId::BIGINT,
+                        _ => {}
+                    }
+                    // Check type parameter scope
+                    if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
+                        return type_id;
+                    }
+                    // Try to resolve as a lib type
+                    if let Some(ty) = self.resolve_lib_type_by_name(name) {
+                        return ty;
+                    }
+                }
+
+        // For identifiers, try resolving the name
+        if let Some(name) = arena.get_identifier_text(node_idx) {
+            if let Some(&type_id) = self.ctx.type_parameter_scope.get(name) {
+                return type_id;
+            }
+            if let Some(ty) = self.resolve_lib_type_by_name(name) {
+                return ty;
+            }
+        }
+
+        TypeId::UNKNOWN
     }
 
     pub(crate) fn resolve_lib_type_by_name(&mut self, name: &str) -> Option<TypeId> {
