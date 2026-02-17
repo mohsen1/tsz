@@ -862,6 +862,19 @@ impl<'a> Printer<'a> {
                         let export_name = names.first().copied();
                         self.emit_commonjs_inner(node, idx, inner.as_ref(), export_name);
                         self.ctx.options.module = prev_module;
+                    } else if !is_default
+                        && node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                        && let Some(inline_decls) = self.try_collect_inline_cjs_exports(node)
+                    {
+                        // Inline form: exports.x = initializer;
+                        for (name, init_idx) in &inline_decls {
+                            self.write("exports.");
+                            self.write(name);
+                            self.write(" = ");
+                            self.emit(*init_idx);
+                            self.write(";");
+                            self.write_line();
+                        }
                     } else {
                         let export_name = names.first().copied();
                         self.emit_commonjs_export(names.as_ref(), is_default, |this| {
