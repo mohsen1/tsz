@@ -624,6 +624,8 @@ impl<'a> CheckerState<'a> {
                         false,
                     );
                     self.check_parameter_properties(&params.nodes);
+                    // TS2371: Parameter initializers not allowed in call/construct signatures
+                    self.check_non_impl_parameter_initializers(&params.nodes, false, false);
                     for &param_idx in &params.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -667,6 +669,8 @@ impl<'a> CheckerState<'a> {
                         false,
                     );
                     self.check_parameter_properties(&params.nodes);
+                    // TS2371: Parameter initializers not allowed in method signatures
+                    self.check_non_impl_parameter_initializers(&params.nodes, false, false);
                     for &param_idx in &params.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
