@@ -71,21 +71,38 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // For ES2015/ES2016 async lowering, emit yield instead of await
+        // For ES2015/ES2016 async lowering, emit yield instead of await.
+        // When yield replaces await inside a binary expression, we need parens
+        // because yield has lower precedence than binary operators.
+        // e.g., `await p || a` → `(yield p) || a` (not `yield p || a`)
+        let needs_yield_parens = self.ctx.emit_await_as_yield
+            && self.ctx.flags.in_binary_operand
+            && !unary.expression.is_none();
+
         let keyword = if self.ctx.emit_await_as_yield {
             "yield"
         } else {
             "await"
         };
+
+        if needs_yield_parens {
+            self.write("(");
+        }
         self.write(keyword);
         if unary.expression.is_none() {
             // Preserve malformed syntax parity for missing await operands:
             // emit `await ` / `yield ` without synthesizing `void 0`.
             self.write(" ");
+            if needs_yield_parens {
+                self.write(")");
+            }
             return;
         }
         self.write(" ");
         self.emit_expression(unary.expression);
+        if needs_yield_parens {
+            self.write(")");
+        }
     }
 
     // =========================================================================

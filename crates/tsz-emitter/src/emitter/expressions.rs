@@ -50,6 +50,8 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        let prev_in_binary = self.ctx.flags.in_binary_operand;
+        self.ctx.flags.in_binary_operand = true;
         self.emit(binary.left);
 
         // Check if there's a line break between the operator and the right operand
@@ -76,6 +78,7 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 self.emit(binary.right);
                 self.decrease_indent();
+                self.ctx.flags.in_binary_operand = prev_in_binary;
                 return;
             }
             self.write(", ");
@@ -87,11 +90,13 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 self.emit(binary.right);
                 self.decrease_indent();
+                self.ctx.flags.in_binary_operand = prev_in_binary;
                 return;
             }
             self.write_space();
         }
         self.emit(binary.right);
+        self.ctx.flags.in_binary_operand = prev_in_binary;
     }
 
     fn emit_logical_assignment_expression(&mut self, binary: &BinaryExprData) {
@@ -614,7 +619,12 @@ impl<'a> Printer<'a> {
         if unary.operator == SyntaxKind::AsteriskToken as u16 {
             self.write_space();
         }
+        // Set flag so yield-from-await knows to wrap in parens
+        // e.g., `!await x` → `!(yield x)` not `!yield x`
+        let prev = self.ctx.flags.in_binary_operand;
+        self.ctx.flags.in_binary_operand = true;
         self.emit(unary.operand);
+        self.ctx.flags.in_binary_operand = prev;
     }
 
     pub(super) fn emit_postfix_unary(&mut self, node: &Node) {
@@ -1001,11 +1011,14 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let prev = self.ctx.flags.in_binary_operand;
+        self.ctx.flags.in_binary_operand = true;
         self.emit(cond.condition);
         self.write(" ? ");
         self.emit(cond.when_true);
         self.write(" : ");
         self.emit(cond.when_false);
+        self.ctx.flags.in_binary_operand = prev;
     }
 
     pub(super) fn emit_array_literal(&mut self, node: &Node) {

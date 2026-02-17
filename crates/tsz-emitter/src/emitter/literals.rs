@@ -43,12 +43,70 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000
-            if lit.text.contains('_') {
-                let stripped: String = lit.text.chars().filter(|&c| c != '_').collect();
-                self.write(&stripped);
+            let text = if lit.text.contains('_') {
+                lit.text.chars().filter(|&c| c != '_').collect::<String>()
             } else {
-                self.write(&lit.text);
+                lit.text.clone()
+            };
+
+            // Convert numeric literals that need downleveling:
+            // - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
+            // - Legacy octal (01, 076): for ALL targets (TSC always converts these)
+            if let Some(converted) = self.convert_numeric_literal_downlevel(&text) {
+                self.write(&converted);
+                return;
             }
+
+            self.write(&text);
+        }
+    }
+
+    /// Convert numeric literals that need downleveling:
+    /// - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
+    /// - Legacy octal (01, 076): for ALL targets
+    fn convert_numeric_literal_downlevel(&self, text: &str) -> Option<String> {
+        if text.len() < 2 {
+            return None;
+        }
+        let bytes = text.as_bytes();
+        if bytes[0] != b'0' {
+            return None;
+        }
+        let needs_es5_downlevel = !self.ctx.options.target.supports_es2015();
+        match bytes[1] {
+            b'b' | b'B' if needs_es5_downlevel => {
+                // Binary literal: parse and convert to decimal (or scientific notation for large values)
+                let digits = &text[2..];
+                if digits.is_empty() {
+                    return None;
+                }
+                // Parse as f64 to handle overflow to Infinity correctly
+                let value: f64 = u128::from_str_radix(digits, 2)
+                    .map(|v| v as f64)
+                    .unwrap_or_else(|_| {
+                        // For very large binary numbers, compute as f64 directly
+                        digits
+                            .bytes()
+                            .fold(0.0_f64, |acc, b| acc * 2.0 + (b - b'0') as f64)
+                    });
+                Some(format_js_number(value))
+            }
+            b'o' | b'O' if needs_es5_downlevel => {
+                // Octal literal: parse and convert to decimal
+                let digits = &text[2..];
+                if digits.is_empty() {
+                    return None;
+                }
+                let value: f64 = u128::from_str_radix(digits, 8)
+                    .map(|v| v as f64)
+                    .unwrap_or_else(|_| {
+                        digits
+                            .bytes()
+                            .fold(0.0_f64, |acc, b| acc * 8.0 + (b - b'0') as f64)
+                    });
+                Some(format_js_number(value))
+            }
+            _ => None,
         }
     }
 
@@ -185,4 +243,35 @@ impl<'a> Printer<'a> {
             }
         }
     }
+}
+
+/// Format an f64 value the way JavaScript's `Number.toString()` would.
+/// JavaScript uses exponential notation for integers >= 1e21.
+fn format_js_number(value: f64) -> String {
+    if value.is_infinite() {
+        return "Infinity".to_string();
+    }
+    if value.is_nan() {
+        return "NaN".to_string();
+    }
+    // For integers < 1e21, emit as plain integer (no decimal point)
+    // JavaScript switches to exponential notation at 1e21
+    if value == value.trunc() && value.abs() < 1e21 {
+        return format!("{}", value as i128);
+    }
+    // For large values or non-integers, use JavaScript-style formatting
+    // JavaScript's Number.toString() uses exponential for >= 1e21
+    // Format: significant digits + e+exponent
+    let s = format!("{:e}", value);
+    // Rust's {:e} produces lowercase 'e' like "9.671406556917009e24"
+    // JS uses "9.671406556917009e+24" (with explicit + sign)
+    if let Some(pos) = s.find('e') {
+        let (mantissa, exp_part) = s.split_at(pos);
+        let exp_str = &exp_part[1..]; // skip 'e'
+        if !exp_str.starts_with('-') && !exp_str.starts_with('+') {
+            return format!("{}e+{}", mantissa, exp_str);
+        }
+        return s;
+    }
+    s
 }
