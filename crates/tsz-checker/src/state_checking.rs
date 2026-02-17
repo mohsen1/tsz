@@ -1408,6 +1408,22 @@ impl<'a> CheckerState<'a> {
         element_type: TypeId,
         is_for_of: bool,
     ) {
+        // TS1106: The left-hand side of a 'for...of' statement may not be 'async'.
+        // `for (async of expr)` is ambiguous with `for await (... of ...)`.
+        if is_for_of
+            && let Some(init_node) = self.ctx.arena.get(initializer)
+            && init_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(init_node)
+            && self.ctx.arena.resolve_identifier_text(ident) == "async"
+        {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.error_at_node(
+                initializer,
+                diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_ASYNC,
+                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_OF_STATEMENT_MAY_NOT_BE_ASYNC,
+            );
+        }
+
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
         let var_type = self.get_type_of_node(initializer);
         let target_type = if is_for_of

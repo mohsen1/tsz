@@ -267,16 +267,22 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1183: An implementation cannot be declared in ambient contexts
-        // Check if we're in a declared class and the method has a body
-        if !method.body.is_none()
-            && let Some(ref class_info) = self.ctx.enclosing_class
-            && class_info.is_declared
-        {
-            self.error_at_node(
-                member_idx,
-                "An implementation cannot be declared in ambient contexts.",
-                diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
-            );
+        // Check if we're in a declared class and the method has a body,
+        // OR if the method itself has a `declare` modifier and a body.
+        if !method.body.is_none() {
+            let in_declared_class = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| c.is_declared);
+            let method_has_declare = self.has_declare_modifier(&method.modifiers);
+            if in_declared_class || method_has_declare {
+                self.error_at_node(
+                    member_idx,
+                    "An implementation cannot be declared in ambient contexts.",
+                    diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
+                );
+            }
         }
 
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
@@ -580,6 +586,7 @@ impl<'a> CheckerState<'a> {
             self.check_parameter_properties(&ctor.parameters.nodes);
         }
         // TS1187: Parameter properties cannot use binding patterns in constructors.
+        // TS1317: A parameter property cannot be declared using a rest parameter.
         for &param_idx in &ctor.parameters.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
@@ -589,6 +596,14 @@ impl<'a> CheckerState<'a> {
             };
             if !self.has_parameter_property_modifier(&param.modifiers) {
                 continue;
+            }
+            // TS1317: rest parameter with property modifier
+            if param.dot_dot_dot_token {
+                self.error_at_node(
+                    param_idx,
+                    diagnostic_messages::A_PARAMETER_PROPERTY_CANNOT_BE_DECLARED_USING_A_REST_PARAMETER,
+                    diagnostic_codes::A_PARAMETER_PROPERTY_CANNOT_BE_DECLARED_USING_A_REST_PARAMETER,
+                );
             }
             let Some(name_node) = self.ctx.arena.get(param.name) else {
                 continue;
