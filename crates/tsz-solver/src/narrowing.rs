@@ -2501,13 +2501,9 @@ impl<'a> NarrowingContext<'a> {
                 property_path,
                 value_type,
             } => {
-                if sense {
-                    // Discriminant matches: narrow to matching union members
-                    self.narrow_by_discriminant(source_type, property_path, *value_type)
-                } else {
-                    // Discriminant doesn't match: exclude matching union members
-                    self.narrow_by_excluding_discriminant(source_type, property_path, *value_type)
-                }
+                // Use narrow_by_discriminant_for_type which handles type parameters
+                // by narrowing the constraint and returning T & NarrowedConstraint
+                self.narrow_by_discriminant_for_type(source_type, property_path, *value_type, sense)
             }
 
             TypeGuard::InProperty(property_name) => {
