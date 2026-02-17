@@ -3517,16 +3517,11 @@ impl<'a> CheckerState<'a> {
         let original_object_type = object_type;
         let object_type = self.evaluate_application_type(object_type);
 
-        // Check for never type - emit TS18050 "The value 'never' cannot be used here"
+        // Property access on `never` returns `never` (bottom type propagation).
+        // TSC does not emit TS18050 for property access on `never` — the result is
+        // simply `never`, which allows exhaustive narrowing patterns to work correctly.
         if object_type == TypeId::NEVER {
-            if !access.question_dot_token {
-                self.report_never_type_usage(access.expression);
-            }
-            return if access.question_dot_token {
-                TypeId::UNDEFINED
-            } else {
-                TypeId::ERROR
-            };
+            return TypeId::NEVER;
         }
 
         let (object_type_for_check, nullish_cause) = self.split_nullish_type(object_type);
