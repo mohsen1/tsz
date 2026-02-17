@@ -761,23 +761,36 @@ impl<'a> Printer<'a> {
             match clause_node.kind {
                 // export const/let/var x = ...
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    // Collect export names before emitting
-                    let export_names = self.collect_variable_names_from_node(clause_node);
-
-                    // Emit the variable declaration
-                    self.emit_variable_statement(clause_node);
-                    self.write_line();
-
-                    // Emit exports.x = x; for each name (unless file has export =)
                     if !self.ctx.module_state.has_export_assignment {
-                        for name in &export_names {
-                            self.write("exports.");
-                            self.write(name);
-                            self.write(" = ");
-                            self.write(name);
-                            self.write(";");
+                        // Try inline form: exports.x = initializer;
+                        // TSC emits this for simple single-binding declarations.
+                        if let Some(inline_decls) = self.try_collect_inline_cjs_exports(clause_node)
+                        {
+                            for (name, init_idx) in &inline_decls {
+                                self.write("exports.");
+                                self.write(name);
+                                self.write(" = ");
+                                self.emit(*init_idx);
+                                self.write(";");
+                                self.write_line();
+                            }
+                        } else {
+                            // Complex case (destructuring): emit declaration then exports
+                            let export_names = self.collect_variable_names_from_node(clause_node);
+                            self.emit_variable_statement(clause_node);
                             self.write_line();
+                            for name in &export_names {
+                                self.write("exports.");
+                                self.write(name);
+                                self.write(" = ");
+                                self.write(name);
+                                self.write(";");
+                                self.write_line();
+                            }
                         }
+                    } else {
+                        self.emit_variable_statement(clause_node);
+                        self.write_line();
                     }
                 }
                 // export function f() {} or export default function f() {}
@@ -963,6 +976,44 @@ impl<'a> Printer<'a> {
             }
         }
         names
+    }
+
+    /// Try to collect inline CJS export info for a variable statement.
+    /// Returns Some(vec of (name, initializer_idx)) if ALL declarators are simple
+    /// identifier bindings with initializers. Returns None if any declarator uses
+    /// destructuring or lacks an initializer (in which case we fall back to split form).
+    fn try_collect_inline_cjs_exports(&self, node: &Node) -> Option<Vec<(String, NodeIndex)>> {
+        let var_stmt = self.arena.get_variable(node)?;
+        let mut result = Vec::new();
+
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            let decl_list = self.arena.get_variable(decl_list_node)?;
+
+            for &decl_idx in &decl_list.declarations.nodes {
+                let decl_node = self.arena.get(decl_idx)?;
+                let decl = self.arena.get_variable_declaration(decl_node)?;
+
+                // Must be a simple identifier (not destructuring)
+                let name_node = self.arena.get(decl.name)?;
+                if name_node.kind != SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                let name = self.arena.get_identifier(name_node)?.escaped_text.clone();
+
+                // Must have an initializer
+                if decl.initializer.is_none() {
+                    return None;
+                }
+
+                result.push((name, decl.initializer));
+            }
+        }
+
+        if result.is_empty() {
+            return None;
+        }
+        Some(result)
     }
 
     /// Get identifier text from optional node index
