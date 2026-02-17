@@ -16,9 +16,9 @@ use crate::instantiate::TypeSubstitution;
 use crate::types::*;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, FunctionShapeId, InferencePriority, IntrinsicKind,
-    LiteralValue, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo, PropertyLookup,
-    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
-    TypeId, TypeListId,
+    LiteralValue, MappedTypeId, ObjectShape, ObjectShapeId, ParamInfo, PropertyInfo,
+    PropertyLookup, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId,
+    TypeData, TypeId, TypeListId,
 };
 use crate::utils;
 use crate::visitor::{self, is_literal_type};
@@ -1147,6 +1147,13 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_template_literal(source, Some(&source_key), target_id, priority)?;
             }
 
+            // Mapped type inference: infer from object properties against mapped type
+            // Handles: source { a: string, b: number } against target { [P in K]: T }
+            // Infers K from property names and T from property value types
+            (Some(TypeData::Object(source_shape)), Some(TypeData::Mapped(mapped_id))) => {
+                self.infer_from_mapped_type(source_shape, mapped_id, priority)?;
+            }
+
             // If we can't match structurally, that's okay - it might mean the types are incompatible
             // The Checker will handle this with proper error reporting
             _ => {
@@ -1200,6 +1207,46 @@ impl<'a> InferenceContext<'a> {
                 target_number_idx.value_type,
                 priority,
             )?;
+        }
+
+        Ok(())
+    }
+
+    /// Infer type arguments from an object type matched against a mapped type.
+    ///
+    /// When source is `{ a: string, b: number }` and target is `{ [P in K]: T }`:
+    /// - Infer K from the union of source property name literals ("a" | "b")
+    /// - Infer T from each source property value type against the mapped template
+    fn infer_from_mapped_type(
+        &mut self,
+        source_shape: ObjectShapeId,
+        mapped_id: MappedTypeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let mapped = self.interner.mapped_type(mapped_id);
+        let source = self.interner.object_shape(source_shape);
+
+        if source.properties.is_empty() {
+            return Ok(());
+        }
+
+        // Infer the constraint type (K) from the union of source property names
+        // e.g., for { foo: string, bar: number }, K = "foo" | "bar"
+        let name_literals: Vec<TypeId> = source
+            .properties
+            .iter()
+            .map(|p| self.interner.literal_string_atom(p.name))
+            .collect();
+        let names_union = if name_literals.len() == 1 {
+            name_literals[0]
+        } else {
+            self.interner.union(name_literals)
+        };
+        self.infer_from_types(names_union, mapped.constraint, priority)?;
+
+        // Infer the template type (T) from each source property value type
+        for prop in &source.properties {
+            self.infer_from_types(prop.type_id, mapped.template, priority)?;
         }
 
         Ok(())
