@@ -3523,7 +3523,6 @@ impl<'a> CheckerState<'a> {
 
                     let required_count = self.count_required_type_params(heritage_sym);
                     let total_type_params = self.get_type_params_for_symbol(heritage_sym).len();
-
                     if let Some(type_args) = type_args {
                         if total_type_params == 0 {
                             let symbol_type = self.get_type_of_symbol(heritage_sym);

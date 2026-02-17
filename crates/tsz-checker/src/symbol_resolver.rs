@@ -333,7 +333,6 @@ impl<'a> CheckerState<'a> {
                 true
             },
         );
-
         let result = {
             let expected_name = self
                 .ctx
@@ -371,7 +370,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 return None;
             };
-
             // Check lib_contexts directly for global symbols
             for (lib_idx, lib_ctx) in self.ctx.lib_contexts.iter().enumerate() {
                 if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name) {
