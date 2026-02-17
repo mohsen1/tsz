@@ -1184,7 +1184,54 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the type of the callee
-        let mut callee_type = self.get_type_of_node(call.expression);
+        let mut callee_type = if let Some(callee_node) = self.ctx.arena.get(call.expression) {
+            if callee_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                let identifier_text = self
+                    .ctx
+                    .arena
+                    .get_identifier(callee_node)
+                    .map(|ident| ident.escaped_text.as_str())
+                    .unwrap_or_default();
+                let direct_symbol = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&call.expression.0)
+                    .copied();
+                let fast_symbol = direct_symbol
+                    .or_else(|| self.resolve_identifier_symbol(call.expression))
+                    .filter(|&sym_id| {
+                        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+                            let is_plain_function_decl = symbol.declarations.len() == 1
+                                && !symbol.value_declaration.is_none()
+                                && self
+                                    .ctx
+                                    .arena
+                                    .get(symbol.value_declaration)
+                                    .is_some_and(|decl| {
+                                        decl.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                                    });
+                            symbol.escaped_name == identifier_text
+                                && is_plain_function_decl
+                                && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::VALUE) != 0
+                                && (symbol.flags & tsz_binder::symbol_flags::ALIAS) == 0
+                                && (symbol.decl_file_idx == u32::MAX
+                                    || symbol.decl_file_idx == self.ctx.current_file_idx as u32)
+                        })
+                    });
+                if let Some(sym_id) = fast_symbol {
+                    self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
+                    self.get_type_of_symbol(sym_id)
+                } else {
+                    self.get_type_of_node(call.expression)
+                }
+            } else {
+                self.get_type_of_node(call.expression)
+            }
+        } else {
+            self.get_type_of_node(call.expression)
+        };
         trace!(
             callee_type = ?callee_type,
             callee_expr = ?call.expression,
@@ -1535,7 +1582,6 @@ impl<'a> CheckerState<'a> {
                 None, // No skipping needed for single-pass
             )
         };
-
         // Delegate the call resolution to solver boundary helpers.
         self.ensure_relation_input_ready(callee_type_for_resolution);
         self.ensure_relation_inputs_ready(&arg_types);

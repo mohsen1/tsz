@@ -41,6 +41,7 @@ use tsz_common::limits;
 /// This prevents OOM/stack overflow from infinitely expanding recursive types.
 /// Examples: `interface AA<T extends AA<T>>`, `interface List<T> { next: List<T> }`
 pub(crate) const MAX_SUBTYPE_DEPTH: u32 = limits::MAX_SUBTYPE_DEPTH;
+const INTERSECTION_OBJECT_FAST_PATH_THRESHOLD: usize = 8;
 
 /// Result of a subtype check
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -1690,6 +1691,69 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
     }
 
+    fn can_use_object_intersection_fast_path(&self, members: &[TypeId]) -> bool {
+        if members.len() < INTERSECTION_OBJECT_FAST_PATH_THRESHOLD {
+            return false;
+        }
+
+        for &member in members {
+            let resolved = self.resolve_ref_type(member);
+
+            // Callable requirements must remain explicit intersection members.
+            // Collapsing to a merged object target would drop call signatures.
+            if callable_shape_id(self.interner, resolved).is_some()
+                || function_shape_id(self.interner, resolved).is_some()
+            {
+                return false;
+            }
+
+            let Some(shape_id) = object_shape_id(self.interner, resolved)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved))
+            else {
+                return false;
+            };
+
+            let shape = self.interner.object_shape(shape_id);
+            if shape
+                .properties
+                .iter()
+                .any(|prop| prop.visibility != Visibility::Public)
+            {
+                return false;
+            }
+        }
+
+        true
+    }
+
+    fn build_object_intersection_target(&self, target_intersection: TypeId) -> Option<TypeId> {
+        use crate::objects::{PropertyCollectionResult, collect_properties};
+
+        match collect_properties(target_intersection, self.interner, self.resolver) {
+            PropertyCollectionResult::Properties {
+                properties,
+                string_index,
+                number_index,
+            } => {
+                let shape = ObjectShape {
+                    flags: ObjectFlags::empty(),
+                    properties,
+                    string_index,
+                    number_index,
+                    symbol: None,
+                };
+
+                if shape.string_index.is_some() || shape.number_index.is_some() {
+                    Some(self.interner.object_with_index(shape))
+                } else {
+                    Some(self.interner.object(shape.properties))
+                }
+            }
+            PropertyCollectionResult::Any => Some(TypeId::ANY),
+            PropertyCollectionResult::NonObject => None,
+        }
+    }
+
     /// Check if two types have any overlap (non-empty intersection).
     ///
     /// This is used for TS2367: "This condition will always return 'false' since the types 'X' and 'Y' have no overlap."
@@ -2660,6 +2724,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(members) = intersection_list_id(self.interner, target) {
             let member_list = self.interner.type_list(members);
+
+            if self.can_use_object_intersection_fast_path(&member_list)
+                && let Some(merged_target) = self.build_object_intersection_target(target)
+            {
+                return self.check_subtype(source, merged_target);
+            }
+
             for &member in member_list.iter() {
                 if !self.check_subtype(source, member).is_true() {
                     return SubtypeResult::False;
