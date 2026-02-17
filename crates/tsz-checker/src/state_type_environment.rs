@@ -301,7 +301,8 @@ impl<'a> CheckerState<'a> {
         let keys = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
 
         // Extract string literal keys
-        let string_keys = self.extract_string_literal_keys(keys);
+        let string_keys =
+            tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, keys);
         if string_keys.is_empty() {
             // Can't evaluate - return original
             return type_id;

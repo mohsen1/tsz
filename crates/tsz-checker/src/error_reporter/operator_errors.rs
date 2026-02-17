@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .arena
                         .get_identifier(left_node)
-                        .map_or(false, |id| id.escaped_text == "undefined"))
+                        .is_some_and(|id| id.escaped_text == "undefined"))
         } else {
             false
         };
@@ -154,7 +154,7 @@ impl<'a> CheckerState<'a> {
                         .ctx
                         .arena
                         .get_identifier(right_node)
-                        .map_or(false, |id| id.escaped_text == "undefined"))
+                        .is_some_and(|id| id.escaped_text == "undefined"))
         } else {
             false
         };

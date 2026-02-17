@@ -535,16 +535,17 @@ impl<'a> NarrowingContext<'a> {
         if let TypeParameterConstraintKind::TypeParameter {
             constraint: Some(constraint),
         } = classify_for_type_parameter_constraint(self.db, type_id)
-            && constraint != type_id {
-                let narrowed_constraint = if is_true_branch {
-                    self.narrow_by_discriminant(constraint, prop_path, literal_type)
-                } else {
-                    self.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
-                };
-                if narrowed_constraint != constraint {
-                    return self.db.intersection(vec![type_id, narrowed_constraint]);
-                }
+            && constraint != type_id
+        {
+            let narrowed_constraint = if is_true_branch {
+                self.narrow_by_discriminant(constraint, prop_path, literal_type)
+            } else {
+                self.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
+            };
+            if narrowed_constraint != constraint {
+                return self.db.intersection(vec![type_id, narrowed_constraint]);
             }
+        }
 
         if is_true_branch {
             self.narrow_by_discriminant(type_id, prop_path, literal_type)

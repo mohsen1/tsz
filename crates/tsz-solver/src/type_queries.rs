@@ -2903,6 +2903,23 @@ pub fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     false
 }
 
+/// Extract string literal key names from a type (single literal, or union of literals).
+///
+/// Returns an empty Vec if the type doesn't contain string literals.
+pub fn extract_string_literal_keys(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<tsz_common::interner::Atom> {
+    match classify_for_string_literal_keys(db, type_id) {
+        StringLiteralKeyKind::SingleString(name) => vec![name],
+        StringLiteralKeyKind::Union(members) => members
+            .iter()
+            .filter_map(|&member| get_string_literal_value(db, member))
+            .collect(),
+        StringLiteralKeyKind::NotStringLiteral => Vec::new(),
+    }
+}
+
 /// Extracts the return type from a callable type for declaration emit.
 ///
 /// For overloaded functions (Callable), returns the return type of the first signature.
