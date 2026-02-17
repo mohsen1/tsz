@@ -3140,10 +3140,10 @@ impl ParserState {
 
     fn parse_switch_case_recovery(&mut self) {
         if self.token_pos() != self.last_error_pos {
-            use tsz_common::diagnostics::diagnostic_codes;
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.parse_error_at_current_token(
-                "case or default expected.",
-                diagnostic_codes::EXPECTED,
+                diagnostic_messages::CASE_OR_DEFAULT_EXPECTED,
+                diagnostic_codes::CASE_OR_DEFAULT_EXPECTED,
             );
         }
         self.next_token();
