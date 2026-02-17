@@ -600,10 +600,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
         match key {
             TypeData::TypeQuery(sym_ref) => {
-                // Resolve the TypeQuery to get the actual type, or pass through if unresolved
-                match self.resolver.resolve_symbol_ref(sym_ref, self.interner) {
-                    Some(resolved) => resolved,
-                    None => arg,
+                // Resolve the TypeQuery to get the VALUE type (constructor for classes).
+                // Use resolve_ref, not resolve_symbol_ref, to avoid the resolve_lazy path
+                // which returns instance types for classes.
+                if let Some(resolved) = self.resolver.resolve_ref(sym_ref, self.interner) {
+                    resolved
+                } else if let Some(def_id) = self.resolver.symbol_to_def_id(sym_ref) {
+                    self.resolver
+                        .resolve_lazy(def_id, self.interner)
+                        .unwrap_or(arg)
+                } else {
+                    arg
                 }
             }
             TypeData::Application(_)
@@ -890,19 +897,27 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Visit a type query: typeof expr
+    ///
+    /// `TypeQuery` represents `typeof X` which must resolve to the VALUE-space type
+    /// (constructor type for classes). We use `resolve_ref` which returns the
+    /// constructor type stored under `SymbolRef`, NOT `resolve_lazy` which returns
+    /// the instance type for classes. This distinction is critical: `typeof A`
+    /// for a class A should give the constructor type (with static members and
+    /// construct signatures), not the instance type.
     fn visit_type_query(&mut self, symbol_ref: u32, original_type_id: TypeId) -> TypeId {
         use crate::types::SymbolRef;
         let symbol = SymbolRef(symbol_ref);
 
-        // Try to resolve via DefId (type alias, interface, class)
-        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol)
-            && let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner)
-        {
+        // Prefer resolve_ref which returns the VALUE type (constructor for classes).
+        // This is correct for TypeQuery (typeof) which is a value-space query.
+        if let Some(resolved) = self.resolver.resolve_ref(symbol, self.interner) {
             return resolved;
         }
 
-        // Fallback to legacy Ref resolution
-        if let Some(resolved) = self.resolver.resolve_symbol_ref(symbol, self.interner) {
+        // Fallback: try DefId-based resolution if no SymbolRef mapping exists
+        if let Some(def_id) = self.resolver.symbol_to_def_id(symbol)
+            && let Some(resolved) = self.resolver.resolve_lazy(def_id, self.interner)
+        {
             return resolved;
         }
 
