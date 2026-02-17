@@ -2591,6 +2591,41 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a variable declaration is exported (has `export` on its statement).
+    pub(crate) fn is_exported_variable_declaration(&self, decl_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(decl_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return false;
+        }
+        // Walk up: VariableDeclaration -> VariableDeclarationList -> VariableStatement
+        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+            && let Some(list_ext) = self.ctx.arena.get_extended(ext.parent)
+            && let Some(stmt_node) = self.ctx.arena.get(list_ext.parent)
+            && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+            && let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node)
+        {
+            // Check modifiers on the VariableStatement itself
+            if self
+                .ctx
+                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword as u16)
+            {
+                return true;
+            }
+            // The parser wraps `export var` in ExportDeclaration -> VariableStatement,
+            // so also check if the VariableStatement's parent is an ExportDeclaration.
+            let stmt_idx = list_ext.parent;
+            if let Some(stmt_ext) = self.ctx.arena.get_extended(stmt_idx)
+                && let Some(parent_node) = self.ctx.arena.get(stmt_ext.parent)
+                && parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check if a function declaration has the declare modifier (is ambient).
     pub(crate) fn is_ambient_function_declaration(&self, decl_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
@@ -3718,7 +3753,17 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if Self::declarations_conflict(decl_flags, other_flags) {
+                    // Two exported `var` declarations with the same name conflict (TS2323).
+                    // Regular `var` redeclarations are legal in JS, but exported vars
+                    // create ambiguity in module export bindings.
+                    if decl_is_var
+                        && other_is_var
+                        && self.is_exported_variable_declaration(decl_idx)
+                        && self.is_exported_variable_declaration(other_idx)
+                    {
+                        conflicts.insert(decl_idx);
+                        conflicts.insert(other_idx);
+                    } else if Self::declarations_conflict(decl_flags, other_flags) {
                         conflicts.insert(decl_idx);
                         conflicts.insert(other_idx);
                     }
@@ -3907,17 +3952,7 @@ impl<'a> CheckerState<'a> {
                         })
                     }
                     k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
-                        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-                            && let Some(list_ext) = self.ctx.arena.get_extended(ext.parent)
-                            && let Some(stmt_node) = self.ctx.arena.get(list_ext.parent)
-                            && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                            && let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node)
-                        {
-                            self.ctx
-                                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword as u16)
-                        } else {
-                            false
-                        }
+                        self.is_exported_variable_declaration(decl_idx)
                     }
                     _ => false,
                 }
