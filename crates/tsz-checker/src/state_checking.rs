@@ -2915,6 +2915,24 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // If property not found and the type is a Mapped type (e.g. { [P in Keys]: T }),
+        // the solver's NoopResolver can't resolve Lazy(DefId) constraints (type alias refs).
+        // Expand the mapped type using the checker's type environment and retry.
+        if matches!(
+            result,
+            tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound { .. }
+        ) && tsz_solver::type_queries::is_mapped_type(self.ctx.types, object_type)
+        {
+            let expanded = self.evaluate_mapped_type_with_resolution(object_type);
+            if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
+                return self.ctx.types.resolve_property_access_with_options(
+                    expanded,
+                    prop_name,
+                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                );
+            }
+        }
+
         result
     }
 

@@ -471,6 +471,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.evaluate_keyof(operand);
         }
 
+        // Evaluate the constraint to resolve type aliases (Lazy), Applications, etc.
+        // For example, `type Keys = "a" | "b"; { [P in Keys]: T }` has a Lazy(DefId)
+        // constraint that must be evaluated to get the concrete union `"a" | "b"`.
+        let evaluated = self.evaluate(constraint);
+        if evaluated != constraint {
+            return self.evaluate_keyof_or_constraint(evaluated);
+        }
+
         // Otherwise return as-is
         constraint
     }
