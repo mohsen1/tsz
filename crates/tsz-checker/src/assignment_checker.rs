@@ -892,9 +892,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2791: bigint exponentiation assignment requires target >= ES2016.
+        // Skip when either type is any/unknown (TSC skips the bigint branch for those).
         if operator == SyntaxKind::AsteriskAsteriskEqualsToken as u16
             && (self.ctx.compiler_options.target as u32)
                 < (tsz_common::common::ScriptTarget::ES2016 as u32)
+            && left_type != TypeId::ANY
+            && right_type != TypeId::ANY
+            && left_type != TypeId::UNKNOWN
+            && right_type != TypeId::UNKNOWN
             && self.is_subtype_of(left_type, TypeId::BIGINT)
             && self.is_subtype_of(right_type, TypeId::BIGINT)
         {
