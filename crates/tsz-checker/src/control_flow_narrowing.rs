@@ -611,6 +611,14 @@ impl<'a> FlowAnalyzer<'a> {
                 idx = paren.expression;
                 continue;
             }
+            // Skip non-null assertions (expr!) — TypeScript treats these as transparent
+            // for narrowing purposes, so `x!.prop` should narrow the same as `x.prop`.
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+                && let Some(unary) = self.arena.get_unary_expr_ex(node)
+            {
+                idx = unary.expression;
+                continue;
+            }
             // Skip comma expressions - they evaluate to their rightmost operand
             // This allows narrowing to work through expressions like (a, b).prop
             // Fast path: check kind first before calling get_binary_expr

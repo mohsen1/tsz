@@ -2645,12 +2645,11 @@ impl<'a> CheckerState<'a> {
             let Some(parent_node) = self.ctx.arena.get(parent) else {
                 return false;
             };
-            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                if let Some(module) = self.ctx.arena.get_module(parent_node) {
-                    if self.has_declare_modifier(&module.modifiers) {
-                        return true;
-                    }
-                }
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && self.has_declare_modifier(&module.modifiers)
+            {
+                return true;
             }
             if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
                 return false;
@@ -2663,7 +2662,7 @@ impl<'a> CheckerState<'a> {
     /// Handles all declaration kinds: function, class, interface, enum, type alias,
     /// module/namespace, and variable declarations.
     /// The parser wraps `export <decl>` as `ExportDeclaration → <inner decl>`, so
-    /// we check both the node's own modifiers and whether its parent is ExportDeclaration.
+    /// we check both the node's own modifiers and whether its parent is `ExportDeclaration`.
     pub(crate) fn is_declaration_exported(&self, decl_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return false;
@@ -3620,7 +3619,8 @@ impl<'a> CheckerState<'a> {
                         .collect();
 
                     // Group by enclosing scope and check each group
-                    let mut scope_groups: FxHashMap<NodeIndex, Vec<(NodeIndex, u32, u32, bool)>> =
+                    type ScopeGroupEntry = (NodeIndex, u32, u32, bool);
+                    let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
                         FxHashMap::default();
                     for &(decl_idx, flags, space, exported, scope) in &decl_info {
                         scope_groups
