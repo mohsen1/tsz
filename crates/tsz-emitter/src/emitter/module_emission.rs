@@ -982,7 +982,10 @@ impl<'a> Printer<'a> {
     /// Returns Some(vec of (name, initializer_idx)) if ALL declarators are simple
     /// identifier bindings with initializers. Returns None if any declarator uses
     /// destructuring or lacks an initializer (in which case we fall back to split form).
-    fn try_collect_inline_cjs_exports(&self, node: &Node) -> Option<Vec<(String, NodeIndex)>> {
+    pub(super) fn try_collect_inline_cjs_exports(
+        &self,
+        node: &Node,
+    ) -> Option<Vec<(String, NodeIndex)>> {
         let var_stmt = self.arena.get_variable(node)?;
         let mut result = Vec::new();
 
