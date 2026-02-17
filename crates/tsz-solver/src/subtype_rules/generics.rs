@@ -8,11 +8,12 @@
 //! - Type expansion and instantiation
 
 use crate::def::DefId;
-use crate::types::Visibility;
+use crate::types::{MappedModifier, Visibility};
 use crate::types::{MappedTypeId, SymbolRef, TypeApplicationId, TypeId};
 use crate::visitor::{
     application_id, index_access_parts, keyof_inner_type, lazy_def_id, literal_value,
-    object_shape_id, object_with_index_shape_id, ref_symbol, type_param_info, union_list_id,
+    mapped_type_id, object_shape_id, object_with_index_shape_id, ref_symbol, type_param_info,
+    union_list_id,
 };
 use tsz_binder::SymbolId;
 
@@ -524,6 +525,75 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
+    /// Check application-to-application structural comparison.
+    ///
+    /// When both source and target are type applications that resolve to mapped types
+    /// over the same type parameter (e.g., `Readonly<T>` vs `Partial<T>`), compare
+    /// the mapped type structure directly rather than trying to expand.
+    pub(crate) fn check_application_to_application(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        s_app_id: TypeApplicationId,
+        t_app_id: TypeApplicationId,
+    ) -> SubtypeResult {
+        // Try to resolve both applications to see if they are mapped types
+        let s_resolved = self.try_resolve_application_body(s_app_id);
+        let t_resolved = self.try_resolve_application_body(t_app_id);
+
+        // If both resolve to mapped types, try direct mapped-to-mapped comparison
+        if let (Some(s_body), Some(t_body)) = (s_resolved, t_resolved)
+            && let (Some(s_mapped_id), Some(t_mapped_id)) = (
+                mapped_type_id(self.interner, s_body),
+                mapped_type_id(self.interner, t_body),
+            )
+        {
+            return self.check_mapped_to_mapped(source, target, s_mapped_id, t_mapped_id);
+        }
+
+        SubtypeResult::False
+    }
+
+    /// Try to resolve the body of a type application (instantiated with its args),
+    /// without requiring concrete expansion. This resolves the base type alias/interface
+    /// body and instantiates it with the provided type arguments.
+    fn try_resolve_application_body(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
+        use crate::{TypeSubstitution, instantiate_type};
+
+        let app = self.interner.type_application(app_id);
+
+        let (type_params, resolved_body) =
+            if let Some(def_id) = lazy_def_id(self.interner, app.base) {
+                let params = self.resolver.get_lazy_type_params(def_id)?;
+                let body = self.resolver.resolve_lazy(def_id, self.interner)?;
+                (params, body)
+            } else if let Some(symbol) = ref_symbol(self.interner, app.base) {
+                let params = self.resolver.get_type_params(symbol)?;
+                let body = if let Some(def_id) = self.resolver.symbol_to_def_id(symbol) {
+                    self.resolver.resolve_lazy(def_id, self.interner)?
+                } else {
+                    self.resolver.resolve_symbol_ref(symbol, self.interner)?
+                };
+                (params, body)
+            } else {
+                return None;
+            };
+
+        // Skip if self-referential
+        if let Some(resolved_app_id) = application_id(self.interner, resolved_body)
+            && resolved_app_id == app_id
+        {
+            return None;
+        }
+
+        let substitution = TypeSubstitution::from_args(self.interner, &type_params, &app.args);
+        Some(instantiate_type(
+            self.interner,
+            resolved_body,
+            &substitution,
+        ))
+    }
+
     /// Check Application expansion to target (one-sided Application case).
     ///
     /// When the target is an Application type that can be expanded (e.g., conditional
@@ -554,6 +624,88 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             Some(expanded) => self.check_subtype(source, expanded),
             None => SubtypeResult::False,
         }
+    }
+
+    /// Check mapped-to-mapped structural comparison.
+    ///
+    /// When both source and target are mapped types, compare their structure directly
+    /// rather than trying to expand (which fails for generic type parameters).
+    ///
+    /// This handles cases like:
+    /// - `Readonly<T>` assignable to `Partial<T>` (template `T[K]` is same, target adds `?`)
+    /// - `Partial<Readonly<T>>` assignable to `Readonly<Partial<T>>` (equivalent)
+    /// - `T` wrapped in nested homomorphic mapped types
+    ///
+    /// The rule from tsc: when both mapped types have the same constraint, compare
+    /// the template types. If the target adds optional (`?`), the source template
+    /// must be assignable to `target_template | undefined`.
+    pub(crate) fn check_mapped_to_mapped(
+        &mut self,
+        _source: TypeId,
+        _target: TypeId,
+        source_mapped_id: MappedTypeId,
+        target_mapped_id: MappedTypeId,
+    ) -> SubtypeResult {
+        let source_mapped = self.interner.mapped_type(source_mapped_id);
+        let target_mapped = self.interner.mapped_type(target_mapped_id);
+
+        // Both must have the same constraint for this optimization to apply.
+        // This handles cases like both being `keyof T` for the same T.
+        if source_mapped.constraint != target_mapped.constraint {
+            return SubtypeResult::False;
+        }
+
+        // Check template types.
+        // For homomorphic mapped types with the same constraint, the templates
+        // can be compared directly: source_template <: target_template.
+        let source_template = source_mapped.template;
+        let mut target_template = target_mapped.template;
+
+        // If the target adds optional modifier, the target template is effectively
+        // `template | undefined`, since optional properties accept undefined.
+        let target_adds_optional = target_mapped.optional_modifier == Some(MappedModifier::Add);
+        let source_adds_optional = source_mapped.optional_modifier == Some(MappedModifier::Add);
+
+        if target_adds_optional && !source_adds_optional {
+            // Target is `{ [K in ...]?: template }` — target template effectively
+            // becomes `template | undefined`, so source template just needs to be
+            // assignable to `template | undefined`.
+            target_template = self.interner.union2(target_template, TypeId::UNDEFINED);
+        }
+
+        // If the source removes optional but the target doesn't, that's fine
+        // (Required<T> to Partial<T> should work).
+
+        // If the target removes optional (Required) but source doesn't, source
+        // properties may be optional while target requires them — we can't
+        // automatically approve this, so fall through to expansion.
+        let target_removes_optional =
+            target_mapped.optional_modifier == Some(MappedModifier::Remove);
+        let source_removes_optional =
+            source_mapped.optional_modifier == Some(MappedModifier::Remove);
+        if target_removes_optional && !source_removes_optional {
+            // Can't easily determine if source properties include undefined,
+            // fall through to expansion.
+            return SubtypeResult::False;
+        }
+
+        // Handle nested mapped types in templates.
+        // For example, Partial<Readonly<T>> has template that is itself a mapped type.
+        // Recursively compare if both templates are mapped types.
+        if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
+            mapped_type_id(self.interner, source_template),
+            mapped_type_id(self.interner, target_template),
+        ) {
+            return self.check_mapped_to_mapped(
+                source_template,
+                target_template,
+                s_inner_mapped,
+                t_inner_mapped,
+            );
+        }
+
+        // Compare templates directly
+        self.check_subtype(source_template, target_template)
     }
 
     /// Check Mapped expansion to target (one-sided Mapped case).

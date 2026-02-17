@@ -4671,3 +4671,76 @@ fn test_private_brand_callable_with_brand() {
     // Different brands in callables = not assignable
     assert!(!checker.is_assignable(source, target));
 }
+
+/// Test: Mapped types with same constraint but different modifiers should be
+/// structurally comparable (Readonly<T> assignable to Partial<T>).
+#[test]
+fn test_mapped_to_mapped_readonly_assignable_to_partial() {
+    use crate::MappedModifier;
+
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    // Create a type parameter T (represented as a TypeParam)
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Create keyof T
+    let keyof_t = interner.intern(TypeData::KeyOf(t_param));
+
+    // Create K (iteration parameter)
+    let k_name = interner.intern_string("K");
+
+    // Create T[K] (index access as template)
+    let t_k = interner.intern(TypeData::IndexAccess(
+        t_param,
+        interner.intern(TypeData::TypeParameter(TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        })),
+    ));
+
+    // Readonly<T>: { readonly [K in keyof T]: T[K] }
+    let readonly_t = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: keyof_t,
+        name_type: None,
+        template: t_k,
+        readonly_modifier: Some(MappedModifier::Add),
+        optional_modifier: None,
+    });
+
+    // Partial<T>: { [K in keyof T]?: T[K] }
+    let partial_t = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: keyof_t,
+        name_type: None,
+        template: t_k,
+        readonly_modifier: None,
+        optional_modifier: Some(MappedModifier::Add),
+    });
+
+    // Readonly<T> should be assignable to Partial<T>
+    // Because the template T[K] is assignable to T[K] | undefined
+    assert!(
+        checker.is_assignable(readonly_t, partial_t),
+        "Readonly<T> should be assignable to Partial<T>"
+    );
+}
