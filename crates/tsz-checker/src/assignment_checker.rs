@@ -215,6 +215,65 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Check if the operand of an increment/decrement operator is a valid l-value (TS2357).
+    ///
+    /// The operand must be a variable (Identifier), property access, or element access.
+    /// Expressions like `(1 + 2)++` or `1++` are not valid.
+    /// Transparent wrappers are skipped: parenthesized, non-null assertion, type assertion,
+    /// and satisfies expressions (e.g., `foo[x]!++` and `(a satisfies number)++` are valid).
+    /// Returns `true` if an error was emitted.
+    pub(crate) fn check_increment_decrement_operand(&mut self, operand_idx: NodeIndex) -> bool {
+        let inner = self.skip_assignment_transparent_wrappers(operand_idx);
+        let Some(node) = self.ctx.arena.get(inner) else {
+            return false;
+        };
+
+        let is_valid = node.kind == SyntaxKind::Identifier as u16
+            || node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION;
+
+        if !is_valid {
+            self.error_at_node(
+                operand_idx,
+                diagnostic_messages::THE_OPERAND_OF_AN_INCREMENT_OR_DECREMENT_OPERATOR_MUST_BE_A_VARIABLE_OR_A_PROPER,
+                diagnostic_codes::THE_OPERAND_OF_AN_INCREMENT_OR_DECREMENT_OPERATOR_MUST_BE_A_VARIABLE_OR_A_PROPER,
+            );
+            return true;
+        }
+
+        false
+    }
+
+    /// Skip through transparent wrapper expressions that don't affect l-value validity.
+    ///
+    /// Skips: parenthesized, non-null assertion (`!`), type assertion (`as`/angle-bracket),
+    /// and `satisfies` expressions.
+    fn skip_assignment_transparent_wrappers(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.ctx.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    idx = paren.expression;
+                    continue;
+                }
+            if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
+                && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
+                    idx = unary.expression;
+                    continue;
+                }
+            if (node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+                && let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
+                    idx = assertion.expression;
+                    continue;
+                }
+            return idx;
+        }
+    }
+
     /// Check if the assignment target (LHS) is a const variable and emit TS2588 if so.
     ///
     /// Resolves through parenthesized expressions to find the underlying identifier.

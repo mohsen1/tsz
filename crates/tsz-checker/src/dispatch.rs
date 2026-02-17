@@ -555,56 +555,65 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.get_type_of_prefix_unary(idx)
             }
 
-            // Postfix unary expression - ++ and -- require numeric operand
+            // Postfix unary expression - ++ and -- require numeric operand and valid l-value
             k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                 if let Some(unary) = self.checker.ctx.arena.get_unary_expr(node) {
-                    // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
-                    // Must come before TS2356 to match TSC's diagnostic priority.
-                    let mut emitted_strict = false;
-                    if let Some(operand_node) = self.checker.ctx.arena.get(unary.operand)
-                        && operand_node.kind == SyntaxKind::Identifier as u16
-                        && let Some(id_data) = self.checker.ctx.arena.get_identifier(operand_node)
-                        && (id_data.escaped_text == "eval" || id_data.escaped_text == "arguments")
-                        && self.checker.is_strict_mode_for_node(unary.operand)
-                    {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.checker.error_at_node_msg(
-                            unary.operand,
-                            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                            &[&id_data.escaped_text],
-                        );
-                        emitted_strict = true;
-                    }
+                    // TS2357: The operand must be a variable or property access
+                    let emitted_lvalue = self
+                        .checker
+                        .check_increment_decrement_operand(unary.operand);
 
-                    // TS2588: Cannot assign to 'x' because it is a constant.
-                    let is_const = self.checker.check_const_assignment(unary.operand);
-
-                    // TS2630: Cannot assign to 'x' because it is a function.
-                    // Must come after const check but before type checking.
-                    self.checker.check_function_assignment(unary.operand);
-
-                    // TS2540: Cannot assign to readonly property (e.g., namespace const export)
-                    if !is_const {
-                        self.checker.check_readonly_assignment(unary.operand, idx);
-                    }
-
-                    // Get operand type for validation
-                    let operand_type = self.checker.get_type_of_node(unary.operand);
-
-                    // Skip TS2356 when TS1100 was already emitted (TSC prioritizes strict mode)
-                    if !is_const && !emitted_strict {
-                        // Check if operand is valid for increment/decrement
-                        use tsz_solver::BinaryOpEvaluator;
-                        let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
-                        let is_valid = evaluator.is_arithmetic_operand(operand_type);
-
-                        if !is_valid {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.checker.error_at_node(
+                    if !emitted_lvalue {
+                        // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
+                        // Must come before TS2356 to match TSC's diagnostic priority.
+                        let mut emitted_strict = false;
+                        if let Some(operand_node) = self.checker.ctx.arena.get(unary.operand)
+                            && operand_node.kind == SyntaxKind::Identifier as u16
+                            && let Some(id_data) =
+                                self.checker.ctx.arena.get_identifier(operand_node)
+                            && (id_data.escaped_text == "eval"
+                                || id_data.escaped_text == "arguments")
+                            && self.checker.is_strict_mode_for_node(unary.operand)
+                        {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.checker.error_at_node_msg(
                                 unary.operand,
-                                diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
-                                diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                                diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                                &[&id_data.escaped_text],
                             );
+                            emitted_strict = true;
+                        }
+
+                        // TS2588: Cannot assign to 'x' because it is a constant.
+                        let is_const = self.checker.check_const_assignment(unary.operand);
+
+                        // TS2630: Cannot assign to 'x' because it is a function.
+                        // Must come after const check but before type checking.
+                        self.checker.check_function_assignment(unary.operand);
+
+                        // TS2540: Cannot assign to readonly property (e.g., namespace const export)
+                        if !is_const {
+                            self.checker.check_readonly_assignment(unary.operand, idx);
+                        }
+
+                        // Get operand type for validation
+                        let operand_type = self.checker.get_type_of_node(unary.operand);
+
+                        // Skip TS2356 when TS1100 was already emitted (TSC prioritizes strict mode)
+                        if !is_const && !emitted_strict {
+                            // Check if operand is valid for increment/decrement
+                            use tsz_solver::BinaryOpEvaluator;
+                            let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
+                            let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                            if !is_valid {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.checker.error_at_node(
+                                    unary.operand,
+                                    diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                                    diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                                );
+                            }
                         }
                     }
                 }
