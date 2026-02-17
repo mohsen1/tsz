@@ -1135,8 +1135,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
 
             let ty = if has_constraints {
+                // Constraint resolution only needs structural upper-bound validation.
+                // Using the strict relation avoids extra compatibility-layer work
+                // (e.g., weak/excess property checks) on hot inference paths.
                 match infer_ctx.resolve_with_constraints_by(var, |source, target| {
-                    self.checker.is_assignable_to(source, target)
+                    self.checker.is_assignable_to_strict(source, target)
                 }) {
                     Ok(ty) => {
                         trace!(
