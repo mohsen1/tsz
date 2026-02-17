@@ -2599,45 +2599,9 @@ impl<'a> CheckerState<'a> {
     /// Handle a truly unresolved identifier — not a type parameter, not in the
     /// binder, not a known global. Emits TS2304, TS2524, TS2662 as appropriate.
     fn resolve_truly_unknown_identifier(&mut self, idx: NodeIndex, name: &str) -> TypeId {
-        // TS1212: Identifier expected. 'X' is a reserved word in strict mode.
-        // Emitted when a strict-mode reserved word is used as an identifier in expression context.
-        // This is independent of TS2304 — it fires even when TS2304 is suppressed.
-        if crate::state_checking::is_strict_mode_reserved_name(name)
-            && self.is_strict_mode_for_node(idx)
-        {
-            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            if self.ctx.enclosing_class.is_some() {
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                    &[name],
-                );
-                self.error_at_node(
-                    idx,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
-                );
-            } else if self.ctx.binder.is_external_module() {
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                    &[name],
-                );
-                self.error_at_node(
-                    idx,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
-                );
-            } else {
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                    &[name],
-                );
-                self.error_at_node(
-                    idx,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                );
-            }
-        }
+        // Note: TS1212/1213/1214 strict-mode reserved word check is now handled
+        // centrally in error_cannot_find_name_at to cover both value and type contexts.
+
         // Check static member suggestion (error 2662)
         if let Some(ref class_info) = self.ctx.enclosing_class.clone()
             && self.is_static_member(&class_info.member_nodes, name)

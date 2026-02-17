@@ -113,6 +113,54 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node is inside a `"use strict"` block by walking up the AST
+    /// to find a source file or function body with a "use strict" directive prologue.
+    fn is_in_use_strict_block(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut current = idx;
+        let mut guard = 0;
+        while !current.is_none() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            // Check source file level "use strict"
+            if node.kind == syntax_kind_ext::SOURCE_FILE {
+                if let Some(sf) = self.ctx.arena.get_source_file(node) {
+                    for &stmt_idx in &sf.statements.nodes {
+                        let Some(stmt) = self.ctx.arena.get(stmt_idx) else {
+                            continue;
+                        };
+                        if stmt.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                            break;
+                        }
+                        if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(stmt)
+                            && let Some(expr_node) = self.ctx.arena.get(expr_stmt.expression)
+                            && expr_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                            && let Some(lit) = self.ctx.arena.get_literal(expr_node)
+                            && lit.text == "use strict"
+                        {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+        false
+    }
+
     /// Check if a node is in a type-annotation context (type reference, implements, extends, etc.).
     /// Used to determine which symbol meaning to use for spelling suggestions.
     fn is_in_type_context(&self, idx: NodeIndex) -> bool {
@@ -178,6 +226,84 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::lib_loader;
         use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
+
+        // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
+        // before any TS2304 suppression logic. This fires independently of TS2304.
+        if crate::state_checking::is_strict_mode_reserved_name(name) {
+            // Detect class context by walking up the AST (enclosing_class may not
+            // be set during type resolution or other non-statement-walk phases).
+            let in_class = {
+                let mut cur = idx;
+                let mut found = false;
+                let mut g = 0;
+                while !cur.is_none() {
+                    g += 1;
+                    if g > 256 {
+                        break;
+                    }
+                    if let Some(n) = self.ctx.arena.get(cur) {
+                        if n.kind == syntax_kind_ext::CLASS_DECLARATION
+                            || n.kind == syntax_kind_ext::CLASS_EXPRESSION
+                        {
+                            found = true;
+                            break;
+                        }
+                        if n.kind == syntax_kind_ext::SOURCE_FILE {
+                            break;
+                        }
+                    }
+                    let Some(ext) = self.ctx.arena.get_extended(cur) else {
+                        break;
+                    };
+                    if ext.parent.is_none() {
+                        break;
+                    }
+                    cur = ext.parent;
+                }
+                found
+            };
+
+            let is_strict = self.ctx.compiler_options.always_strict
+                || self.ctx.compiler_options.strict
+                || self.ctx.binder.is_external_module()
+                || in_class
+                || self.is_in_use_strict_block(idx);
+
+            if is_strict {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                if in_class {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                        &[name],
+                    );
+                    self.error_at_node(
+                        idx,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    );
+                } else if self.ctx.binder.is_external_module() {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                        &[name],
+                    );
+                    self.error_at_node(
+                        idx,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                        &[name],
+                    );
+                    self.error_at_node(
+                        idx,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    );
+                }
+            }
+        }
 
         // Keep TS2304 for ambiguous generic assertions such as `<<T>(x: T) => T>f`.
         // These nodes can carry parse-error flags, but TypeScript still reports
