@@ -2814,8 +2814,11 @@ impl<'a> CheckerState<'a> {
                         let inferred_type = self.get_type_of_node(var_decl.initializer);
                         // FIX: Widen literal types for non-const variables (let/var)
                         // TypeScript widens "hello" -> string, 42 -> number for mutable variables
-                        // but preserves literal types for const variables
-                        if !self.is_const_variable_declaration(resolved_value_decl) {
+                        // but preserves literal types for const variables and `as const` assertions.
+                        // `let x = "div" as const` should have type "div", not string.
+                        if !self.is_const_variable_declaration(resolved_value_decl)
+                            && !self.is_const_assertion_initializer(var_decl.initializer)
+                        {
                             let widened_type =
                                 self.widen_initializer_type_for_mutable_binding(inferred_type);
                             // When strictNullChecks is off, undefined and null widen to any

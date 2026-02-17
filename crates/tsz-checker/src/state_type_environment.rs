@@ -1545,15 +1545,15 @@ impl<'a> CheckerState<'a> {
                 return result;
             }
             if node.kind == syntax_kind_ext::TYPE_QUERY {
-                // Handle typeof X - need to resolve symbol properly via binder
-                // Check cache first - allow re-resolution of ERROR when type params in scope
-                if let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-                    if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
-                        return cached;
-                    }
-                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
-                        return cached;
-                    }
+                // Handle typeof X - need to resolve symbol properly via binder.
+                // Return cached non-ERROR results when no type params in scope.
+                // Always re-resolve ERROR because TypeNodeChecker may have cached
+                // ERROR for qualified names it can't resolve without binder context.
+                if let Some(&cached) = self.ctx.node_types.get(&idx.0)
+                    && cached != TypeId::ERROR
+                    && self.ctx.type_parameter_scope.is_empty()
+                {
+                    return cached;
                 }
                 let result = self.get_type_from_type_query(idx);
                 self.ctx.node_types.insert(idx.0, result);
