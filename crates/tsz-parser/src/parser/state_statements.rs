@@ -1109,19 +1109,23 @@ impl ParserState {
                 break;
             }
 
-            // After comma, check if next token can start another declaration
-            // Handle cases like: let x, , y (missing declaration between commas)
-            let can_start_next = self.is_identifier_or_keyword()
+            // After comma, check if next token can start another declaration.
+            // Handle cases like: let x, , y (missing declaration between commas).
+            // Reserved words (return, if, while, etc.) cannot be binding identifiers,
+            // so `var a, return;` should be a trailing comma error, not a new declaration.
+            let can_start_next = (self.is_identifier_or_keyword() && !self.is_reserved_word())
                 || self.is_token(SyntaxKind::OpenBraceToken)
                 || self.is_token(SyntaxKind::OpenBracketToken);
 
             if !can_start_next {
                 // Trailing comma in variable declaration list — emit TS1009.
-                // This covers `var a,;`, `var a,}`, and `var a,` (EOF).
+                // This covers `var a,;`, `var a,}`, `var a,` (EOF), and
+                // `var a,\nreturn;` (reserved word after comma = trailing comma).
                 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
                 if self.is_token(SyntaxKind::SemicolonToken)
                     || self.is_token(SyntaxKind::CloseBraceToken)
                     || self.is_token(SyntaxKind::EndOfFileToken)
+                    || self.is_reserved_word()
                 {
                     // Report at the comma position (one token back).
                     // The comma was already consumed by parse_optional above.
@@ -1784,6 +1788,13 @@ impl ParserState {
         let mut emitted_rest_error = false;
 
         while !self.is_token(SyntaxKind::CloseParenToken) {
+            // If we see `=>` before any parameters were parsed, this is likely a
+            // degenerate case like `function =>` with no parens. Don't consume `=>`
+            // here — let the caller handle it, avoiding a spurious `)` expected error.
+            if self.is_token(SyntaxKind::EqualsGreaterThanToken) && params.is_empty() {
+                break;
+            }
+
             // TS1014: A rest parameter must be last in a parameter list
             // Check BEFORE parsing the next parameter (but only emit once)
             if seen_rest_parameter && !emitted_rest_error {
