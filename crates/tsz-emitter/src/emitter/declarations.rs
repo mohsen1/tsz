@@ -1277,13 +1277,22 @@ impl<'a> Printer<'a> {
             || !self.hoisted_assignment_value_temps.is_empty()
             || !self.hoisted_for_of_temps.is_empty();
 
-        // Empty constructor with no prologue: emit `{ }` on one line
+        // Empty constructor with no prologue: check source format
         if block.statements.nodes.is_empty()
             && param_props.is_empty()
             && field_inits.is_empty()
             && !has_function_temps
         {
-            self.write("{ }");
+            // TypeScript preserves the source formatting: if the body was
+            // on a single line in the source (e.g. `{ }`), keep it single-line.
+            // If it was multi-line, emit multi-line with empty body.
+            if self.is_single_line(block_node) {
+                self.write("{ }");
+            } else {
+                self.write("{");
+                self.write_line();
+                self.write("}");
+            }
             return;
         }
 
