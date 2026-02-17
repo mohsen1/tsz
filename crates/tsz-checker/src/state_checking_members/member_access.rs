@@ -866,6 +866,31 @@ impl<'a> CheckerState<'a> {
     /// Get property information needed for index signature checking.
     /// Returns (`property_name`, `property_type`, `name_node_index`).
     /// Get the name text from a member name node (identifier, string literal, or computed).
+    /// Normalize a numeric literal string to its canonical JS property name form.
+    /// In JavaScript, `0` and `0.0` are the same property (both `ToString(ToNumber(...))` → `"0"`).
+    /// This is used for duplicate member detection, where different numeric literal spellings
+    /// must be recognized as referring to the same property.
+    fn normalize_numeric_name(text: &str) -> String {
+        // Handle hex, octal, binary prefixes that f64::parse doesn't handle
+        let parsed = if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X"))
+        {
+            u64::from_str_radix(hex, 16).ok().map(|n| n as f64)
+        } else if let Some(oct) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+            u64::from_str_radix(oct, 8).ok().map(|n| n as f64)
+        } else if let Some(bin) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+            u64::from_str_radix(bin, 2).ok().map(|n| n as f64)
+        } else {
+            // Strip numeric separators (e.g., 1_000 → 1000)
+            let cleaned = text.replace('_', "");
+            cleaned.parse::<f64>().ok()
+        };
+
+        match parsed {
+            Some(n) if n.is_finite() => format!("{n}"),
+            _ => text.to_string(),
+        }
+    }
+
     fn get_member_name_text(&self, name_idx: NodeIndex) -> Option<String> {
         use tsz_scanner::SyntaxKind;
 
@@ -890,7 +915,7 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_literal(name_node)
-                .map(|lit| lit.text.to_string()),
+                .map(|lit| Self::normalize_numeric_name(&lit.text)),
             k if k == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME => {
                 // For computed property names with string/numeric literal expressions like ["a"],
                 // extract the value for duplicate checking. tsc formats these as ["a"] in diagnostics.
@@ -903,7 +928,7 @@ impl<'a> CheckerState<'a> {
                     }
                     ek if ek == SyntaxKind::NumericLiteral as u16 => {
                         let lit = self.ctx.arena.get_literal(expr_node)?;
-                        Some(lit.text.to_string())
+                        Some(Self::normalize_numeric_name(&lit.text))
                     }
                     _ => None,
                 }

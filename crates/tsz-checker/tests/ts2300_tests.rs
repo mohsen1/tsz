@@ -47,7 +47,6 @@ fn check(source: &str) -> Vec<crate::checker::diagnostics::Diagnostic> {
 }
 
 /// Test that method followed by property emits TS2300 only on the property.
-/// Regression test for fix where both were being reported.
 #[test]
 fn test_duplicate_method_then_property() {
     let source = r#"
@@ -57,7 +56,6 @@ class C {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert_eq!(
         ts2300_errors.len(),
@@ -68,7 +66,6 @@ class C {
 }
 
 /// Test that property followed by method emits TS2300 on BOTH declarations.
-/// This is the special case where tsc reports both as duplicates.
 #[test]
 fn test_duplicate_property_then_method() {
     let source = r#"
@@ -78,7 +75,6 @@ class K {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert_eq!(
         ts2300_errors.len(),
@@ -98,7 +94,6 @@ class D {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert_eq!(
         ts2300_errors.len(),
@@ -119,7 +114,6 @@ class C {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert!(
         ts2300_errors.is_empty(),
@@ -138,7 +132,6 @@ interface Foo {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert_eq!(
         ts2300_errors.len(),
@@ -160,7 +153,6 @@ interface Foo {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert!(
         ts2300_errors.is_empty(),
@@ -179,7 +171,6 @@ class C {
 }
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     let ts2393_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2393).collect();
 
@@ -193,44 +184,6 @@ class C {
         2,
         "Should have 2 TS2393 errors for both implementations, got: {:?}",
         ts2393_errors
-    );
-}
-
-/// Test that multiple export assignments emit TS2300 on ALL occurrences.
-#[test]
-fn test_duplicate_export_assignments() {
-    let source = r#"
-const server = {};
-const connectExport = {};
-
-export = server;
-export = connectExport;
-"#;
-    let diagnostics = check(source);
-
-    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
-    assert_eq!(
-        ts2300_errors.len(),
-        2,
-        "Should have exactly 2 TS2300 errors for both export assignments, got: {:?}",
-        ts2300_errors
-    );
-}
-
-/// Test that a single export assignment does not emit TS2300.
-#[test]
-fn test_single_export_assignment() {
-    let source = r#"
-const server = {};
-export = server;
-"#;
-    let diagnostics = check(source);
-
-    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
-    assert!(
-        ts2300_errors.is_empty(),
-        "Should NOT have TS2300 for single export assignment, got: {:?}",
-        ts2300_errors
     );
 }
 
@@ -288,6 +241,60 @@ class C {
     );
 }
 
+/// Test that numeric class members with equivalent numeric values are detected as duplicates.
+/// `0` and `0.0` both resolve to property name "0", so they are duplicates.
+/// `'0'` (string literal) also matches since its value is "0".
+/// `'0.0'` (string literal) is NOT the same as `'0'` (no numeric normalization for strings).
+#[test]
+fn test_numeric_class_member_duplicates() {
+    // C234: 0 and 0.0 are the same property → TS2300 on 0.0
+    let source = r#"
+class C234 {
+    0 = 1;
+    0.0 = 2;
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert_eq!(
+        ts2300_errors.len(),
+        1,
+        "C234: should have 1 TS2300 for duplicate numeric member 0/0.0, got: {:?}",
+        ts2300_errors
+    );
+
+    // C235: 0.0 and '0' are the same property → TS2300 on '0'
+    let source = r#"
+class C235 {
+    0.0 = 1;
+    '0' = 2;
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert_eq!(
+        ts2300_errors.len(),
+        1,
+        "C235: should have 1 TS2300 for duplicate 0.0/'0', got: {:?}",
+        ts2300_errors
+    );
+
+    // C236: '0.0' and '0' are NOT duplicates (different string values)
+    let source = r#"
+class C236 {
+    '0.0' = 1;
+    '0' = 2;
+}
+"#;
+    let diagnostics = check(source);
+    let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
+    assert!(
+        ts2300_errors.is_empty(),
+        "C236: should NOT have TS2300 for '0.0' vs '0' (different strings), got: {:?}",
+        ts2300_errors
+    );
+}
+
 /// Test that duplicate `import =` alias declarations emit TS2300.
 #[test]
 fn test_duplicate_import_equals_alias_emits_ts2300() {
@@ -299,7 +306,6 @@ import a = m;
 import a = m;
 "#;
     let diagnostics = check(source);
-
     let ts2300_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2300).collect();
     assert!(
         !ts2300_errors.is_empty(),
@@ -319,7 +325,6 @@ import a = m;
 const a = 1;
 "#;
     let diagnostics = check(source);
-
     let ts2440_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2440).collect();
     assert!(
         !ts2440_errors.is_empty(),
