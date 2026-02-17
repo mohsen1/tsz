@@ -57,11 +57,6 @@ impl<'a> CheckerState<'a> {
     {
         use tsz_solver::FunctionShape;
         let factory = self.ctx.types.factory();
-        let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
-        let perf_start = perf_enabled.then(std::time::Instant::now);
-        let mut expected_ms = 0.0f64;
-        let mut get_type_ms = 0.0f64;
-        let mut spread_args = 0usize;
 
         // Pre-create a single placeholder for skipped sensitive arguments.
         // The solver's is_contextually_sensitive recognizes Function types and skips them
@@ -127,7 +122,6 @@ impl<'a> CheckerState<'a> {
                 if arg_node.kind == syntax_kind_ext::SPREAD_ELEMENT
                     && let Some(spread_data) = self.ctx.arena.get_spread(arg_node)
                 {
-                    spread_args += 1;
                     let spread_type = self.get_type_of_node(spread_data.expression);
                     let spread_type = self.resolve_type_for_property_access(spread_type);
                     let spread_type = self.resolve_lazy_type(spread_type);
@@ -221,20 +215,12 @@ impl<'a> CheckerState<'a> {
             }
 
             // Regular (non-spread) argument
-            let expected_start = perf_enabled.then(std::time::Instant::now);
             let expected_type = expected_for_index(effective_index, expanded_count);
-            if let Some(start) = expected_start {
-                expected_ms += start.elapsed().as_secs_f64() * 1000.0;
-            }
 
             let prev_context = self.ctx.contextual_type;
             self.ctx.contextual_type = expected_type;
 
-            let arg_type_start = perf_enabled.then(std::time::Instant::now);
             let arg_type = self.get_type_of_node(arg_idx);
-            if let Some(start) = arg_type_start {
-                get_type_ms += start.elapsed().as_secs_f64() * 1000.0;
-            }
             arg_types.push(arg_type);
 
             if check_excess_properties
@@ -252,18 +238,6 @@ impl<'a> CheckerState<'a> {
 
             self.ctx.contextual_type = prev_context;
             effective_index += 1;
-        }
-
-        if let Some(start) = perf_start {
-            tracing::info!(
-                target: "wasm::perf",
-                phase = "call_collect_args_detail",
-                args = args.len(),
-                spread_args,
-                expected_ms,
-                get_type_ms,
-                ms = start.elapsed().as_secs_f64() * 1000.0
-            );
         }
 
         arg_types

@@ -1929,22 +1929,6 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
-        // Fast path: only attempt flow narrowing for potentially narrowable types.
-        // Concrete non-union, non-generic object/primitive types generally keep
-        // their declared type across flow contexts, and traversing the flow graph
-        // for each read is pure overhead in call-heavy code.
-        let needs_narrowing = declared_type == TypeId::ANY
-            || declared_type == TypeId::UNKNOWN
-            || tsz_solver::type_queries_extended::is_narrowable_type_key(
-                self.ctx.types,
-                declared_type,
-            )
-            || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, declared_type);
-        if !needs_narrowing {
-            trace!("Type is not flow-narrowable, returning declared type");
-            return declared_type;
-        }
-
         // Apply type narrowing based on control flow
         trace!("Applying flow narrowing");
         let result = self.apply_flow_narrowing(idx, declared_type);
