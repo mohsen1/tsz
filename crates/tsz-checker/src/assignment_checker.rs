@@ -254,22 +254,25 @@ impl<'a> CheckerState<'a> {
                 return idx;
             };
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                && let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                    idx = paren.expression;
-                    continue;
-                }
+                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+            {
+                idx = paren.expression;
+                continue;
+            }
             if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION
-                && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node) {
-                    idx = unary.expression;
-                    continue;
-                }
+                && let Some(unary) = self.ctx.arena.get_unary_expr_ex(node)
+            {
+                idx = unary.expression;
+                continue;
+            }
             if (node.kind == syntax_kind_ext::TYPE_ASSERTION
                 || node.kind == syntax_kind_ext::AS_EXPRESSION
                 || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
-                && let Some(assertion) = self.ctx.arena.get_type_assertion(node) {
-                    idx = assertion.expression;
-                    continue;
-                }
+                && let Some(assertion) = self.ctx.arena.get_type_assertion(node)
+            {
+                idx = assertion.expression;
+                continue;
+            }
             return idx;
         }
     }
