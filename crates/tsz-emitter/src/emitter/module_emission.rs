@@ -979,7 +979,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Try to collect inline CJS export info for a variable statement.
-    /// Returns Some(vec of (name, initializer_idx)) if ALL declarators are simple
+    /// Returns Some(vec of (name, `initializer_idx`)) if ALL declarators are simple
     /// identifier bindings with initializers. Returns None if any declarator uses
     /// destructuring or lacks an initializer (in which case we fall back to split form).
     pub(super) fn try_collect_inline_cjs_exports(

@@ -338,18 +338,14 @@ fn test_any_in_function_parameters_strict_mode() {
         TypeId::VOID,         // return: void
     );
 
-    // In strict mode, function parameter variance should be contravariant
-    // (x: number) => void is NOT assignable to (x: any) => void
-    // because any at depth 1 is treated as unknown
+    // In strict mode, function parameter variance should be contravariant.
+    // (x: number) => void IS assignable to (x: any) => void
+    // because `any` in the target parameter is always compatible —
+    // `any` is both a subtype and supertype of every type in TypeScript.
     assert!(
-        !checker.is_assignable(number_param, any_param),
-        "Strict mode: (x: number) => void should NOT be assignable to (x: any) => void"
+        checker.is_assignable(number_param, any_param),
+        "Strict mode: (x: number) => void should be assignable to (x: any) => void"
     );
-
-    // In legacy mode with bivariance, it should work
-    checker.set_strict_any_propagation(false);
-    // Note: This still might not work due to function bivariance being separate
-    // from any propagation. The test verifies the current behavior.
 }
 
 #[test]
@@ -545,11 +541,12 @@ fn test_function_contravariance_strict_mode() {
         "Strict mode: (x: any) => void should be assignable to (x: string) => void (contravariance)"
     );
 
-    // (x: string) => void should NOT be assignable to (x: any) => void
-    // because string is NOT a supertype of any
+    // (x: string) => void IS assignable to (x: any) => void
+    // because `any` in the target parameter is always compatible —
+    // `any` is both a subtype and supertype of every type in TypeScript.
     assert!(
-        !checker.is_assignable(string_param, any_param),
-        "Strict mode: (x: string) => void should NOT be assignable to (x: any) => void (contravariance)"
+        checker.is_assignable(string_param, any_param),
+        "Strict mode: (x: string) => void should be assignable to (x: any) => void (any is universal)"
     );
 }
 
@@ -663,9 +660,11 @@ fn test_function_with_multiple_parameters() {
         "Strict mode: (any, any) => void should be assignable to (string, number) => void (contravariance)"
     );
 
+    // (string, number) => void IS assignable to (any, any) => void
+    // because `any` in target parameters is always compatible.
     assert!(
-        !checker.is_assignable(func1, func2),
-        "Strict mode: (string, number) => void should NOT be assignable to (any, any) => void (contravariance)"
+        checker.is_assignable(func1, func2),
+        "Strict mode: (string, number) => void should be assignable to (any, any) => void (any is universal)"
     );
 }
 
