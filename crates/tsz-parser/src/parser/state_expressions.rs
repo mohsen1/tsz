@@ -663,6 +663,11 @@ impl ParserState {
             }
 
             if op == SyntaxKind::AsKeyword || op == SyntaxKind::SatisfiesKeyword {
+                // `as` and `satisfies` do not bind across line terminators.
+                // `x\nas Type` is two statements via ASI, not a type assertion.
+                if self.scanner.has_preceding_line_break() {
+                    break;
+                }
                 left = self.parse_as_or_satisfies_expression(left, start_pos);
                 continue;
             }
