@@ -1007,8 +1007,9 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::SubstituteArguments => {
-                // Substitute 'arguments' with '_arguments' for lexical capture
-                self.write("_arguments");
+                // TSC does not rename 'arguments' when lowering arrow functions.
+                // It lets the lowered function's own 'arguments' binding take effect.
+                self.write("arguments");
             }
 
             EmitDirective::ES5SuperCall => {
@@ -1444,8 +1445,9 @@ impl<'a> Printer<'a> {
                 self.write(capture_name);
             }
             EmitDirective::SubstituteArguments => {
-                // Substitute 'arguments' with '_arguments' for lexical capture
-                self.write("_arguments");
+                // TSC does not rename 'arguments' when lowering arrow functions.
+                // It lets the lowered function's own 'arguments' binding take effect.
+                self.write("arguments");
             }
             EmitDirective::ES5SuperCall => {
                 // Transform super(...) to _super.call(this, ...)
@@ -1645,7 +1647,7 @@ impl<'a> Printer<'a> {
                 if self.transforms.has_transform(idx) {
                     if let Some(directive) = self.transforms.get(idx) {
                         match directive {
-                            TransformDirective::SubstituteArguments => self.write("_arguments"),
+                            TransformDirective::SubstituteArguments => self.write("arguments"),
                             TransformDirective::SubstituteThis { capture_name } => {
                                 let name = std::sync::Arc::clone(capture_name);
                                 self.write(&name);
