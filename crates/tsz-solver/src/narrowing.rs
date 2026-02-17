@@ -736,16 +736,19 @@ impl<'a> NarrowingContext<'a> {
         // This ensures type aliases are resolved to their actual union types
         let resolved_type = self.resolve_type(union_type);
 
-        // Get union members - normalize single types to "union of 1" slice
-        // This allows single-object narrowing to work correctly
-        let single_member_storage;
-        let members_list_storage;
-        let members: &[TypeId] = if let Some(members_id) = union_list_id(self.db, resolved_type) {
-            members_list_storage = self.db.type_list(members_id);
-            &members_list_storage
-        } else {
-            single_member_storage = [resolved_type];
-            &single_member_storage[..]
+        // CRITICAL FIX: Use classify_for_union_members instead of union_list_id
+        // This correctly handles intersections containing unions, nested unions, etc.
+        // Consistent with narrow_by_discriminant.
+        let single_member_storage: Vec<TypeId>;
+        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
+            UnionMembersKind::Union(members_list) => {
+                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
+                &single_member_storage
+            }
+            UnionMembersKind::NotUnion => {
+                single_member_storage = vec![resolved_type];
+                &single_member_storage
+            }
         };
 
         trace!(
