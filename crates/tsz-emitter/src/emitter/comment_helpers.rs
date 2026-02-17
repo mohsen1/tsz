@@ -1,5 +1,4 @@
-use super::{Printer, get_trailing_comment_ranges};
-use crate::printer::safe_slice;
+use super::Printer;
 use tsz_parser::parser::node::Node;
 
 impl<'a> Printer<'a> {
@@ -8,8 +7,12 @@ impl<'a> Printer<'a> {
     // =========================================================================
 
     /// Emit trailing comments after a node's end position.
-    /// Note: In TypeScript's AST, node.end often includes trailing trivia (including comments).
-    /// We clamp the position to valid bounds and scan from there.
+    /// Trailing comments are comments on the same line as `end_pos`,
+    /// e.g. `foo(); // comment` — the `// comment` is trailing.
+    ///
+    /// Uses `all_comments` exclusively (not dynamic source scanning) to avoid
+    /// duplicate emission when the leading comment scanner has already advanced
+    /// `comment_emit_idx` past a comment.
     pub(super) fn emit_trailing_comments(&mut self, end_pos: u32) {
         if self.ctx.options.remove_comments {
             return;
@@ -19,40 +22,42 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Clamp position to valid range
-        let pos = std::cmp::min(end_pos as usize, text.len());
-        let comments = get_trailing_comment_ranges(text, pos);
-        for comment in comments {
-            // Skip if this comment was already emitted.
-            // Since all_comments is sorted by position and comment_emit_idx advances
-            // monotonically, a comment whose end position is at or before the current
-            // all_comments[comment_emit_idx - 1].end has already been emitted.
-            if self.comment_emit_idx > 0 {
-                let last_emitted = &self.all_comments[self.comment_emit_idx - 1];
-                if comment.end <= last_emitted.end {
-                    continue;
-                }
+        // Look for comments in all_comments starting from comment_emit_idx
+        // that are on the same line as end_pos (i.e., trailing comments).
+        // A trailing comment must start at or after end_pos, and there must be
+        // no line break between end_pos and the comment start.
+        let bytes = text.as_bytes();
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c_pos = self.all_comments[self.comment_emit_idx].pos;
+            let c_end = self.all_comments[self.comment_emit_idx].end;
+
+            // Comment must start at or after end_pos
+            if c_pos < end_pos {
+                // This comment is before our position — it should have been
+                // emitted already. Skip it to avoid stalling.
+                self.comment_emit_idx += 1;
+                continue;
             }
 
-            // Add space before trailing comment
+            // Check if there's a line break between end_pos and the comment.
+            // If so, this is a leading comment for the next construct, not trailing.
+            let gap_start = end_pos as usize;
+            let gap_end = std::cmp::min(c_pos as usize, bytes.len());
+            let has_line_break = bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r');
+            if has_line_break {
+                break;
+            }
+
+            // This is a trailing comment on the same line — emit it
             self.write_space();
-            // Emit the comment text using safe slicing
-            let comment_text = safe_slice::slice(text, comment.pos as usize, comment.end as usize);
+            let comment_text =
+                crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
             if !comment_text.is_empty() {
                 self.write_comment(comment_text);
             }
-            // Advance the global comment index past this comment so it
-            // won't be emitted again by the end-of-file comment sweep.
-            while self.comment_emit_idx < self.all_comments.len() {
-                let c = &self.all_comments[self.comment_emit_idx];
-                if c.pos >= comment.pos && c.end <= comment.end {
-                    self.comment_emit_idx += 1;
-                    break;
-                } else if c.end > comment.end {
-                    break;
-                }
-                self.comment_emit_idx += 1;
-            }
+            self.comment_emit_idx += 1;
         }
     }
 
