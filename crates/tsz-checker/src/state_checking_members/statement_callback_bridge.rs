@@ -745,12 +745,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         initializer: NodeIndex,
         element_type: TypeId,
         is_for_of: bool,
+        has_await_modifier: bool,
     ) {
         CheckerState::check_for_in_of_expression_initializer(
             self,
             initializer,
             element_type,
             is_for_of,
+            has_await_modifier,
         );
     }
 
