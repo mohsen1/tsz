@@ -913,11 +913,22 @@ impl<'a> CheckerState<'a> {
         // Unannotated async functions infer Promise<T>, where T is inferred from
         // return statements in the function body.
         if !has_type_annotation && function_is_async && !function_is_generator {
+            // Resolve the real Promise type from lib files when available,
+            // so that the return type is structurally compatible with PromiseLike<T>.
+            // Fall back to synthetic PROMISE_BASE only without lib files.
+            let promise_base = {
+                let lib_binders = self.get_lib_binders();
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs("Promise", &lib_binders)
+                    .map(|sym_id| self.ctx.create_lazy_type_ref(sym_id))
+                    .unwrap_or(TypeId::PROMISE_BASE)
+            };
             final_return_type = self
                 .ctx
                 .types
                 .factory()
-                .application(TypeId::PROMISE_BASE, vec![final_return_type]);
+                .application(promise_base, vec![final_return_type]);
         }
 
         let shape = FunctionShape {
