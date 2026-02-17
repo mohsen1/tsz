@@ -1625,6 +1625,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 break;
             };
 
+            if *arg_type == param_type {
+                continue;
+            }
+
             // Expand TypeParameters to their constraints for assignability checking when the
             // *parameter* expects a concrete type (e.g. `object`) but the argument is an outer
             // type parameter with a compatible constraint.
@@ -1637,6 +1641,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 Some(TypeData::TypeParameter(_) | TypeData::Infer(_)) => *arg_type,
                 _ => self.expand_type_param(*arg_type),
             };
+
+            if expanded_arg_type == param_type {
+                continue;
+            }
 
             let assignable = if allow_bivariant_callbacks || self.force_bivariant_callbacks {
                 self.checker
