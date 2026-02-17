@@ -41,7 +41,7 @@ pub(crate) fn is_strict_mode_reserved_name(name: &str) -> bool {
 
 impl<'a> CheckerState<'a> {
     /// Check a declaration name node for strict mode reserved words.
-    /// Emits TS1212 (general strict mode) or TS1213 (class context).
+    /// Emits TS1212 (general strict mode), TS1213 (class context), or TS1214 (module context).
     pub(crate) fn check_strict_mode_reserved_name_at(
         &mut self,
         name_idx: tsz_parser::parser::NodeIndex,
@@ -69,6 +69,16 @@ impl<'a> CheckerState<'a> {
                 name_idx,
                 &message,
                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+            );
+        } else if self.ctx.binder.is_external_module() {
+            let message = format_message(
+                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                &[&ident.escaped_text],
+            );
+            self.error_at_node(
+                name_idx,
+                &message,
+                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
             );
         } else {
             let message = format_message(
@@ -1569,22 +1579,44 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        // TS1212: Identifier expected. '{0}' is a reserved word in strict mode.
+        // TS1212/1213/1214: Identifier expected. '{0}' is a reserved word in strict mode.
         // Check if variable name is a strict-mode reserved word used in strict context.
         if self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && is_strict_mode_reserved_name(name)
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                &[name],
-            );
-            self.error_at_node(
-                var_decl.name,
-                &message,
-                diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-            );
+            if self.ctx.enclosing_class.is_some() {
+                let message = format_message(
+                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    &[name],
+                );
+                self.error_at_node(
+                    var_decl.name,
+                    &message,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                );
+            } else if self.ctx.binder.is_external_module() {
+                let message = format_message(
+                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                    &[name],
+                );
+                self.error_at_node(
+                    var_decl.name,
+                    &message,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                );
+            } else {
+                let message = format_message(
+                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    &[name],
+                );
+                self.error_at_node(
+                    var_decl.name,
+                    &message,
+                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                );
+            }
         }
 
         // TS2480: 'let' is not allowed to be used as a name in 'let' or 'const' declarations.

@@ -78,18 +78,40 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 );
             }
 
-            // TS1212: Reserved word used as function name in strict mode
+            // TS1212/TS1213/TS1214: Reserved word used as function name in strict mode
             if crate::state_checking::is_strict_mode_reserved_name(&ident.escaped_text) {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-                let message = format_message(
-                    diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                    &[&ident.escaped_text],
-                );
-                self.error_at_node(
-                    func.name,
-                    &message,
-                    diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
-                );
+                if self.ctx.enclosing_class.is_some() {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                        &[&ident.escaped_text],
+                    );
+                    self.error_at_node(
+                        func.name,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_CLASS_DEFINITIONS_ARE_AUTO,
+                    );
+                } else if self.ctx.binder.is_external_module() {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                        &[&ident.escaped_text],
+                    );
+                    self.error_at_node(
+                        func.name,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                        &[&ident.escaped_text],
+                    );
+                    self.error_at_node(
+                        func.name,
+                        &message,
+                        diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE,
+                    );
+                }
             }
         }
 
