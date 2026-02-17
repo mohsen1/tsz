@@ -262,14 +262,14 @@ fn format_js_number(value: f64) -> String {
     // For large values or non-integers, use JavaScript-style formatting
     // JavaScript's Number.toString() uses exponential for >= 1e21
     // Format: significant digits + e+exponent
-    let s = format!("{:e}", value);
+    let s = format!("{value:e}");
     // Rust's {:e} produces lowercase 'e' like "9.671406556917009e24"
     // JS uses "9.671406556917009e+24" (with explicit + sign)
     if let Some(pos) = s.find('e') {
         let (mantissa, exp_part) = s.split_at(pos);
         let exp_str = &exp_part[1..]; // skip 'e'
         if !exp_str.starts_with('-') && !exp_str.starts_with('+') {
-            return format!("{}e+{}", mantissa, exp_str);
+            return format!("{mantissa}e+{exp_str}");
         }
         return s;
     }
