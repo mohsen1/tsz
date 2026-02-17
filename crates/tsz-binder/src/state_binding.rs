@@ -670,6 +670,7 @@ impl BinderState {
             self.break_targets.push(end_label);
 
             // Case block contains case clauses
+            let mut has_default_clause = false;
             if let Some(case_block_node) = arena.get(switch_data.case_block)
                 && let Some(case_block) = arena.get_block(case_block_node)
             {
@@ -680,6 +681,10 @@ impl BinderState {
                     if let Some(clause_node) = arena.get(clause_idx)
                         && let Some(clause) = arena.get_case_clause(clause_node)
                     {
+                        if clause.expression.is_none() {
+                            has_default_clause = true;
+                        }
+
                         self.switch_clause_to_switch.insert(clause_idx.0, idx);
 
                         self.current_flow = pre_switch_flow;
@@ -706,6 +711,19 @@ impl BinderState {
                             fallthrough_flow = FlowNodeId::NONE;
                         }
                     }
+                }
+
+                // Exhaustiveness: if no default clause, create an implicit default
+                // path representing "no case matched". This SWITCH_CLAUSE uses the
+                // case_block node as a marker so the checker can detect it and apply
+                // default-clause narrowing (excluding all case values).
+                if !has_default_clause {
+                    let implicit_default_flow = self.create_switch_clause_flow(
+                        pre_switch_flow,
+                        FlowNodeId::NONE,
+                        switch_data.case_block,
+                    );
+                    self.add_antecedent(end_label, implicit_default_flow);
                 }
 
                 // Exit the case block scope

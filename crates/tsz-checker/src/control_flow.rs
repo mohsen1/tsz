@@ -437,7 +437,6 @@ impl<'a> FlowAnalyzer<'a> {
                 visited.insert(current_flow);
                 continue;
             };
-
             // Check if this is a merge point that needs all antecedents processed first
             let is_switch_fallthrough =
                 flow.has_any_flags(flow_flags::SWITCH_CLAUSE) && flow.antecedent.len() > 1;
@@ -945,7 +944,7 @@ impl<'a> FlowAnalyzer<'a> {
         // This happens when a switch has no default clause - we use the case_block
         // as a marker to represent the implicit "no match" path
         let is_implicit_default = if let Some(node) = self.arena.get(clause_idx) {
-            node.kind == syntax_kind_ext::BLOCK
+            node.kind == syntax_kind_ext::CASE_BLOCK
         } else {
             false
         };
