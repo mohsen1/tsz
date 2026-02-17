@@ -132,7 +132,32 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Track nullish operands for proper error reporting
+        // Track nullish operands for proper error reporting.
+        // TS18050 is ONLY for literal null/undefined tokens in source, not for expressions
+        // whose type happens to be null/undefined (e.g. `void x` has type undefined but
+        // should get TS2532 not TS18050).
+        let left_is_literal_nullish = if let Some(left_node) = self.ctx.arena.get(left_idx) {
+            left_node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+                || (left_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(left_node)
+                        .map_or(false, |id| id.escaped_text == "undefined"))
+        } else {
+            false
+        };
+        let right_is_literal_nullish = if let Some(right_node) = self.ctx.arena.get(right_idx) {
+            right_node.kind == tsz_scanner::SyntaxKind::NullKeyword as u16
+                || (right_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    && self
+                        .ctx
+                        .arena
+                        .get_identifier(right_node)
+                        .map_or(false, |id| id.escaped_text == "undefined"))
+        } else {
+            false
+        };
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
@@ -147,8 +172,8 @@ impl<'a> CheckerState<'a> {
             "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
         );
 
-        // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
-        if left_is_nullish && should_emit_nullish_error {
+        // Emit TS18050 for literal null/undefined operands in arithmetic operations
+        if left_is_literal_nullish && should_emit_nullish_error {
             let value_name = if left_type == TypeId::NULL {
                 "null"
             } else {
@@ -172,7 +197,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if right_is_nullish && should_emit_nullish_error {
+        if right_is_literal_nullish && should_emit_nullish_error {
             let value_name = if right_type == TypeId::NULL {
                 "null"
             } else {
@@ -196,8 +221,8 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // If BOTH operands are null/undefined AND we emitted TS18050 for them, we're done
-        if left_is_nullish && right_is_nullish && emitted_nullish_error {
+        // If BOTH operands are literal null/undefined AND we emitted TS18050 for them, we're done
+        if left_is_literal_nullish && right_is_literal_nullish && emitted_nullish_error {
             return;
         }
 
