@@ -1774,6 +1774,13 @@ impl<'a> Printer<'a> {
                 self.emit_block(node, idx);
             }
 
+            // Class static block: `static { ... }`
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                self.write("static ");
+                // The static block uses the same data as a Block node
+                self.emit_block(node, idx);
+            }
+
             // If statement
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 self.emit_if_statement(node);
