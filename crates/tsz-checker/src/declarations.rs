@@ -1562,6 +1562,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 || k == syntax_kind_ext::THROW_STATEMENT
                 || k == syntax_kind_ext::TRY_STATEMENT
                 || k == syntax_kind_ext::DEBUGGER_STATEMENT
+                || k == syntax_kind_ext::EMPTY_STATEMENT
         );
 
         if is_non_declaration {
