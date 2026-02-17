@@ -55,6 +55,9 @@ pub struct IRPrinter<'a> {
     /// Name of the current ES5 class IIFE constructor, used to force constructor
     /// empty-body formatting without affecting nested function declarations.
     current_class_iife_name: Option<String>,
+    /// When true, the next `FunctionExpr` emit will force multiline for empty bodies.
+    /// Set by `CallExpr` when emitting an IIFE callee.
+    force_iife_multiline_empty: bool,
 }
 
 impl<'a> IRPrinter<'a> {
@@ -182,6 +185,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             current_class_iife_name: None,
+            force_iife_multiline_empty: false,
         }
     }
 
@@ -196,6 +200,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             current_class_iife_name: None,
+            force_iife_multiline_empty: false,
         }
     }
 
@@ -210,6 +215,7 @@ impl<'a> IRPrinter<'a> {
             transforms: None,
             suppress_function_trailing_extraction: false,
             current_class_iife_name: None,
+            force_iife_multiline_empty: false,
         }
     }
 
@@ -332,8 +338,12 @@ impl<'a> IRPrinter<'a> {
                 let is_iife = matches!(&**callee, IRNode::FunctionExpr { .. });
                 if is_iife {
                     self.write("(");
+                    // IIFE function bodies should use multiline for empty bodies,
+                    // matching TSC's behavior for synthetic code wrappers.
+                    self.force_iife_multiline_empty = true;
                 }
                 self.emit_node(callee);
+                self.force_iife_multiline_empty = false;
                 if is_iife {
                     self.write(")");
                 }
@@ -475,7 +485,8 @@ impl<'a> IRPrinter<'a> {
                     self.write("; }");
                     return;
                 }
-                let force_multiline_empty = matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(n.as_str()));
+                let force_multiline_empty = self.force_iife_multiline_empty
+                    || matches!(name, Some(n) if self.current_class_iife_name.as_deref() == Some(n.as_str()));
                 self.emit_function_body_with_defaults(
                     parameters,
                     body,
@@ -1579,12 +1590,7 @@ impl<'a> IRPrinter<'a> {
 
     fn emit_block(&mut self, stmts: &[IRNode]) {
         if stmts.is_empty() {
-            // TSC emits empty blocks as multiline for synthetic/generated code.
-            // Block statements in IR are always synthetic (from transforms), so use multiline.
-            self.write("{");
-            self.write_line();
-            self.write_indent();
-            self.write("}");
+            self.write("{ }");
             return;
         }
 
