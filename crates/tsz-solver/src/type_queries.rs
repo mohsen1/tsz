@@ -2629,6 +2629,52 @@ pub fn classify_for_constructor_instance(
     }
 }
 
+/// Extract the instance type from a constructor type.
+///
+/// Given a type with construct signatures, returns the union of their return types.
+/// Recursively handles union types (collecting from all members) and intersection types
+/// (returning from the first member with construct signatures).
+pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    match classify_for_constructor_instance(db, type_id) {
+        ConstructorInstanceKind::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            if shape.construct_signatures.is_empty() {
+                return None;
+            }
+            let returns: Vec<TypeId> = shape
+                .construct_signatures
+                .iter()
+                .map(|s| s.return_type)
+                .collect();
+            Some(if returns.len() == 1 {
+                returns[0]
+            } else {
+                db.union(returns)
+            })
+        }
+        ConstructorInstanceKind::Union(members) => {
+            let instance_types: Vec<TypeId> = members
+                .into_iter()
+                .filter_map(|m| instance_type_from_constructor(db, m))
+                .collect();
+            if instance_types.is_empty() {
+                None
+            } else if instance_types.len() == 1 {
+                Some(instance_types[0])
+            } else {
+                Some(db.union(instance_types))
+            }
+        }
+        ConstructorInstanceKind::Intersection(members) => {
+            // TypeScript takes the first member with construct signatures
+            members
+                .into_iter()
+                .find_map(|m| instance_type_from_constructor(db, m))
+        }
+        ConstructorInstanceKind::None => None,
+    }
+}
+
 /// Classification for type parameter constraint access.
 /// Used by narrowing to check if a type has a constraint to narrow.
 #[derive(Debug, Clone)]
