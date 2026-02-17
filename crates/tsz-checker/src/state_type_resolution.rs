@@ -2829,11 +2829,23 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated = self.evaluate_application_type(type_id);
+        // Resolve Lazy types (e.g., interface references) so the classifier
+        // can see the actual type structure (Callable with construct signatures)
+        // rather than the opaque Lazy wrapper.
+        let evaluated = {
+            let resolved = self.resolve_lazy_type(evaluated);
+            if resolved != evaluated {
+                resolved
+            } else {
+                evaluated
+            }
+        };
         if !visited.insert(evaluated) {
             return;
         }
 
-        match query::classify_constructor_type(self.ctx.types, evaluated) {
+        let classification = query::classify_constructor_type(self.ctx.types, evaluated);
+        match classification {
             query::ConstructorTypeKind::Callable => {
                 ctor_types.push(evaluated);
             }
