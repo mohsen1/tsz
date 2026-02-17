@@ -254,6 +254,11 @@ pub struct CheckerContext<'a> {
     pub flow_analysis_cache:
         RefCell<FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>>,
 
+    /// Shared reference-equivalence cache used by flow narrowing.
+    /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,
@@ -625,6 +630,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
@@ -747,6 +753,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
@@ -860,6 +867,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: FxHashMap::default(),
@@ -975,6 +983,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: cache.class_instance_type_to_decl,
@@ -1089,6 +1098,7 @@ impl<'a> CheckerContext<'a> {
             application_eval_set: FxHashSet::default(),
             mapped_eval_set: FxHashSet::default(),
             flow_analysis_cache: RefCell::new(cache.flow_analysis_cache),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             class_instance_type_to_decl: cache.class_instance_type_to_decl,
@@ -1220,6 +1230,7 @@ impl<'a> CheckerContext<'a> {
             mapped_eval_set: FxHashSet::default(),
             // FlowNodeId/SymbolId are binder-local; isolate flow cache per context.
             flow_analysis_cache: RefCell::new(FxHashMap::default()),
+            flow_reference_match_cache: RefCell::new(FxHashMap::default()),
             application_symbols_resolved: FxHashSet::default(),
             application_symbols_resolution_set: FxHashSet::default(),
             // NodeIndex is arena-local; keep class declaration maps local.

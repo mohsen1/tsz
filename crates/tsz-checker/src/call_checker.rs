@@ -12,19 +12,150 @@
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
 use crate::query_boundaries::call_checker::{
-    array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type,
-    resolve_call_with_context, tuple_elements_for_type,
+    array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type, resolve_call,
+    resolve_new, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{ContextualTypeContext, TypeId};
+use tsz_solver::{AssignabilityChecker, CallResult, ContextualTypeContext, TypeId};
+
+struct CheckerCallAssignabilityAdapter<'s, 'ctx> {
+    state: &'s mut CheckerState<'ctx>,
+}
+
+impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
+    fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.state.is_assignable_to(source, target)
+    }
+
+    fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.state.is_assignable_to_strict(source, target)
+    }
+
+    fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.state.is_assignable_to_bivariant(source, target)
+    }
+
+    fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        self.state.evaluate_type_for_assignability(type_id)
+    }
+}
 
 // =============================================================================
 // Call Checking Methods
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
+    /// Whether an argument node needs contextual typing from the callee signature.
+    ///
+    /// Most argument expressions (identifiers, property access, literals) have a
+    /// stable type independent of contextual type. Restricting contextual typing to
+    /// genuinely sensitive nodes avoids redundant checker work on hot call paths.
+    fn argument_needs_contextual_type(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        matches!(
+            node.kind,
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                || k == syntax_kind_ext::CONDITIONAL_EXPRESSION
+        )
+    }
+
+    /// Const object/array literal bindings do not benefit from flow narrowing at
+    /// call sites. Skipping flow narrowing for these stable identifiers avoids
+    /// repeated CFG traversals on large argument objects.
+    fn can_skip_flow_narrowing_for_argument(&self, idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+
+        let Some(sym_id) = self
+            .ctx
+            .binder
+            .get_node_symbol(idx)
+            .or_else(|| self.ctx.binder.resolve_identifier(self.ctx.arena, idx))
+        else {
+            return false;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() || !self.is_const_variable_declaration(value_decl) {
+            return false;
+        }
+
+        let Some(decl_node) = self.ctx.arena.get(value_decl) else {
+            return false;
+        };
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if !var_decl.type_annotation.is_none() || var_decl.initializer.is_none() {
+            return false;
+        }
+
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+    }
+
+    pub(crate) fn resolve_call_with_checker_adapter(
+        &mut self,
+        func_type: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+    ) -> CallResult {
+        self.ensure_relation_input_ready(func_type);
+        self.ensure_relation_inputs_ready(arg_types);
+
+        let db = self.ctx.types;
+        let mut checker = CheckerCallAssignabilityAdapter { state: self };
+        resolve_call(
+            db,
+            &mut checker,
+            func_type,
+            arg_types,
+            force_bivariant_callbacks,
+            contextual_type,
+        )
+    }
+
+    pub(crate) fn resolve_new_with_checker_adapter(
+        &mut self,
+        type_id: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+    ) -> CallResult {
+        self.ensure_relation_input_ready(type_id);
+        self.ensure_relation_inputs_ready(arg_types);
+
+        let db = self.ctx.types;
+        let mut checker = CheckerCallAssignabilityAdapter { state: self };
+        resolve_new(
+            db,
+            &mut checker,
+            type_id,
+            arg_types,
+            force_bivariant_callbacks,
+        )
+    }
+
     // =========================================================================
     // Argument Type Collection
     // =========================================================================
@@ -216,11 +347,27 @@ impl<'a> CheckerState<'a> {
 
             // Regular (non-spread) argument
             let expected_type = expected_for_index(effective_index, expanded_count);
+            let apply_contextual = self.argument_needs_contextual_type(arg_idx);
 
             let prev_context = self.ctx.contextual_type;
-            self.ctx.contextual_type = expected_type;
+            if apply_contextual {
+                self.ctx.contextual_type = expected_type;
+            } else {
+                // Non-sensitive argument expressions should not inherit an outer
+                // contextual type (e.g. variable-initializer context) because that
+                // can trigger unnecessary contextual resolution work.
+                self.ctx.contextual_type = None;
+            }
+            let skip_flow = !apply_contextual && self.can_skip_flow_narrowing_for_argument(arg_idx);
+            let prev_skip_flow = self.ctx.skip_flow_narrowing;
+            if skip_flow {
+                self.ctx.skip_flow_narrowing = true;
+            }
 
             let arg_type = self.get_type_of_node(arg_idx);
+            if skip_flow {
+                self.ctx.skip_flow_narrowing = prev_skip_flow;
+            }
             arg_types.push(arg_type);
 
             if check_excess_properties
@@ -355,29 +502,22 @@ impl<'a> CheckerState<'a> {
         for (idx, (_sig, &func_type)) in signatures.iter().zip(signature_types.iter()).enumerate() {
             tracing::debug!("Trying overload {} with {} args", idx, arg_types.len());
             self.ensure_relation_input_ready(func_type);
-            self.ensure_relation_inputs_ready(&arg_types);
-            let result = {
-                let env = self.ctx.type_env.borrow();
-                // Resolve Lazy func_type via type_env before passing to solver.
-                // The solver's resolve_call doesn't handle Lazy types, so we must
-                // resolve to the concrete Function/Callable type here.
-                let resolved_func_type = {
-                    if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
-                        env.get_def(def_id).unwrap_or(func_type)
-                    } else {
-                        func_type
-                    }
+            let resolved_func_type =
+                if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
+                    self.ctx
+                        .type_env
+                        .borrow()
+                        .get_def(def_id)
+                        .unwrap_or(func_type)
+                } else {
+                    func_type
                 };
-                resolve_call_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    resolved_func_type,
-                    &arg_types,
-                    force_bivariant_callbacks,
-                    self.ctx.contextual_type,
-                )
-            };
+            let result = self.resolve_call_with_checker_adapter(
+                resolved_func_type,
+                &arg_types,
+                force_bivariant_callbacks,
+                self.ctx.contextual_type,
+            );
 
             match &result {
                 CallResult::ArgumentTypeMismatch {
@@ -444,27 +584,23 @@ impl<'a> CheckerState<'a> {
             );
 
             self.ensure_relation_input_ready(func_type);
-            self.ensure_relation_inputs_ready(&sig_arg_types);
 
-            let result = {
-                let env = self.ctx.type_env.borrow();
-                let resolved_func_type = {
-                    if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
-                        env.get_def(def_id).unwrap_or(func_type)
-                    } else {
-                        func_type
-                    }
+            let resolved_func_type =
+                if let Some(def_id) = lazy_def_id_for_type(self.ctx.types, func_type) {
+                    self.ctx
+                        .type_env
+                        .borrow()
+                        .get_def(def_id)
+                        .unwrap_or(func_type)
+                } else {
+                    func_type
                 };
-                resolve_call_with_context(
-                    self.ctx.types,
-                    &self.ctx,
-                    &env,
-                    resolved_func_type,
-                    &sig_arg_types,
-                    force_bivariant_callbacks,
-                    self.ctx.contextual_type,
-                )
-            };
+            let result = self.resolve_call_with_checker_adapter(
+                resolved_func_type,
+                &sig_arg_types,
+                force_bivariant_callbacks,
+                self.ctx.contextual_type,
+            );
 
             if let CallResult::Success(return_type) = result {
                 let sig_node_types = std::mem::take(&mut self.ctx.node_types);

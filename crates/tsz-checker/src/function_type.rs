@@ -1612,7 +1612,13 @@ impl<'a> CheckerState<'a> {
                     } else {
                         prop_type
                     };
-                    self.apply_flow_narrowing(idx, effective_type)
+                    if !self.ctx.skip_flow_narrowing
+                        && self.should_skip_property_result_flow_narrowing(idx)
+                    {
+                        effective_type
+                    } else {
+                        self.apply_flow_narrowing(idx, effective_type)
+                    }
                 }
 
                 PropertyAccessResult::PropertyNotFound { .. } => {
@@ -1892,6 +1898,65 @@ impl<'a> CheckerState<'a> {
         } else {
             TypeId::ANY
         }
+    }
+
+    /// In `obj.prop === <literal>`/`!==` comparisons, the base object (`obj`) has
+    /// already been flow-narrowed before we resolve `prop`. Re-applying flow
+    /// narrowing to the property access result is redundant and expensive on large
+    /// discriminated unions.
+    fn should_skip_property_result_flow_narrowing(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+
+        let is_equality = matches!(
+            binary.operator_token,
+            k if k == SyntaxKind::EqualsEqualsToken as u16
+                || k == SyntaxKind::ExclamationEqualsToken as u16
+                || k == SyntaxKind::EqualsEqualsEqualsToken as u16
+                || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
+        );
+        if !is_equality {
+            return false;
+        }
+
+        let other = if binary.left == idx {
+            binary.right
+        } else if binary.right == idx {
+            binary.left
+        } else {
+            return false;
+        };
+        let other = self.skip_parenthesized_expression(other);
+        let Some(other_node) = self.ctx.arena.get(other) else {
+            return false;
+        };
+
+        matches!(
+            other_node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        )
     }
 
     fn resolve_array_global_augmentation_property(

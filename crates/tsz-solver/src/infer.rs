@@ -333,6 +333,7 @@ pub struct InferenceContext<'a> {
 
 impl<'a> InferenceContext<'a> {
     const UPPER_BOUND_INTERSECTION_FAST_PATH_LIMIT: usize = 8;
+    const UPPER_BOUND_INTERSECTION_LARGE_SET_THRESHOLD: usize = 64;
 
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         InferenceContext {
@@ -1832,10 +1833,44 @@ impl<'a> InferenceContext<'a> {
                         return None;
                     }
                 }
+                // For very large upper-bound sets, a single intersection check can
+                // still be profitable in the common success path (all bounds satisfy).
+                // Fall back to per-bound checks if that coarse check fails.
+                if many.len() >= Self::UPPER_BOUND_INTERSECTION_LARGE_SET_THRESHOLD
+                    && self.should_try_large_upper_bound_intersection(result, many)
+                {
+                    let intersection = self.interner.intersection(many.to_vec());
+                    if is_subtype(result, intersection) {
+                        return None;
+                    }
+                }
                 many.iter()
                     .copied()
                     .find(|&upper| !is_subtype(result, upper))
             }
+        }
+    }
+
+    fn should_try_large_upper_bound_intersection(&self, result: TypeId, bounds: &[TypeId]) -> bool {
+        self.is_object_like_upper_bound(result)
+            && bounds
+                .iter()
+                .copied()
+                .all(|bound| self.is_object_like_upper_bound(bound))
+    }
+
+    fn is_object_like_upper_bound(&self, ty: TypeId) -> bool {
+        match self.interner.lookup(ty) {
+            Some(
+                TypeData::Object(_)
+                | TypeData::ObjectWithIndex(_)
+                | TypeData::Lazy(_)
+                | TypeData::Intersection(_),
+            ) => true,
+            Some(TypeData::TypeParameter(info)) => info
+                .constraint
+                .is_some_and(|constraint| self.is_object_like_upper_bound(constraint)),
+            _ => false,
         }
     }
 
@@ -1847,6 +1882,7 @@ impl<'a> InferenceContext<'a> {
         let info = self.table.probe_value(root);
         let target_names = self.type_param_names_for_root(root);
         let mut upper_bounds = Vec::new();
+        let mut seen_upper_bounds = FxHashSet::default();
         let mut candidates = info.candidates;
         for bound in info.upper_bounds {
             if self.occurs_in(root, bound) {
@@ -1862,7 +1898,7 @@ impl<'a> InferenceContext<'a> {
                 );
                 continue;
             }
-            if !upper_bounds.contains(&bound) {
+            if seen_upper_bounds.insert(bound) {
                 upper_bounds.push(bound);
             }
         }

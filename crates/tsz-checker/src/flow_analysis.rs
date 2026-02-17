@@ -1352,6 +1352,7 @@ impl<'a> CheckerState<'a> {
             &self.ctx.node_types,
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         let narrowed = analyzer.get_flow_type(idx, declared_type, flow_node);
@@ -1917,6 +1918,13 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Const object/array literal bindings have a stable type shape and do not
+        // benefit from control-flow narrowing. Skipping CFG traversal for these
+        // bindings avoids O(N²) reference matching on large call-heavy files.
+        if self.should_skip_flow_narrowing_for_const_literal_binding(sym_id) {
+            return declared_type;
+        }
+
         // Check definite assignment for block-scoped variables without initializers
         if should_report_variable_use_before_assignment(self, idx, declared_type, sym_id) {
             // Report TS2454 error: Variable used before assignment
@@ -1940,6 +1948,53 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol(sym_id)
             .is_some_and(|symbol| (symbol.flags & symbol_flags::VARIABLE) != 0)
+    }
+
+    fn should_skip_flow_narrowing_for_const_literal_binding(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+
+        let mut value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return false;
+        }
+
+        let mut decl_node = match self.ctx.arena.get(value_decl) {
+            Some(node) => node,
+            None => return false,
+        };
+
+        // Binder symbols can point at the identifier node for the declaration name.
+        // Normalize to the enclosing VARIABLE_DECLARATION before checking const/init shape.
+        if decl_node.kind == SyntaxKind::Identifier as u16
+            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
+            && !ext.parent.is_none()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
+        {
+            value_decl = ext.parent;
+            decl_node = parent_node;
+        }
+
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION
+            || !self.is_const_variable_declaration(value_decl)
+        {
+            return false;
+        }
+
+        let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
+            return false;
+        };
+        if !var_decl.type_annotation.is_none() || var_decl.initializer.is_none() {
+            return false;
+        }
+
+        let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
+            return false;
+        };
+        init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
     }
 
     /// Emit TS2454 error for variable used before definite assignment.
@@ -2414,6 +2469,7 @@ impl<'a> CheckerState<'a> {
             &self.ctx.node_types,
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache)
+        .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(Rc::clone(&self.ctx.type_environment));
 
         analyzer.is_definitely_assigned(idx, flow_node)

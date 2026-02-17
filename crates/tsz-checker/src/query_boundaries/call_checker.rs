@@ -50,27 +50,6 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     evaluator.resolve_call(func_type, arg_types)
 }
 
-pub(crate) fn resolve_call_with_context(
-    db: &dyn QueryDatabase,
-    ctx: &crate::context::CheckerContext<'_>,
-    env: &tsz_solver::TypeEnvironment,
-    func_type: TypeId,
-    arg_types: &[TypeId],
-    force_bivariant_callbacks: bool,
-    contextual_type: Option<TypeId>,
-) -> CallResult {
-    let mut checker = CompatChecker::with_resolver(db, env);
-    ctx.configure_compat_checker(&mut checker);
-    resolve_call(
-        db,
-        &mut checker,
-        func_type,
-        arg_types,
-        force_bivariant_callbacks,
-        contextual_type,
-    )
-}
-
 pub(crate) fn resolve_new<C: AssignabilityChecker>(
     db: &dyn QueryDatabase,
     checker: &mut C,
@@ -81,25 +60,6 @@ pub(crate) fn resolve_new<C: AssignabilityChecker>(
     let mut evaluator = tsz_solver::CallEvaluator::new(db, checker);
     evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
     evaluator.resolve_new(type_id, arg_types)
-}
-
-pub(crate) fn resolve_new_with_context(
-    db: &dyn QueryDatabase,
-    ctx: &crate::context::CheckerContext<'_>,
-    env: &tsz_solver::TypeEnvironment,
-    type_id: TypeId,
-    arg_types: &[TypeId],
-    force_bivariant_callbacks: bool,
-) -> CallResult {
-    let mut checker = CompatChecker::with_resolver(db, env);
-    ctx.configure_compat_checker(&mut checker);
-    resolve_new(
-        db,
-        &mut checker,
-        type_id,
-        arg_types,
-        force_bivariant_callbacks,
-    )
 }
 
 pub(crate) fn compute_contextual_types<C: AssignabilityChecker>(

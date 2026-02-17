@@ -1530,10 +1530,10 @@ impl<'a> CheckerState<'a> {
                 || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
         {
             self.error_at_node(
-                                var_decl.name,
-                                "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
-                                crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
-                            );
+                var_decl.name,
+                "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
+                crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
+            );
         }
     }
 
@@ -1546,10 +1546,10 @@ impl<'a> CheckerState<'a> {
                 || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
         {
             self.error_at_node(
-                    initializer,
-                    "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
-                    crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
-                );
+                initializer,
+                "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
+                crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
+            );
         }
     }
 

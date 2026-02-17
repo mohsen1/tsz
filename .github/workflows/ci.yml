@@ -496,7 +496,9 @@ jobs:
 
           # Build and run conformance (cache is checked into the repo)
           TMPOUT=$(mktemp)
-          ./scripts/conformance.sh run 2>&1 | tee "$TMPOUT" || true
+          # CI runners are slower and noisier than local machines; use an
+          # explicit timeout/workers config to avoid timeout-induced flake.
+          ./scripts/conformance.sh run --timeout 10 --workers 12 2>&1 | tee "$TMPOUT" || true
 
           # Extract actual percentage from output (matches "N.N%" pattern)
           ACTUAL=$(grep -oE '[0-9]+\.[0-9]+%' "$TMPOUT" | tail -1 | tr -d '%')

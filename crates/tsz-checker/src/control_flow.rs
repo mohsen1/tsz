@@ -33,6 +33,7 @@ use tsz_solver::{
 };
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
+type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 
 // =============================================================================
 // FlowGraph
@@ -110,7 +111,11 @@ pub struct FlowAnalyzer<'a> {
     /// Cache for `is_matching_reference` results.
     /// Key: (`node_a`, `node_b`) -> whether references match (same symbol/property chain).
     /// This avoids O(N²) repeated comparisons during flow analysis with many variables.
-    pub(crate) reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+    pub(crate) reference_match_cache: ReferenceMatchCache,
+    /// Optional shared reference-match cache from the checker context.
+    /// When provided, this lets multiple `FlowAnalyzer` instances reuse reference
+    /// equivalence results within the same file check.
+    pub(crate) shared_reference_match_cache: Option<&'a ReferenceMatchCache>,
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
@@ -146,6 +151,7 @@ impl<'a> FlowAnalyzer<'a> {
             type_environment: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             reference_match_cache: RefCell::new(FxHashMap::default()),
+            shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
     }
@@ -167,6 +173,7 @@ impl<'a> FlowAnalyzer<'a> {
             type_environment: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             reference_match_cache: RefCell::new(FxHashMap::default()),
+            shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
         }
     }
@@ -177,6 +184,12 @@ impl<'a> FlowAnalyzer<'a> {
         cache: &'a RefCell<FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>>,
     ) -> Self {
         self.flow_cache = Some(cache);
+        self
+    }
+
+    /// Set a shared reference-match cache used by `is_matching_reference`.
+    pub const fn with_reference_match_cache(mut self, cache: &'a ReferenceMatchCache) -> Self {
+        self.shared_reference_match_cache = Some(cache);
         self
     }
 
