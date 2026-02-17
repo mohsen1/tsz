@@ -512,64 +512,69 @@ impl<'a> CheckerState<'a> {
                 self.get_type_of_node(unary.operand);
                 TypeId::NUMBER
             }
-            // ++ and -- require numeric operand
+            // ++ and -- require numeric operand and valid l-value
             k if k == SyntaxKind::PlusPlusToken as u16
                 || k == SyntaxKind::MinusMinusToken as u16 =>
             {
-                // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
-                // Must come before TS2356 to match TSC's diagnostic priority.
-                let mut emitted_strict = false;
-                if let Some(operand_node) = self.ctx.arena.get(unary.operand)
-                    && operand_node.kind == SyntaxKind::Identifier as u16
-                    && let Some(id_data) = self.ctx.arena.get_identifier(operand_node)
-                    && (id_data.escaped_text == "eval" || id_data.escaped_text == "arguments")
-                    && self.is_strict_mode_for_node(unary.operand)
-                {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        unary.operand,
-                        diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                        &[&id_data.escaped_text],
-                    );
-                    emitted_strict = true;
-                }
+                // TS2357: The operand must be a variable or property access
+                let emitted_lvalue = self.check_increment_decrement_operand(unary.operand);
 
-                // TS2588: Cannot assign to 'x' because it is a constant.
-                let is_const = self.check_const_assignment(unary.operand);
+                if !emitted_lvalue {
+                    // TS1100: Invalid use of 'eval'/'arguments' in strict mode.
+                    // Must come before TS2356 to match TSC's diagnostic priority.
+                    let mut emitted_strict = false;
+                    if let Some(operand_node) = self.ctx.arena.get(unary.operand)
+                        && operand_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(id_data) = self.ctx.arena.get_identifier(operand_node)
+                        && (id_data.escaped_text == "eval" || id_data.escaped_text == "arguments")
+                        && self.is_strict_mode_for_node(unary.operand)
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            unary.operand,
+                            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                            &[&id_data.escaped_text],
+                        );
+                        emitted_strict = true;
+                    }
 
-                // TS2630: Cannot assign to 'x' because it is a function.
-                // Must come after const check but before type checking.
-                self.check_function_assignment(unary.operand);
+                    // TS2588: Cannot assign to 'x' because it is a constant.
+                    let is_const = self.check_const_assignment(unary.operand);
 
-                // TS2540: Cannot assign to readonly property (e.g., namespace const export)
-                if !is_const {
-                    self.check_readonly_assignment(unary.operand, idx);
-                }
+                    // TS2630: Cannot assign to 'x' because it is a function.
+                    // Must come after const check but before type checking.
+                    self.check_function_assignment(unary.operand);
 
-                // Get operand type for validation
-                let operand_type = self.get_type_of_node(unary.operand);
+                    // TS2540: Cannot assign to readonly property (e.g., namespace const export)
+                    if !is_const {
+                        self.check_readonly_assignment(unary.operand, idx);
+                    }
 
-                // Check if operand is valid for increment/decrement (number, bigint, any, or enum)
-                // Skip when TS1100 was already emitted (TSC prioritizes strict mode over type check)
-                if !is_const && !emitted_strict {
-                    use tsz_solver::BinaryOpEvaluator;
-                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                    let is_valid = evaluator.is_arithmetic_operand(operand_type);
+                    // Get operand type for validation
+                    let operand_type = self.get_type_of_node(unary.operand);
 
-                    if !is_valid {
-                        // Emit TS2356 for invalid increment/decrement operand type
-                        if let Some(loc) = self.get_source_location(unary.operand) {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.ctx.diagnostics.push(Diagnostic {
-                                code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
-                                category: DiagnosticCategory::Error,
-                                message_text: diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE
-                                    .to_string(),
-                                file: self.ctx.file_name.clone(),
-                                start: loc.start,
-                                length: loc.length(),
-                                related_information: Vec::new(),
-                            });
+                    // Check if operand is valid for increment/decrement (number, bigint, any, or enum)
+                    // Skip when TS1100 was already emitted (TSC prioritizes strict mode over type check)
+                    if !is_const && !emitted_strict {
+                        use tsz_solver::BinaryOpEvaluator;
+                        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                        let is_valid = evaluator.is_arithmetic_operand(operand_type);
+
+                        if !is_valid {
+                            // Emit TS2356 for invalid increment/decrement operand type
+                            if let Some(loc) = self.get_source_location(unary.operand) {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.ctx.diagnostics.push(Diagnostic {
+                                    code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
+                                    category: DiagnosticCategory::Error,
+                                    message_text: diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE
+                                        .to_string(),
+                                    file: self.ctx.file_name.clone(),
+                                    start: loc.start,
+                                    length: loc.length(),
+                                    related_information: Vec::new(),
+                                });
+                            }
                         }
                     }
                 }
