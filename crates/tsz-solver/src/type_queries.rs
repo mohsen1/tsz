@@ -2876,6 +2876,10 @@ pub fn classify_for_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Lit
 ///
 /// Returns `None` for all other types.
 pub fn is_narrowing_literal(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    // null and undefined are unit types that can serve as discriminants
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return Some(type_id);
+    }
     let key = db.lookup(type_id)?;
     match key {
         TypeData::Literal(_) | TypeData::Enum(_, _) => Some(type_id),

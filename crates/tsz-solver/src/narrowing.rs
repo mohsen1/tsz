@@ -317,6 +317,39 @@ impl<'a> NarrowingContext<'a> {
                 continue;
             }
 
+            // 3. Handle TemplateLiteral types that can be fully evaluated to string literals.
+            // Template literal spans may contain Lazy(DefId) types (e.g., `${EnumType.Member}`)
+            // that must be resolved before evaluation. We resolve all lazy spans first,
+            // rebuild the template literal, then let the evaluator handle it.
+            if let Some(TypeData::TemplateLiteral(spans_id)) = self.db.lookup(type_id) {
+                use crate::types::TemplateSpan;
+                let spans = self.db.template_list(spans_id);
+                let mut new_spans = Vec::with_capacity(spans.len());
+                let mut changed = false;
+                for span in spans.iter() {
+                    match span {
+                        TemplateSpan::Type(inner_id) => {
+                            let resolved = self.resolve_type(*inner_id);
+                            if resolved != *inner_id {
+                                changed = true;
+                            }
+                            new_spans.push(TemplateSpan::Type(resolved));
+                        }
+                        other => new_spans.push(other.clone()),
+                    }
+                }
+                let eval_input = if changed {
+                    self.db.template_literal(new_spans)
+                } else {
+                    type_id
+                };
+                let evaluated = self.db.evaluate_type(eval_input);
+                if evaluated != type_id {
+                    type_id = evaluated;
+                    continue;
+                }
+            }
+
             // It's a structural type (Object, Union, Intersection, Primitive)
             break;
         }
