@@ -206,6 +206,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Step 2: Check for naked type parameter
             if let Some(TypeData::TypeParameter(param)) = self.interner().lookup(check_type) {
+                // Simplification: T extends never ? X : Y → Y
+                // A type parameter T cannot extend `never` (only `never` extends `never`),
+                // so the conditional always takes the false branch.
+                if extends_type == TypeId::NEVER {
+                    return self.evaluate(cond.false_type);
+                }
+
+                // Simplification: T extends T ? X : Y → X
+                // A type parameter always extends itself, so the conditional always takes
+                // the true branch.
+                if check_type == extends_type {
+                    return self.evaluate(cond.true_type);
+                }
+
                 // If extends_type contains infer patterns and the type parameter has a constraint,
                 // try to infer from the constraint. This handles cases like:
                 // R extends Reducer<infer S, any> ? S : never
