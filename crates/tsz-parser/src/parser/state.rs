@@ -352,6 +352,22 @@ impl ParserState {
         }
     }
 
+    /// Check if the current token is a delimiter/terminator where a missing type
+    /// should be silently recovered (no TS1110). TSC doesn't emit "Type expected" when
+    /// a type is simply omitted before a structural delimiter like `)`, `,`, `=>`, etc.
+    pub(crate) const fn is_type_terminator_token(&self) -> bool {
+        matches!(
+            self.current_token,
+            SyntaxKind::CloseParenToken          // ) - end of parameter list, parenthesized type
+            | SyntaxKind::CloseBracketToken      // ] - end of tuple/array type
+            | SyntaxKind::CloseBraceToken        // } - end of object type / block
+            | SyntaxKind::CommaToken             // , - next element in list
+            | SyntaxKind::SemicolonToken         // ; - end of statement
+            | SyntaxKind::EqualsGreaterThanToken // => - arrow (return type missing)
+            | SyntaxKind::EndOfFileToken // EOF
+        )
+    }
+
     /// Parse type member separators with ASI-aware recovery.
     ///
     /// Type members in interface/type literal bodies allow:
