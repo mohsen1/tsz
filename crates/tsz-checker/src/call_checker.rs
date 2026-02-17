@@ -121,6 +121,9 @@ impl<'a> CheckerState<'a> {
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
     ) -> CallResult {
+        self.ensure_relation_input_ready(func_type);
+        self.ensure_relation_inputs_ready(arg_types);
+
         let db = self.ctx.types;
         let mut checker = CheckerCallAssignabilityAdapter { state: self };
         resolve_call(
@@ -139,6 +142,9 @@ impl<'a> CheckerState<'a> {
         arg_types: &[TypeId],
         force_bivariant_callbacks: bool,
     ) -> CallResult {
+        self.ensure_relation_input_ready(type_id);
+        self.ensure_relation_inputs_ready(arg_types);
+
         let db = self.ctx.types;
         let mut checker = CheckerCallAssignabilityAdapter { state: self };
         resolve_new(

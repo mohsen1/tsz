@@ -1024,7 +1024,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // === Fixing: Resolve variables with enough information ===
         // This "fixes" type variables that have candidates from Round 1,
         // preventing Round 2 from overriding them with lower-priority constraints.
-        if has_context_sensitive_args && infer_ctx.fix_current_variables().is_err() {
+        if infer_ctx.fix_current_variables().is_err() {
             // Fixing failed - this might indicate a constraint conflict
             // Continue with partial fixing, final resolution will detect errors
         }
@@ -1152,11 +1152,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             );
 
             let ty = if has_constraints {
-                // Constraint resolution only needs structural upper-bound validation.
-                // Using the strict relation avoids extra compatibility-layer work
-                // (e.g., weak/excess property checks) on hot inference paths.
                 match infer_ctx.resolve_with_constraints_by(var, |source, target| {
-                    self.checker.is_assignable_to_strict(source, target)
+                    self.checker.is_assignable_to(source, target)
                 }) {
                     Ok(ty) => {
                         trace!(
@@ -1397,18 +1394,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         let arg_ty = arg_types[0];
+        let inferred_ty = if tp.is_const {
+            arg_ty
+        } else {
+            crate::widening::widen_type(self.interner.as_type_database(), arg_ty)
+        };
         if let Some(constraint) = tp.constraint
-            && !self.checker.is_assignable_to(arg_ty, constraint)
-            && !self.is_function_union_compat(arg_ty, constraint)
+            && !self.checker.is_assignable_to(inferred_ty, constraint)
+            && !self.is_function_union_compat(inferred_ty, constraint)
         {
             return Some(CallResult::TypeParameterConstraintViolation {
-                inferred_type: arg_ty,
+                inferred_type: inferred_ty,
                 constraint_type: constraint,
-                return_type: arg_ty,
+                return_type: inferred_ty,
             });
         }
 
-        Some(CallResult::Success(arg_ty))
+        Some(CallResult::Success(inferred_ty))
     }
 
     /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.
