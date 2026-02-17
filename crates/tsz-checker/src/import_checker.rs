@@ -992,15 +992,70 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2528: Check for multiple default exports
-        // tsc always emits TS2528 for duplicate default exports, regardless of
-        // whether they target type-only or value symbols.
+        // tsc allows declaration merging of default exports:
+        // - Interface + value (function/class) can coexist
+        // - Function overloads (multiple `export default function foo(...)`) are one symbol
+        // Only emit TS2528 when there are truly conflicting default exports.
         if export_default_indices.len() > 1 {
+            // Classify each default export
+            let mut has_interface = false;
+            let mut value_count = 0;
+            let mut function_name: Option<String> = None;
+            let mut all_same_function = true;
+
             for &export_idx in &export_default_indices {
-                self.error_at_node(
-                    export_idx,
-                    "A module cannot have multiple default exports.",
-                    diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
-                );
+                let wrapped_kind = self
+                    .ctx
+                    .arena
+                    .get_export_decl_at(export_idx)
+                    .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                    .map(|n| n.kind);
+
+                match wrapped_kind {
+                    Some(k) if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                        has_interface = true;
+                    }
+                    Some(k) if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        // Check if all function defaults share the same name (overloads)
+                        let name = self
+                            .ctx
+                            .arena
+                            .get_export_decl_at(export_idx)
+                            .and_then(|ed| self.ctx.arena.get(ed.export_clause))
+                            .and_then(|n| self.ctx.arena.get_function(n))
+                            .map(|f| self.node_text(f.name).unwrap_or_default());
+                        match (&function_name, name) {
+                            (None, Some(n)) => {
+                                function_name = Some(n);
+                                value_count += 1;
+                            }
+                            (Some(existing), Some(n)) if *existing == n => {
+                                // Same function name: overload, don't count again
+                            }
+                            _ => {
+                                all_same_function = false;
+                                value_count += 1;
+                            }
+                        }
+                    }
+                    _ => {
+                        all_same_function = false;
+                        value_count += 1;
+                    }
+                }
+            }
+
+            // Emit TS2528 only when there are conflicting value exports
+            // (interface-only or interface + one value group is OK)
+            let is_conflict = value_count > 1 || (!has_interface && !all_same_function);
+            if is_conflict {
+                for &export_idx in &export_default_indices {
+                    self.error_at_node(
+                        export_idx,
+                        "A module cannot have multiple default exports.",
+                        diagnostic_codes::A_MODULE_CANNOT_HAVE_MULTIPLE_DEFAULT_EXPORTS,
+                    );
+                }
             }
         }
     }
