@@ -1714,6 +1714,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
 
             let shape = self.interner.object_shape(shape_id);
+            if !shape.flags.is_empty() {
+                return false;
+            }
             if shape
                 .properties
                 .iter()
@@ -2725,7 +2728,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if let Some(members) = intersection_list_id(self.interner, target) {
             let member_list = self.interner.type_list(members);
 
-            if self.can_use_object_intersection_fast_path(&member_list)
+            // Keep diagnostic precision when collecting mismatch reasons via tracer.
+            if self.tracer.is_none()
+                && self.can_use_object_intersection_fast_path(&member_list)
                 && let Some(merged_target) = self.build_object_intersection_target(target)
             {
                 return self.check_subtype(source, merged_target);

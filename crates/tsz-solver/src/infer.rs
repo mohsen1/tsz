@@ -1765,6 +1765,9 @@ impl<'a> InferenceContext<'a> {
             [] => None,
             [single] => (!is_subtype(result, *single)).then_some(*single),
             many => {
+                // Building and checking a very large synthetic intersection can be
+                // more expensive than directly validating bounds one-by-one.
+                // Keep the intersection shortcut for small/medium bound sets only.
                 if many.len() <= Self::UPPER_BOUND_INTERSECTION_FAST_PATH_LIMIT {
                     let intersection = self.interner.intersection(many.to_vec());
                     if is_subtype(result, intersection) {

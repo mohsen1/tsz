@@ -1223,6 +1223,10 @@ impl<'a> CheckerState<'a> {
                         })
                     });
                 if let Some(sym_id) = fast_symbol {
+                    // Fast path intentionally skips identifier-side diagnostic probes
+                    // (e.g. type-only import/value checks). The guard requires a local,
+                    // plain function declaration without explicit return annotation to
+                    // avoid those semantic/diagnostic-sensitive callee forms.
                     self.ctx.referenced_symbols.borrow_mut().insert(sym_id);
                     self.get_type_of_symbol(sym_id)
                 } else {
