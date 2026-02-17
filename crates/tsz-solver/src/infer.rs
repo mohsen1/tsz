@@ -995,6 +995,17 @@ impl<'a> InferenceContext<'a> {
                 .all(|c| c.priority == InferencePriority::ReturnType)
     }
 
+    /// Get the original un-widened literal candidate types for an inference variable.
+    pub fn get_literal_candidates(&mut self, var: InferenceVar) -> Vec<TypeId> {
+        let root = self.table.find(var);
+        let info = self.table.probe_value(root);
+        info.candidates
+            .iter()
+            .filter(|c| c.is_fresh_literal)
+            .map(|c| c.type_id)
+            .collect()
+    }
+
     /// Collect a constraint from an assignment: source flows into target
     /// If target is an inference variable, source becomes a lower bound.
     /// If source is an inference variable, target becomes an upper bound.
@@ -1824,7 +1835,7 @@ impl<'a> InferenceContext<'a> {
         let upper_bounds_only = candidates.is_empty() && !upper_bounds.is_empty();
 
         let result = if !candidates.is_empty() {
-            self.resolve_from_candidates(&candidates, is_const)
+            self.resolve_from_candidates(&candidates, is_const, &upper_bounds)
         } else if !upper_bounds.is_empty() {
             // RESTORED: Fall back to upper bounds (constraints) when no candidates exist.
             // This matches TypeScript: un-inferred generics default to their constraint.
@@ -1861,16 +1872,16 @@ impl<'a> InferenceContext<'a> {
         Ok(results)
     }
 
-    fn resolve_from_candidates(&self, candidates: &[InferenceCandidate], is_const: bool) -> TypeId {
-        // CRITICAL FIX: Always filter by priority, even with circular candidates.
-        // High-priority direct candidates should win over low-priority propagated ones.
-        // Previously: has_circular check disabled filtering, causing unwanted widening.
+    fn resolve_from_candidates(
+        &self,
+        candidates: &[InferenceCandidate],
+        is_const: bool,
+        upper_bounds: &[TypeId],
+    ) -> TypeId {
         let filtered = self.filter_candidates_by_priority(candidates);
-
         if filtered.is_empty() {
             return TypeId::UNKNOWN;
         }
-        // Filter out NEVER candidates before widening to avoid widening other candidates
         let filtered_no_never: Vec<_> = filtered
             .iter()
             .filter(|c| c.type_id != TypeId::NEVER)
@@ -1879,17 +1890,45 @@ impl<'a> InferenceContext<'a> {
         if filtered_no_never.is_empty() {
             return TypeId::NEVER;
         }
-        // If this is a const type parameter, apply const assertion transformation
-        // (preserve literals, convert arrays to readonly tuples, make objects readonly)
-        let widened = if is_const {
-            filtered_no_never
-                .iter()
-                .map(|c| widening::apply_const_assertion(self.interner, c.type_id))
-                .collect()
+        // TypeScript preserves literal types when the constraint implies literals
+        // (e.g., T extends "a" | "b"). Widening "b" to string would violate the constraint.
+        let preserve_literals = is_const || self.constraint_implies_literals(upper_bounds);
+        let widened = if preserve_literals {
+            if is_const {
+                filtered_no_never
+                    .iter()
+                    .map(|c| widening::apply_const_assertion(self.interner, c.type_id))
+                    .collect()
+            } else {
+                filtered_no_never.iter().map(|c| c.type_id).collect()
+            }
         } else {
             self.widen_candidate_types(&filtered_no_never)
         };
         self.best_common_type(&widened)
+    }
+
+    /// Check if any upper bounds contain or imply literal types.
+    fn constraint_implies_literals(&self, upper_bounds: &[TypeId]) -> bool {
+        upper_bounds
+            .iter()
+            .any(|&bound| self.type_implies_literals(bound))
+    }
+
+    /// Check if a type contains literal types (directly or in unions/intersections).
+    fn type_implies_literals(&self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Literal(_)) => true,
+            Some(TypeData::Union(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members.iter().any(|&m| self.type_implies_literals(m))
+            }
+            Some(TypeData::Intersection(list_id)) => {
+                let members = self.interner.type_list(list_id);
+                members.iter().any(|&m| self.type_implies_literals(m))
+            }
+            _ => false,
+        }
     }
 
     /// Phase 7a Task 2: Filter candidates by priority using NEW `InferencePriority`.
@@ -3813,7 +3852,8 @@ impl<'a> InferenceContext<'a> {
             // This uses the same logic as compute_constraint_result but doesn't
             // validate against upper bounds yet (that happens in final resolution)
             let is_const = self.is_var_const(root);
-            let result = self.resolve_from_candidates(&info.candidates, is_const);
+            let result =
+                self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds);
 
             // Check for occurs (recursive type)
             if self.occurs_in(root, result) {
@@ -3871,7 +3911,7 @@ impl<'a> InferenceContext<'a> {
 
                     if !info.candidates.is_empty() {
                         let is_const = self.is_var_const(root);
-                        self.resolve_from_candidates(&info.candidates, is_const)
+                        self.resolve_from_candidates(&info.candidates, is_const, &info.upper_bounds)
                     } else if !info.upper_bounds.is_empty() {
                         // No candidates yet, but we have a constraint (upper bound).
                         // Use the constraint as contextual fallback so that mapped types

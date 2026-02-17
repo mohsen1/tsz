@@ -1203,16 +1203,35 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // trigger excess property checking against type parameter constraints.
                 let ty_for_check = crate::freshness::widen_freshness(self.interner, ty);
                 if !self.checker.is_assignable_to(ty_for_check, constraint_ty) {
-                    // Inferred type doesn't satisfy constraint.
-                    // Use TypeParameterConstraintViolation for callback return type inferences
-                    // (TS2322) vs ArgumentTypeMismatch for direct arg inferences (TS2345).
-                    let return_type =
-                        instantiate_type(self.interner, func.return_type, &final_subst);
-                    return CallResult::TypeParameterConstraintViolation {
-                        inferred_type: ty,
-                        constraint_type: constraint_ty,
-                        return_type,
+                    // Try to recover using un-widened literal candidates when widening
+                    // caused the violation (e.g., "b" widened to string violates keyof O).
+                    let un_widened = infer_ctx.get_literal_candidates(var);
+                    let recovered = if !un_widened.is_empty() {
+                        let candidate_type = if un_widened.len() == 1 {
+                            un_widened[0]
+                        } else {
+                            self.interner.union(un_widened)
+                        };
+                        if self.checker.is_assignable_to(candidate_type, constraint_ty) {
+                            Some(candidate_type)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
                     };
+
+                    if let Some(recovered_ty) = recovered {
+                        final_subst.insert(tp.name, recovered_ty);
+                    } else {
+                        let return_type =
+                            instantiate_type(self.interner, func.return_type, &final_subst);
+                        return CallResult::TypeParameterConstraintViolation {
+                            inferred_type: ty,
+                            constraint_type: constraint_ty,
+                            return_type,
+                        };
+                    }
                 }
             }
         }

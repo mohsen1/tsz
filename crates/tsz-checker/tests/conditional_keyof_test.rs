@@ -39,7 +39,7 @@ const result = getProperty(shape, cond ? "width" : "height");
 
     checker.check_source_file(root);
 
-    // Should have NO errors - "width" | "height" is assignable to keyof Shape
+    // Should have NO errors - literal types preserved when constraint implies literals
     let ts2322_count = checker
         .ctx
         .diagnostics
@@ -48,7 +48,7 @@ const result = getProperty(shape, cond ? "width" : "height");
         .count();
 
     assert_eq!(
-        ts2322_count, 1,
-        "Expected 1 TS2322 error because fresh literal widening causes string to not satisfy keyof constraint, got {ts2322_count}"
+        ts2322_count, 0,
+        "Expected 0 TS2322 errors - literal types preserved when constraint implies literals, got {ts2322_count}"
     );
 }
