@@ -149,8 +149,10 @@ impl<'a> Printer<'a> {
             self.write(")");
         }
 
-        // Arrow functions capture `this` lexically, so we use `this` directly
-        self.write(" => __awaiter(this, void 0, void 0, function* () {");
+        // Arrow functions don't have their own `this`, so TSC passes `void 0`
+        // as the this-arg to __awaiter. The arrow captures `this` lexically from
+        // the enclosing scope, but __awaiter doesn't need it.
+        self.write(" => __awaiter(void 0, void 0, void 0, function* () {");
         self.write_line();
         self.increase_indent();
 
