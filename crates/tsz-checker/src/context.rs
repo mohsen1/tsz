@@ -344,6 +344,10 @@ pub struct CheckerContext<'a> {
     /// yet, so TS7006 should be deferred until the checking phase.
     pub is_checking_statements: bool,
 
+    /// Whether the current file is a declaration file (.d.ts/.d.tsx/.d.mts/.d.cts).
+    /// Used to suppress statement-specific errors (TS1105, TS1108, TS1104) in favor of TS1036.
+    pub is_in_ambient_declaration_file: bool,
+
     /// Whether we are currently evaluating the LHS of a destructuring assignment.
     /// Used to suppress TS1117 (duplicate property) checks in object patterns.
     pub in_destructuring_target: bool,
@@ -650,6 +654,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             is_checking_statements: false,
+            is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
@@ -771,6 +776,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             is_checking_statements: false,
+            is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
@@ -883,6 +889,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             is_checking_statements: false,
+            is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
@@ -997,6 +1004,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             is_checking_statements: false,
+            is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
@@ -1110,6 +1118,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             is_checking_statements: false,
+            is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),
@@ -1243,6 +1252,7 @@ impl<'a> CheckerContext<'a> {
             type_parameter_scope: FxHashMap::default(),
             contextual_type: None,
             is_checking_statements: false,
+            is_in_ambient_declaration_file: false,
             in_destructuring_target: false,
             skip_flow_narrowing: false,
             instantiation_depth: RefCell::new(0),

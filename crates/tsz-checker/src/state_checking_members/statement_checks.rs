@@ -247,6 +247,11 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_break_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
 
+        // In .d.ts files, TS1036 is emitted instead of TS1105
+        if self.ctx.is_in_ambient_declaration_file {
+            return;
+        }
+
         // Get the label if any
         let label_name = self
             .ctx
@@ -309,6 +314,11 @@ impl<'a> CheckerState<'a> {
     /// TS1116: A 'continue' statement can only jump to a label of an enclosing iteration statement.
     pub(crate) fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
+
+        // In .d.ts files, TS1036 is emitted instead of TS1104
+        if self.ctx.is_in_ambient_declaration_file {
+            return;
+        }
 
         // Get the label if any
         let label_name = self

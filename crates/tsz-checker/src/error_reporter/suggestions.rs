@@ -215,29 +215,10 @@ impl<'a> CheckerState<'a> {
             );
         }
 
-        // Fall back to lib globals for spelling suggestions when local scope
-        // candidates don't produce a close enough match.
-        if best_candidate.is_none() {
-            let lib_binders = self.get_lib_binders();
-            for lib_binder in &lib_binders {
-                for (candidate, sym_id) in lib_binder.file_locals.iter() {
-                    if lib_binder
-                        .get_symbol(*sym_id)
-                        .is_none_or(|sym| sym.flags & tsz_binder::symbol_flags::VALUE == 0)
-                    {
-                        continue;
-                    }
-                    Self::consider_identifier_suggestion(
-                        name,
-                        candidate,
-                        name_len,
-                        maximum_length_difference,
-                        &mut best_distance,
-                        &mut best_candidate,
-                    );
-                }
-            }
-        }
+        // NOTE: We intentionally do NOT fall back to lib globals for spelling
+        // suggestions. TSC's fallback is more targeted (only specific well-known
+        // globals), while iterating all file_locals from lib.d.ts produces false
+        // positives (e.g., Script→WScript, parse→parseFloat).
 
         best_candidate.map(|c| vec![c])
     }
