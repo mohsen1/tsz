@@ -2001,6 +2001,10 @@ impl<'a> CheckerState<'a> {
         if object_type == TypeId::ERROR {
             return TypeId::ERROR;
         }
+        // Element access on `never` returns `never` (bottom type propagation).
+        if object_type == TypeId::NEVER {
+            return TypeId::NEVER;
+        }
 
         let (object_type_for_access, nullish_cause) = self.split_nullish_type(object_type);
         let Some(object_type_for_access) = object_type_for_access else {
