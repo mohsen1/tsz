@@ -111,7 +111,7 @@ impl Default for CheckerOptions {
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
-            always_strict: true,
+            always_strict: false,
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,
