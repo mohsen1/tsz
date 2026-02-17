@@ -58,7 +58,11 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
     // Transform members
     let members = transform_enum_members(arena, &enum_data.members, &name);
 
-    Some(IRNode::EnumIIFE { name, members })
+    Some(IRNode::EnumIIFE {
+        name,
+        members,
+        namespace_export: None,
+    })
 }
 
 /// Transform enum members to IR

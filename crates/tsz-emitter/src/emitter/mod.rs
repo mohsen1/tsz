@@ -283,6 +283,10 @@ pub struct Printer<'a> {
     /// Whether we're inside a namespace IIFE (strip export/default modifiers from classes).
     pub(super) in_namespace_iife: bool,
 
+    /// When set, the next enum emit should fold the namespace export into the IIFE closing.
+    /// E.g., `(Color = A.Color || (A.Color = {}))` instead of `(Color || (Color = {}))`.
+    pub(super) enum_namespace_export: Option<String>,
+
     /// Marker that the next block emission is a function body.
     pub(super) emitting_function_body_block: bool,
 
@@ -378,6 +382,7 @@ impl<'a> Printer<'a> {
             temp_scope_stack: Vec::new(),
             first_for_of_emitted: false,
             in_namespace_iife: false,
+            enum_namespace_export: None,
             emitting_function_body_block: false,
             current_namespace_name: None,
             declared_namespace_names: FxHashSet::default(),
