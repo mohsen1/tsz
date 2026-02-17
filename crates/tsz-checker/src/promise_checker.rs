@@ -561,15 +561,23 @@ impl<'a> CheckerState<'a> {
         // Check if it's a type application (e.g., Generator<Y, R, N>)
         let app = query::type_application(self.ctx.types, type_id)?;
 
-        // Need at least 2 type arguments (Y and R)
-        if app.args.len() < 2 {
+        if app.args.is_empty() {
             return None;
         }
 
         // Check if base is Generator, AsyncGenerator, Iterator, or AsyncIterator
-        let is_generator_like = self.is_generator_like_base_type(app.base);
+        if !self.is_generator_like_base_type(app.base) {
+            return None;
+        }
 
-        is_generator_like.then(|| app.args[1])
+        if app.args.len() >= 2 {
+            // Generator<Y, R, N>, Iterator<T, TReturn, TNext> etc. — TReturn is args[1]
+            Some(app.args[1])
+        } else {
+            // IterableIterator<T>, AsyncIterableIterator<T> — only 1 type arg.
+            // TReturn defaults to `any` per the lib definitions.
+            Some(TypeId::ANY)
+        }
     }
 
     /// Extract the `TYield` type argument from Generator<Y, R, N> or `AsyncGenerator`<Y, R, N>.
