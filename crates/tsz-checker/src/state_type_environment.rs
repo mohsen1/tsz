@@ -881,7 +881,15 @@ impl<'a> CheckerState<'a> {
             && resolved != TypeId::ANY
             && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
         {
-            env.insert_def(def_id, resolved);
+            // Insert the type params alongside the def type so that
+            // Application evaluation via TypeEnvironment can instantiate
+            // generic types correctly, even for DefIds created in different
+            // checker contexts (e.g., PromiseLike mapped multiple times).
+            if let Some(params) = self.ctx.get_def_type_params(def_id) {
+                env.insert_def_with_params(def_id, resolved, params);
+            } else {
+                env.insert_def(def_id, resolved);
+            }
         }
         Some(resolved)
     }
