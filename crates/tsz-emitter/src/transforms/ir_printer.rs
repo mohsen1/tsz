@@ -1210,7 +1210,7 @@ impl<'a> IRPrinter<'a> {
                             crate::transform_context::TransformDirective::SubstituteArguments
                         ) && let Some(_ident) = arena.get_identifier(node)
                         {
-                            self.write("_arguments");
+                            self.write("arguments");
                             return;
                         }
 
