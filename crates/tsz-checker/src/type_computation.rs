@@ -3026,6 +3026,20 @@ impl<'a> CheckerState<'a> {
                     self.check_computed_property_name(accessor.name);
                     if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         self.get_type_of_function(elem_idx);
+
+                        // TS2378: A 'get' accessor must return a value.
+                        if !accessor.body.is_none() {
+                            let has_return = self.body_has_return_with_value(accessor.body);
+                            let falls_through = self.function_body_falls_through(accessor.body);
+                            if !has_return && falls_through {
+                                use crate::diagnostics::diagnostic_codes;
+                                self.error_at_node(
+                                    accessor.name,
+                                    "A 'get' accessor must return a value.",
+                                    diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
+                                );
+                            }
+                        }
                     }
                 }
             }

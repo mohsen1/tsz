@@ -303,6 +303,10 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // TS1212/TS1213: Check if the computed expression is a strict mode reserved word.
+        // E.g., `{ [public]: 0 }` should emit TS1212 in strict mode.
+        self.check_strict_mode_reserved_name_at(computed.expression, name_idx);
+
         let expr_type = self.get_type_of_node(computed.expression);
 
         // Skip error types to avoid cascading diagnostics
