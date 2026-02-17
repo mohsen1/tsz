@@ -133,9 +133,9 @@ build_runner() {
     else
         if find "$SCRIPT_DIR/src" -type f -name '*.ts' -newer "$dist_runner" | grep -q .; then
             should_build=1
-        elif [[ -f "$SCRIPT_DIR/package.json" && "$SCRIPT_DIR/package.json" -nt "$dist_runner" ]]; then
+        elif [[ -f "$SCRIPT_DIR/../package.json" && "$SCRIPT_DIR/../package.json" -nt "$dist_runner" ]]; then
             should_build=1
-        elif [[ -f "$SCRIPT_DIR/package-lock.json" && "$SCRIPT_DIR/package-lock.json" -nt "$dist_runner" ]]; then
+        elif [[ -f "$SCRIPT_DIR/../package-lock.json" && "$SCRIPT_DIR/../package-lock.json" -nt "$dist_runner" ]]; then
             should_build=1
         fi
     fi
@@ -146,13 +146,17 @@ build_runner() {
     fi
 
     log_step "Building emit runner..."
+    local scripts_dir
+    scripts_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
+    # Install from the consolidated scripts/ package (parent of emit/)
+    if [[ ! -d "$scripts_dir/node_modules" ]]; then
+        log_step "Installing scripts dependencies..."
+        (cd "$scripts_dir" && npm install --silent 2>/dev/null || npm install)
+    fi
     (
         cd "$SCRIPT_DIR"
-        "$ROOT_DIR/scripts/ensure-pinned-typescript.sh" "$SCRIPT_DIR"
-        if [[ ! -d "node_modules" ]]; then
-            npm install --silent 2>/dev/null || npm install
-        fi
-        npm run build --silent 2>/dev/null || npm run build
+        # Use tsc from the parent scripts/node_modules
+        "$scripts_dir/node_modules/.bin/tsc" -p tsconfig.json
     )
     log_success "Runner built"
 }

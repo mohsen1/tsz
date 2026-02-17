@@ -534,7 +534,7 @@ function formatTime(secs) {
 function parseArgs(argv) {
   const args = {
     testDir: './TypeScript/tests/cases',
-    output: './tsc-cache-full.json',
+    output: './scripts/tsc-cache-full.json',
     workers: Math.min(Math.max(1, cpus().length - 1), 8),
     max: 0,
     verbose: false,

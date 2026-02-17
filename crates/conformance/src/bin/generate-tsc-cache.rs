@@ -26,7 +26,7 @@ struct Args {
     test_dir: String,
 
     /// Output cache file path
-    #[arg(long, default_value = "./tsc-cache-full.json")]
+    #[arg(long, default_value = "./scripts/tsc-cache-full.json")]
     output: String,
 
     /// Maximum number of tests to process (0 = unlimited)
