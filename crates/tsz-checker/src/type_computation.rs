@@ -2108,11 +2108,7 @@ impl<'a> CheckerState<'a> {
                 if report_no_index {
                     result_type = Some(TypeId::ANY);
                 } else if !types.is_empty() {
-                    result_type = Some(if types.len() == 1 {
-                        types[0]
-                    } else {
-                        self.ctx.types.factory().union(types)
-                    });
+                    result_type = Some(tsz_solver::utils::union_or_single(self.ctx.types, types));
                 }
             }
         }
