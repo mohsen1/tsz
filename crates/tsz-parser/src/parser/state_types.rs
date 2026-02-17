@@ -79,12 +79,14 @@ impl ParserState {
             }
         }
 
-        // Additional error recovery: if we're at a clear statement boundary or EOF,
-        // and the token cannot start a type, return an error node.
+        // Error recovery: if the token cannot start a type and we're at a boundary
+        // (statement start, EOF, or type terminator like `)` `,` `=>`), emit TS1110.
         // Note: We must check can_token_start_type() because identifiers are both
         // statement starters AND valid type names (e.g., "let x: MyType = ...")
         if !self.can_token_start_type()
-            && (self.is_statement_start() || self.is_token(SyntaxKind::EndOfFileToken))
+            && (self.is_statement_start()
+                || self.is_token(SyntaxKind::EndOfFileToken)
+                || self.is_type_terminator_token())
         {
             self.error_type_expected();
             return self.error_node();
