@@ -351,6 +351,9 @@ pub struct TypeInterner {
     array_base_type: OnceLock<TypeId>,
     /// Type parameters for the Array base type
     array_base_type_params: OnceLock<Vec<TypeParamInfo>>,
+    /// Boxed interface types for primitives (e.g., String interface for `string`).
+    /// Registered from lib.d.ts during primordial type setup.
+    boxed_types: DashMap<IntrinsicKind, TypeId, FxBuildHasher>,
 }
 
 impl std::fmt::Debug for TypeInterner {
@@ -386,6 +389,7 @@ impl TypeInterner {
             unit_type_cache: DashMap::with_hasher(FxBuildHasher),
             array_base_type: OnceLock::new(),
             array_base_type_params: OnceLock::new(),
+            boxed_types: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
@@ -410,6 +414,21 @@ impl TypeInterner {
         self.array_base_type_params
             .get()
             .map_or(&[], |v| v.as_slice())
+    }
+
+    /// Set a boxed interface type for a primitive intrinsic kind.
+    ///
+    /// Called during primordial type setup when lib.d.ts is processed.
+    /// For example, `set_boxed_type(IntrinsicKind::String, type_id_of_String_interface)`
+    /// enables property access on `string` values to resolve through the String interface.
+    pub fn set_boxed_type(&self, kind: IntrinsicKind, type_id: TypeId) {
+        self.boxed_types.insert(kind, type_id);
+    }
+
+    /// Get the boxed interface type for a primitive intrinsic kind.
+    #[inline]
+    pub fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {
+        self.boxed_types.get(&kind).map(|r| *r)
     }
 
     /// Get the object property maps, initializing on first access

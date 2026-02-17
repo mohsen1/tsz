@@ -3288,6 +3288,23 @@ impl<'a> CheckerState<'a> {
                 .register_array_base_type(ty, array_type_params.clone());
         }
 
+        // Register boxed types through the query database so PropertyAccessEvaluator
+        // can resolve primitive methods (e.g., "hello".match()) through the actual
+        // interface types from lib.d.ts instead of falling back to hardcoded lists.
+        for (kind, type_id) in [
+            (IntrinsicKind::String, string_type),
+            (IntrinsicKind::Number, number_type),
+            (IntrinsicKind::Boolean, boolean_type),
+            (IntrinsicKind::Symbol, symbol_type),
+            (IntrinsicKind::Bigint, bigint_type),
+            (IntrinsicKind::Object, object_type),
+            (IntrinsicKind::Function, function_type),
+        ] {
+            if let Some(ty) = type_id {
+                self.ctx.types.register_boxed_type(kind, ty);
+            }
+        }
+
         // 2. Populate the environment
         // We use try_borrow_mut to be safe, though at this stage it should be free
         if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
