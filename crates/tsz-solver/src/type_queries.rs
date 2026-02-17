@@ -200,13 +200,17 @@ pub fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     matches!(db.lookup(type_id), Some(TypeData::TemplateLiteral(_)))
 }
 
-/// Check if a type is a type parameter or infer type.
+/// Check if a type is a type parameter, bound parameter, or infer type.
 ///
-/// Returns true for `TypeData::TypeParameter` and `TypeData::Infer`.
+/// Returns true for `TypeData::TypeParameter`, `TypeData::BoundParameter`,
+/// and `TypeData::Infer`. BoundParameter is included because it represents
+/// a type parameter that has been bound to a specific index in a generic
+/// signature — it should still be treated as "unresolved" for purposes like
+/// excess property checking and constraint validation.
 pub fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(
         db.lookup(type_id),
-        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+        Some(TypeData::TypeParameter(_) | TypeData::BoundParameter(_) | TypeData::Infer(_))
     )
 }
 
