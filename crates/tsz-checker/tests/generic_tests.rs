@@ -367,3 +367,173 @@ const r4 = foo<number, boolean>(1, "hello"); // TS2322: string not assignable to
         "Expected at least 1 TS2322 error, got {ts2322_count}"
     );
 }
+
+#[test]
+fn test_ts2313_direct_circular_constraint() {
+    let source = r"
+class C<T extends T> { }
+function f<T extends T>() { }
+interface I<T extends T> { }
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2313_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2313)
+        .count();
+    assert_eq!(
+        ts2313_count,
+        3,
+        "Expected 3 TS2313 errors for direct circular constraints, got {ts2313_count}. Diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2313_indirect_circular_constraint() {
+    let source = r"
+class C<U extends T, T extends U> { }
+class C2<T extends U, U extends V, V extends T> { }
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2313_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2313)
+        .count();
+    assert_eq!(
+        ts2313_count,
+        5,
+        "Expected 5 TS2313 errors for indirect circular constraints (2 for C, 3 for C2), got {ts2313_count}. Diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2313_no_false_positive_for_non_circular() {
+    // S extends Foo<S> is NOT circular - the constraint wraps S in Foo<>
+    let source = r"
+type Foo<T> = [T] extends [number] ? {} : {};
+function foo<S extends Foo<S>>() {}
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2313_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2313)
+        .count();
+    assert_eq!(
+        ts2313_count,
+        0,
+        "Expected 0 TS2313 errors for non-circular constraint Foo<S>, got {ts2313_count}. Diagnostics: {:?}",
+        checker
+            .ctx
+            .diagnostics
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ts2313_non_cyclic_chain_not_flagged() {
+    // U extends T, T extends V, V extends T: U is NOT part of the cycle
+    let source = r"
+class D<U extends T, T extends V, V extends T> { }
+";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let ts2313_diags: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2313)
+        .collect();
+
+    // T and V form a cycle, but U just points to the cycle - should not be flagged
+    assert_eq!(
+        ts2313_diags.len(),
+        2,
+        "Expected 2 TS2313 errors (T and V), not U. Got: {:?}",
+        ts2313_diags
+            .iter()
+            .map(|d| d.message_text.clone())
+            .collect::<Vec<_>>()
+    );
+}
