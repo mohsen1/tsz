@@ -433,10 +433,11 @@ impl<'a> CheckerState<'a> {
                     if base_type.is_none() && !base_symbol.value_declaration.is_none() {
                         let base_decl_idx = base_symbol.value_declaration;
                         if let Some(base_node) = self.ctx.arena.get(base_decl_idx)
-                            && let Some(base_class) = self.ctx.arena.get_class(base_node) {
-                                base_type =
-                                    Some(self.get_class_instance_type(base_decl_idx, base_class));
-                            }
+                            && let Some(base_class) = self.ctx.arena.get_class(base_node)
+                        {
+                            base_type =
+                                Some(self.get_class_instance_type(base_decl_idx, base_class));
+                        }
                     }
 
                     // For interfaces/type aliases, resolve through symbol type

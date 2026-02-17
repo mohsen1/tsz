@@ -1188,6 +1188,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for CompatChecker<'a, R> {
         // Bypass the cache and perform a one-off check with non-strict function variance.
         self.is_assignable_impl(source, target, false)
     }
+
+    fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        self.subtype.evaluate_type(type_id)
+    }
 }
 
 // =============================================================================

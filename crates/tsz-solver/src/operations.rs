@@ -62,6 +62,14 @@ pub trait AssignabilityChecker {
     fn is_assignable_to_bivariant_callback(&mut self, source: TypeId, target: TypeId) -> bool {
         self.is_assignable_to(source, target)
     }
+
+    /// Evaluate/expand a type using the checker's resolver context.
+    /// This is needed during inference constraint collection, where Application types
+    /// like `Func<T>` must be expanded to their structural form (e.g., a Callable).
+    /// The default implementation returns the type unchanged (no resolver available).
+    fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        type_id
+    }
 }
 
 // =============================================================================
@@ -3053,9 +3061,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 self.constrain_types(ctx, var_map, s_mem, t_mem, priority);
             }
             // Application on source side (not matched by Application-Application above):
-            // evaluate and recurse
+            // evaluate and recurse. Use the checker's resolver to expand Application
+            // types like `Func<T>` that reference DefId-based interfaces.
             (Some(TypeData::Application(_)), _) => {
-                let evaluated = crate::evaluate::evaluate_type(self.interner, source);
+                let evaluated = self.checker.evaluate_type(source);
                 if evaluated != source {
                     self.constrain_types(ctx, var_map, evaluated, target, priority);
                 }
@@ -3064,7 +3073,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             // evaluate and recurse. This handles inference from object literal against
             // generic types like Options<T, U>.
             (_, Some(TypeData::Application(_))) => {
-                let evaluated = crate::evaluate::evaluate_type(self.interner, target);
+                let evaluated = self.checker.evaluate_type(target);
                 if evaluated != target {
                     self.constrain_types(ctx, var_map, source, evaluated, priority);
                 }

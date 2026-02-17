@@ -4712,6 +4712,10 @@ impl<'a, R: TypeResolver> AssignabilityChecker for SubtypeChecker<'a, R> {
         self.strict_function_types = prev_strict;
         result
     }
+
+    fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
+        SubtypeChecker::evaluate_type(self, type_id)
+    }
 }
 
 /// Check if two types are structurally identical using De Bruijn indices for cycles.
