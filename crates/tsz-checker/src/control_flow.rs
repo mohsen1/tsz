@@ -189,8 +189,23 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
+    /// Check if the switch expression is the literal `true` keyword.
+    /// `switch(true)` is a pattern where each case clause acts as an independent
+    /// type guard condition, not a comparison against the switch expression.
+    fn is_switch_true(&self, switch_expr: NodeIndex) -> bool {
+        self.arena
+            .get(switch_expr)
+            .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
+    }
+
     #[inline]
     fn switch_can_affect_reference(&self, switch_expr: NodeIndex, reference: NodeIndex) -> bool {
+        // switch(true) can narrow any reference — each case expression is an
+        // independent condition (like an if-else chain).
+        if self.is_switch_true(switch_expr) {
+            return true;
+        }
+
         let key = (switch_expr.0, reference.0);
         if let Some(&cached) = self.switch_reference_cache.borrow().get(&key) {
             return cached;
@@ -1027,6 +1042,16 @@ impl<'a> FlowAnalyzer<'a> {
                 switch_data.case_block,
                 reference,
                 &narrowing,
+            )
+        } else if self.is_switch_true(switch_data.expression) {
+            // For switch(true), each case expression is an independent condition.
+            // Treat `case expr:` as `if (expr)` rather than `if (true === expr)`.
+            self.narrow_type_by_condition(
+                pre_switch_type,
+                clause.expression,
+                reference,
+                true,
+                FlowNodeId::NONE,
             )
         } else {
             self.narrow_by_switch_clause(
