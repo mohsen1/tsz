@@ -547,11 +547,13 @@ impl<'a> FlowAnalyzer<'a> {
                         // Antecedent already computed — use its narrowed type
                         (ant_type, ant)
                     } else if !visited.contains(&ant) {
-                        // Antecedent not yet computed — defer if it produces a
-                        // meaningful narrowed type we need to wait for:
+                        // Antecedent not yet computed — defer if it could carry
+                        // narrowing info we need:
                         //   CONDITION: else-if chains (nested type guards)
                         //   CALL: assertion functions
                         //   LOOP_LABEL: loop fixed-point analysis (incomplete types)
+                        //   BRANCH_LABEL: merges after if-return that carry narrowed types
+                        //   ASSIGNMENT: may chain through from narrowing antecedents
                         let ant_flags = self
                             .binder
                             .flow_nodes
@@ -560,7 +562,8 @@ impl<'a> FlowAnalyzer<'a> {
                             .unwrap_or(0);
                         let ant_needs_defer = (ant_flags & flow_flags::CONDITION) != 0
                             || (ant_flags & flow_flags::CALL) != 0
-                            || (ant_flags & flow_flags::LOOP_LABEL) != 0;
+                            || (ant_flags & flow_flags::LOOP_LABEL) != 0
+                            || (ant_flags & flow_flags::BRANCH_LABEL) != 0;
                         if ant_needs_defer {
                             if !in_worklist.contains(&ant) {
                                 worklist.push_front((ant, current_type));
@@ -733,10 +736,13 @@ impl<'a> FlowAnalyzer<'a> {
                         } else if !visited.contains(&ant) {
                             let ant_needs_defer =
                                 self.binder.flow_nodes.get(ant).is_some_and(|f| {
-                                    f.has_any_flags(flow_flags::CONDITION | flow_flags::CALL)
+                                    f.has_any_flags(
+                                        flow_flags::CONDITION
+                                            | flow_flags::CALL
+                                            | flow_flags::BRANCH_LABEL,
+                                    )
                                 });
                             if ant_needs_defer {
-                                // Defer: process antecedent first, then re-process self
                                 if !in_worklist.contains(&ant) {
                                     worklist.push_front((ant, current_type));
                                     in_worklist.insert(ant);
@@ -747,7 +753,6 @@ impl<'a> FlowAnalyzer<'a> {
                                 }
                                 continue;
                             }
-                            // Non-narrowing antecedent: schedule it but use current_type
                             if !in_worklist.contains(&ant) {
                                 worklist.push_back((ant, current_type));
                                 in_worklist.insert(ant);
