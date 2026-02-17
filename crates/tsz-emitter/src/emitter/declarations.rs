@@ -1099,6 +1099,9 @@ impl<'a> Printer<'a> {
                         if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
                             // export var x = 10; → ns.x = 10;
                             self.emit_namespace_exported_variable(inner_idx, &ns_name, stmt_node);
+                        } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                            // export import X = Y; → ns.X = Y;
+                            self.emit_namespace_exported_import_alias(inner_idx, &ns_name);
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
@@ -1167,6 +1170,37 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// Emit exported import alias as namespace property assignment.
+    /// `export import X = Y;` → `ns.X = Y;`
+    fn emit_namespace_exported_import_alias(&mut self, import_idx: NodeIndex, ns_name: &str) {
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return;
+        };
+        let Some(import) = self.arena.get_import_decl(import_node) else {
+            return;
+        };
+
+        // Get the alias name
+        let alias_name = self.get_identifier_text_idx(import.import_clause);
+        if alias_name.is_empty() {
+            return;
+        }
+
+        // Check if the referenced value has runtime semantics
+        if !self.import_decl_has_runtime_value(import) {
+            return;
+        }
+
+        // Emit: ns.X = Y;
+        self.write(ns_name);
+        self.write(".");
+        self.write(&alias_name);
+        self.write(" = ");
+        self.emit_entity_name(import.module_specifier);
+        self.write(";");
+        self.write_line();
     }
 
     /// Emit exported variable as namespace property assignment.

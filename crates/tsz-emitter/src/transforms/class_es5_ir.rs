@@ -1940,6 +1940,23 @@ impl<'a> AstToIr<'a> {
                 self.convert_type_assertion(idx)
             }
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => self.convert_non_null(idx),
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                // QualifiedName (A.B) is used in import aliases: import X = A.B
+                // Convert to PropertyAccess IR so source text isn't copied verbatim
+                // (which would include trailing semicolons).
+                if let Some(qn) = self.arena.get_qualified_name(node) {
+                    IRNode::PropertyAccess {
+                        object: Box::new(self.convert_expression(qn.left)),
+                        property: self
+                            .arena
+                            .get(qn.right)
+                            .and_then(|n| self.arena.get_identifier(n))
+                            .map_or_else(String::new, |id| id.escaped_text.clone()),
+                    }
+                } else {
+                    IRNode::ASTRef(idx)
+                }
+            }
             _ => IRNode::ASTRef(idx), // Fallback
         }
     }
