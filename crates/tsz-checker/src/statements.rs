@@ -111,6 +111,12 @@ pub trait StatementCheckCallbacks {
         has_await_modifier: bool,
     );
 
+    /// TS2491: Check if a for-in variable declaration uses a destructuring pattern.
+    fn check_for_in_destructuring_pattern(&mut self, initializer: NodeIndex);
+
+    /// TS2491: Check if a for-in expression initializer is an array/object literal.
+    fn check_for_in_expression_destructuring(&mut self, initializer: NodeIndex);
+
     /// Recursively check a nested statement (callback to `check_statement`).
     fn check_statement(&mut self, stmt_idx: NodeIndex);
 
@@ -397,6 +403,10 @@ impl StatementChecker {
                             .is_some_and(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
                     };
                     if is_var_decl_list {
+                        // TS2491: for-in cannot use destructuring patterns
+                        if !is_for_of {
+                            state.check_for_in_destructuring_pattern(initializer);
+                        }
                         state.assign_for_in_of_initializer_types(
                             initializer,
                             loop_var_type,
@@ -404,6 +414,10 @@ impl StatementChecker {
                         );
                         state.check_variable_declaration_list(initializer);
                     } else {
+                        // TS2491: for-in with expression initializer cannot be array/object literal
+                        if !is_for_of {
+                            state.check_for_in_expression_destructuring(initializer);
+                        }
                         // Non-declaration initializer (e.g., `for (v of expr)` where v is pre-declared)
                         // Check assignability: element type must be assignable to the variable's type
                         // Also checks TS2588 (const assignment)
