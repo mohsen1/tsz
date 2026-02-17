@@ -840,7 +840,6 @@ impl<'a> FlowGraphBuilder<'a> {
                     FlowNodeId::NONE, // No fallthrough - implicit default is separate path
                     switch_data.case_block, // Use case_block as marker for implicit default
                 );
-
                 // Connect implicit default to end label (fallthrough from switch)
                 self.add_antecedent(end_label, implicit_default_flow);
             }
