@@ -15,10 +15,9 @@ use tsz_solver::{
     NarrowingContext, ParamInfo, SymbolRef, TypeGuard, TypeId, TypePredicate, TypePredicateTarget,
     TypeofKind,
     type_queries::{
-        ConstructorInstanceKind, LiteralValueKind, PredicateSignatureKind,
-        TypeParameterConstraintKind, classify_for_constructor_instance, classify_for_literal_value,
-        classify_for_predicate_signature, classify_for_type_parameter_constraint,
-        is_narrowing_literal,
+        LiteralValueKind, PredicateSignatureKind, TypeParameterConstraintKind,
+        classify_for_literal_value, classify_for_predicate_signature,
+        classify_for_type_parameter_constraint, is_narrowing_literal,
     },
 };
 
@@ -532,7 +531,8 @@ impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn instance_type_from_constructor(&self, expr: NodeIndex) -> Option<TypeId> {
         if let Some(node_types) = self.node_types
             && let Some(&type_id) = node_types.get(&expr.0)
-            && let Some(instance_type) = self.instance_type_from_constructor_type(type_id)
+            && let Some(instance_type) =
+                tsz_solver::type_queries::instance_type_from_constructor(self.interner, type_id)
         {
             return Some(instance_type);
         }
@@ -555,52 +555,6 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
-    }
-
-    pub(crate) fn instance_type_from_constructor_type(&self, type_id: TypeId) -> Option<TypeId> {
-        match classify_for_constructor_instance(self.interner, type_id) {
-            ConstructorInstanceKind::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                if shape.construct_signatures.is_empty() {
-                    return None;
-                }
-                let mut returns = Vec::new();
-                for sig in &shape.construct_signatures {
-                    returns.push(sig.return_type);
-                }
-                Some(if returns.len() == 1 {
-                    returns[0]
-                } else {
-                    self.interner.union(returns)
-                })
-            }
-            ConstructorInstanceKind::Union(members) => {
-                let mut instance_types = Vec::new();
-                for member in members {
-                    if let Some(instance_type) = self.instance_type_from_constructor_type(member) {
-                        instance_types.push(instance_type);
-                    }
-                }
-                if instance_types.is_empty() {
-                    None
-                } else if instance_types.len() == 1 {
-                    Some(instance_types[0])
-                } else {
-                    Some(self.interner.union(instance_types))
-                }
-            }
-            ConstructorInstanceKind::Intersection(members) => {
-                // For intersection types, TypeScript finds the first member with a construct signature
-                // Example: { new(): T } & { foo: true } extracts T from the first member
-                for member in members {
-                    if let Some(instance_type) = self.instance_type_from_constructor_type(member) {
-                        return Some(instance_type);
-                    }
-                }
-                None
-            }
-            ConstructorInstanceKind::None => None,
-        }
     }
 
     pub(crate) fn narrow_by_in_operator(
