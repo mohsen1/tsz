@@ -553,9 +553,12 @@ impl<'a> CheckerState<'a> {
 
     /// Check for duplicate property names in type literals (TS2300).
     /// e.g. `{ a: string; a: number; }` has duplicate property `a`.
+    ///
+    /// Method signatures (overloads) with the same name are allowed — only
+    /// property signatures are checked for duplicates.
     pub(crate) fn check_type_literal_duplicate_properties(&mut self, members: &[NodeIndex]) {
         use crate::diagnostics::diagnostic_codes;
-        use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
+        use tsz_parser::parser::syntax_kind_ext::PROPERTY_SIGNATURE;
 
         let mut seen: rustc_hash::FxHashMap<String, NodeIndex> = rustc_hash::FxHashMap::default();
 
@@ -564,7 +567,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if member_node.kind != PROPERTY_SIGNATURE && member_node.kind != METHOD_SIGNATURE {
+            // Only check property signatures for duplicates.
+            // Method signatures with the same name are valid overloads.
+            if member_node.kind != PROPERTY_SIGNATURE {
                 continue;
             }
 
