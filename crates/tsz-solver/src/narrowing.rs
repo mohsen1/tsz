@@ -1727,6 +1727,24 @@ impl<'a> NarrowingContext<'a> {
         source_type
     }
 
+    /// Check if a literal type is assignable to a target for narrowing purposes.
+    ///
+    /// Handles union decomposition: if the target is a union, checks each member.
+    /// Falls back to `narrow_to_type` to determine if the literal can narrow to the target.
+    pub fn literal_assignable_to(&self, literal: TypeId, target: TypeId) -> bool {
+        if literal == target || target == TypeId::ANY || target == TypeId::UNKNOWN {
+            return true;
+        }
+
+        if let UnionMembersKind::Union(members) = classify_for_union_members(self.db, target) {
+            return members
+                .iter()
+                .any(|&member| self.literal_assignable_to(literal, member));
+        }
+
+        self.narrow_to_type(literal, target) != TypeId::NEVER
+    }
+
     /// Narrow a type to exclude members assignable to target.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
         if let Some(members) = intersection_list_id(self.db, source_type) {
