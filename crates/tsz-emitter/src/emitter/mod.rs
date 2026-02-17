@@ -2285,6 +2285,8 @@ impl<'a> Printer<'a> {
                 | ModuleKind::ES2022
                 | ModuleKind::ESNext
                 | ModuleKind::Preserve
+                | ModuleKind::Node16
+                | ModuleKind::NodeNext
         );
 
         // Check if source already has "use strict" directive
