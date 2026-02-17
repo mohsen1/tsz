@@ -37,9 +37,20 @@ where
     if items.is_empty() {
         return;
     }
-    let existing: FxHashSet<_> = target.iter().cloned().collect();
+
+    // Hot path for inference: most merges add a single item.
+    // Avoid allocating/hash-building a set for that case.
+    if items.len() == 1 {
+        let item = &items[0];
+        if !target.contains(item) {
+            target.push(item.clone());
+        }
+        return;
+    }
+
+    let mut existing: FxHashSet<_> = target.iter().cloned().collect();
     for item in items {
-        if !existing.contains(item) {
+        if existing.insert(item.clone()) {
             target.push(item.clone());
         }
     }
@@ -321,6 +332,8 @@ pub struct InferenceContext<'a> {
 }
 
 impl<'a> InferenceContext<'a> {
+    const UPPER_BOUND_INTERSECTION_FAST_PATH_LIMIT: usize = 8;
+
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         InferenceContext {
             interner,
@@ -1650,29 +1663,11 @@ impl<'a> InferenceContext<'a> {
 
         // Validate against upper bounds
         if !upper_bounds_only {
-            let mut filtered_upper_bounds = Vec::new();
-            for &upper in &upper_bounds {
-                if matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
-                    continue;
-                }
-                filtered_upper_bounds.push(upper);
-            }
-
-            if filtered_upper_bounds.len() > 1 {
-                let intersection = self.interner.intersection(filtered_upper_bounds.clone());
-                if !self.is_subtype(result, intersection) {
-                    for &upper in &filtered_upper_bounds {
-                        if !self.is_subtype(result, upper) {
-                            return Err(InferenceError::BoundsViolation {
-                                var,
-                                lower: result,
-                                upper,
-                            });
-                        }
-                    }
-                }
-            } else if let Some(&upper) = filtered_upper_bounds.first()
-                && !self.is_subtype(result, upper)
+            let filtered_upper_bounds = Self::filter_relevant_upper_bounds(&upper_bounds);
+            if let Some(upper) =
+                self.first_failed_upper_bound(result, &filtered_upper_bounds, |a, b| {
+                    self.is_subtype(a, b)
+                })
             {
                 return Err(InferenceError::BoundsViolation {
                     var,
@@ -1706,7 +1701,7 @@ impl<'a> InferenceContext<'a> {
     pub fn resolve_with_constraints_by<F>(
         &mut self,
         var: InferenceVar,
-        mut is_subtype: F,
+        is_subtype: F,
     ) -> Result<TypeId, InferenceError>
     where
         F: FnMut(TypeId, TypeId) -> bool,
@@ -1719,29 +1714,9 @@ impl<'a> InferenceContext<'a> {
         let (root, result, upper_bounds, upper_bounds_only) = self.compute_constraint_result(var);
 
         if !upper_bounds_only {
-            let mut filtered_upper_bounds = Vec::new();
-            for &upper in &upper_bounds {
-                if matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
-                    continue;
-                }
-                filtered_upper_bounds.push(upper);
-            }
-
-            if filtered_upper_bounds.len() > 1 {
-                let intersection = self.interner.intersection(filtered_upper_bounds.clone());
-                if !is_subtype(result, intersection) {
-                    for &upper in &filtered_upper_bounds {
-                        if !is_subtype(result, upper) {
-                            return Err(InferenceError::BoundsViolation {
-                                var,
-                                lower: result,
-                                upper,
-                            });
-                        }
-                    }
-                }
-            } else if let Some(&upper) = filtered_upper_bounds.first()
-                && !is_subtype(result, upper)
+            let filtered_upper_bounds = Self::filter_relevant_upper_bounds(&upper_bounds);
+            if let Some(upper) =
+                self.first_failed_upper_bound(result, &filtered_upper_bounds, is_subtype)
             {
                 return Err(InferenceError::BoundsViolation {
                     var,
@@ -1767,6 +1742,40 @@ impl<'a> InferenceContext<'a> {
         );
 
         Ok(result)
+    }
+
+    fn filter_relevant_upper_bounds(upper_bounds: &[TypeId]) -> Vec<TypeId> {
+        upper_bounds
+            .iter()
+            .copied()
+            .filter(|&upper| !matches!(upper, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR))
+            .collect()
+    }
+
+    fn first_failed_upper_bound<F>(
+        &self,
+        result: TypeId,
+        filtered_upper_bounds: &[TypeId],
+        mut is_subtype: F,
+    ) -> Option<TypeId>
+    where
+        F: FnMut(TypeId, TypeId) -> bool,
+    {
+        match filtered_upper_bounds {
+            [] => None,
+            [single] => (!is_subtype(result, *single)).then_some(*single),
+            many => {
+                if many.len() <= Self::UPPER_BOUND_INTERSECTION_FAST_PATH_LIMIT {
+                    let intersection = self.interner.intersection(many.to_vec());
+                    if is_subtype(result, intersection) {
+                        return None;
+                    }
+                }
+                many.iter()
+                    .copied()
+                    .find(|&upper| !is_subtype(result, upper))
+            }
+        }
     }
 
     fn compute_constraint_result(

@@ -797,8 +797,26 @@ impl<'a> CheckerState<'a> {
                 });
 
             if should_narrow {
-                // Apply flow narrowing to get the context-specific type
-                return self.apply_flow_narrowing(idx, cached);
+                // Flow narrowing is only useful for types whose apparent type can change
+                // across control-flow branches (union/unknown/any/type-parameter).
+                // For concrete non-union object/primitive types, the narrowed type is
+                // effectively stable, and rebuilding flow analyzers on every cached
+                // identifier read is unnecessary overhead in call-heavy code.
+                let needs_flow_narrowing = cached == TypeId::ANY
+                    || cached == TypeId::UNKNOWN
+                    || tsz_solver::type_queries_extended::is_narrowable_type_key(
+                        self.ctx.types,
+                        cached,
+                    )
+                    || tsz_solver::type_queries::contains_type_parameters_db(
+                        self.ctx.types,
+                        cached,
+                    );
+                if needs_flow_narrowing {
+                    // Apply flow narrowing to get the context-specific type
+                    return self.apply_flow_narrowing(idx, cached);
+                }
+                return cached;
             }
 
             // TS 5.1+ divergent accessor types: when in a write context
@@ -861,7 +879,18 @@ impl<'a> CheckerState<'a> {
             });
 
         if should_narrow_computed {
-            let mut narrowed = self.apply_flow_narrowing(idx, result);
+            let needs_flow_narrowing = result == TypeId::ANY
+                || result == TypeId::UNKNOWN
+                || tsz_solver::type_queries_extended::is_narrowable_type_key(
+                    self.ctx.types,
+                    result,
+                )
+                || tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, result);
+            let mut narrowed = if needs_flow_narrowing {
+                self.apply_flow_narrowing(idx, result)
+            } else {
+                result
+            };
             // FIX: Flow narrowing may return the original fresh type from the initializer
             // expression, undoing the freshness stripping that get_type_of_identifier
             // already performed. Re-apply freshness stripping to prevent "Zombie Freshness"
