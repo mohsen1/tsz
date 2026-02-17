@@ -287,7 +287,32 @@ impl<'a> NarrowingContext<'a> {
             }
 
             // 2. Handle Application types (Generics)
-            if let Some(TypeData::Application(_app_id)) = self.db.lookup(type_id) {
+            // CRITICAL: When a resolver is available (from the checker's TypeEnvironment),
+            // use it to resolve the Application's base type and instantiate with args.
+            // Without the resolver, generic type aliases like `Box<number>` can't resolve
+            // their DefId-based base types, causing narrowing to fail on discriminated
+            // unions wrapped in generics.
+            if let Some(TypeData::Application(app_id)) = self.db.lookup(type_id) {
+                if let Some(resolver) = self.resolver {
+                    let app = self.db.type_application(app_id);
+                    // Try to resolve the base type's DefId and instantiate manually
+                    if let Some(def_id) = lazy_def_id(self.db, app.base) {
+                        let resolved_body =
+                            resolver.resolve_lazy(def_id, self.db.as_type_database());
+                        let type_params = resolver.get_lazy_type_params(def_id);
+                        if let (Some(body), Some(params)) = (resolved_body, type_params) {
+                            let instantiated = crate::instantiate::instantiate_generic(
+                                self.db.as_type_database(),
+                                body,
+                                &params,
+                                &app.args,
+                            );
+                            type_id = instantiated;
+                            continue;
+                        }
+                    }
+                }
+                // Fallback: use db.evaluate_type (works when resolver isn't needed)
                 type_id = self.db.evaluate_type(type_id);
                 continue;
             }
