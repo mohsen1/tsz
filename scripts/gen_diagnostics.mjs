@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Generate crates/tsz-common/src/diagnostics.rs from TypeScript's diagnosticMessages.json
+// Generate crates/tsz-common/src/diagnostics/data.rs from TypeScript's diagnosticMessages.json
+// Types and helper functions are hand-authored in diagnostics/mod.rs.
 // Usage: node scripts/gen_diagnostics.mjs
 
 import { readFileSync, writeFileSync } from "fs";
@@ -99,120 +100,13 @@ function escapeRust(s) {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
 
-// Generate the Rust file
-let output = `//! Diagnostic codes and message templates for the type checker.
+// Generate the data file only (types live in mod.rs, which is hand-authored).
+// Output goes to diagnostics/data.rs.
+let output = `//! Auto-generated diagnostic message data.
 //!
-//! AUTO-GENERATED from TypeScript's diagnosticMessages.json.
-//! Do not edit manually - run \`node scripts/gen_diagnostics.mjs\` to regenerate.
-//!
-//! When a locale is set via \`--locale\`, messages are translated using
-//! TypeScript's official locale files.
-
-use serde::Serialize;
-
-// =============================================================================
-// Diagnostic Types
-// =============================================================================
-
-/// Diagnostic category.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub enum DiagnosticCategory {
-    Warning = 0,
-    Error = 1,
-    Suggestion = 2,
-    Message = 3,
-}
-
-/// Related information for a diagnostic (e.g., "see also" locations).
-#[derive(Clone, Debug, Serialize)]
-pub struct DiagnosticRelatedInformation {
-    pub file: String,
-    pub start: u32,
-    pub length: u32,
-    pub message_text: String,
-    pub category: DiagnosticCategory,
-    pub code: u32,
-}
-
-/// A type-checking diagnostic message with optional related information.
-#[derive(Clone, Debug, Serialize)]
-pub struct Diagnostic {
-    pub file: String,
-    pub start: u32,
-    pub length: u32,
-    pub message_text: String,
-    pub category: DiagnosticCategory,
-    pub code: u32,
-    /// Related information spans (e.g., where a type was declared)
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub related_information: Vec<DiagnosticRelatedInformation>,
-}
-
-impl Diagnostic {
-    /// Create a new error diagnostic.
-    pub fn error(file: String, start: u32, length: u32, message: String, code: u32) -> Self {
-        Diagnostic {
-            file,
-            start,
-            length,
-            message_text: message,
-            category: DiagnosticCategory::Error,
-            code,
-            related_information: Vec::new(),
-        }
-    }
-
-    /// Add related information to this diagnostic.
-    pub fn with_related(mut self, file: String, start: u32, length: u32, message: String) -> Self {
-        self.related_information.push(DiagnosticRelatedInformation {
-            file,
-            start,
-            length,
-            message_text: message,
-            category: DiagnosticCategory::Message,
-            code: 0,
-        });
-        self
-    }
-}
-
-/// Format a diagnostic message by replacing {0}, {1}, etc. with arguments.
-pub fn format_message(template: &str, args: &[&str]) -> String {
-    let mut result = template.to_string();
-    for (i, arg) in args.iter().enumerate() {
-        result = result.replace(&format!("{{{}}}", i), arg);
-    }
-    result
-}
-
-/// A diagnostic message definition with code, category, and message template.
-#[derive(Clone, Copy, Debug)]
-pub struct DiagnosticMessage {
-    pub code: u32,
-    pub category: DiagnosticCategory,
-    pub message: &'static str,
-}
-
-/// Look up a diagnostic message definition by code.
-///
-/// Returns the DiagnosticMessage with template string containing \`{0}\`, \`{1}\`, etc. placeholders.
-/// Use \`format_message()\` to fill in the placeholders.
-pub fn get_diagnostic_message(code: u32) -> Option<&'static DiagnosticMessage> {
-    DIAGNOSTIC_MESSAGES.iter().find(|m| m.code == code)
-}
-
-/// Get the message template for a diagnostic code.
-///
-/// Returns the template string with \`{0}\`, \`{1}\`, etc. placeholders.
-/// Use \`format_message()\` to fill in the placeholders.
-pub fn get_message_template(code: u32) -> Option<&'static str> {
-    get_diagnostic_message(code).map(|m| m.message)
-}
-
-/// Get the category for a diagnostic code.
-pub fn get_diagnostic_category(code: u32) -> Option<DiagnosticCategory> {
-    get_diagnostic_message(code).map(|m| m.category)
-}
+//! DO NOT EDIT MANUALLY — run \`node scripts/gen_diagnostics.mjs\` to regenerate.
+use super::DiagnosticCategory;
+use super::DiagnosticMessage;
 
 /// All diagnostic messages from TypeScript's diagnosticMessages.json.
 pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
@@ -250,9 +144,8 @@ for (const entry of codeEntries) {
 output += `}
 `;
 
-writeFileSync(join(root, "crates/tsz-common/src/diagnostics.rs"), output);
+const outPath = join(root, "crates/tsz-common/src/diagnostics/data.rs");
+writeFileSync(outPath, output);
 
 console.log(`Generated ${codeEntries.length} diagnostic entries`);
-console.log(
-  `Output: crates/tsz-common/src/diagnostics.rs`
-);
+console.log(`Output: crates/tsz-common/src/diagnostics/data.rs`);
