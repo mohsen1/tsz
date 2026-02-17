@@ -1892,22 +1892,20 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check default import name: `import package from "./mod"`
-        if !clause.name.is_none() {
-            if let Some(name_node) = self.ctx.arena.get(clause.name) {
-                if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                    if is_strict_mode_reserved_name(&ident.escaped_text) {
-                        let message = format_message(
+        if !clause.name.is_none()
+            && let Some(name_node) = self.ctx.arena.get(clause.name)
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && is_strict_mode_reserved_name(&ident.escaped_text)
+        {
+            let message = format_message(
                             diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                             &[&ident.escaped_text],
                         );
-                        self.error_at_node(
+            self.error_at_node(
                             clause.name,
                             &message,
                             diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                         );
-                    }
-                }
-            }
         }
 
         // Check named bindings (namespace import or named imports)
@@ -1920,29 +1918,26 @@ impl<'a> CheckerState<'a> {
 
         if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
             // `import * as package from "./mod"` — check the alias name
-            if let Some(ns_data) = self.ctx.arena.get_named_imports(bindings_node) {
-                if !ns_data.name.is_none() {
-                    if let Some(name_node) = self.ctx.arena.get(ns_data.name) {
-                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            if is_strict_mode_reserved_name(&ident.escaped_text) {
-                                let message = format_message(
+            if let Some(ns_data) = self.ctx.arena.get_named_imports(bindings_node)
+                && !ns_data.name.is_none()
+                && let Some(name_node) = self.ctx.arena.get(ns_data.name)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                && is_strict_mode_reserved_name(&ident.escaped_text)
+            {
+                let message = format_message(
                                     diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                                     &[&ident.escaped_text],
                                 );
-                                self.error_at_node(
+                self.error_at_node(
                                     ns_data.name,
                                     &message,
                                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                                 );
-                            }
-                        }
-                    }
-                }
             }
         } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS {
             // `import { foo as package } from "./mod"` — check each specifier's local name
             if let Some(named_data) = self.ctx.arena.get_named_imports(bindings_node) {
-                let elements: Vec<_> = named_data.elements.nodes.iter().copied().collect();
+                let elements: Vec<_> = named_data.elements.nodes.to_vec();
                 for elem_idx in elements {
                     let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                         continue;
@@ -1952,20 +1947,19 @@ impl<'a> CheckerState<'a> {
                     };
                     // The local binding name is `spec.name`
                     let name_to_check = spec.name;
-                    if let Some(name_node) = self.ctx.arena.get(name_to_check) {
-                        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                            if is_strict_mode_reserved_name(&ident.escaped_text) {
-                                let message = format_message(
+                    if let Some(name_node) = self.ctx.arena.get(name_to_check)
+                        && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        && is_strict_mode_reserved_name(&ident.escaped_text)
+                    {
+                        let message = format_message(
                                     diagnostic_messages::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                                     &[&ident.escaped_text],
                                 );
-                                self.error_at_node(
+                        self.error_at_node(
                                     name_to_check,
                                     &message,
                                     diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_IN_STRICT_MODE_MODULES_ARE_AUTOMATICALLY,
                                 );
-                            }
-                        }
                     }
                 }
             }

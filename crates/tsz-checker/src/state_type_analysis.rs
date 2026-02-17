@@ -974,10 +974,10 @@ impl<'a> CheckerState<'a> {
 
                 if is_circular {
                     // TS2313: Type parameter 'T' has a circular constraint
-                    self.error_at_node(
+                    self.error_at_node_msg(
                         data.constraint,
-                        &format!("Type parameter '{name}' has a circular constraint."),
-                        crate::diagnostics::diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_CONSTRAINT,
+                        &[&name],
                     );
                     Some(TypeId::UNKNOWN)
                 } else {
@@ -1039,8 +1039,111 @@ impl<'a> CheckerState<'a> {
                 .insert(name.clone(), constrained_type_id);
         }
 
+        // Third pass: Detect indirect circular constraints (e.g., T extends U, U extends T)
+        // Build a constraint graph among type parameters in this list and detect cycles.
+        self.check_indirect_circular_constraints(&params, &param_indices);
+
         self.ctx.leave_recursion();
         (params, updates)
+    }
+
+    /// Detect indirect circular constraints among type parameters.
+    ///
+    /// For each type parameter, if its constraint is another type parameter in the same
+    /// list, follow the chain. If we reach the original parameter, emit TS2313.
+    /// Direct self-references (T extends T) are already caught in the second pass.
+    fn check_indirect_circular_constraints(
+        &mut self,
+        params: &[tsz_solver::TypeParamInfo],
+        param_indices: &[NodeIndex],
+    ) {
+        // Build a map: param name (Atom) -> index in params list
+        let mut name_to_idx: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let param_names: Vec<String> = params
+            .iter()
+            .map(|p| self.ctx.types.resolve_atom(p.name))
+            .collect();
+        for (i, name) in param_names.iter().enumerate() {
+            name_to_idx.insert(name.clone(), i);
+        }
+
+        // For each param, check if its constraint forms an indirect cycle
+        for (i, param) in params.iter().enumerate() {
+            let Some(constraint_type) = param.constraint else {
+                continue;
+            };
+
+            // Get the name of the constraint if it's a type parameter
+            let constraint_info =
+                tsz_solver::type_queries::get_type_parameter_info(self.ctx.types, constraint_type);
+            let Some(constraint_info) = constraint_info else {
+                continue;
+            };
+            let constraint_name = self
+                .ctx
+                .types
+                .resolve_atom(constraint_info.name)
+                .to_string();
+
+            // Skip direct self-references (already caught)
+            if constraint_name == param_names[i] {
+                continue;
+            }
+
+            // Only follow if constraint is another param in the same list
+            let Some(&next_idx) = name_to_idx.get(&constraint_name) else {
+                continue;
+            };
+
+            // Follow the chain to detect if it cycles back to param i.
+            // Only report if the chain leads back to the starting parameter itself,
+            // not if it merely reaches some other cycle.
+            let mut current = next_idx;
+            let mut steps = 0;
+            let max_steps = params.len();
+
+            let is_in_cycle = loop {
+                if current == i {
+                    break true;
+                }
+                steps += 1;
+                if steps > max_steps {
+                    break false;
+                }
+
+                // Follow the constraint of the current param
+                let Some(next_constraint) = params[current].constraint else {
+                    break false;
+                };
+                let next_info = tsz_solver::type_queries::get_type_parameter_info(
+                    self.ctx.types,
+                    next_constraint,
+                );
+                let Some(next_info) = next_info else {
+                    break false;
+                };
+                let next_name = self.ctx.types.resolve_atom(next_info.name).to_string();
+                let Some(&next) = name_to_idx.get(&next_name) else {
+                    break false;
+                };
+                current = next;
+            };
+
+            if is_in_cycle {
+                let node_idx = param_indices[i];
+                if let Some(node) = self.ctx.arena.get(node_idx)
+                    && let Some(data) = self.ctx.arena.get_type_parameter(node)
+                    && data.constraint != NodeIndex::NONE
+                {
+                    self.error_at_node_msg(
+                        data.constraint,
+                        crate::diagnostics::diagnostic_codes::TYPE_PARAMETER_HAS_A_CIRCULAR_CONSTRAINT,
+                        &[&param_names[i]],
+                    );
+                }
+            }
+        }
     }
 
     /// Check if a constraint type is the same as a type parameter (circular constraint).
