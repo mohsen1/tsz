@@ -530,6 +530,20 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if self.checker.is_js_file() {
                     self.checker.check_js_grammar_function(idx, node);
                 }
+                // TS1100: Invalid use of 'eval'/'arguments' as function expression name
+                if let Some(func) = self.checker.ctx.arena.get_function(node)
+                    && !func.name.is_none()
+                    && let Some(name_node) = self.checker.ctx.arena.get(func.name)
+                    && let Some(ident) = self.checker.ctx.arena.get_identifier(name_node)
+                    && (ident.escaped_text == "eval" || ident.escaped_text == "arguments")
+                    && self.checker.is_strict_mode_for_node(idx)
+                {
+                    self.checker.error_at_node_msg(
+                        func.name,
+                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                        &[&ident.escaped_text],
+                    );
+                }
                 self.checker.get_type_of_function(idx)
             }
 
