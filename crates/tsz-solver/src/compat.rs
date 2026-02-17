@@ -699,9 +699,78 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return self.is_assignable_to_empty_object(source);
         }
 
+        // Check mapped-to-mapped structural comparison before full subtype check.
+        // When both source and target are deferred mapped types over the same constraint
+        // (e.g., Readonly<T> vs Partial<T>), compare template types directly.
+        if let (Some(TypeData::Mapped(s_mapped_id)), Some(TypeData::Mapped(t_mapped_id))) =
+            (self.interner.lookup(source), self.interner.lookup(target))
+        {
+            let result = self.check_mapped_to_mapped_assignability(s_mapped_id, t_mapped_id);
+            if let Some(assignable) = result {
+                return assignable;
+            }
+        }
+
         // Default to structural subtype checking
         self.configure_subtype(strict_function_types);
         self.subtype.is_subtype_of(source, target)
+    }
+
+    /// Check if two mapped types are assignable via structural template comparison.
+    ///
+    /// When both source and target are mapped types with the same constraint
+    /// (e.g., both iterate over `keyof T`), compare their templates directly.
+    /// This handles cases like `Readonly<T>` assignable to `Partial<T>` where
+    /// the mapped types can't be concretely expanded because T is generic.
+    ///
+    /// Returns `Some(true/false)` if determination was made, `None` to fall through.
+    fn check_mapped_to_mapped_assignability(
+        &mut self,
+        s_mapped_id: crate::types::MappedTypeId,
+        t_mapped_id: crate::types::MappedTypeId,
+    ) -> Option<bool> {
+        use crate::types::MappedModifier;
+        use crate::visitor::mapped_type_id;
+
+        let s_mapped = self.interner.mapped_type(s_mapped_id);
+        let t_mapped = self.interner.mapped_type(t_mapped_id);
+
+        // Both must have the same constraint (e.g., both `keyof T`)
+        if s_mapped.constraint != t_mapped.constraint {
+            return None;
+        }
+
+        let source_template = s_mapped.template;
+        let mut target_template = t_mapped.template;
+
+        // If the target adds optional (`?`), the target template effectively
+        // becomes `template | undefined` since optional properties accept undefined.
+        let target_adds_optional = t_mapped.optional_modifier == Some(MappedModifier::Add);
+        let source_adds_optional = s_mapped.optional_modifier == Some(MappedModifier::Add);
+
+        if target_adds_optional && !source_adds_optional {
+            target_template = self.interner.union2(target_template, TypeId::UNDEFINED);
+        }
+
+        // If the target removes optional (Required) but source doesn't,
+        // fall through to full structural check.
+        let target_removes_optional = t_mapped.optional_modifier == Some(MappedModifier::Remove);
+        if target_removes_optional && !source_adds_optional && s_mapped.optional_modifier.is_none()
+        {
+            return None;
+        }
+
+        // If both templates are themselves mapped types, recurse
+        if let (Some(s_inner), Some(t_inner)) = (
+            mapped_type_id(self.interner, source_template),
+            mapped_type_id(self.interner, target_template),
+        ) {
+            return self.check_mapped_to_mapped_assignability(s_inner, t_inner);
+        }
+
+        // Compare templates using the subtype checker
+        self.configure_subtype(self.strict_function_types);
+        Some(self.subtype.is_subtype_of(source_template, target_template))
     }
 
     /// Check fast-path assignability conditions.

@@ -3139,12 +3139,39 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.check_application_to_application_subtype(s_app_id, t_app_id);
         }
 
+        // When both source and target are applications, try mapped-to-mapped
+        // comparison before falling through to one-sided expansion. This handles
+        // cases like Readonly<T> <: Partial<T> where both resolve to mapped types
+        // over a generic type parameter that can't be concretely expanded.
+        if let (Some(s_app_id), Some(t_app_id)) = (
+            application_id(self.interner, source),
+            application_id(self.interner, target),
+        ) {
+            let result = self.check_application_to_application(source, target, s_app_id, t_app_id);
+            if result != SubtypeResult::False {
+                return result;
+            }
+            // Fall through to one-sided expansion
+        }
+
         if let Some(app_id) = application_id(self.interner, source) {
             return self.check_application_expansion_target(source, target, app_id);
         }
 
         if let Some(app_id) = application_id(self.interner, target) {
             return self.check_source_to_application_expansion(source, target, app_id);
+        }
+
+        // Check mapped-to-mapped structural comparison (for raw mapped types).
+        if let (Some(source_mapped_id), Some(target_mapped_id)) = (
+            mapped_type_id(self.interner, source),
+            mapped_type_id(self.interner, target),
+        ) {
+            let result =
+                self.check_mapped_to_mapped(source, target, source_mapped_id, target_mapped_id);
+            if result != SubtypeResult::False {
+                return result;
+            }
         }
 
         if let Some(mapped_id) = mapped_type_id(self.interner, source) {
