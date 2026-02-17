@@ -1202,15 +1202,17 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.resolve_identifier_symbol(call.expression))
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            let is_plain_function_decl = symbol.declarations.len() == 1
-                                && !symbol.value_declaration.is_none()
-                                && self
-                                    .ctx
-                                    .arena
-                                    .get(symbol.value_declaration)
-                                    .is_some_and(|decl| {
-                                        decl.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                                    });
+                            let is_plain_function_decl =
+                                symbol.declarations.len() == 1
+                                    && !symbol.value_declaration.is_none()
+                                    && self.ctx.arena.get(symbol.value_declaration).is_some_and(
+                                        |decl| {
+                                            decl.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                                                && self.ctx.arena.get_function(decl).is_some_and(
+                                                    |func| func.type_annotation.is_none(),
+                                                )
+                                        },
+                                    );
                             symbol.escaped_name == identifier_text
                                 && is_plain_function_decl
                                 && (symbol.flags & tsz_binder::symbol_flags::FUNCTION) != 0
