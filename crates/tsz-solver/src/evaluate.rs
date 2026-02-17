@@ -341,8 +341,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let result = if let Some(type_params) = type_params {
                 // Resolve the base type to get the body
                 if let Some(resolved) = resolved {
-                    // Pre-expand type arguments that are TypeQuery or Application
-                    let expanded_args = self.expand_type_args(&app.args);
+                    // Pre-expand type arguments that are TypeQuery or Application.
+                    // For conditional type bodies with Application extends containing infer,
+                    // preserve Application args so the conditional evaluator can match
+                    // at the Application level (e.g., Promise<string> vs Promise<infer U>).
+                    let body_is_conditional_with_app_infer =
+                        self.is_conditional_with_application_infer(resolved);
+                    let expanded_args = if body_is_conditional_with_app_infer {
+                        self.expand_type_args_preserve_applications(&app.args)
+                    } else {
+                        self.expand_type_args(&app.args)
+                    };
                     let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
                     if let Some(db) = self.query_db
@@ -429,6 +438,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // If we can't expand, return the original application
             self.interner.application(app.base, app.args.clone())
         }
+    }
+
+    /// Check if a type is a Conditional whose `extends_type` is an Application containing infer.
+    /// This detects patterns like `T extends Promise<infer U> ? U : T`.
+    fn is_conditional_with_application_infer(&self, type_id: TypeId) -> bool {
+        let Some(TypeData::Conditional(cond_id)) = self.interner.lookup(type_id) else {
+            return false;
+        };
+        let cond = self.interner.conditional_type(cond_id);
+        matches!(
+            self.interner.lookup(cond.extends_type),
+            Some(TypeData::Application(_))
+        )
+    }
+
+    /// Like `expand_type_args` but preserves Application types without evaluating them.
+    /// Used for conditional type bodies so the conditional evaluator can match
+    /// at the Application level for infer pattern matching.
+    fn expand_type_args_preserve_applications(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+        let mut expanded = Vec::with_capacity(args.len());
+        for &arg in args {
+            let Some(key) = self.interner.lookup(arg) else {
+                expanded.push(arg);
+                continue;
+            };
+            match key {
+                TypeData::Application(_) => {
+                    // Preserve Application form for conditional infer matching
+                    expanded.push(arg);
+                }
+                _ => expanded.push(self.try_expand_type_arg(arg)),
+            }
+        }
+        expanded
     }
 
     /// Expand type arguments by evaluating any that are `TypeQuery` or Application.

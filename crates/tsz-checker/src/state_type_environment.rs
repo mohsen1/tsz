@@ -239,9 +239,20 @@ impl<'a> CheckerState<'a> {
         }
 
         // Resolve type arguments so distributive conditionals can see unions.
+        // For conditional type bodies with Application extends containing infer
+        // (e.g., `T extends Promise<infer U> ? U : T`), preserve Application args
+        // so the conditional evaluator can match at the Application level.
+        let body_has_conditional_app_infer =
+            self.body_is_conditional_with_application_infer(body_type);
         let evaluated_args: Vec<TypeId> = args
             .iter()
-            .map(|&arg| self.evaluate_type_with_env(arg))
+            .map(|&arg| {
+                if body_has_conditional_app_infer && query::is_generic_type(self.ctx.types, arg) {
+                    arg // Preserve Application form
+                } else {
+                    self.evaluate_type_with_env(arg)
+                }
+            })
             .collect();
 
         // Create substitution and instantiate
@@ -257,6 +268,15 @@ impl<'a> CheckerState<'a> {
 
         // Evaluate meta-types (conditional, index access, keyof) with symbol resolution
         self.evaluate_type_with_env(result)
+    }
+
+    /// Check if a type body is a Conditional type whose `extends_type` is an Application.
+    /// This detects patterns like `T extends Promise<infer U> ? U : T`.
+    fn body_is_conditional_with_application_infer(&self, body_type: TypeId) -> bool {
+        let Some(cond) = query::get_conditional_type(self.ctx.types, body_type) else {
+            return false;
+        };
+        query::is_generic_type(self.ctx.types, cond.extends_type)
     }
 
     /// Evaluate a mapped type with symbol resolution.

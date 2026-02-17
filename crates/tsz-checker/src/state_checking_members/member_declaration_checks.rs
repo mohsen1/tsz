@@ -884,9 +884,9 @@ impl<'a> CheckerState<'a> {
 
             // Only compare within the same overload group.
             // After an implementation (body), start a new group.
-            if !prev_had_body {
-                if let (Some(prev), Some(cur)) = (&prev_name, &cur_name) {
-                    if prev == cur && cur_is_static != prev_is_static {
+            if !prev_had_body
+                && let (Some(prev), Some(cur)) = (&prev_name, &cur_name)
+                    && prev == cur && cur_is_static != prev_is_static {
                         let error_node = if !method.name.is_none() {
                             method.name
                         } else {
@@ -906,8 +906,6 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                }
-            }
 
             prev_name = cur_name;
             prev_is_static = cur_is_static;
