@@ -47,6 +47,22 @@ mod spelling_integration_tests;
 #[path = "../../tests/duplicate_label_tests.rs"]
 mod duplicate_label_tests;
 
+#[cfg(test)]
+#[path = "../../tests/state_expression_tests.rs"]
+mod state_expression_tests;
+
+#[cfg(test)]
+#[path = "../../tests/state_statement_tests.rs"]
+mod state_statement_tests;
+
+#[cfg(test)]
+#[path = "../../tests/state_type_tests.rs"]
+mod state_type_tests;
+
+#[cfg(test)]
+#[path = "../../tests/state_declaration_tests.rs"]
+mod state_declaration_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
