@@ -646,7 +646,10 @@ impl<'a> CheckerState<'a> {
                             let is_optional = self.is_property_optional(object_type, &prop_name);
                             let optional_via_undefined =
                                 !self.ctx.compiler_options.exact_optional_property_types
-                                    && self.type_includes_undefined(type_id);
+                                    && tsz_solver::type_queries::type_includes_undefined(
+                                        self.ctx.types,
+                                        type_id,
+                                    );
                             if !is_optional && !optional_via_undefined {
                                 self.error_at_node(
                                     idx,
