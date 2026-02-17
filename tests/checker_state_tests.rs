@@ -26794,6 +26794,55 @@ const switchWithDefault = (value: number): string => {
 }
 
 #[test]
+fn test_ts2366_arrow_function_switch_grouped_cases() {
+    use crate::parser::ParserState;
+
+    // Regression: grouped switch cases should not trigger TS2366 when all paths return.
+    let source = r#"
+const groupedSwitchReturns = (value: string | number): number => {
+    switch (typeof value) {
+        case "string":
+        case "number":
+            return 1;
+        default:
+            return 2;
+    }
+};
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(parser.get_diagnostics().is_empty());
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let opts = crate::checker::context::CheckerOptions {
+        strict_null_checks: true,
+        ..Default::default()
+    };
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        opts,
+    );
+    setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert_eq!(
+        codes.iter().filter(|&&c| c == 2366).count(),
+        0,
+        "Expected 0 TS2366 errors for grouped switch cases with full returns, got: {:?}",
+        codes
+    );
+}
+
+#[test]
 fn test_ts2366_arrow_function_try_catch() {
     use crate::parser::ParserState;
 
