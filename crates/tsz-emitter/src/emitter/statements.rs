@@ -526,8 +526,8 @@ impl<'a> Printer<'a> {
 
         self.write("while (");
         self.emit(loop_stmt.condition);
-        self.write(") ");
-        self.emit(loop_stmt.statement);
+        self.write(")");
+        self.emit_loop_body(loop_stmt.statement);
     }
 
     pub(super) fn emit_for_statement(&mut self, node: &Node) {
@@ -547,8 +547,8 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit(loop_stmt.incrementor);
         }
-        self.write(") ");
-        self.emit(loop_stmt.statement);
+        self.write(")");
+        self.emit_loop_body(loop_stmt.statement);
     }
 
     pub(super) fn emit_for_in_statement(&mut self, node: &Node) {
@@ -560,8 +560,8 @@ impl<'a> Printer<'a> {
         self.emit(for_in_of.initializer);
         self.write(" in ");
         self.emit(for_in_of.expression);
-        self.write(") ");
-        self.emit(for_in_of.statement);
+        self.write(")");
+        self.emit_loop_body(for_in_of.statement);
     }
 
     pub(super) fn emit_for_of_statement(&mut self, node: &Node) {
@@ -805,9 +805,23 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.write("do ");
-        self.emit(loop_stmt.statement);
-        self.write(" while (");
+        self.write("do");
+        let body_is_block = self
+            .arena
+            .get(loop_stmt.statement)
+            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+        if body_is_block {
+            self.write(" ");
+            self.emit(loop_stmt.statement);
+            self.write(" ");
+        } else {
+            self.write_line();
+            self.increase_indent();
+            self.emit(loop_stmt.statement);
+            self.decrease_indent();
+            self.write_line();
+        }
+        self.write("while (");
         self.emit(loop_stmt.condition);
         self.write(")");
         self.write_semicolon();

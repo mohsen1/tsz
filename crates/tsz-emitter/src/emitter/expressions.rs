@@ -1,5 +1,6 @@
 use super::{Printer, get_operator_text};
 use tsz_parser::parser::{
+    NodeIndex,
     node::{AccessExprData, BinaryExprData, Node},
     syntax_kind_ext,
 };
@@ -973,19 +974,56 @@ impl<'a> Printer<'a> {
         // If the inner expression is a type assertion/as/satisfies expression,
         // the parens were only needed for the TS syntax (e.g., `(<Type>x).foo`).
         // In JS emit, the type assertion is stripped, making the parens unnecessary.
+        // EXCEPTION: If the underlying expression (after unwrapping type assertions)
+        // is an object literal, parens must be preserved to avoid block ambiguity
+        // (e.g., `() => (<Error>{ name: "foo" })` → `() => ({ name: "foo" })`)
         if let Some(inner) = self.arena.get(paren.expression)
             && (inner.kind == syntax_kind_ext::TYPE_ASSERTION
                 || inner.kind == syntax_kind_ext::AS_EXPRESSION
                 || inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
         {
-            // Emit the inner expression directly, without parens
-            self.emit(paren.expression);
-            return;
+            // Check if unwrapping the type assertion yields an object literal
+            if !self.type_assertion_wraps_object_literal(paren.expression) {
+                // Safe to strip parens — no block ambiguity
+                self.emit(paren.expression);
+                return;
+            }
+            // Fall through to emit with parens preserved
         }
 
         self.write("(");
         self.emit(paren.expression);
         self.write(")");
+    }
+
+    /// Check if a type assertion/as/satisfies chain ultimately wraps an object literal.
+    fn type_assertion_wraps_object_literal(&self, mut idx: NodeIndex) -> bool {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    if let Some(p) = self.arena.get_parenthesized(node) {
+                        idx = p.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => return true,
+                _ => return false,
+            }
+        }
     }
 
     pub(super) fn emit_type_assertion_expression(&mut self, node: &Node) {
