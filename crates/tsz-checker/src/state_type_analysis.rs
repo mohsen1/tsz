@@ -663,11 +663,8 @@ impl<'a> CheckerState<'a> {
                             let prop_name = ident.escaped_text.clone();
                             let object_type = self.resolve_type_for_property_access(left_type);
                             use tsz_solver::operations_property::PropertyAccessResult;
-                            match self.resolve_property_access_with_env(object_type, &prop_name) {
-                                PropertyAccessResult::Success { type_id, .. } => {
-                                    return type_id;
-                                }
-                                _ => {}
+                            if let PropertyAccessResult::Success { type_id, .. } = self.resolve_property_access_with_env(object_type, &prop_name) {
+                                return type_id;
                             }
                         }
                     }
