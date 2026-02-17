@@ -200,6 +200,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut has_default = false;
+        let mut clause_indices = Vec::new();
         for &clause_idx in &case_block.statements.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
@@ -207,15 +208,53 @@ impl<'a> CheckerState<'a> {
             if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
                 has_default = true;
             }
+            clause_indices.push(clause_idx);
+        }
+
+        // Without a default clause, unmatched discriminants skip the switch body,
+        // so execution can always continue after the switch.
+        if !has_default {
+            return true;
+        }
+
+        // Analyze from bottom to top so empty/grouped clauses inherit the
+        // fall-through behavior of the next clause in the chain.
+        let mut falls_from_next = true;
+        let mut any_entry_falls_through = false;
+
+        for &clause_idx in clause_indices.iter().rev() {
+            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+                continue;
+            };
             let Some(clause) = self.ctx.arena.get_case_clause(clause_node) else {
                 continue;
             };
-            if self.block_falls_through(&clause.statements.nodes) {
-                return true;
-            }
+
+            let clause_falls_through = if clause.statements.nodes.is_empty() {
+                // Empty case labels fall through to the next clause.
+                falls_from_next
+            } else if clause
+                .statements
+                .nodes
+                .iter()
+                .any(|&stmt| self.contains_break_statement(stmt))
+            {
+                // A break can complete the switch normally, even if later clauses
+                // would not fall through.
+                true
+            } else if self.block_falls_through(&clause.statements.nodes) {
+                // Non-terminating clauses continue into the next clause.
+                falls_from_next
+            } else {
+                // Clause exits function/control flow (e.g. return/throw).
+                false
+            };
+
+            any_entry_falls_through |= clause_falls_through;
+            falls_from_next = clause_falls_through;
         }
 
-        !has_default
+        any_entry_falls_through
     }
 
     /// Check if a try statement falls through.

@@ -2738,7 +2738,8 @@ impl ParserState {
         }
 
         if self.is_token(SyntaxKind::OfKeyword) {
-            // Look ahead to see if 'of' is used as a variable name
+            // Look ahead to see if 'of' is used as a variable name.
+            // `for (var of ...)` — `of` could be a variable name OR the for-of keyword.
             let snapshot = self.scanner.save_state();
             let saved_token = self.current_token;
             self.next_token(); // skip 'of'
@@ -2754,8 +2755,18 @@ impl ParserState {
                     | SyntaxKind::OfKeyword
                     | SyntaxKind::ExclamationToken
             );
+            // Special case: `for (var of of)` — when `of` is followed by `of` then `)`,
+            // the first `of` is the for-of keyword (not a variable name), making the
+            // declaration list empty. tsc emits TS1123 for this pattern.
+            let is_of_of_pattern = next == SyntaxKind::OfKeyword && {
+                self.next_token(); // skip second 'of'
+                self.is_token(SyntaxKind::CloseParenToken)
+            };
             self.scanner.restore_state(snapshot);
             self.current_token = saved_token;
+            if is_of_of_pattern {
+                return true;
+            }
             return !is_var_name;
         }
 
