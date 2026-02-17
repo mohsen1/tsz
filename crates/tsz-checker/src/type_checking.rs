@@ -3744,29 +3744,44 @@ impl<'a> CheckerState<'a> {
             // When 2+ function declarations with bodies share a name, emit TS2393 on each.
             // This runs BEFORE TS2813/TS2814 handling since that removes function indices.
             {
-                let duplicate_func_impls: Vec<NodeIndex> = declarations
+                let func_impls_with_scope: Vec<(NodeIndex, NodeIndex)> = declarations
                     .iter()
                     .filter(|(decl_idx, flags)| {
                         conflicts.contains(decl_idx)
                             && (flags & symbol_flags::FUNCTION) != 0
                             && self.function_has_body(*decl_idx)
                     })
-                    .map(|(idx, _)| *idx)
+                    .map(|(idx, _)| (*idx, self.get_enclosing_block_scope(*idx)))
                     .collect();
 
-                if duplicate_func_impls.len() > 1 {
-                    for &idx in &duplicate_func_impls {
-                        let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
-                        self.error_at_node(
-                            error_node,
-                            diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                            diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                        );
-                        conflicts.remove(&idx);
+                // Group by block scope - only functions in the SAME scope are duplicates.
+                // Functions in different block scopes (e.g., if/else branches) shadow
+                // rather than conflict, so they should not emit TS2393.
+                let mut scope_groups: std::collections::HashMap<NodeIndex, Vec<NodeIndex>> =
+                    std::collections::HashMap::new();
+                for &(idx, scope) in &func_impls_with_scope {
+                    scope_groups.entry(scope).or_default().push(idx);
+                }
+
+                for group in scope_groups.values() {
+                    if group.len() > 1 {
+                        for &idx in group {
+                            let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
+                            self.error_at_node(
+                                error_node,
+                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            );
+                            conflicts.remove(&idx);
+                        }
                     }
-                    if conflicts.is_empty() {
-                        continue;
-                    }
+                }
+                // Also remove all function impls from conflicts since they were handled
+                for &(idx, _) in &func_impls_with_scope {
+                    conflicts.remove(&idx);
+                }
+                if conflicts.is_empty() {
+                    continue;
                 }
             }
 
