@@ -90,7 +90,7 @@ mod tests {
         let bytes = [0xFF, 0xFE, 0xB5, 0x00, 0x73, 0x00];
         assert_eq!(
             decode_source_text(&bytes),
-            DecodedSourceText::Text("µs".to_string())
+            DecodedSourceText::TextWithOriginalBytes("µs".to_string(), bytes.to_vec())
         );
     }
 
@@ -100,7 +100,7 @@ mod tests {
         let bytes = [0xFE, 0xFF, 0x00, 0xB5, 0x00, 0x73];
         assert_eq!(
             decode_source_text(&bytes),
-            DecodedSourceText::Text("µs".to_string())
+            DecodedSourceText::TextWithOriginalBytes("µs".to_string(), bytes.to_vec())
         );
     }
 
