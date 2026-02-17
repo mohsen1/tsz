@@ -12,6 +12,7 @@
 //! This module extends `CheckerState` with utilities for indexed access type
 //! operations, providing cleaner APIs for T[K] type checking.
 
+use crate::query_boundaries::array_type as array_query;
 use crate::query_boundaries::indexed_access_type as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
@@ -145,8 +146,8 @@ impl<'a> CheckerState<'a> {
             }
             // Check if it's an array
             if self.is_array_type(object_type) {
-                return self
-                    .get_array_element_type_or(object_type, TypeId::UNKNOWN)
+                return array_query::array_element_type(self.ctx.types, object_type)
+                    .unwrap_or(TypeId::UNKNOWN)
                     .into();
             }
         }
