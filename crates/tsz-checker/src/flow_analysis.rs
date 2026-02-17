@@ -1486,7 +1486,7 @@ impl<'a> CheckerState<'a> {
                     .ctx
                     .arena
                     .get(clause_idx)
-                    .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+                    .is_some_and(|n| n.kind == syntax_kind_ext::CASE_BLOCK);
                 let switch_idx = if is_implicit_default {
                     self.ctx
                         .arena
