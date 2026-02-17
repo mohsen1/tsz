@@ -111,7 +111,9 @@ impl Default for CheckerOptions {
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,
-            always_strict: false,
+            // TSC 6.0 defaults: `alwaysStrict !== false` → true when not explicitly set.
+            // This matches TypeScript's behavior where alwaysStrict is true by default.
+            always_strict: true,
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,
