@@ -2124,7 +2124,26 @@ impl<'a> CheckerContext<'a> {
 
         // Fallback: look up via SymbolId. Multiple DefIds can map to the same symbol
         // when lib interfaces are referenced from different checker contexts.
-        let sym_id = self.def_to_symbol.borrow().get(&def_id).copied()?;
+        // Also handle the case where DefId was created from a raw SymbolId by
+        // `interner.reference()` — use the raw value as a SymbolId candidate.
+        let sym_id = self
+            .def_to_symbol
+            .borrow()
+            .get(&def_id)
+            .copied()
+            .or_else(|| {
+                let candidate = tsz_binder::SymbolId(def_id.0);
+                if self.binder.symbols.get(candidate).is_some()
+                    || self
+                        .lib_contexts
+                        .iter()
+                        .any(|lib| lib.binder.symbols.get(candidate).is_some())
+                {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            })?;
         for (&other_def, other_params) in params.iter() {
             if other_def != def_id
                 && self
@@ -2856,17 +2875,49 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     ) -> Option<tsz_solver::TypeId> {
         use tsz_binder::symbol_flags;
 
-        // Convert DefId to SymbolId using the reverse mapping
-        if let Some(sym_id) = self.def_to_symbol_id(def_id) {
-            // For classes, check if we should return instance type instead of constructor type
-            if let Some(symbol) = self.binder.symbols.get(sym_id) {
-                // Check if symbol is a class
-                if (symbol.flags & symbol_flags::CLASS) != 0 {
-                    // For classes in TYPE position, return instance type
-                    if let Some(instance_type) = self.symbol_instance_types.get(&sym_id) {
-                        return Some(*instance_type);
-                    }
-                }
+        // Convert DefId to SymbolId using the reverse mapping.
+        // Fallback: if the DefId was created by `interner.reference(SymbolRef(N))`,
+        // the raw DefId value equals the SymbolId. In that case, use the SymbolId
+        // directly and redirect through the proper DefId mapping.
+        let sym_id = self.def_to_symbol_id(def_id).or_else(|| {
+            // Fallback: `interner.reference(SymbolRef(N))` creates `Lazy(DefId(N))`
+            // where N is the raw SymbolId value. The DefId(N) doesn't exist in the
+            // definition store. Try using N as a SymbolId and redirect.
+            let candidate = tsz_binder::SymbolId(def_id.0);
+            let found = self.binder.symbols.get(candidate).is_some()
+                || self
+                    .lib_contexts
+                    .iter()
+                    .any(|lib| lib.binder.symbols.get(candidate).is_some())
+                || self.all_binders.as_ref().is_some_and(|binders| {
+                    binders
+                        .iter()
+                        .any(|binder| binder.symbols.get(candidate).is_some())
+                });
+            found.then_some(candidate)
+        });
+        if let Some(sym_id) = sym_id {
+            // If this is a fallback from a raw SymbolId-based DefId, check if there's
+            // a proper DefId registered for this symbol and redirect through it.
+            if self.def_to_symbol.borrow().get(&def_id).is_none()
+                && let Some(&real_def_id) = self.symbol_to_def.borrow().get(&sym_id)
+                && real_def_id != def_id
+            {
+                return self.resolve_lazy(real_def_id, _interner);
+            }
+
+            // For classes, check if we should return instance type instead of constructor type.
+            // Check both main binder and lib binders for the symbol.
+            let symbol = self.binder.symbols.get(sym_id).or_else(|| {
+                self.lib_contexts
+                    .iter()
+                    .find_map(|lib| lib.binder.symbols.get(sym_id))
+            });
+            if let Some(symbol) = symbol
+                && (symbol.flags & symbol_flags::CLASS) != 0
+                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
+            {
+                return Some(*instance_type);
             }
 
             // Look up the cached type for this symbol (constructor type for classes)
