@@ -2674,7 +2674,12 @@ impl ParserState {
         // Optional second argument (import attributes/assertions)
         let options = if self.parse_optional(SyntaxKind::CommaToken) {
             if self.is_token(SyntaxKind::CloseParenToken) {
-                None // Trailing comma after first arg
+                // Trailing comma after first arg → TS1009
+                self.parse_error_at_current_token(
+                    "Trailing comma not allowed.",
+                    diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+                );
+                None
             } else {
                 Some(self.parse_assignment_expression())
             }
@@ -2686,7 +2691,12 @@ impl ParserState {
         // cascading TS1005 parse errors. The checker validates arity.
         while self.parse_optional(SyntaxKind::CommaToken) {
             if self.is_token(SyntaxKind::CloseParenToken) {
-                break; // Trailing comma
+                // Trailing comma → TS1009
+                self.parse_error_at_current_token(
+                    "Trailing comma not allowed.",
+                    diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
+                );
+                break;
             }
             self.parse_assignment_expression();
         }
