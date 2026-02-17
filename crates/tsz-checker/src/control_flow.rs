@@ -1631,9 +1631,6 @@ impl<'a> FlowAnalyzer<'a> {
                 }
                 return Some(literal_type);
             }
-            if let Some(nullish_type) = self.nullish_literal_type(rhs) {
-                return Some(nullish_type);
-            }
             // For variable declarations with type annotations, preserve the declared
             // type (return None) in two cases:
             //
@@ -1653,6 +1650,13 @@ impl<'a> FlowAnalyzer<'a> {
                 if !is_const || is_structural_literal {
                     return None;
                 }
+            }
+            // Nullish literals (null, undefined) as initializers should narrow to
+            // their literal type — but only AFTER the type annotation check above.
+            // For `var x: SomeType = null`, the declared type is authoritative;
+            // for `const x = null` (no annotation), we narrow to null.
+            if let Some(nullish_type) = self.nullish_literal_type(rhs) {
+                return Some(nullish_type);
             }
             if let Some(node_types) = self.node_types
                 && let Some(&rhs_type) = node_types.get(&rhs.0)
