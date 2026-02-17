@@ -2492,15 +2492,59 @@ impl<'a> NarrowingContext<'a> {
                     Some(target_type) => {
                         // Type guard with specific type: is T or asserts T
                         if sense {
-                            // True branch: narrow to the target type.
-                            // Like instanceof, if narrow_to_type returns NEVER
-                            // (source and target don't overlap), fall back to
-                            // intersection (e.g. Legged & Winged from successive guards).
-                            let narrowed = self.narrow_to_type(source_type, *target_type);
-                            if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
-                                self.db.intersection2(source_type, *target_type)
+                            // True branch: narrow source to the predicate type.
+                            // Following TSC's narrowType logic:
+                            // 1. For unions: filter members using narrow_to_type
+                            // 2. For non-unions:
+                            //    a. source <: target → return source
+                            //    b. target <: source → return target
+                            //    c. otherwise → return source & target
+                            //
+                            // Following TSC's narrowType logic which uses
+                            // isTypeSubtypeOf (not isTypeAssignableTo) to decide
+                            // whether source is already specific enough.
+                            //
+                            // If source is a strict subtype of the target, return
+                            // source (it's already more specific). If target is a
+                            // strict subtype of source, return target (narrowing
+                            // down). Otherwise, return the intersection.
+                            //
+                            // narrow_to_type uses assignability internally, which is
+                            // too loose for type predicates (e.g. {} is assignable to
+                            // Record<string,unknown> but not a subtype).
+                            let resolved_source = self.resolve_type(source_type);
+
+                            if resolved_source == self.resolve_type(*target_type) {
+                                source_type
+                            } else if resolved_source == TypeId::UNKNOWN
+                                || resolved_source == TypeId::ANY
+                            {
+                                *target_type
+                            } else if union_list_id(self.db, resolved_source).is_some() {
+                                // For unions: filter members, fall back to
+                                // intersection if nothing matches.
+                                let narrowed = self.narrow_to_type(source_type, *target_type);
+                                if narrowed == TypeId::NEVER && source_type != TypeId::NEVER {
+                                    self.db.intersection2(source_type, *target_type)
+                                } else {
+                                    narrowed
+                                }
                             } else {
-                                narrowed
+                                // Non-union source: use narrow_to_type first.
+                                // If it returns source unchanged (assignable but
+                                // possibly losing structural info) or NEVER (no
+                                // overlap), fall back to intersection.
+                                let narrowed = self.narrow_to_type(source_type, *target_type);
+                                if narrowed == source_type && narrowed != *target_type {
+                                    // Source was unchanged — intersect to preserve
+                                    // target's structural info (index sigs, etc.)
+                                    self.db.intersection2(source_type, *target_type)
+                                } else if narrowed == TypeId::NEVER && source_type != TypeId::NEVER
+                                {
+                                    self.db.intersection2(source_type, *target_type)
+                                } else {
+                                    narrowed
+                                }
                             }
                         } else if *asserts {
                             // CRITICAL: For assertion functions, the false branch is unreachable
