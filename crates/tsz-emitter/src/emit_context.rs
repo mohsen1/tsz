@@ -33,6 +33,10 @@ pub struct EmitFlags {
 
     /// Whether we're emitting for declaration files (.d.ts)
     pub in_declaration_emit: bool,
+
+    /// Whether we're inside a binary/conditional expression operand.
+    /// Used to wrap yield-from-await in parens for correct precedence.
+    pub in_binary_operand: bool,
 }
 
 impl EmitFlags {
