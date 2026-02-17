@@ -16,9 +16,9 @@ use tsz_solver::{
     TypeofKind,
     type_queries::{
         ConstructorInstanceKind, LiteralValueKind, PredicateSignatureKind,
-        TypeParameterConstraintKind, UnionMembersKind, classify_for_constructor_instance,
-        classify_for_literal_value, classify_for_predicate_signature,
-        classify_for_type_parameter_constraint, classify_for_union_members, is_narrowing_literal,
+        TypeParameterConstraintKind, classify_for_constructor_instance, classify_for_literal_value,
+        classify_for_predicate_signature, classify_for_type_parameter_constraint,
+        is_narrowing_literal,
     },
 };
 
@@ -828,26 +828,6 @@ impl<'a> FlowAnalyzer<'a> {
                 is_narrowing_literal(self.interner, type_id)
             }
         }
-    }
-
-    pub(crate) fn literal_assignable_to(
-        &self,
-        literal: TypeId,
-        target: TypeId,
-        narrowing: &NarrowingContext,
-    ) -> bool {
-        if literal == target || target == TypeId::ANY || target == TypeId::UNKNOWN {
-            return true;
-        }
-
-        if let UnionMembersKind::Union(members) = classify_for_union_members(self.interner, target)
-        {
-            return members
-                .iter()
-                .any(|&member| self.literal_assignable_to(literal, member, narrowing));
-        }
-
-        narrowing.narrow_to_type(literal, target) != TypeId::NEVER
     }
 
     pub(crate) fn nullish_literal_type(&self, idx: NodeIndex) -> Option<TypeId> {

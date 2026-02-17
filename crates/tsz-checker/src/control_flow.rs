@@ -3019,7 +3019,7 @@ impl<'a> FlowAnalyzer<'a> {
                     if narrowed != TypeId::NEVER {
                         return narrowed;
                     }
-                    if self.literal_assignable_to(literal_type, type_id, narrowing) {
+                    if narrowing.literal_assignable_to(literal_type, type_id) {
                         return literal_type;
                     }
                     return TypeId::NEVER;
