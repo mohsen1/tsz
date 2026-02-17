@@ -89,7 +89,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
-      - name: Run clippy
+      - name: Run clippy (workspace crates - deny warnings)
+        run: |
+          cargo clippy \
+            -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder \
+            -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp \
+            --all-targets -- -D warnings
+
+      - name: Run clippy (full workspace - warnings only)
         run: cargo clippy --all-targets --all-features
 
       - name: Checker boundary guardrail

@@ -17,6 +17,7 @@ fn test_ir_enum_numeric() {
                 value: EnumMemberValue::Auto(1),
             },
         ],
+        namespace_export: None,
     };
 
     let output = IRPrinter::emit_to_string(&enum_ir);
@@ -40,6 +41,7 @@ fn test_ir_enum_string() {
                 value: EnumMemberValue::String("beta".to_string()),
             },
         ],
+        namespace_export: None,
     };
 
     let output = IRPrinter::emit_to_string(&enum_ir);
