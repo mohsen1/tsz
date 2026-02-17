@@ -517,6 +517,42 @@ impl<'a> NarrowingContext<'a> {
     /// property with unique literal values.
     ///
     /// # Arguments
+    /// Narrow a type by discriminant, handling type parameter constraints.
+    ///
+    /// If the type is a type parameter with a constraint, narrows the constraint
+    /// and intersects with the type parameter when the constraint is affected.
+    pub fn narrow_by_discriminant_for_type(
+        &self,
+        type_id: TypeId,
+        prop_path: &[Atom],
+        literal_type: TypeId,
+        is_true_branch: bool,
+    ) -> TypeId {
+        use crate::type_queries::{
+            TypeParameterConstraintKind, classify_for_type_parameter_constraint,
+        };
+
+        if let TypeParameterConstraintKind::TypeParameter {
+            constraint: Some(constraint),
+        } = classify_for_type_parameter_constraint(self.db, type_id)
+            && constraint != type_id {
+                let narrowed_constraint = if is_true_branch {
+                    self.narrow_by_discriminant(constraint, prop_path, literal_type)
+                } else {
+                    self.narrow_by_excluding_discriminant(constraint, prop_path, literal_type)
+                };
+                if narrowed_constraint != constraint {
+                    return self.db.intersection(vec![type_id, narrowed_constraint]);
+                }
+            }
+
+        if is_true_branch {
+            self.narrow_by_discriminant(type_id, prop_path, literal_type)
+        } else {
+            self.narrow_by_excluding_discriminant(type_id, prop_path, literal_type)
+        }
+    }
+
     /// - `union_type`: The union type to narrow
     /// - `property_path`: Path to the discriminant property (e.g., ["payload", "type"])
     /// - `literal_value`: The literal value to match
