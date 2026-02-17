@@ -294,8 +294,8 @@ impl<'a> CheckerState<'a> {
         // never TS2362/TS2363. But if null/undefined operands already got TS18050,
         // don't also emit TS2365 - tsc only emits the per-operand TS18050 errors.
         if op == "+" {
-            if !emitted_nullish_error {
-                if let Some(loc) = self.get_source_location(node_idx) {
+            if !emitted_nullish_error
+                && let Some(loc) = self.get_source_location(node_idx) {
                     let message = format!(
                         "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                     );
@@ -309,7 +309,6 @@ impl<'a> CheckerState<'a> {
                         related_information: Vec::new(),
                     });
                 }
-            }
             return;
         }
 

@@ -524,17 +524,33 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
+            // Get the declared parameter type (if annotated) and use it as
+            // contextual type so that literal initializers keep their narrow types.
+            // E.g., `function f(p: 1 = 1)` — without contextual typing, `1` widens
+            // to `number` and fails assignability. With it, `1` stays as literal `1`.
+            let declared_type = if !param.type_annotation.is_none() {
+                Some(self.get_type_from_type_node(param.type_annotation))
+            } else {
+                None
+            };
+
+            let prev_context = self.ctx.contextual_type;
+            if let Some(dt) = declared_type
+                && dt != TypeId::ANY
+            {
+                self.ctx.contextual_type = Some(dt);
+            }
+
             // IMPORTANT: Always resolve the initializer expression to check for undefined identifiers (TS2304)
             // This must happen regardless of whether there's a type annotation.
             let init_type = self.get_type_of_node(param.initializer);
 
-            // Only check type assignability if there's a type annotation
-            if param.type_annotation.is_none() {
-                continue;
-            }
+            self.ctx.contextual_type = prev_context;
 
-            // Get the declared parameter type
-            let declared_type = self.get_type_from_type_node(param.type_annotation);
+            // Only check type assignability if there's a type annotation
+            let Some(declared_type) = declared_type else {
+                continue;
+            };
 
             // Check if the initializer type is assignable to the declared type
             if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {

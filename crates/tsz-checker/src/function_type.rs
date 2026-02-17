@@ -469,8 +469,13 @@ impl<'a> CheckerState<'a> {
             // This allows destructuring patterns in callbacks to infer element types from contextual types
             self.assign_contextual_types_to_destructuring_params(&parameters.nodes, &param_types);
 
-            // Check that parameter default values are assignable to declared types (TS2322)
-            self.check_parameter_initializers(&parameters.nodes);
+            // Check that parameter default values are assignable to declared types (TS2322).
+            // Only do this for closures (function expressions, arrow functions) since
+            // function/method declarations are checked by statement_callback_bridge.rs.
+            // Without this guard, function declarations get duplicate diagnostics.
+            if is_closure {
+                self.check_parameter_initializers(&parameters.nodes);
+            }
 
             // Check async function requirements (needed before TS7010 check)
             let (is_async, is_generator, async_node_idx): (bool, bool, NodeIndex) =
