@@ -1129,20 +1129,25 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                         }
                     }
                     if let Some(global_id) = resolved_global_id {
-                        // The user binder may have merged additional flags into this
-                        // lib symbol (e.g., user `type Proxy<T>` adds TYPE_ALIAS to
-                        // lib's `declare var Proxy`). Propagate those extra flags and
-                        // declarations to the global symbol.
+                        // The user binder may have merged additional flags and declarations
+                        // into this lib symbol (e.g., user `interface Event<T>` augments
+                        // lib's non-generic `Event`, or user `type Proxy<T>` adds TYPE_ALIAS
+                        // to lib's `declare var Proxy`). Always propagate extra flags and
+                        // user-local declarations to the global symbol so that type parameter
+                        // resolution can find them.
                         if let Some(global_sym) = global_symbols.get_mut(global_id) {
                             let extra_flags = sym.flags & !global_sym.flags;
                             if extra_flags != 0 {
                                 global_sym.flags |= extra_flags;
-                                // Also copy user declarations that were merged into this symbol
-                                append_unique_declarations(
-                                    &mut global_sym.declarations,
-                                    &sym.declarations,
-                                );
                             }
+                            // Always copy user declarations that were merged into this symbol,
+                            // even when flags are identical. Without this, user declarations
+                            // (e.g., a generic `interface Event<T>`) are lost and
+                            // get_type_params_for_symbol won't find their type parameters.
+                            append_unique_declarations(
+                                &mut global_sym.declarations,
+                                &sym.declarations,
+                            );
                         }
                         id_remap.insert(old_id, global_id);
                         continue;
