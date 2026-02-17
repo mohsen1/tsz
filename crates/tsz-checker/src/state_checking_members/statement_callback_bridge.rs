@@ -786,6 +786,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         );
     }
 
+    fn check_for_in_destructuring_pattern(&mut self, initializer: NodeIndex) {
+        CheckerState::check_for_in_destructuring_pattern(self, initializer);
+    }
+
+    fn check_for_in_expression_destructuring(&mut self, initializer: NodeIndex) {
+        CheckerState::check_for_in_expression_destructuring(self, initializer);
+    }
+
     fn check_statement(&mut self, stmt_idx: NodeIndex) {
         // This calls back to the main check_statement which will delegate to StatementChecker
         CheckerState::check_statement(self, stmt_idx);

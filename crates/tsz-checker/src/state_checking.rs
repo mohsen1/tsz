@@ -1511,6 +1511,53 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2491: The left-hand side of a 'for...in' statement cannot be a destructuring pattern.
+    /// Checks variable declaration list form: `for (let {a, b} in obj)`
+    pub(crate) fn check_for_in_destructuring_pattern(&mut self, initializer: NodeIndex) {
+        let arena = self.ctx.arena;
+        let Some(init_node) = arena.get(initializer) else {
+            return;
+        };
+        let Some(var_data) = arena.get_variable(init_node) else {
+            return;
+        };
+        // Check the first (and typically only) declaration
+        if let Some(&first_decl_idx) = var_data.declarations.nodes.first() {
+            if let Some(decl_node) = arena.get(first_decl_idx) {
+                if let Some(var_decl) = arena.get_variable_declaration(decl_node) {
+                    if let Some(name_node) = arena.get(var_decl.name) {
+                        if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                            || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                        {
+                            self.error_at_node(
+                                var_decl.name,
+                                "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
+                                crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// TS2491: The left-hand side of a 'for...in' statement cannot be a destructuring pattern.
+    /// Checks expression form: `for ([a, b] in obj)` or `for ({a, b} in obj)`
+    pub(crate) fn check_for_in_expression_destructuring(&mut self, initializer: NodeIndex) {
+        let arena = self.ctx.arena;
+        if let Some(init_node) = arena.get(initializer) {
+            if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.error_at_node(
+                    initializer,
+                    "The left-hand side of a 'for...in' statement cannot be a destructuring pattern.",
+                    crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
+                );
+            }
+        }
+    }
+
     /// Check a single variable declaration.
     #[tracing::instrument(level = "trace", skip(self), fields(decl_idx = ?decl_idx))]
     pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
