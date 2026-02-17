@@ -920,10 +920,26 @@ impl<'a> CheckerState<'a> {
                             export_default_indices.push(stmt_idx);
 
                             // TS2714: In ambient context, export default expression must be
-                            // an identifier or qualified name
+                            // an identifier or qualified name. Skip for declarations
+                            // (class, function, interface, enum) which are always valid.
                             let is_ambient =
                                 is_declaration_file || self.is_ambient_declaration(stmt_idx);
+                            let is_declaration = self
+                                .ctx
+                                .arena
+                                .get(export_data.export_clause)
+                                .is_some_and(|n| {
+                                    matches!(
+                                        n.kind,
+                                        k if k == syntax_kind_ext::CLASS_DECLARATION
+                                            || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                            || k == syntax_kind_ext::INTERFACE_DECLARATION
+                                            || k == syntax_kind_ext::ENUM_DECLARATION
+                                            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                    )
+                                });
                             if is_ambient
+                                && !is_declaration
                                 && !export_data.export_clause.is_none()
                                 && !self.is_identifier_or_qualified_name(export_data.export_clause)
                             {
