@@ -1744,6 +1744,10 @@ impl ParserState {
             SyntaxKind::SlashToken | SyntaxKind::SlashEqualsToken => self.parse_regex_literal(),
             // Dynamic import or import.meta
             SyntaxKind::ImportKeyword => self.parse_import_expression(),
+            // `as` and `satisfies` are binary operators but also valid identifiers.
+            // When they appear at expression start, they must be identifiers
+            // (e.g., `var x = as as string` — first `as` is the variable).
+            SyntaxKind::AsKeyword | SyntaxKind::SatisfiesKeyword => self.parse_identifier_name(),
             SyntaxKind::Unknown => {
                 // TS1127: Invalid character - emit specific error for invalid characters
                 use tsz_common::diagnostics::diagnostic_codes;
