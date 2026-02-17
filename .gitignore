@@ -93,11 +93,9 @@ yarn.lock
 logs/
 scripts/conformance/.tsc-cache
 
-# TSC conformance cache files
+# TSC conformance cache files (ignore generated, keep the committed one)
 tsc-cache*.json
-
-# Takes 30 minutes to generate. Remove later...
-!tsc-cache-full.json
+!scripts/tsc-cache-full.json
 
 # Debug tests
 tests/debug/

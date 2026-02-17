@@ -1,19 +1,23 @@
 {
-  "name": "zang-scripts",
+  "name": "tsz-scripts",
   "version": "1.0.0",
-  "description": "Testing and build scripts for Project Zang.",
-  "license": "ISC",
-  "author": "",
-  "type": "commonjs",
-  "main": "index.js",
+  "description": "Build, test, and dev scripts for the tsz TypeScript compiler.",
+  "license": "Apache-2.0",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "devDependencies": {
-    "dotenv": "^17.2.3"
+    "build:emit": "cd emit && ../node_modules/.bin/tsc -p tsconfig.json"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
-    "blake3": "^2.1.7"
+    "blake3": "^2.1.7",
+    "diff": "^5.2.0",
+    "p-limit": "^7.3.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/diff": "^5.2.0",
+    "@types/node": "^20.0.0",
+    "dotenv": "^17.2.3",
+    "typescript": "6.0.0-dev.20260215"
   }
 }

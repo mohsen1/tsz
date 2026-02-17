@@ -5,6 +5,7 @@
     "moduleResolution": "NodeNext",
     "lib": ["ES2022"],
     "types": ["node"],
+    "typeRoots": ["../node_modules/@types"],
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
@@ -15,5 +16,5 @@
     "sourceMap": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["dist"]
 }

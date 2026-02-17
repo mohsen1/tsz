@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # Default values (relative to repo root)
 TEST_DIR="$REPO_ROOT/TypeScript/tests/cases"
-CACHE_FILE="$REPO_ROOT/tsc-cache-full.json"
+CACHE_FILE="$REPO_ROOT/scripts/tsc-cache-full.json"
 
 # Build profile (dist-fast = fast build + good runtime perf)
 BUILD_PROFILE="dist-fast"
@@ -86,9 +86,9 @@ Analysis output includes:
   - Impact estimation - how many tests each code affects
 
 Note: Binaries are automatically built if not found.
-      Cache (tsc-cache-full.json) is checked into the repo.
+      Cache (scripts/tsc-cache-full.json) is checked into the repo.
 
-Cache location: tsc-cache-full.json (in repo root)
+Cache location: scripts/tsc-cache-full.json
 Test directory: TypeScript/tests/cases/conformance
 EOF
 }
@@ -204,7 +204,10 @@ ensure_binaries() {
 generate_cache() {
     local force_regenerate="${1:-false}"
     
-    "$REPO_ROOT/scripts/ensure-pinned-typescript.sh" "$REPO_ROOT/scripts/emit"
+    # Ensure scripts dependencies (TypeScript + emit runner deps) are installed
+    if [ ! -d "$REPO_ROOT/scripts/node_modules" ]; then
+        (cd "$REPO_ROOT/scripts" && npm install --silent 2>/dev/null || npm install)
+    fi
 
     if [ "$force_regenerate" != "true" ] && [ -f "$CACHE_FILE" ]; then
         echo -e "${YELLOW}Cache already exists: $CACHE_FILE${NC}"
