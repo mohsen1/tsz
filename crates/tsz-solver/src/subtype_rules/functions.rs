@@ -107,6 +107,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
 
+        // Fast path: `any` in either parameter position is always compatible.
+        // In TypeScript, `any` is both assignable to and from every type,
+        // including in parameter positions. This must be checked BEFORE the
+        // deeper structural check because TopLevelOnly any_propagation mode
+        // (used during strict function type checks) demotes `any` to `unknown`
+        // at depth > 0, which would incorrectly reject `any` parameters.
+        if source_type.is_any() || target_type.is_any() {
+            return true;
+        }
+
         let contains_this =
             self.type_contains_this_type(source_type) || self.type_contains_this_type(target_type);
 

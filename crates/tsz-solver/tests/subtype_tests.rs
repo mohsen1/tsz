@@ -1426,7 +1426,9 @@ fn test_rest_any_bivariant_subtyping_toggle() {
         is_method: false,
     });
 
-    assert!(!checker.is_subtype_of(source, target));
+    // (x: number) => void IS subtype of (...args: any[]) => void
+    // because `any` in the target rest parameter is always compatible.
+    assert!(checker.is_subtype_of(source, target));
 
     checker.allow_bivariant_rest = true;
     assert!(checker.is_subtype_of(source, target));
