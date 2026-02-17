@@ -1407,10 +1407,13 @@ impl<'a> CheckerState<'a> {
         initializer: NodeIndex,
         element_type: TypeId,
         is_for_of: bool,
+        has_await_modifier: bool,
     ) {
         // TS1106: The left-hand side of a 'for...of' statement may not be 'async'.
         // `for (async of expr)` is ambiguous with `for await (... of ...)`.
+        // With `for await`, the `async` identifier is unambiguous, so skip the check.
         if is_for_of
+            && !has_await_modifier
             && let Some(init_node) = self.ctx.arena.get(initializer)
             && init_node.kind == SyntaxKind::Identifier as u16
             && let Some(ident) = self.ctx.arena.get_identifier(init_node)

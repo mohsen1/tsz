@@ -103,6 +103,7 @@ pub trait StatementCheckCallbacks {
         initializer: NodeIndex,
         element_type: TypeId,
         is_for_of: bool,
+        has_await_modifier: bool,
     );
 
     /// Recursively check a nested statement (callback to `check_statement`).
@@ -405,6 +406,7 @@ impl StatementChecker {
                             initializer,
                             loop_var_type,
                             is_for_of,
+                            await_modifier,
                         );
                     }
                     state.enter_iteration_statement();
