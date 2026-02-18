@@ -1697,7 +1697,7 @@ impl<'a> Printer<'a> {
             .is_some_and(|text| start < end && end <= text.len() && text[start..end].contains('\n'))
     }
 
-    /// Emit object literal with spread elements as Object.assign() for pre-ES2018 targets.
+    /// Emit object literal with spread elements as `Object.assign()` for pre-ES2018 targets.
     ///
     /// TypeScript's object spread lowering for ES2015-ES2017:
     /// - `{ ...a }` → `Object.assign({}, a)`
@@ -1788,12 +1788,11 @@ impl<'a> Printer<'a> {
         self.write(" }");
     }
 
-    /// Emit the expression part of a SPREAD_ASSIGNMENT node (the `x` in `...x`).
+    /// Emit the expression part of a `SPREAD_ASSIGNMENT` node (the `x` in `...x`).
     fn emit_spread_expression_node(&mut self, spread_idx: NodeIndex) {
-        if let Some(spread_node) = self.arena.get(spread_idx) {
-            if let Some(spread) = self.arena.get_spread(spread_node) {
+        if let Some(spread_node) = self.arena.get(spread_idx)
+            && let Some(spread) = self.arena.get_spread(spread_node) {
                 self.emit_expression(spread.expression);
             }
-        }
     }
 }
