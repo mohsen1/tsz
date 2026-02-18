@@ -968,7 +968,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(sym_id) = self.resolve_identifier_symbol(base_expr)
             {
                 let declared_type = self.get_type_of_symbol(sym_id);
-                let _ = self.check_flow_usage(idx, declared_type, sym_id);
+                let _ = self.check_flow_usage(base_expr, declared_type, sym_id);
             }
         }
 
@@ -977,8 +977,14 @@ impl<'a> CheckerState<'a> {
         // Example: After `if (foo[x] === undefined)`, when checking `foo[x] = 1`,
         // we should check against the declared type (e.g., `number | undefined` from index signature)
         // not the narrowed type (e.g., `undefined`).
+        //
+        // However, if the target is invalid (e.g. `getValue<number> = ...` parsed as BinaryExpression),
+        // we should NOT skip narrowing because we want to treat it as an expression read
+        // to catch errors like TS2454 (used before assigned).
         let prev_skip_narrowing = self.ctx.skip_flow_narrowing;
-        self.ctx.skip_flow_narrowing = true;
+        if self.is_valid_assignment_target(idx) {
+            self.ctx.skip_flow_narrowing = true;
+        }
         let result = self.get_type_of_node(idx);
         self.ctx.skip_flow_narrowing = prev_skip_narrowing;
         result

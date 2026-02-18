@@ -64,7 +64,7 @@ impl<'a> CheckerState<'a> {
     /// Returns false for literals, call expressions, and other non-assignable expressions.
     /// Used to emit TS2364: "The left-hand side of an assignment expression must be a variable
     /// or a property access."
-    fn is_valid_assignment_target(&self, idx: NodeIndex) -> bool {
+    pub(crate) fn is_valid_assignment_target(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
