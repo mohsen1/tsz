@@ -3922,7 +3922,7 @@ fn test_variance_optional_rest_function_rest_with_this_contravariant() {
 }
 
 #[test]
-fn test_variance_optional_rest_constructor_optional_contravariant() {
+fn test_variance_optional_rest_constructor_optional_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -3960,11 +3960,12 @@ fn test_variance_optional_rest_constructor_optional_contravariant() {
     });
 
     assert!(checker.is_subtype_of(wide_ctor, narrow_ctor));
-    assert!(!checker.is_subtype_of(narrow_ctor, wide_ctor));
+    // Constructor signatures are bivariant (like methods), not contravariant
+    assert!(checker.is_subtype_of(narrow_ctor, wide_ctor));
 }
 
 #[test]
-fn test_variance_optional_rest_constructor_rest_contravariant() {
+fn test_variance_optional_rest_constructor_rest_bivariant() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -4004,7 +4005,8 @@ fn test_variance_optional_rest_constructor_rest_contravariant() {
     });
 
     assert!(checker.is_subtype_of(wide_ctor, narrow_ctor));
-    assert!(!checker.is_subtype_of(narrow_ctor, wide_ctor));
+    // Constructor signatures are bivariant (like methods), not contravariant
+    assert!(checker.is_subtype_of(narrow_ctor, wide_ctor));
 }
 
 #[test]
@@ -16064,8 +16066,8 @@ fn test_variance_triple_nested_contravariance() {
 }
 
 #[test]
-fn test_variance_constructor_param_contravariant() {
-    // new (x: string | number) => T  <:  new (x: string) => T
+fn test_variance_constructor_param_bivariant() {
+    // Construct signatures use bivariant parameter checking (like methods).
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);
 
@@ -16119,9 +16121,9 @@ fn test_variance_constructor_param_contravariant() {
         number_index: None,
     });
 
-    // Wide param constructor <: narrow param constructor (contravariant)
+    // Both directions work (bivariant for construct signatures)
     assert!(checker.is_subtype_of(ctor_wide, ctor_narrow));
-    assert!(!checker.is_subtype_of(ctor_narrow, ctor_wide));
+    assert!(checker.is_subtype_of(ctor_narrow, ctor_wide));
 }
 
 #[test]

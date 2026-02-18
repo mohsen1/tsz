@@ -4481,11 +4481,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source.params.len()
         };
         let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
+        // Constructor and method signatures are bivariant even with strictFunctionTypes
+        let is_method_or_ctor =
+            source.is_method || target.is_method || source.is_constructor || target.is_constructor;
         for i in 0..fixed_compare_count {
             let s_param = &source.params[i];
             let t_param = &target.params[i];
             // Check parameter compatibility (contravariant in strict mode, bivariant in legacy)
-            if !self.are_parameters_compatible(s_param.type_id, t_param.type_id) {
+            if !self.are_parameters_compatible_impl(
+                s_param.type_id,
+                t_param.type_id,
+                is_method_or_ctor,
+            ) {
                 return Some(SubtypeFailureReason::ParameterTypeMismatch {
                     param_index: i,
                     source_param: s_param.type_id,
@@ -4504,7 +4511,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             for i in target_fixed_count..source_fixed_count {
                 let s_param = &source.params[i];
-                if !self.are_parameters_compatible(s_param.type_id, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(
+                    s_param.type_id,
+                    rest_elem_type,
+                    is_method_or_ctor,
+                ) {
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: i,
                         source_param: s_param.type_id,
@@ -4516,7 +4527,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if source_has_rest {
                 let s_rest_param = source.params.last()?;
                 let s_rest_elem = self.get_array_element_type(s_rest_param.type_id);
-                if !self.are_parameters_compatible(s_rest_elem, rest_elem_type) {
+                if !self.are_parameters_compatible_impl(
+                    s_rest_elem,
+                    rest_elem_type,
+                    is_method_or_ctor,
+                ) {
                     return Some(SubtypeFailureReason::ParameterTypeMismatch {
                         param_index: source_fixed_count,
                         source_param: s_rest_elem,
