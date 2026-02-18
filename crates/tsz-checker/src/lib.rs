@@ -89,6 +89,7 @@ mod state_variable_checking;
 pub mod statements;
 pub mod super_checker;
 pub mod symbol_resolver;
+mod symbol_resolver_utils;
 pub mod triple_slash_validator;
 pub mod tuple_type;
 pub mod type_api;
