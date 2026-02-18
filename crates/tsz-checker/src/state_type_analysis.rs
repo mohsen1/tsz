@@ -658,6 +658,16 @@ impl<'a> CheckerState<'a> {
                     let left_type = self.get_type_of_node(left_idx);
                     self.ctx.skip_flow_narrowing = prev_skip;
                     trace!(left_type = ?left_type, "type_query qualified: left_type");
+                    if left_type == TypeId::ANY {
+                        // globalThis resolves to ANY since it's a synthetic global.
+                        // `typeof globalThis.foo` should also be ANY (no TS2304).
+                        if let Some(left_node) = self.ctx.arena.get(left_idx)
+                            && let Some(ident) = self.ctx.arena.get_identifier(left_node)
+                            && ident.escaped_text == "globalThis"
+                        {
+                            return TypeId::ANY;
+                        }
+                    }
                     if left_type != TypeId::ANY && left_type != TypeId::ERROR {
                         // Look up the right side as a property on the left type
                         if let Some(right_node) = self.ctx.arena.get(right_idx)

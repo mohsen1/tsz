@@ -2076,6 +2076,14 @@ impl<'a> CheckerState<'a> {
             let node = self.ctx.arena.get(current)?;
             if node.kind == SyntaxKind::Identifier as u16 {
                 if self.resolve_identifier_symbol(current).is_none() {
+                    // globalThis is a synthetic global in tsc with no binder symbol.
+                    // Don't report it as missing in typeof qualified expressions
+                    // (e.g., `typeof globalThis.isNaN`).
+                    if let Some(ident) = self.ctx.arena.get_identifier(node)
+                        && ident.escaped_text == "globalThis"
+                    {
+                        return None;
+                    }
                     return Some(current);
                 }
                 return None;
