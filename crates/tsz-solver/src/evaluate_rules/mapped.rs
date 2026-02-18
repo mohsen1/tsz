@@ -105,8 +105,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         (false, false)
     }
 
-    /// Get the DECLARED type of a property from source_object, without adding
-    /// `| undefined` for optional properties. This is distinct from IndexedAccess
+    /// Get the DECLARED type of a property from `source_object`, without adding
+    /// `| undefined` for optional properties. This is distinct from `IndexedAccess`
     /// evaluation which adds `| undefined` for optional properties.
     ///
     /// Used in homomorphic mapped types where the template type should use the
@@ -693,21 +693,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Key remapping (`as` clause / name_type) breaks homomorphism.
         if mapped.name_type.is_none()
             && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
+            && let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx)
+            && param.name == mapped.type_param.name
         {
-            if let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx) {
-                if param.name == mapped.type_param.name {
-                    // Don't match if obj is still a type parameter (not yet instantiated)
-                    if matches!(
-                        self.interner().lookup(obj),
-                        Some(TypeData::TypeParameter(_))
-                    ) {
-                        return false;
-                    }
-                    // Verify: the constraint is exactly the keys of obj
-                    let expected_keys = self.evaluate_keyof(obj);
-                    return expected_keys == mapped.constraint;
-                }
+            // Don't match if obj is still a type parameter (not yet instantiated)
+            if matches!(
+                self.interner().lookup(obj),
+                Some(TypeData::TypeParameter(_))
+            ) {
+                return false;
             }
+            // Verify: the constraint is exactly the keys of obj
+            let expected_keys = self.evaluate_keyof(obj);
+            return expected_keys == mapped.constraint;
         }
 
         false
