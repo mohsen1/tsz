@@ -298,14 +298,27 @@ impl<'a> CheckerState<'a> {
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, constructor_type) else {
             return;
         };
-        // For callable types, use the first construct signature's type params
-        let type_params = shape
-            .construct_signatures
-            .first()
-            .map(|sig| sig.type_params.clone())
-            .unwrap_or_default();
-
         let got = type_args_list.nodes.len();
+
+        // For callable types with overloaded construct signatures, prefer
+        // a signature whose type parameter arity matches the provided args.
+        let type_params = {
+            let matching = shape
+                .construct_signatures
+                .iter()
+                .find(|sig| sig.type_params.len() == got)
+                .map(|sig| sig.type_params.clone());
+            if let Some(params) = matching {
+                params
+            } else {
+                // Fall back to first signature for diagnostics
+                shape
+                    .construct_signatures
+                    .first()
+                    .map(|sig| sig.type_params.clone())
+                    .unwrap_or_default()
+            }
+        };
 
         if type_params.is_empty() {
             // TS2558: Expected 0 type arguments, but got N.
