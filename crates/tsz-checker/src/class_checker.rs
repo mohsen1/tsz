@@ -1181,18 +1181,19 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .is_assignable_to(derived_type, base_type_instantiated)
-                && !class_extends_error_reported {
-                    let derived_type_str = self.format_type(derived_type);
-                    let base_type_str = self.format_type(base_type_instantiated);
-                    self.error_at_node(
+                && !class_extends_error_reported
+            {
+                let derived_type_str = self.format_type(derived_type);
+                let base_type_str = self.format_type(base_type_instantiated);
+                self.error_at_node(
                         derived_class.name,
                         &format!(
                             "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  'string' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
                         ),
                         crate::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
                     );
-                    class_extends_error_reported = true;
-                }
+                class_extends_error_reported = true;
+            }
         }
 
         // Check number index signature compatibility
@@ -1204,17 +1205,18 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .types
                 .is_assignable_to(derived_type, base_type_instantiated)
-                && !class_extends_error_reported {
-                    let derived_type_str = self.format_type(derived_type);
-                    let base_type_str = self.format_type(base_type_instantiated);
-                    self.error_at_node(
+                && !class_extends_error_reported
+            {
+                let derived_type_str = self.format_type(derived_type);
+                let base_type_str = self.format_type(base_type_instantiated);
+                self.error_at_node(
                         derived_class.name,
                         &format!(
                             "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  'number' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
                         ),
                         crate::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
                     );
-                }
+            }
         }
     }
 
