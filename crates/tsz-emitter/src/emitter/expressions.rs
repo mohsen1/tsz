@@ -1791,8 +1791,9 @@ impl<'a> Printer<'a> {
     /// Emit the expression part of a `SPREAD_ASSIGNMENT` node (the `x` in `...x`).
     fn emit_spread_expression_node(&mut self, spread_idx: NodeIndex) {
         if let Some(spread_node) = self.arena.get(spread_idx)
-            && let Some(spread) = self.arena.get_spread(spread_node) {
-                self.emit_expression(spread.expression);
-            }
+            && let Some(spread) = self.arena.get_spread(spread_node)
+        {
+            self.emit_expression(spread.expression);
+        }
     }
 }

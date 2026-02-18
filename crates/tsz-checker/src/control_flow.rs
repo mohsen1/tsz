@@ -1458,7 +1458,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Get the declared annotation type for a variable declaration node, if available.
     ///
-    /// Returns `Some(type_id)` when `assignment_node` is a VARIABLE_DECLARATION with a
+    /// Returns `Some(type_id)` when `assignment_node` is a `VARIABLE_DECLARATION` with a
     /// type annotation whose type has already been computed and cached in `node_types`.
     /// Returns `None` otherwise (no annotation, wrong node kind, or not cached yet).
     ///
