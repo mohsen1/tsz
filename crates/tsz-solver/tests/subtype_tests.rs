@@ -1,7 +1,9 @@
 use super::*;
 use crate::TypeInterner;
+use crate::TypeResolver;
 use crate::def::DefId;
 use crate::{TypeSubstitution, Visibility, instantiate_type};
+use tsz_binder::SymbolId;
 
 #[test]
 fn test_intrinsic_subtyping() {
@@ -1216,6 +1218,49 @@ fn test_ref_resolution_with_environment() {
     let mut checker_with_env = SubtypeChecker::with_resolver(&interner, &env);
     assert!(checker_with_env.is_subtype_of(ref_type, TypeId::STRING));
     assert!(!checker_with_env.is_subtype_of(ref_type, TypeId::NUMBER));
+}
+
+#[test]
+fn test_reference_lazy_fallback_uses_symbol_to_def_mapping() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // Register a real DefId and map a raw SymbolId back to it.
+    let real_def = DefId(100);
+    env.insert_def(real_def, TypeId::STRING);
+    env.register_def_symbol_mapping(real_def, SymbolId(5));
+
+    let raw_reference = interner.reference(SymbolRef(5));
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(checker.is_subtype_of(raw_reference, TypeId::STRING));
+    assert!(!checker.is_subtype_of(raw_reference, TypeId::NUMBER));
+}
+
+#[test]
+fn test_lazy_type_params_falls_back_from_symbol_based_lazy_ref() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let generic_def = DefId(200);
+    env.insert_def_with_params(generic_def, TypeId::STRING, vec![t_param.clone()]);
+    env.register_def_symbol_mapping(generic_def, SymbolId(42));
+
+    let raw_lazy = env
+        .get_lazy_type_params(DefId(42))
+        .expect("fallback should resolve params");
+    assert_eq!(raw_lazy.len(), 1);
+    assert_eq!(raw_lazy[0], t_param);
+
+    let symbol_reference = interner.reference(SymbolRef(42));
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+    assert!(checker.is_subtype_of(symbol_reference, TypeId::STRING));
 }
 
 #[test]

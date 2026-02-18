@@ -2115,6 +2115,72 @@ fn test_infer_generic_function_identity() {
 }
 
 #[test]
+fn test_infer_generic_function_identity_widens_non_const_literal() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let hello = interner.literal_string("hello");
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[hello]);
+    assert_eq!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_infer_generic_function_identity_preserves_const_type_param() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: true,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: t_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let hello = interner.literal_string("hello");
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[hello]);
+    assert_eq!(result, hello);
+}
+
+#[test]
 fn test_infer_generic_function_this_type_param() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
