@@ -2996,6 +2996,15 @@ impl<'a> CheckerState<'a> {
         number_index: &mut Option<tsz_solver::IndexSignature>,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) {
+        // Resolve Lazy types so the classifier can see the actual structure.
+        let base_instance_type = {
+            let resolved = self.resolve_lazy_type(base_instance_type);
+            if resolved != base_instance_type {
+                resolved
+            } else {
+                base_instance_type
+            }
+        };
         if !visited.insert(base_instance_type) {
             return;
         }
