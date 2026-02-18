@@ -363,6 +363,19 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             k if k == SyntaxKind::ThisKeyword as u16 => {
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    // TS2465: 'this' cannot be referenced in a computed property name.
+                    // Check this first — it takes priority over other `this` errors.
+                    if self
+                        .checker
+                        .is_this_in_class_member_computed_property_name(idx)
+                    {
+                        self.checker.error_at_node(
+                            idx,
+                            diagnostic_messages::THIS_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
+                            diagnostic_codes::THIS_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
+                        );
+                        return TypeId::ANY;
+                    }
                     // TS2331: 'this' cannot be referenced in a module or namespace body
                     if self.checker.is_this_in_namespace_body(idx) {
                         self.checker.error_at_node(

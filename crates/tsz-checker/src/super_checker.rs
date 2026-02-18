@@ -835,6 +835,17 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_super_expression(&mut self, idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+        // TS2466: 'super' cannot be referenced in a computed property name.
+        // Check this first — it takes priority over TS2337/TS2660/etc.
+        if self.is_super_in_computed_property_name(idx) {
+            self.error_at_node(
+                idx,
+                diagnostic_messages::SUPER_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
+                diagnostic_codes::SUPER_CANNOT_BE_REFERENCED_IN_A_COMPUTED_PROPERTY_NAME,
+            );
+            return;
+        }
+
         // Detect if this is a super() call early (needed for error selection)
         let parent_info = self
             .ctx
