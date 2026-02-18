@@ -1045,6 +1045,18 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // (`x is T`) and are not value expressions.
             k if k == syntax_kind_ext::TYPE_PREDICATE => TypeId::BOOLEAN,
 
+            // ExpressionWithTypeArguments: `expr<T>` used as a standalone expression
+            // (e.g., `List<number>.makeChild()`). Evaluate the inner expression
+            // to trigger name resolution (TS2304) even though the overall node
+            // produces a parse error (TS1477).
+            k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                if let Some(data) = self.checker.ctx.arena.get_expr_type_args(node) {
+                    self.checker.get_type_of_node(data.expression)
+                } else {
+                    TypeId::ERROR
+                }
+            }
+
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(
