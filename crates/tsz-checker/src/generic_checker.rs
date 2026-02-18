@@ -48,6 +48,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let callee_type = self.evaluate_application_type(callee_type);
+        // Resolve Lazy types so the classifier can see callable/function signatures.
+        let callee_type = {
+            let resolved = self.resolve_lazy_type(callee_type);
+            if resolved != callee_type {
+                resolved
+            } else {
+                callee_type
+            }
+        };
 
         let got = type_args_list.nodes.len();
         // Get the type parameters from the callee type. For callables with overloads,

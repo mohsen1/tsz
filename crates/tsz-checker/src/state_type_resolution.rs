@@ -2672,6 +2672,15 @@ impl<'a> CheckerState<'a> {
             return callee_type;
         }
 
+        // Resolve Lazy types before classification.
+        let callee_type = {
+            let resolved = self.resolve_lazy_type(callee_type);
+            if resolved != callee_type {
+                resolved
+            } else {
+                callee_type
+            }
+        };
         let factory = self.ctx.types.factory();
         match query::classify_for_signatures(self.ctx.types, callee_type) {
             query::SignatureTypeKind::Callable(shape_id) => {
