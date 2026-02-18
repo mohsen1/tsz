@@ -170,7 +170,12 @@ impl<'a> CheckerState<'a> {
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
             let parent_sym_id = symbol.parent;
             // Call get_or_create_def_id for the parent to populate symbol_to_def mapping
-            self.ctx.get_or_create_def_id(parent_sym_id);
+            let parent_def_id = self.ctx.get_or_create_def_id(parent_sym_id);
+            // Register the parent-child relationship in TypeEnvironment
+            // This enables enum member widening for mutable bindings
+            if let Ok(mut env) = self.ctx.type_env.try_borrow_mut() {
+                env.register_enum_parent(member_def_id, parent_def_id);
+            }
         }
 
         // Get the literal type from the initializer
@@ -380,6 +385,8 @@ impl<'a> CheckerState<'a> {
                                 );
                                 if member_def_id != tsz_solver::DefId::INVALID {
                                     env.insert_def(member_def_id, member_enum_type);
+                                    // Register parent-child relationship for enum member widening
+                                    env.register_enum_parent(member_def_id, def_id);
                                 }
                             }
                         }
