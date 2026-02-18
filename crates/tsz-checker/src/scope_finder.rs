@@ -818,14 +818,12 @@ impl<'a> CheckerState<'a> {
                 // Check if this computed property's owner's parent is a class
                 if let Some(cpn_ext) = self.ctx.arena.get_extended(parent_idx) {
                     let owner_idx = cpn_ext.parent; // MethodDeclaration, PropertyDeclaration, etc.
-                    if let Some(owner_ext) = self.ctx.arena.get_extended(owner_idx) {
-                        let class_idx = owner_ext.parent; // ClassDeclaration or ObjectLiteralExpression
-                        if let Some(class_node) = self.ctx.arena.get(class_idx)
-                            && (class_node.kind == CLASS_DECLARATION
-                                || class_node.kind == CLASS_EXPRESSION)
-                        {
-                            return true;
-                        }
+                    if let Some(owner_ext) = self.ctx.arena.get_extended(owner_idx)
+                        && let Some(class_node) = self.ctx.arena.get(owner_ext.parent)
+                        && (class_node.kind == CLASS_DECLARATION
+                            || class_node.kind == CLASS_EXPRESSION)
+                    {
+                        return true;
                     }
                 }
                 // Not a class member computed property; keep walking to find an outer one
