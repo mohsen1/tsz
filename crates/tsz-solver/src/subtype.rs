@@ -2272,6 +2272,48 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// 3. Meta-type evaluation (keyof, conditional, mapped, etc.)
     /// 4. Structural comparison
     ///
+    /// Check if source satisfies the Object contract (conflicting properties check).
+    ///
+    /// The `Object` interface allows assignment from almost anything, but if the source
+    /// provides properties that overlap with `Object` (e.g. `toString`), they must be compatible.
+    fn check_object_contract(&mut self, source: TypeId, target: TypeId) -> SubtypeResult {
+        use crate::visitor::{object_shape_id, object_with_index_shape_id};
+
+        // Resolve source shape first - if not an object, it's valid (primitives match Object)
+        let source_eval = self.evaluate_type(source);
+        let s_shape_id = match object_shape_id(self.interner, source_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, source_eval))
+        {
+            Some(id) => id,
+            None => return SubtypeResult::True,
+        };
+        let s_shape = self.interner.object_shape(s_shape_id);
+
+        // Resolve Object shape (target)
+        let target_eval = self.evaluate_type(target);
+        let t_shape_id = match object_shape_id(self.interner, target_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, target_eval))
+        {
+            Some(id) => id,
+            None => return SubtypeResult::True, // Should not happen for Object interface
+        };
+        let t_shape = self.interner.object_shape(t_shape_id);
+
+        // Check for conflicting properties
+        for s_prop in &s_shape.properties {
+            // Find property in Object interface (target)
+            if let Some(t_prop) = self.lookup_property(&t_shape.properties, Some(t_shape_id), s_prop.name) {
+                // Found potential conflict: check compatibility
+                let result = self.check_property_compatibility(s_prop, t_prop);
+                if !result.is_true() {
+                    return result;
+                }
+            }
+        }
+
+        SubtypeResult::True
+    }
+
     /// When a cycle is detected, we return `CycleDetected` (coinductive semantics)
     /// which implements greatest fixed point semantics - the correct behavior for
     /// recursive type checking. When depth/iteration limits are exceeded, we return
@@ -2511,11 +2553,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if is_object_interface_target {
                 let is_nullable = matches!(source, TypeId::NULL | TypeId::UNDEFINED | TypeId::VOID);
                 if !is_nullable {
+                    let result = self.check_object_contract(source, target);
                     if let Some(dp) = def_entered {
                         self.def_guard.leave(dp);
                     }
                     self.guard.leave(pair);
-                    return SubtypeResult::True;
+                    return result;
                 }
             }
         }
