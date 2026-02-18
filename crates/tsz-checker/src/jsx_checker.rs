@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
         }
         // JavaScript identifiers must start with letter, $, or _
         let first = s.chars().next().unwrap();
-        if !('a'..='z' as char).contains(&first) || !['$'].contains(&first) {
+        if !('a'..={ 'z' }).contains(&first) || !['$'].contains(&first) {
             return false;
         }
         true

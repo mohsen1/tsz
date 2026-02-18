@@ -238,8 +238,17 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "jsx_checker should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
-    let context_src = fs::read_to_string("src/context.rs")
+    let mut context_src = fs::read_to_string("src/context.rs")
         .expect("failed to read src/context.rs for architecture guard");
+    // Include split-off modules that are part of the context logical module
+    context_src.push_str(
+        &fs::read_to_string("src/context_constructors.rs")
+            .expect("failed to read src/context_constructors.rs for architecture guard"),
+    );
+    context_src.push_str(
+        &fs::read_to_string("src/context_resolver.rs")
+            .expect("failed to read src/context_resolver.rs for architecture guard"),
+    );
     assert!(
         !context_src.contains("self.types.intern(TypeData::Lazy("),
         "context should use solver lazy constructor API, not direct TypeData::Lazy interning"
@@ -540,6 +549,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     state_checking_src.push_str(
         &fs::read_to_string("src/state_property_checking.rs")
             .expect("failed to read src/state_property_checking.rs for architecture guard"),
+    );
+    state_checking_src.push_str(
+        &fs::read_to_string("src/state_class_checking.rs")
+            .expect("failed to read src/state_class_checking.rs for architecture guard"),
     );
     assert!(
         state_checking_src.contains("check_assignable_or_report(")
