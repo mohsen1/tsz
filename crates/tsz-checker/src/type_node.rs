@@ -484,6 +484,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         if let Some(tuple_type) = self.ctx.arena.get_tuple_type(node) {
             let mut elements = Vec::new();
+            let mut seen_optional = false;
 
             for &elem_idx in &tuple_type.elements.nodes {
                 if elem_idx.is_none() {
@@ -498,6 +499,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 use tsz_parser::parser::syntax_kind_ext;
                 if elem_node.kind == syntax_kind_ext::OPTIONAL_TYPE {
                     // Optional element (e.g., `string?`)
+                    seen_optional = true;
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check(wrapped.type_node);
                         elements.push(TupleElement {
@@ -509,6 +511,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 } else if elem_node.kind == syntax_kind_ext::REST_TYPE {
                     // Rest element (e.g., `...string[]`)
+                    // Rest elements can come after optional elements, so we don't error
                     if let Some(wrapped) = self.ctx.arena.get_wrapped_type(elem_node) {
                         let elem_type = self.check(wrapped.type_node);
                         elements.push(TupleElement {
@@ -520,6 +523,15 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                 } else {
                     // Regular element
+                    // TS1257: A required element cannot follow an optional element
+                    if seen_optional {
+                        self.ctx.error(
+                            elem_node.pos,
+                            elem_node.end - elem_node.pos,
+                            crate::diagnostics::diagnostic_messages::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT.to_string(),
+                            crate::diagnostics::diagnostic_codes::A_REQUIRED_ELEMENT_CANNOT_FOLLOW_AN_OPTIONAL_ELEMENT,
+                        );
+                    }
                     let elem_type = self.check(elem_idx);
                     elements.push(TupleElement {
                         type_id: elem_type,
