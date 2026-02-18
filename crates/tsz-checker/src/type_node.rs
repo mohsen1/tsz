@@ -1168,9 +1168,22 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return expr_type;
         }
 
-        // For now, delegate to TypeLowering
+        // For qualified names (e.g., typeof M.F2), resolve the symbol through
+        // the binder's export tables. Simple identifiers are already handled by
+        // the node_types cache above, but qualified names need member resolution.
+        if let Some(sym_id) = self.resolve_type_query_symbol(type_query.expr_name) {
+            let factory = self.ctx.types.factory();
+            return factory.type_query(tsz_solver::SymbolRef(sym_id.0));
+        }
+
+        // Fall back to TypeLowering with proper value resolvers
+        let value_resolver = |node_idx: NodeIndex| -> Option<u32> {
+            let ident = self.ctx.arena.get_identifier_at(node_idx)?;
+            let name = ident.escaped_text.as_str();
+            let sym_id = self.ctx.binder.file_locals.get(name)?;
+            Some(sym_id.0)
+        };
         let type_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
-        let value_resolver = |_node_idx: NodeIndex| -> Option<u32> { None };
         let lowering = TypeLowering::with_resolvers(
             self.ctx.arena,
             self.ctx.types,
@@ -1179,6 +1192,54 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         );
 
         lowering.lower_type(idx)
+    }
+
+    /// Resolve the symbol for a type query expression name.
+    ///
+    /// Handles both simple identifiers and qualified names (e.g., `M.F2`).
+    /// For qualified names, walks through namespace exports to find the member.
+    fn resolve_type_query_symbol(&self, expr_name: NodeIndex) -> Option<tsz_binder::SymbolId> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let node = self.ctx.arena.get(expr_name)?;
+
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+            let ident = self.ctx.arena.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+            let sym_id = self.ctx.binder.file_locals.get(name)?;
+            return Some(sym_id);
+        }
+
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = self.ctx.arena.get_qualified_name(node)?;
+            // Recursively resolve the left side
+            let left_sym = self.resolve_type_query_symbol(qn.left)?;
+
+            // Get the right name
+            let right_node = self.ctx.arena.get(qn.right)?;
+            let right_ident = self.ctx.arena.get_identifier(right_node)?;
+            let right_name = right_ident.escaped_text.as_str();
+
+            // Look through binder + libs for the left symbol's exports
+            let lib_binders: Vec<std::sync::Arc<tsz_binder::BinderState>> = self
+                .ctx
+                .lib_contexts
+                .iter()
+                .map(|lc| std::sync::Arc::clone(&lc.binder))
+                .collect();
+            let left_symbol = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(left_sym, &lib_binders)?;
+
+            if let Some(exports) = left_symbol.exports.as_ref()
+                && let Some(member_sym) = exports.get(right_name)
+            {
+                return Some(member_sym);
+            }
+        }
+
+        None
     }
 
     /// Check a mapped type ({ [P in K]: T }).

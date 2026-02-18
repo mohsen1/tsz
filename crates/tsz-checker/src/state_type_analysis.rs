@@ -620,6 +620,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if self.is_import_type_query(type_query.expr_name) {
+            trace!("get_type_from_type_query: is import type query");
             return TypeId::ANY;
         }
 
@@ -656,6 +657,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.skip_flow_narrowing = false;
                     let left_type = self.get_type_of_node(left_idx);
                     self.ctx.skip_flow_narrowing = prev_skip;
+                    trace!(left_type = ?left_type, "type_query qualified: left_type");
                     if left_type != TypeId::ANY && left_type != TypeId::ERROR {
                         // Look up the right side as a property on the left type
                         if let Some(right_node) = self.ctx.arena.get(right_idx)
@@ -663,12 +665,27 @@ impl<'a> CheckerState<'a> {
                         {
                             let prop_name = ident.escaped_text.clone();
                             let object_type = self.resolve_type_for_property_access(left_type);
+                            trace!(object_type = ?object_type, prop_name = %prop_name, "type_query qualified: property access");
                             use tsz_solver::operations_property::PropertyAccessResult;
-                            if let PropertyAccessResult::Success { type_id, .. } =
-                                self.resolve_property_access_with_env(object_type, &prop_name)
-                            {
-                                return type_id;
+                            match self.resolve_property_access_with_env(object_type, &prop_name) {
+                                PropertyAccessResult::Success { type_id, .. }
+                                    if type_id != TypeId::ANY && type_id != TypeId::ERROR =>
+                                {
+                                    return type_id;
+                                }
+                                _ => {
+                                    // Property access returned any/error or failed entirely.
+                                    // Fall through to binder-based resolution below.
+                                }
                             }
+                        }
+                    }
+                    // Fall back: resolve via binder symbol exports for namespace members
+                    if let Some(sym_id) = self.resolve_qualified_symbol(type_query.expr_name) {
+                        let member_type = self.get_type_of_symbol(sym_id);
+                        trace!(sym_id = ?sym_id, member_type = ?member_type, "type_query qualified: resolved via binder exports");
+                        if member_type != TypeId::ERROR {
+                            return member_type;
                         }
                     }
                 }
