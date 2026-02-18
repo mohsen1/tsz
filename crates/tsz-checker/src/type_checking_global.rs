@@ -627,6 +627,7 @@ impl<'a> CheckerState<'a> {
 
             let mut conflicts = FxHashSet::default();
             let mut namespace_order_errors = FxHashSet::default();
+
             for i in 0..declarations.len() {
                 for j in (i + 1)..declarations.len() {
                     let (decl_idx, decl_flags) = declarations[i];
@@ -927,10 +928,8 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 }
-                // Also remove all function impls from conflicts since they were handled
-                for &(idx, _) in &func_impls_with_scope {
-                    conflicts.remove(&idx);
-                }
+                // Only remove function impls that were actually handled (groups with >1)
+                // Single function implementations should remain in conflicts to emit TS2300
                 if conflicts.is_empty() {
                     continue;
                 }
@@ -1024,6 +1023,11 @@ impl<'a> CheckerState<'a> {
             let has_non_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
                 conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) == 0
             });
+            // Also check for accessor conflicts - TS2323 should only fire for pure variable conflicts
+            let has_accessor_conflict = declarations.iter().any(|(decl_idx, flags)| {
+                conflicts.contains(decl_idx)
+                    && (flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR)) != 0
+            });
             let has_exported_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
                 conflicts.contains(decl_idx)
                     && (flags & symbol_flags::VARIABLE) != 0
@@ -1033,6 +1037,7 @@ impl<'a> CheckerState<'a> {
             let (message, code) = if has_exported_variable_conflict
                 && has_variable_conflict
                 && !has_non_variable_conflict
+                && !has_accessor_conflict
             {
                 (
                     format_message(
