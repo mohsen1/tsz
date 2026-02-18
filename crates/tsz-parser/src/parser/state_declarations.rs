@@ -3073,7 +3073,25 @@ impl ParserState {
                     &mut reported_duplicate_default,
                 ));
             } else {
-                self.parse_switch_case_recovery();
+                // Unexpected token in switch body.
+                // Emit TS1130 once (guarded by last_error_pos), then try to parse the
+                // unexpected tokens as a complete statement so that compound constructs
+                // like `class D {}` are consumed in one shot (emitting only ONE TS1130),
+                // matching TSC's parseList / abortParsingListOrMoveToNextToken behavior.
+                if self.token_pos() != self.last_error_pos {
+                    use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::CASE_OR_DEFAULT_EXPECTED,
+                        diagnostic_codes::CASE_OR_DEFAULT_EXPECTED,
+                    );
+                }
+                let pos_before = self.token_pos();
+                let _ = self.parse_statement();
+                // Failsafe: if parse_statement didn't advance, advance one token to avoid
+                // an infinite loop.
+                if self.token_pos() == pos_before {
+                    self.next_token();
+                }
             }
         }
         clauses
@@ -3150,17 +3168,6 @@ impl ParserState {
             }
         }
         statements
-    }
-
-    fn parse_switch_case_recovery(&mut self) {
-        if self.token_pos() != self.last_error_pos {
-            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-            self.parse_error_at_current_token(
-                diagnostic_messages::CASE_OR_DEFAULT_EXPECTED,
-                diagnostic_codes::CASE_OR_DEFAULT_EXPECTED,
-            );
-        }
-        self.next_token();
     }
 
     /// Parse try statement
