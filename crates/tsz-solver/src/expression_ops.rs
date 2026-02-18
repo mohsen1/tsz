@@ -50,11 +50,24 @@ pub fn compute_conditional_expression_type(
         return TypeId::NEVER;
     }
 
-    // Check if condition is definitely truthy or falsy
-    if is_definitely_truthy(interner, condition) {
+    // Only short-circuit for literal boolean types (true/false).
+    // Do NOT short-circuit based on general type truthiness (e.g., object types),
+    // because the static type may not reflect the actual runtime value.
+    // Example: `<T>null` has type T (object), but value is null (falsy).
+    // The result type should still be the union of both branches.
+    if let Some(TypeData::Literal(LiteralValue::Boolean(true))) = interner.lookup(condition) {
         return true_type;
     }
-    if is_definitely_falsy(interner, condition) {
+    if let Some(TypeData::Literal(LiteralValue::Boolean(false))) = interner.lookup(condition) {
+        return false_type;
+    }
+    // Also short-circuit for null/undefined literal conditions
+    // since these are known to be always falsy at runtime
+    if matches!(
+        interner.lookup(condition),
+        Some(TypeData::Intrinsic(IntrinsicKind::Null))
+            | Some(TypeData::Intrinsic(IntrinsicKind::Undefined))
+    ) {
         return false_type;
     }
 
@@ -327,37 +340,6 @@ fn common_parent_enum_type<R: TypeResolver>(
     resolver
         .resolve_lazy(parent_def, interner)
         .or_else(|| Some(interner.lazy(parent_def)))
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-/// Checks if a type is definitely truthy.
-fn is_definitely_truthy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match interner.lookup(type_id) {
-        Some(TypeData::Literal(LiteralValue::Boolean(true)))
-        | Some(TypeData::Object(_))
-        | Some(TypeData::Function(_)) => true,
-        Some(TypeData::Literal(LiteralValue::String(s))) => !s.is_none(),
-        // Non-zero, non-NaN numbers are truthy
-        Some(TypeData::Literal(LiteralValue::Number(n))) => n.0 != 0.0 && !n.0.is_nan(),
-        _ => false,
-    }
-}
-
-/// Checks if a type is definitely falsy.
-fn is_definitely_falsy(interner: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    match interner.lookup(type_id) {
-        Some(TypeData::Literal(LiteralValue::Boolean(false)))
-        | Some(TypeData::Intrinsic(IntrinsicKind::Null))
-        | Some(TypeData::Intrinsic(IntrinsicKind::Undefined))
-        | Some(TypeData::Intrinsic(IntrinsicKind::Void)) => true,
-        Some(TypeData::Literal(LiteralValue::String(s))) => s.is_none(),
-        // 0, -0, and NaN are falsy
-        Some(TypeData::Literal(LiteralValue::Number(n))) => n.0 == 0.0 || n.0.is_nan(),
-        _ => false,
-    }
 }
 
 #[cfg(test)]
