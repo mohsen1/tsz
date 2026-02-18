@@ -717,8 +717,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        // Method bivariance
-        let is_method = source_instantiated.is_method || target_instantiated.is_method;
+        // Method/constructor bivariance: strictFunctionTypes only applies to function
+        // type literals, not to methods or construct signatures (new (...) => T).
+        let is_method = source_instantiated.is_method
+            || target_instantiated.is_method
+            || source_instantiated.is_constructor
+            || target_instantiated.is_constructor;
 
         // Unpack tuple rest parameters before comparison.
         // In TypeScript, `(...args: [A, B]) => R` is equivalent to `(a: A, b: B) => R`.
@@ -1045,11 +1049,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // For each target construct signature, at least one source signature must match
+        // For each target construct signature, at least one source signature must match.
+        // Construct signatures use bivariant parameter checking (like methods).
         for t_sig in &target.construct_signatures {
             let mut found_match = false;
             for s_sig in &source.construct_signatures {
-                if self.check_call_signature_subtype(s_sig, t_sig).is_true() {
+                if self
+                    .check_call_signature_subtype_as_constructor(s_sig, t_sig)
+                    .is_true()
+                {
                     found_match = true;
                     break;
                 }
@@ -1128,13 +1136,31 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: &CallSignature,
         target: &CallSignature,
     ) -> SubtypeResult {
+        self.check_call_signature_subtype_impl(source, target, false)
+    }
+
+    /// Check construct signature subtyping (bivariant parameters).
+    pub(crate) fn check_call_signature_subtype_as_constructor(
+        &mut self,
+        source: &CallSignature,
+        target: &CallSignature,
+    ) -> SubtypeResult {
+        self.check_call_signature_subtype_impl(source, target, true)
+    }
+
+    fn check_call_signature_subtype_impl(
+        &mut self,
+        source: &CallSignature,
+        target: &CallSignature,
+        is_constructor: bool,
+    ) -> SubtypeResult {
         let source_fn = FunctionShape {
             type_params: source.type_params.clone(),
             params: source.params.clone(),
             this_type: source.this_type,
             return_type: source.return_type,
             type_predicate: source.type_predicate.clone(),
-            is_constructor: false,
+            is_constructor,
             is_method: source.is_method,
         };
         let target_fn = FunctionShape {
@@ -1143,7 +1169,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             this_type: target.this_type,
             return_type: target.return_type,
             type_predicate: target.type_predicate.clone(),
-            is_constructor: false,
+            is_constructor,
             is_method: target.is_method,
         };
         self.check_function_subtype(&source_fn, &target_fn)
