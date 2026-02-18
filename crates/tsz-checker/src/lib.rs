@@ -49,6 +49,7 @@ pub mod flow_narrowing;
 pub mod function_type;
 pub mod generic_checker;
 pub mod import_checker;
+mod import_declaration_checker;
 pub mod indexed_access_type;
 pub mod interface_type;
 pub mod intersection_type;
