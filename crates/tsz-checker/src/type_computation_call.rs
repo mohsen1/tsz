@@ -1513,6 +1513,8 @@ impl<'a> CheckerState<'a> {
         // TS2693: Primitive type keywords used as values
         // TypeScript primitive type keywords (number, string, boolean, etc.) are language keywords
         // for types, not identifiers. When used in value position, emit TS2693.
+        // NOTE: `symbol` is excluded — tsc never emits TS2693 for lowercase `symbol`.
+        // Instead it emits TS2552 "Cannot find name 'symbol'. Did you mean 'Symbol'?"
         // Exception: in import equals module references (e.g., `import r = undefined`),
         // TS2503 is already emitted by check_namespace_import — don't also emit TS2693.
         if matches!(
@@ -1520,7 +1522,6 @@ impl<'a> CheckerState<'a> {
             "number"
                 | "string"
                 | "boolean"
-                | "symbol"
                 | "void"
                 | "undefined"
                 | "null"
@@ -1582,6 +1583,26 @@ impl<'a> CheckerState<'a> {
         // Check known globals that might be missing
         if self.is_known_global_value_name(name) {
             return self.emit_global_not_found_error(idx, name);
+        }
+        // Always emit errors for primitive type keywords used as values,
+        // regardless of report_unresolved_imports. These are built-in language
+        // keywords, not cross-file identifiers that might be unresolved.
+        if matches!(
+            name,
+            "number"
+                | "string"
+                | "boolean"
+                | "symbol"
+                | "void"
+                | "null"
+                | "any"
+                | "unknown"
+                | "never"
+                | "object"
+                | "bigint"
+        ) {
+            self.error_cannot_find_name_at(name, idx);
+            return TypeId::ERROR;
         }
         // Suppress in single-file mode to prevent cascading false positives
         if !self.ctx.report_unresolved_imports {
