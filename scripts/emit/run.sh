@@ -46,6 +46,26 @@ die() { log_error "$@"; exit 2; }
 # Check for required tools
 command -v node &>/dev/null || die "Node.js is required"
 
+resolve_tsc_binary() {
+    local scripts_dir
+    scripts_dir="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+    local candidates=(
+        "$scripts_dir/node_modules/.bin/tsc"
+        "$SCRIPT_DIR/node_modules/.bin/tsc"
+    )
+
+    for candidate in "${candidates[@]}"; do
+        if [[ -x "$candidate" ]]; then
+            TSC_BIN="$candidate"
+            export TSC_BIN
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 # Resolve tsz binary path for the Node runner
 resolve_tsz_binary() {
     local candidates=()
@@ -153,10 +173,41 @@ build_runner() {
         log_step "Installing scripts dependencies..."
         (cd "$scripts_dir" && npm install --silent 2>/dev/null || npm install)
     fi
+
+    if [[ ! -x "$scripts_dir/node_modules/.bin/tsc" ]]; then
+        log_step "Installing TypeScript in scripts dependencies..."
+        (cd "$scripts_dir" && npm install typescript --include=dev --no-fund --no-audit)
+    fi
+
+    # Re-check legacy location for older layouts where dependencies may live
+    # under `scripts/emit/node_modules`.
+    if [[ ! -x "$scripts_dir/node_modules/.bin/tsc" && -d "$SCRIPT_DIR/node_modules" ]]; then
+        log_info "TS compiler not available in scripts/node_modules; using scripts/emit/node_modules fallback"
+    fi
+
+    if ! resolve_tsc_binary; then
+        if [[ -f "$SCRIPT_DIR/package.json" || -f "$SCRIPT_DIR/package-lock.json" ]]; then
+            log_step "Trying emitter-local dependencies fallback..."
+            if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
+                log_step "Installing emitter-local dependencies..."
+                (cd "$SCRIPT_DIR" && npm install --include=dev --no-fund --no-audit)
+            fi
+            resolve_tsc_binary || true
+        fi
+    fi
+
+    if ! resolve_tsc_binary; then
+        log_error "TypeScript compiler not found in scripts dependencies."
+        log_error "  Tried:"
+        log_error "  $scripts_dir/node_modules/.bin/tsc"
+        log_error "  $SCRIPT_DIR/node_modules/.bin/tsc"
+        die "Install TypeScript in scripts package and retry"
+    fi
+
     (
         cd "$SCRIPT_DIR"
-        # Use tsc from the parent scripts/node_modules
-        "$scripts_dir/node_modules/.bin/tsc" -p tsconfig.json
+        # Use tsc from scripts or emit fallback node_modules.
+        "$TSC_BIN" -p tsconfig.json
     )
     log_success "Runner built"
 }
