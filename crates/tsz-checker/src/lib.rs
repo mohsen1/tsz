@@ -29,6 +29,7 @@ pub mod conditional_type;
 pub mod constructor_checker;
 pub mod context;
 pub mod control_flow;
+mod control_flow_assignment;
 mod control_flow_narrowing;
 pub mod declarations;
 pub mod decorators;
