@@ -1749,19 +1749,30 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        // 2. Any/Error propagation (The Lawyer's "silence errors" rule)
-        if a == TypeId::ANY || b == TypeId::ANY || a == TypeId::ERROR || b == TypeId::ERROR {
+        // 2. Error propagation only — suppress cascading errors from ERROR types.
+        // IMPORTANT: `any` is NOT treated as identical to other types here.
+        // TS2403 specifically requires `any !== number`, `any !== string`, etc.
+        // Only `any === any` (caught by the identity check above).
+        if a == TypeId::ERROR || b == TypeId::ERROR {
             return true;
         }
 
-        // 3. Enum Nominality Check
+        // 3. `any` is NOT identical to non-`any` types for redeclaration (TS2403).
+        // In TypeScript, `any` is both a subtype and supertype of all types,
+        // but for redeclaration checking, `var x: any; var x: number;` must error.
+        // The bidirectional subtype check would incorrectly say they're identical.
+        if a == TypeId::ANY || b == TypeId::ANY {
+            return false;
+        }
+
+        // 4. Enum Nominality Check
         // If one is an enum and the other isn't, or they are different enums,
         // they are not identical for redeclaration, even if structurally compatible.
         if let Some(res) = self.enum_redeclaration_check(a, b) {
             return res;
         }
 
-        // 4. Normalize Application/Mapped/Lazy types before structural comparison.
+        // 5. Normalize Application/Mapped/Lazy types before structural comparison.
         // Required<{a?: string}> must evaluate to {a: string} before bidirectional
         // subtype checking, just as is_assignable_impl() does via normalize_assignability_operands.
         let (a_norm, b_norm) = self.normalize_assignability_operands(a, b);

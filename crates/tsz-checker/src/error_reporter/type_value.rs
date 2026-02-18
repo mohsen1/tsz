@@ -23,14 +23,10 @@ impl<'a> CheckerState<'a> {
         current_type: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress when types are unresolved (ANY/ERROR/UNKNOWN)
-        if prev_type == TypeId::ANY || prev_type == TypeId::ERROR || prev_type == TypeId::UNKNOWN {
-            return;
-        }
-        if current_type == TypeId::ANY
-            || current_type == TypeId::ERROR
-            || current_type == TypeId::UNKNOWN
-        {
+        // Suppress only for ERROR types to avoid cascading diagnostics.
+        // NOTE: `any` must NOT be suppressed here — tsc emits TS2403 for
+        // `var x: any; var x = 2;` because `any` is not identical to `number`.
+        if prev_type == TypeId::ERROR || current_type == TypeId::ERROR {
             return;
         }
         if let Some(loc) = self.get_source_location(idx) {
