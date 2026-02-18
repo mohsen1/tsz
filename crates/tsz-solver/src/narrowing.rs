@@ -46,6 +46,7 @@ use crate::visitor::{
     object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
 };
 use crate::{QueryDatabase, TypeDatabase};
+use rustc_hash::FxHashSet;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
@@ -1023,6 +1024,102 @@ impl<'a> NarrowingContext<'a> {
                 intersection.iter().all(|&m| should_keep_member(m))
             } else {
                 // For non-Intersection: check the single member
+                should_keep_member(resolved_member)
+            };
+
+            if keep_member {
+                remaining.push(member);
+            }
+        }
+
+        union_or_single_preserve(self.db, remaining)
+    }
+
+    /// Narrow a union type by excluding variants with any of the specified discriminant values.
+    ///
+    /// This is an optimized batch version of `narrow_by_excluding_discriminant` for switch statements.
+    pub fn narrow_by_excluding_discriminant_values(
+        &self,
+        union_type: TypeId,
+        property_path: &[Atom],
+        excluded_values: &[TypeId],
+    ) -> TypeId {
+        if excluded_values.is_empty() {
+            return union_type;
+        }
+
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_excluding_discriminant_values",
+            union_type = union_type.0,
+            property_path_len = property_path.len(),
+            excluded_count = excluded_values.len()
+        )
+        .entered();
+
+        let resolved_type = self.resolve_type(union_type);
+
+        let single_member_storage: Vec<TypeId>;
+        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
+            UnionMembersKind::Union(members_list) => {
+                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
+                &single_member_storage
+            }
+            UnionMembersKind::NotUnion => {
+                single_member_storage = vec![resolved_type];
+                &single_member_storage
+            }
+        };
+
+        // Put excluded values into a HashSet for O(1) lookup
+        let excluded_set: FxHashSet<TypeId> = excluded_values.iter().copied().collect();
+
+        let mut remaining: Vec<TypeId> = Vec::new();
+        let property_evaluator = match self.resolver {
+            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
+            None => PropertyAccessEvaluator::new(self.db),
+        };
+
+        for &member in members {
+            if member.is_any_or_unknown() {
+                remaining.push(member);
+                continue;
+            }
+
+            let resolved_member = self.resolve_type(member);
+            let intersection_members = intersection_list_id(self.db, resolved_member)
+                .map(|members_id| self.db.type_list(members_id).to_vec());
+
+            // Helper to check if member should be kept
+            let should_keep_member = |check_type_id: TypeId| -> bool {
+                let prop_type = match self.get_type_at_path(
+                    check_type_id,
+                    property_path,
+                    &property_evaluator,
+                ) {
+                    Some(t) => t,
+                    None => return true, // Keep if property missing
+                };
+
+                let resolved_prop_type = self.resolve_type(prop_type);
+
+                // Optimization: if property type is directly in excluded set (literal match)
+                if excluded_set.contains(&resolved_prop_type) {
+                    return false; // Exclude
+                }
+
+                // Subtype check for each excluded value
+                for &excluded in excluded_values {
+                    if is_subtype_of(self.db, resolved_prop_type, excluded) {
+                        return false; // Exclude
+                    }
+                }
+                true // Keep
+            };
+
+            let keep_member = if let Some(ref intersection) = intersection_members {
+                intersection.iter().all(|&m| should_keep_member(m))
+            } else {
                 should_keep_member(resolved_member)
             };
 

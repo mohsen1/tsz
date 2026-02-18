@@ -918,10 +918,13 @@ impl<'a> FlowAnalyzer<'a> {
         // Fast path: if this switch does not reference the target (directly or via discriminant
         // property access like switch(x.kind) when narrowing x), it cannot affect target's type.
         let target_is_switch_expr = self.is_matching_reference(switch_expr, target);
+        let mut discriminant_info = None;
+
         if !target_is_switch_expr {
-            let switch_targets_base = self
-                .discriminant_property_info(switch_expr, target)
-                .is_some_and(|(_, _, base)| self.is_matching_reference(base, target));
+            discriminant_info = self.discriminant_property_info(switch_expr, target);
+            let switch_targets_base = discriminant_info
+                .as_ref()
+                .is_some_and(|(_, _, base)| self.is_matching_reference(*base, target));
             if !switch_targets_base {
                 return type_id;
             }
@@ -938,10 +941,10 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
-        // OPTIMIZATION: For direct switches on the target (switch(x) {...}),
+        // OPTIMIZATION: For direct switches on the target (switch(x) {...}) OR discriminant switches (switch(x.kind)),
         // collect all case types first and exclude them in a single O(N) pass.
         // This avoids O(N²) behavior when there are many case clauses.
-        if target_is_switch_expr {
+        if target_is_switch_expr || discriminant_info.is_some() {
             // Collect all case expression types
             let mut excluded_types: Vec<TypeId> = Vec::new();
             for &clause_idx in &case_block.statements.nodes {
@@ -968,8 +971,17 @@ impl<'a> FlowAnalyzer<'a> {
             }
 
             if !excluded_types.is_empty() {
-                // Use batched narrowing for O(N) instead of O(N²)
-                return narrowing.narrow_excluding_types(type_id, &excluded_types);
+                if target_is_switch_expr {
+                    // Use batched narrowing for O(N) instead of O(N²)
+                    return narrowing.narrow_excluding_types(type_id, &excluded_types);
+                } else if let Some((path, _, _)) = discriminant_info {
+                    // Use batched discriminant narrowing
+                    return narrowing.narrow_by_excluding_discriminant_values(
+                        type_id,
+                        &path,
+                        &excluded_types,
+                    );
+                }
             }
         }
 
