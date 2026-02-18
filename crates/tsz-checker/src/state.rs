@@ -873,8 +873,12 @@ impl<'a> CheckerState<'a> {
                 // FIX: If flow analysis returns a widened version of a literal cached type
                 // (e.g., cached="foo" but flow returns string), use the cached type.
                 // This prevents zombie freshness where flow analysis undoes literal preservation.
+                // IMPORTANT: Evaluate the cached type first to expand type aliases
+                // and lazy references, so widen_type can see the actual union members.
                 if narrowed != cached && narrowed != TypeId::ERROR {
-                    let widened_cached = tsz_solver::widening::widen_type(self.ctx.types, cached);
+                    let evaluated_cached = self.evaluate_type_for_assignability(cached);
+                    let widened_cached =
+                        tsz_solver::widening::widen_type(self.ctx.types, evaluated_cached);
                     if widened_cached == narrowed {
                         return cached;
                     }
@@ -953,8 +957,12 @@ impl<'a> CheckerState<'a> {
             // flow analysis may return the widened primitive (string) even though
             // there's no actual narrowing. Detect this case: if widen(result) == narrowed,
             // the flow is just widening our literal, not genuinely narrowing.
+            // IMPORTANT: Evaluate the result type first to expand type aliases
+            // and lazy references, so widen_type can see the actual union members.
             if narrowed != result && narrowed != TypeId::ERROR {
-                let widened_result = tsz_solver::widening::widen_type(self.ctx.types, result);
+                let evaluated_result = self.evaluate_type_for_assignability(result);
+                let widened_result =
+                    tsz_solver::widening::widen_type(self.ctx.types, evaluated_result);
                 if widened_result == narrowed {
                     // Flow just widened our literal type - use the original result
                     narrowed = result;
