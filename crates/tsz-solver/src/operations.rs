@@ -3780,6 +3780,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut any_has_rest = false;
         let actual_count = arg_types.len();
         let mut exact_expected_counts = FxHashSet::default();
+        // Track if exactly one overload matched argument count but had a type mismatch.
+        // When there is a single "count-compatible" overload that fails only on types,
+        // tsc reports TS2345 (the inner type error) rather than TS2769 (no overload matched).
+        let mut type_mismatch_count: usize = 0;
+        let mut sole_type_mismatch: Option<(usize, TypeId, TypeId)> = None; // (index, expected, actual)
+        let mut has_non_count_non_type_failure = false;
 
         for sig in &callable.call_signatures {
             // Convert CallSignature to FunctionShape
@@ -3801,11 +3807,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return CallResult::Success(return_type);
                 }
                 CallResult::ArgumentTypeMismatch {
-                    index: _,
+                    index,
                     expected,
                     actual,
                 } => {
                     all_arg_count_mismatches = false;
+                    type_mismatch_count += 1;
+                    if type_mismatch_count == 1 {
+                        sole_type_mismatch = Some((index, expected, actual));
+                    }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
@@ -3833,6 +3843,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 _ => {
                     all_arg_count_mismatches = false;
+                    has_non_count_non_type_failure = true;
                 }
             }
         }
@@ -3872,6 +3883,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: actual_count,
             };
         }
+
+        // If exactly one overload had a type mismatch (all others failed on arg count),
+        // report TS2345 (the inner type error) instead of TS2769. This matches tsc's
+        // "best candidate" behavior: when one overload clearly matches by arity but
+        // fails on types, that overload's type error is surfaced directly.
+        if !has_non_count_non_type_failure && type_mismatch_count == 1
+            && let Some((index, expected, actual)) = sole_type_mismatch {
+                return CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                };
+            }
 
         // If we got here, no signature matched
         CallResult::NoOverloadMatch {
@@ -3983,6 +4007,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let mut max_expected = 0;
         let mut any_has_rest = false;
         let actual_count = arg_types.len();
+        // Track single count-compatible overload that fails on types (see resolve_callable_call).
+        let mut type_mismatch_count: usize = 0;
+        let mut sole_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
+        let mut has_non_count_non_type_failure = false;
 
         for sig in &shape.construct_signatures {
             let func = FunctionShape {
@@ -4001,11 +4029,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     return CallResult::Success(return_type);
                 }
                 CallResult::ArgumentTypeMismatch {
-                    index: _,
+                    index,
                     expected,
                     actual,
                 } => {
                     all_arg_count_mismatches = false;
+                    type_mismatch_count += 1;
+                    if type_mismatch_count == 1 {
+                        sole_type_mismatch = Some((index, expected, actual));
+                    }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
                             actual, expected,
@@ -4031,6 +4063,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 }
                 _ => {
                     all_arg_count_mismatches = false;
+                    has_non_count_non_type_failure = true;
                 }
             }
         }
@@ -4048,6 +4081,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 actual: actual_count,
             };
         }
+
+        // Same "best candidate" heuristic as resolve_callable_call.
+        if !has_non_count_non_type_failure && type_mismatch_count == 1
+            && let Some((index, expected, actual)) = sole_type_mismatch {
+                return CallResult::ArgumentTypeMismatch {
+                    index,
+                    expected,
+                    actual,
+                };
+            }
 
         CallResult::NoOverloadMatch {
             func_type: self.interner.callable(shape.clone()),
