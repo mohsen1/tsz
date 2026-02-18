@@ -287,6 +287,11 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             current = self.evaluate_application_type(current);
+            // Resolve Lazy types so the classifier can see construct signatures.
+            let resolved = self.resolve_lazy_type(current);
+            if resolved != current {
+                current = resolved;
+            }
             match classify_for_instance_type(self.ctx.types, current) {
                 InstanceTypeKind::Callable(shape_id) => {
                     let shape = self.ctx.types.callable_shape(shape_id);
