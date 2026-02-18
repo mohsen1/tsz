@@ -761,8 +761,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // This applies to non-string-named module/namespace declarations that are inside labeled statements
             // or other non-module constructs.
             if !is_string_named {
-                // Check if the parent is a valid context (SourceFile, ModuleBlock, or ExportDeclaration)
-                // ExportDeclaration is valid because `export namespace Foo` wraps the namespace in an export node.
+                // Check if the parent is a valid context for namespace declarations.
+                // Valid parents:
+                //   - SourceFile: top-level namespace
+                //   - ModuleBlock: namespace inside another namespace's body
+                //   - ModuleDeclaration: dotted namespace name (e.g. `namespace A.B`)
+                //   - ExportDeclaration: `export namespace Foo`
                 let is_valid_context = if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
                     let parent = ext.parent;
                     if parent.is_none() {
@@ -1681,11 +1685,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     && let Some(name_node) = self.ctx.arena.get(module.name)
                 {
                     self.ctx.error(
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                            diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC.to_string(),
-                            diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
-                        );
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC.to_string(),
+                        diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
+                    );
                 }
             }
 

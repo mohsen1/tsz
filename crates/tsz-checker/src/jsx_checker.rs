@@ -209,45 +209,43 @@ impl<'a> CheckerState<'a> {
         // Try construct signatures first (class components)
         if let Some(construct_sigs) =
             tsz_solver::type_queries::get_construct_signatures(self.ctx.types, component_type)
+            && let Some(sig) = construct_sigs.first()
         {
-            if let Some(sig) = construct_sigs.first() {
-                let instance_type = sig.return_type;
-                if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
-                    return None;
-                }
-
-                // If ElementAttributesProperty has a specific property name,
-                // get that property from the instance type
-                if let Some(ref prop_name) = attrs_prop_name {
-                    use tsz_solver::operations_property::PropertyAccessResult;
-                    if let PropertyAccessResult::Success { type_id, .. } =
-                        self.resolve_property_access_with_env(instance_type, prop_name)
-                    {
-                        return Some(type_id);
-                    }
-                    return None;
-                }
-
-                // ElementAttributesProperty is empty {} or not defined:
-                // attributes are the instance type itself
-                return Some(instance_type);
+            let instance_type = sig.return_type;
+            if instance_type == TypeId::ANY || instance_type == TypeId::ERROR {
+                return None;
             }
+
+            // If ElementAttributesProperty has a specific property name,
+            // get that property from the instance type
+            if let Some(ref prop_name) = attrs_prop_name {
+                use tsz_solver::operations_property::PropertyAccessResult;
+                if let PropertyAccessResult::Success { type_id, .. } =
+                    self.resolve_property_access_with_env(instance_type, prop_name)
+                {
+                    return Some(type_id);
+                }
+                return None;
+            }
+
+            // ElementAttributesProperty is empty {} or not defined:
+            // attributes are the instance type itself
+            return Some(instance_type);
         }
 
         // Try call signatures (function components)
         if let Some(call_sigs) =
             tsz_solver::type_queries::get_call_signatures(self.ctx.types, component_type)
+            && let Some(sig) = call_sigs.first()
         {
-            if let Some(sig) = call_sigs.first() {
-                // For function components, the first parameter is the props type
-                if let Some(first_param) = sig.params.first() {
-                    let props_type = first_param.type_id;
-                    if props_type != TypeId::ANY && props_type != TypeId::ERROR {
-                        return Some(props_type);
-                    }
+            // For function components, the first parameter is the props type
+            if let Some(first_param) = sig.params.first() {
+                let props_type = first_param.type_id;
+                if props_type != TypeId::ANY && props_type != TypeId::ERROR {
+                    return Some(props_type);
                 }
-                return None;
             }
+            return None;
         }
 
         None
@@ -275,10 +273,9 @@ impl<'a> CheckerState<'a> {
 
         // Check if it has any properties — if so, return the first property name
         if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, attrs_type)
+            && let Some(first_prop) = shape.properties.first()
         {
-            if let Some(first_prop) = shape.properties.first() {
-                return Some(self.ctx.types.resolve_atom(first_prop.name));
-            }
+            return Some(self.ctx.types.resolve_atom(first_prop.name));
         }
 
         None
