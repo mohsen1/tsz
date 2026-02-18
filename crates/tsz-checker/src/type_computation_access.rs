@@ -967,7 +967,17 @@ impl<'a> CheckerState<'a> {
                                 | "with"
                         );
 
-                        if !is_strict_reserved {
+                        // Also suppress TS18004 for obviously invalid names that
+                        // are parser-recovery artifacts (single punctuation characters
+                        // like `:`, `,`, `;` that became shorthand properties during
+                        // error recovery).
+                        let is_obviously_invalid_name = name.len() == 1
+                            && name
+                                .chars()
+                                .next()
+                                .is_some_and(|c| !c.is_alphanumeric() && c != '_' && c != '$');
+
+                        if !is_strict_reserved && !is_obviously_invalid_name {
                             // TS18004: Missing value binding for shorthand property name
                             // Example: `({ arguments })` inside arrow function where `arguments`
                             // is not in scope as a value.

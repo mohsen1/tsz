@@ -326,12 +326,14 @@ impl<'a> CheckerState<'a> {
             })
             .unwrap_or(false);
 
+        // NOTE: `symbol` is intentionally excluded — tsc never emits TS2693 for
+        // lowercase `symbol`. Instead it emits TS2552 "Cannot find name 'symbol'.
+        // Did you mean 'Symbol'?" via the normal spelling-suggestion path.
         let is_primitive_type_keyword = matches!(
             name,
             "number"
                 | "string"
                 | "boolean"
-                | "symbol"
                 | "void"
                 | "undefined"
                 | "null"
