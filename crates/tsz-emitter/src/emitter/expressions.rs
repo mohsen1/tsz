@@ -37,9 +37,17 @@ impl<'a> Printer<'a> {
             == SyntaxKind::AmpersandAmpersandEqualsToken as u16
             || binary.operator_token == SyntaxKind::BarBarEqualsToken as u16
             || binary.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16;
+        let is_exponentiation = binary.operator_token == SyntaxKind::AsteriskAsteriskToken as u16;
+        let is_exponentiation_assignment =
+            binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16;
         let is_nullish = binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
         let supports_logical_assignment =
             (self.ctx.options.target as u8) >= (super::ScriptTarget::ES2021 as u8);
+
+        if (is_exponentiation || is_exponentiation_assignment) && self.ctx.needs_es2016_lowering {
+            self.emit_exponentiation_expression(binary);
+            return;
+        }
 
         if is_logical_assignment && !supports_logical_assignment {
             self.emit_logical_assignment_expression(binary);
@@ -98,6 +106,23 @@ impl<'a> Printer<'a> {
         }
         self.emit(binary.right);
         self.ctx.flags.in_binary_operand = prev_in_binary;
+    }
+
+    fn emit_exponentiation_expression(&mut self, binary: &BinaryExprData) {
+        if binary.operator_token == SyntaxKind::AsteriskAsteriskEqualsToken as u16 {
+            self.emit(binary.left);
+            self.write(" = Math.pow(");
+            self.emit(binary.left);
+            self.write(", ");
+            self.emit(binary.right);
+            self.write(")");
+        } else {
+            self.write("Math.pow(");
+            self.emit(binary.left);
+            self.write(", ");
+            self.emit(binary.right);
+            self.write(")");
+        }
     }
 
     fn emit_logical_assignment_expression(&mut self, binary: &BinaryExprData) {

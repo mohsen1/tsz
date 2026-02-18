@@ -130,3 +130,23 @@ fn test_optional_catch_binding_downlevel_to_param() {
     .code;
     assert!(!output_es2020.contains("catch (_unused)"));
 }
+
+#[test]
+fn test_exponentiation_downlevel_to_math_pow() {
+    let source = "const x = 2 ** 3;\nlet y = 2;\ny **= 3;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("Math.pow(2, 3)"));
+    assert!(output.contains("y = Math.pow(y, 3)"));
+}
