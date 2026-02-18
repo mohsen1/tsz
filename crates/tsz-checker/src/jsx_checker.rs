@@ -8,12 +8,14 @@
 //! - JSX namespace type lookup
 //! - JSX intrinsic elements type lookup
 //! - JSX element type for fragments
+//! - JSX attribute type checking (TS2322 for type mismatches)
 //!
 //! This implements Rule #36: JSX type checking with case-sensitive tag lookup.
 
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 // =============================================================================
@@ -71,7 +73,12 @@ impl<'a> CheckerState<'a> {
                 // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
                 let factory = self.ctx.types.factory();
                 let tag_literal = factory.literal_string(tag);
-                return factory.index_access(intrinsic_elements_type, tag_literal);
+                let props_type = factory.index_access(intrinsic_elements_type, tag_literal);
+
+                // Check JSX attributes against the expected props type
+                self.check_jsx_attributes_against_props(jsx_opening.attributes, props_type);
+
+                return props_type;
             }
             // TS7026: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
             // Only report when noImplicitAny is enabled (TS7026 is an implicit-any diagnostic)
@@ -179,5 +186,102 @@ impl<'a> CheckerState<'a> {
             );
         }
         TypeId::ANY
+    }
+
+    // =========================================================================
+    // JSX Attribute Type Checking
+    // =========================================================================
+
+    /// Check JSX attributes against the expected props type.
+    ///
+    /// For each attribute, checks that the assigned value is assignable to the
+    /// expected property type from the props interface. Emits TS2322 for mismatches.
+    pub(crate) fn check_jsx_attributes_against_props(
+        &mut self,
+        attributes_idx: NodeIndex,
+        props_type: TypeId,
+    ) {
+        // Skip checking if props_type is any or error
+        if props_type == TypeId::ANY || props_type == TypeId::ERROR {
+            return;
+        }
+
+        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
+            return;
+        };
+        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
+            return;
+        };
+
+        // Check each attribute
+        for &attr_idx in &attrs.properties.nodes {
+            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+                continue;
+            };
+
+            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
+                // Regular JSX attribute: name={value}
+                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
+                    continue;
+                };
+
+                // Get attribute name
+                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
+                    continue;
+                };
+                let attr_name = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                    ident.escaped_text.as_str().to_string()
+                } else {
+                    continue;
+                };
+
+                // Get expected type from props
+                use tsz_solver::operations_property::PropertyAccessResult;
+                let expected_type =
+                    match self.resolve_property_access_with_env(props_type, &attr_name) {
+                        PropertyAccessResult::Success { type_id, .. } => type_id,
+                        // Property doesn't exist in props - this is handled elsewhere (excess property check)
+                        _ => continue,
+                    };
+
+                // Get actual type of the attribute value
+                if attr_data.initializer.is_none() {
+                    // Boolean attribute without value (e.g., <input disabled />)
+                    // TypeScript treats this as true, check against boolean
+                    continue;
+                }
+
+                let actual_type = self.compute_type_of_node(attr_data.initializer);
+
+                // Check assignability
+                if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
+                    self.check_assignable_or_report(
+                        actual_type,
+                        expected_type,
+                        attr_data.initializer,
+                    );
+                }
+            } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                // Spread attribute: {...obj}
+                // Check that all properties of the spread object are assignable
+                let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+                    continue;
+                };
+
+                let spread_type = self.compute_type_of_node(spread_data.expression);
+
+                // For spread attributes, we need to check that each property in the spread
+                // is assignable to the corresponding property in props.
+                // This is more complex and may require iterating over the spread type's properties.
+                // For now, we do a simpler check: the spread type should be assignable to the props type.
+                if spread_type != TypeId::ANY && spread_type != TypeId::ERROR {
+                    self.check_assignable_or_report(
+                        spread_type,
+                        props_type,
+                        spread_data.expression,
+                    );
+                }
+            }
+        }
     }
 }
