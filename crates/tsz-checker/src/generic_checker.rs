@@ -292,7 +292,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         constructor_type: TypeId,
         type_args_list: &tsz_parser::parser::NodeList,
-        _call_idx: NodeIndex,
+        call_idx: NodeIndex,
     ) {
         // Get the type parameters from the constructor type
         let Some(shape) = query::callable_shape_for_type(self.ctx.types, constructor_type) else {
@@ -305,7 +305,17 @@ impl<'a> CheckerState<'a> {
             .map(|sig| sig.type_params.clone())
             .unwrap_or_default();
 
+        let got = type_args_list.nodes.len();
+
         if type_params.is_empty() {
+            // TS2558: Expected 0 type arguments, but got N.
+            if got > 0 {
+                self.error_at_node_msg(
+                    call_idx,
+                    crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                    &["0", &got.to_string()],
+                );
+            }
             return;
         }
 

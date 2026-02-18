@@ -3411,10 +3411,14 @@ impl ParserState {
                     self.next_token();
                     let next_is_constructor = self.current_token == SyntaxKind::ConstructorKeyword
                         && !self.scanner.has_preceding_line_break();
+                    // Skip TS1031 for index signatures (e.g., `export [x: string]: string`).
+                    // The checker emits the more specific TS1071 instead.
+                    let next_is_index_sig = self.current_token == SyntaxKind::OpenBracketToken
+                        && !self.scanner.has_preceding_line_break();
                     self.scanner.restore_state(snapshot);
                     self.current_token = saved_token;
 
-                    if !next_is_constructor {
+                    if !next_is_constructor && !next_is_index_sig {
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "'export' modifier cannot appear on class elements of this kind.",

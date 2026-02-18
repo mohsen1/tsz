@@ -426,8 +426,13 @@ impl StatementChecker {
                     // When there are grammar errors, skip semantic checks (TS2407 etc.)
                     // but still evaluate the expression to catch TS2304 "cannot find name".
                     let loop_var_type = if has_grammar_error {
-                        // Still type-check the expression for name resolution errors
-                        state.get_type_of_node(expression);
+                        // Still type-check the expression for name resolution errors,
+                        // but only for for-in. For for-of with grammar errors, the
+                        // expression often involves the `of` keyword itself due to
+                        // parsing ambiguity (e.g., `for (var of of)`).
+                        if !is_for_of {
+                            state.get_type_of_node(expression);
+                        }
                         if is_for_of {
                             TypeId::ANY
                         } else {

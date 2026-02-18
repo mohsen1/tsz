@@ -596,30 +596,47 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // If there's no type annotation, skip (implicitly any[])
-            if param.type_annotation.is_none() {
-                continue;
-            }
+            if !param.type_annotation.is_none() {
+                // Has explicit type annotation — check the declared type
+                let declared_type = self.get_type_from_type_node(param.type_annotation);
 
-            // Get the declared type
-            let declared_type = self.get_type_from_type_node(param.type_annotation);
+                // TypeScript accepts `...args: any` as a valid rest parameter type.
+                // Also skip unresolved/error types to avoid cascading TS2370 when
+                // type resolution itself already failed.
+                if declared_type == TypeId::ANY
+                    || declared_type == TypeId::UNKNOWN
+                    || declared_type == TypeId::ERROR
+                {
+                    continue;
+                }
 
-            // TypeScript accepts `...args: any` as a valid rest parameter type.
-            // Also skip unresolved/error types to avoid cascading TS2370 when
-            // type resolution itself already failed.
-            if declared_type == TypeId::ANY
-                || declared_type == TypeId::UNKNOWN
-                || declared_type == TypeId::ERROR
-            {
-                continue;
-            }
-
-            // Check if the type is an array type
-            // We need to use a Solver query to check this - following architecture rule
-            // that Checker never inspects TypeData
-            if !self.is_array_like_type(declared_type) {
+                if !self.is_array_like_type(declared_type) {
+                    self.error_at_node(
+                        param.type_annotation,
+                        "A rest parameter must be of an array type.",
+                        diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                    );
+                }
+            } else if !param.initializer.is_none() {
+                // No type annotation, but has initializer (e.g., `...bar = 0`).
+                // Infer the type from the initializer.
+                let init_type = self.get_type_of_node(param.initializer);
+                if init_type != TypeId::ANY
+                    && init_type != TypeId::UNKNOWN
+                    && init_type != TypeId::ERROR
+                    && !self.is_array_like_type(init_type)
+                {
+                    self.error_at_node(
+                        param_idx,
+                        "A rest parameter must be of an array type.",
+                        diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                    );
+                }
+            } else if param.question_token {
+                // Optional rest param without annotation (e.g., `...arg?`).
+                // The effective type includes undefined, making it non-array.
                 self.error_at_node(
-                    param.type_annotation,
+                    param_idx,
                     "A rest parameter must be of an array type.",
                     diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
                 );
