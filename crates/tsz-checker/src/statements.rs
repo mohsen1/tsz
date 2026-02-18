@@ -146,11 +146,13 @@ pub trait StatementCheckCallbacks {
     /// Emits TS2678 if the types have no overlap.
     fn check_switch_case_comparable(
         &mut self,
-        _switch_type: TypeId,
-        _case_type: TypeId,
-        _case_expr: NodeIndex,
+        switch_type: TypeId,
+        case_type: TypeId,
+        switch_expr: NodeIndex,
+        case_expr: NodeIndex,
     ) {
         // Default: no comparability checking
+        let _ = (switch_type, case_type, switch_expr, case_expr);
     }
 
     /// Check a break statement for validity.
@@ -491,6 +493,7 @@ impl StatementChecker {
                                     state.check_switch_case_comparable(
                                         switch_type,
                                         case_type,
+                                        expression,
                                         clause_expr,
                                     );
                                 }

@@ -850,6 +850,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         &mut self,
         switch_type: TypeId,
         case_type: TypeId,
+        switch_expr: NodeIndex,
         case_expr: NodeIndex,
     ) {
         // Skip if either type is error/any/unknown to avoid cascade errors
@@ -863,9 +864,15 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         }
 
+        // Use literal type for the switch expression if available, since
+        // get_type_of_node widens literals (e.g., 12 -> number).
+        // tsc's checkExpression preserves literal types for comparability checks.
+        let effective_switch_type = self
+            .literal_type_from_initializer(switch_expr)
+            .unwrap_or(switch_type);
+
         // Use literal type for the case expression if available, since
         // get_type_of_node widens literals (e.g., "c" -> string).
-        // tsc's checkExpression preserves literal types for comparability checks.
         let effective_case_type = self
             .literal_type_from_initializer(case_expr)
             .unwrap_or(case_type);
@@ -873,11 +880,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check if the types are comparable (assignable in either direction).
         // Types are comparable if they overlap — i.e., at least one direction works.
         // For example, "a" is comparable to "a" | "b" | "c" because "a" <: union.
-        if !self.is_type_comparable_to(effective_case_type, switch_type) {
+        if !self.is_type_comparable_to(effective_case_type, effective_switch_type) {
             // TS2678: Type 'X' is not comparable to type 'Y'
             if let Some(loc) = self.get_source_location(case_expr) {
                 let case_str = self.format_type(effective_case_type);
-                let switch_str = self.format_type(switch_type);
+                let switch_str = self.format_type(effective_switch_type);
                 use crate::diagnostics::{
                     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages,
                     format_message,
