@@ -794,8 +794,11 @@ impl<'a> CheckerState<'a> {
 
         // TS1108: A 'return' statement can only be used within a function body.
         // In .d.ts files, TS1036 is emitted instead of TS1108.
+        // Like TSC's grammarErrorOnFirstToken, suppress grammar errors when parse
+        // errors are present — TSC checks hasParseDiagnostics(sourceFile) before
+        // emitting TS1108 and other grammar errors.
         if self.current_return_type().is_none() {
-            if !self.ctx.is_in_ambient_declaration_file {
+            if !self.ctx.is_in_ambient_declaration_file && !self.has_syntax_parse_errors() {
                 use crate::diagnostics::diagnostic_codes;
                 self.error_at_node(
                     stmt_idx,

@@ -2607,7 +2607,15 @@ impl<'a> CheckerState<'a> {
                     let prev_context = self.ctx.contextual_type;
                     self.ctx.contextual_type = property_context_type;
 
-                    let value_type = self.get_type_of_node(prop.initializer);
+                    // When the parser can't parse a value expression (e.g. `{ a: return; }`),
+                    // it uses the property NAME node as the fallback initializer for error
+                    // recovery (prop.initializer == prop.name). Skip type-checking in that
+                    // case to prevent a spurious TS2304 for the property name identifier.
+                    let value_type = if prop.initializer == prop.name {
+                        TypeId::ANY
+                    } else {
+                        self.get_type_of_node(prop.initializer)
+                    };
 
                     // Restore context
                     self.ctx.contextual_type = prev_context;
