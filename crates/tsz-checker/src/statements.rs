@@ -393,26 +393,58 @@ impl StatementChecker {
                         state.check_for_await_statement(stmt_idx);
                     }
 
-                    // Determine the element type for the loop variable (for-of) or key type (for-in).
-                    let expr_type = state.get_type_of_node(expression);
-                    let loop_var_type = if is_for_of {
-                        // Check if the expression is iterable and emit TS2488/TS2504 if not
-                        state.check_for_of_iterability(expr_type, expression, await_modifier);
-                        state.for_of_element_type(expr_type)
-                    } else {
-                        // TS2407: for-in expression must be any, object type, or type parameter
-                        state.check_for_in_expression_type(expr_type, expression);
-                        // `for (x in obj)` iterates keys (string in TS).
-                        TypeId::STRING
+                    // Check if initializer is a variable declaration list and detect
+                    // parser-level errors that should suppress semantic expression checks:
+                    // - Empty decl list (TS1123 already reported by parser)
+                    // - For-in variable with initializer (TS1189 will be reported)
+                    let (is_var_decl_list, has_grammar_error) = {
+                        let arena = state.arena();
+                        if let Some(n) = arena.get(initializer) {
+                            if n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                                let grammar_err = arena.get_variable(n).is_none_or(|v| {
+                                    v.declarations.nodes.is_empty()
+                                        || (!is_for_of
+                                            && v.declarations.nodes.len() == 1
+                                            && v.declarations.nodes.first().is_some_and(|&d| {
+                                                arena.get(d).is_some_and(|dn| {
+                                                    arena
+                                                        .get_variable_declaration(dn)
+                                                        .is_some_and(|vd| !vd.initializer.is_none())
+                                                })
+                                            }))
+                                });
+                                (true, grammar_err)
+                            } else {
+                                (false, false)
+                            }
+                        } else {
+                            (false, false)
+                        }
                     };
 
-                    // Check if initializer is a variable declaration
-                    let is_var_decl_list = {
-                        let arena = state.arena();
-                        arena
-                            .get(initializer)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
+                    // Determine the element type for the loop variable (for-of) or key type (for-in).
+                    // Skip semantic expression checks when there are grammar errors to
+                    // avoid cascading TS2304/TS2407 errors.
+                    let loop_var_type = if has_grammar_error {
+                        if is_for_of {
+                            TypeId::ANY
+                        } else {
+                            TypeId::STRING
+                        }
+                    } else {
+                        let expr_type = state.get_type_of_node(expression);
+                        if is_for_of {
+                            // Check if the expression is iterable and emit TS2488/TS2504 if not
+                            state.check_for_of_iterability(expr_type, expression, await_modifier);
+                            state.for_of_element_type(expr_type)
+                        } else {
+                            // TS2407: for-in expression must be any, object type, or type parameter
+                            state.check_for_in_expression_type(expr_type, expression);
+                            // `for (x in obj)` iterates keys (string in TS).
+                            TypeId::STRING
+                        }
                     };
+
                     if is_var_decl_list {
                         // TS2491: for-in cannot use destructuring patterns
                         if !is_for_of {
