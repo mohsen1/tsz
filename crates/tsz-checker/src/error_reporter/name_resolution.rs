@@ -550,10 +550,14 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
             }
-            // Check immediate parent
+            // Check immediate parent — but not when the parent is an instantiation
+            // expression (EXPRESSION_WITH_TYPE_ARGUMENTS). In that case the parse
+            // error is in the `<>` type-argument span, not in the expression child,
+            // so the identifier (e.g. `List`) should still be name-resolved.
             if let Some(ext) = self.ctx.arena.get_extended(idx)
                 && !ext.parent.is_none()
                 && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind != syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
             {
                 let flags = parent_node.flags as u32;
                 if !force_emit_for_ambiguous_generic

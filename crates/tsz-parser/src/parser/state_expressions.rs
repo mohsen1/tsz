@@ -1277,10 +1277,23 @@ impl ParserState {
                     if let Some(node) = self.arena.get(expr)
                         && node.kind
                             == crate::parser::syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+                        && let Some(eta) = self.arena.get_expr_type_args(node)
                     {
+                        // TSC emits TS1477 at the `<…>` type-argument span (from `<` to
+                        // past `>`), not at the whole expression start. This avoids
+                        // setting THIS_NODE_HAS_ERROR on the expression identifier itself,
+                        // which would suppress TS2304 for unresolved names like `List`.
+                        //
+                        // `<` starts at expression_node.end; `>` ends at node.end.
+                        // NodeList.pos/end are always 0, so we can't use type_args span.
+                        let err_pos = self
+                            .arena
+                            .get(eta.expression)
+                            .map_or(node.pos, |expr_node| expr_node.end);
+                        let err_len = node.end.saturating_sub(err_pos);
                         self.parse_error_at(
-                            node.pos,
-                            node.end.saturating_sub(node.pos),
+                            err_pos,
+                            err_len,
                             tsz_common::diagnostics::diagnostic_messages::AN_INSTANTIATION_EXPRESSION_CANNOT_BE_FOLLOWED_BY_A_PROPERTY_ACCESS,
                             tsz_common::diagnostics::diagnostic_codes::AN_INSTANTIATION_EXPRESSION_CANNOT_BE_FOLLOWED_BY_A_PROPERTY_ACCESS,
                         );
