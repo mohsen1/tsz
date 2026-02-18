@@ -693,6 +693,33 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             }
         }
 
+        // Helper: check if a type name is resolvable in any scope (file locals,
+        // lib contexts, enclosing namespace scopes via binder identifier resolution).
+        let is_name_resolvable =
+            |ctx: &CheckerContext, name: &str, name_node_idx: NodeIndex| -> bool {
+                // Check file-level declarations
+                if ctx.binder.file_locals.get(name).is_some() {
+                    return true;
+                }
+                // Check lib declarations
+                if ctx
+                    .lib_contexts
+                    .iter()
+                    .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some())
+                {
+                    return true;
+                }
+                // Check scope-based resolution (handles namespace-scoped names)
+                if ctx
+                    .binder
+                    .resolve_identifier(ctx.arena, name_node_idx)
+                    .is_some()
+                {
+                    return true;
+                }
+                false
+            };
+
         // Check return type annotation
         if !func_data.type_annotation.is_none()
             && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
@@ -705,14 +732,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let is_builtin = is_builtin_type(name);
             let is_local_type_param = local_type_params.contains(name);
             let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
-            let in_file = self.ctx.binder.file_locals.get(name).is_some();
-            let in_lib = self
-                .ctx
-                .lib_contexts
-                .iter()
-                .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some());
+            let in_scope = is_name_resolvable(self.ctx, name, tr.type_name);
 
-            if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib {
+            if !is_builtin && !is_local_type_param && !is_type_param && !in_scope {
                 undefined_types.push((tr.type_name, name.clone()));
             }
         }
@@ -732,14 +754,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let is_builtin = is_builtin_type(name);
                 let is_local_type_param = local_type_params.contains(name);
                 let is_type_param = self.ctx.type_parameter_scope.contains_key(name);
-                let in_file = self.ctx.binder.file_locals.get(name).is_some();
-                let in_lib = self
-                    .ctx
-                    .lib_contexts
-                    .iter()
-                    .any(|lib_ctx| lib_ctx.binder.file_locals.get(name).is_some());
+                let in_scope = is_name_resolvable(self.ctx, name, tr.type_name);
 
-                if !is_builtin && !is_local_type_param && !is_type_param && !in_file && !in_lib {
+                if !is_builtin && !is_local_type_param && !is_type_param && !in_scope {
                     undefined_types.push((tr.type_name, name.clone()));
                 }
             }
