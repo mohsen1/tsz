@@ -22,19 +22,31 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         Self { ctx }
     }
 
-    /// Check if a declaration is ambient (has declare keyword or AMBIENT flag).
+    /// Check if a declaration is ambient (has declare keyword, AMBIENT node flag,
+    /// or is inside an ambient context like `declare module`).
     fn is_ambient_declaration(&self, var_idx: NodeIndex) -> bool {
         // .d.ts files are always ambient
         if self.ctx.file_name.ends_with(".d.ts") {
             return true;
         }
 
-        // Check if the node or any ancestor has the AMBIENT flag
+        // Check if the node itself has a `declare` modifier
+        if let Some(node) = self.ctx.arena.get(var_idx)
+            && self.node_has_declare_modifier(var_idx, node)
+        {
+            return true;
+        }
+
+        // Check if the node or any ancestor has the AMBIENT flag or `declare` modifier
         let mut current = var_idx;
         while !current.is_none() {
             if let Some(node) = self.ctx.arena.get(current) {
-                // Check if this node has the AMBIENT flag set
                 if (node.flags as u32) & node_flags::AMBIENT != 0 {
+                    return true;
+                }
+                // Check if this ancestor has the `declare` keyword modifier
+                // (covers `declare module`, `declare namespace`, `declare class`, etc.)
+                if self.node_has_declare_modifier_any(current, node) {
                     return true;
                 }
 
@@ -64,6 +76,39 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         } else {
             return false;
         };
+        self.modifiers_contain_declare(modifiers)
+    }
+
+    /// Check if any node type (class, function, module, variable, enum, etc.) has `declare`.
+    fn node_has_declare_modifier_any(
+        &self,
+        _node_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        // Try each node type that can carry modifiers
+        let modifiers = if let Some(class) = self.ctx.arena.get_class(node) {
+            &class.modifiers
+        } else if let Some(func) = self.ctx.arena.get_function(node) {
+            &func.modifiers
+        } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            // Module declarations store modifiers differently
+            if let Some(module) = self.ctx.arena.get_module(node) {
+                &module.modifiers
+            } else {
+                return false;
+            }
+        } else if let Some(var_data) = self.ctx.arena.get_variable(node) {
+            &var_data.modifiers
+        } else if let Some(enum_decl) = self.ctx.arena.get_enum(node) {
+            &enum_decl.modifiers
+        } else {
+            return false;
+        };
+        self.modifiers_contain_declare(modifiers)
+    }
+
+    /// Check if a modifier list contains the `declare` keyword.
+    fn modifiers_contain_declare(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
         if let Some(mods) = modifiers {
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.ctx.arena.get(mod_idx)
@@ -1637,7 +1682,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         module: &tsz_parser::parser::node::ModuleData,
     ) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-        use tsz_parser::parser::node_flags;
 
         // Get the symbol for this module declaration
         let Some(&sym_id) = self.ctx.binder.node_symbols.get(&module_idx.0) else {
@@ -1669,12 +1713,9 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 continue;
             }
 
-            // Check if the declaration is ambient (node_flags::AMBIENT for nested context,
-            // or `declare` keyword modifier for top-level `declare class`/`declare function`)
-            if (decl_node.flags as u32) & node_flags::AMBIENT != 0 {
-                continue;
-            }
-            if self.node_has_declare_modifier(decl_idx, decl_node) {
+            // Check if the declaration is ambient: `declare class`, or inside
+            // an ambient context (e.g. `declare module 'M' { class C {} }`)
+            if self.is_ambient_declaration(decl_idx) {
                 continue;
             }
 
