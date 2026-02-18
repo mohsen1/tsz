@@ -1761,9 +1761,34 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return res;
         }
 
-        // 4. Structural Identity
+        // 4. Normalize Application/Mapped/Lazy types before structural comparison.
+        // Required<{a?: string}> must evaluate to {a: string} before bidirectional
+        // subtype checking, just as is_assignable_impl() does via normalize_assignability_operands.
+        let (a_norm, b_norm) = self.normalize_assignability_operands(a, b);
+        tracing::trace!(
+            a = a.0,
+            b = b.0,
+            a_norm = a_norm.0,
+            b_norm = b_norm.0,
+            a_changed = a != a_norm,
+            b_changed = b != b_norm,
+            "are_types_identical_for_redeclaration: normalized"
+        );
+        let a = a_norm;
+        let b = b_norm;
+
+        // 5. Structural Identity
         // Delegate to the Judge to check bidirectional subtyping
-        self.subtype.is_subtype_of(a, b) && self.subtype.is_subtype_of(b, a)
+        let fwd = self.subtype.is_subtype_of(a, b);
+        let bwd = self.subtype.is_subtype_of(b, a);
+        tracing::trace!(
+            a = a.0,
+            b = b.0,
+            fwd,
+            bwd,
+            "are_types_identical_for_redeclaration: result"
+        );
+        fwd && bwd
     }
 
     /// Check if two types involving enums are compatible for redeclaration.
