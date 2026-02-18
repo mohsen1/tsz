@@ -337,13 +337,16 @@ impl<'a> Printer<'a> {
 
     /// Emit comments between two positions that haven't been emitted yet.
     /// This is used for comments in expression contexts (e.g., between function arguments).
-    pub(crate) fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) {
+    ///
+    /// Returns `true` if the last emitted comment was a line comment (has trailing newline),
+    /// meaning a newline was already written — callers should NOT write an additional newline.
+    pub(crate) fn emit_unemitted_comments_between(&mut self, from_pos: u32, to_pos: u32) -> bool {
         if self.ctx.options.remove_comments {
-            return;
+            return false;
         }
 
         let Some(text) = self.source_text else {
-            return;
+            return false;
         };
 
         // Scan through all_comments to find ones in range [from_pos, to_pos)
@@ -352,6 +355,7 @@ impl<'a> Printer<'a> {
         // since we're looking for comments that may be ahead of the current
         // emission position.
         let mut scan_idx = self.comment_emit_idx;
+        let mut last_had_trailing_newline = false;
         while scan_idx < self.all_comments.len() {
             let c = &self.all_comments[scan_idx];
             if c.pos >= from_pos && c.end <= to_pos {
@@ -360,9 +364,12 @@ impl<'a> Printer<'a> {
                 let has_trailing_new_line = c.has_trailing_new_line;
                 if !comment_text.is_empty() {
                     self.write(comment_text);
-                    if !has_trailing_new_line {
+                    if has_trailing_new_line {
+                        self.write_line();
+                    } else {
                         self.write_space();
                     }
+                    last_had_trailing_newline = has_trailing_new_line;
                 }
                 // Advance the main index past this comment
                 self.comment_emit_idx = scan_idx + 1;
@@ -378,6 +385,7 @@ impl<'a> Printer<'a> {
                 scan_idx += 1;
             }
         }
+        last_had_trailing_newline
     }
 
     pub(super) fn emit_heritage_expression(&mut self, idx: NodeIndex) {
