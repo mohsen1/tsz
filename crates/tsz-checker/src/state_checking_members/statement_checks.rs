@@ -207,6 +207,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
             );
         }
+
+        // Type-check the with-expression for name resolution (TS2304).
+        if let Some(node) = self.ctx.arena.get(stmt_idx)
+            && let Some(with_data) = self.ctx.arena.get_with_statement(node)
+        {
+            self.get_type_of_node(with_data.expression);
+        }
     }
 
     fn is_with_statement_in_strict_mode_context(&self, stmt_idx: NodeIndex) -> bool {

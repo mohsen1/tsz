@@ -423,9 +423,11 @@ impl StatementChecker {
                     };
 
                     // Determine the element type for the loop variable (for-of) or key type (for-in).
-                    // Skip semantic expression checks when there are grammar errors to
-                    // avoid cascading TS2304/TS2407 errors.
+                    // When there are grammar errors, skip semantic checks (TS2407 etc.)
+                    // but still evaluate the expression to catch TS2304 "cannot find name".
                     let loop_var_type = if has_grammar_error {
+                        // Still type-check the expression for name resolution errors
+                        state.get_type_of_node(expression);
                         if is_for_of {
                             TypeId::ANY
                         } else {
