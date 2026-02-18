@@ -2992,15 +2992,17 @@ impl<'a> CheckerState<'a> {
                     self.error_at_position(end_pos, 1, "'{' expected.", diagnostic_codes::EXPECTED);
                 }
 
-                // For setters, check implicit any on parameters (error 7006)
+                // For setters, check implicit any on parameters (error 7006) and on
+                // the property name itself (error 7032).
                 // When a paired getter exists, the setter parameter type is inferred
-                // from the getter return type (contextually typed, suppress TS7006).
+                // from the getter return type (contextually typed, suppress TS7006/7032).
                 if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
                     let has_paired_getter = self
                         .get_property_name(accessor.name)
                         .is_some_and(|name| obj_getter_names.contains(&name));
                     // Check if accessor JSDoc has @param type annotations
                     let accessor_jsdoc = self.get_jsdoc_for_function(elem_idx);
+                    let mut first_param_lacks_annotation = false;
                     for &param_idx in &accessor.parameters.nodes {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
@@ -3013,8 +3015,26 @@ impl<'a> CheckerState<'a> {
                                 } else {
                                     false
                                 };
+                            if param.type_annotation.is_none() && !has_jsdoc {
+                                first_param_lacks_annotation = true;
+                            }
                             self.maybe_report_implicit_any_parameter(param, has_jsdoc);
                         }
+                    }
+                    // TS7032: emit on property name when the setter has no parameter type
+                    // annotation and no paired getter (TSC checks this at accessor symbol
+                    // resolution time; we emit it here during object literal checking).
+                    if first_param_lacks_annotation
+                        && !has_paired_getter
+                        && self.ctx.no_implicit_any()
+                        && let Some(prop_name) = self.get_property_name(accessor.name).as_deref()
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node_msg(
+                            accessor.name,
+                            diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
+                            &[prop_name],
+                        );
                     }
                 }
 
