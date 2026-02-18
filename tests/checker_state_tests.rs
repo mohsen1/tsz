@@ -10504,9 +10504,18 @@ type Alias = Foo.Bar;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    assert!(
-        checker.ctx.diagnostics.is_empty(),
-        "Unexpected diagnostics: {:?}",
+    // tsc emits TS2434: "A namespace declaration cannot be located prior to a class or function
+    // with which it is merged." when namespace appears before the class.
+    let ts2434: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2434)
+        .collect();
+    assert_eq!(
+        ts2434.len(),
+        1,
+        "Expected exactly one TS2434, got diagnostics: {:?}",
         checker.ctx.diagnostics
     );
 
@@ -10615,9 +10624,17 @@ const direct = Foo.value;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    assert!(
-        checker.ctx.diagnostics.is_empty(),
-        "Unexpected diagnostics: {:?}",
+    // tsc emits TS2434 when namespace appears before the class it merges with
+    let ts2434: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2434)
+        .collect();
+    assert_eq!(
+        ts2434.len(),
+        1,
+        "Expected exactly one TS2434, got diagnostics: {:?}",
         checker.ctx.diagnostics
     );
 
@@ -10832,9 +10849,17 @@ const direct = Merge.extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    assert!(
-        checker.ctx.diagnostics.is_empty(),
-        "Unexpected diagnostics: {:?}",
+    // tsc emits TS2434 when namespace appears before the function it merges with
+    let ts2434: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2434)
+        .collect();
+    assert_eq!(
+        ts2434.len(),
+        1,
+        "Expected exactly one TS2434, got diagnostics: {:?}",
         checker.ctx.diagnostics
     );
 
@@ -10945,9 +10970,17 @@ type Alias = Merge.Extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    assert!(
-        checker.ctx.diagnostics.is_empty(),
-        "Unexpected diagnostics: {:?}",
+    // tsc emits TS2434 when namespace appears before the function it merges with
+    let ts2434: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2434)
+        .collect();
+    assert_eq!(
+        ts2434.len(),
+        1,
+        "Expected exactly one TS2434, got diagnostics: {:?}",
         checker.ctx.diagnostics
     );
 
