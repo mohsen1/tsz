@@ -66,6 +66,7 @@ pub mod optional_chain;
 pub mod parameter_checker;
 pub mod private_checker;
 pub mod promise_checker;
+mod property_access_type;
 pub mod property_checker;
 mod query_boundaries;
 pub mod reachability_analyzer;
