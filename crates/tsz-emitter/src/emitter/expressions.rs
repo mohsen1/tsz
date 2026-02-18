@@ -2,7 +2,7 @@ use super::{Printer, get_operator_text};
 use tsz_parser::parser::{
     NodeIndex,
     node::{AccessExprData, BinaryExprData, Node},
-    syntax_kind_ext,
+    node_flags, syntax_kind_ext,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -667,6 +667,35 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if self.is_optional_chain(node) {
+            if self.ctx.options.target.supports_es2020() {
+                self.emit(call.expression);
+                if self.has_optional_call_token(node, call.expression, call.arguments.as_ref()) {
+                    self.write("?.");
+                }
+                self.emit_call_arguments(node, call.arguments.as_ref());
+                return;
+            }
+
+            let has_optional_call_token =
+                self.has_optional_call_token(node, call.expression, call.arguments.as_ref());
+            if let Some(call_expr) = self.arena.get(call.expression)
+                && (call_expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || call_expr.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            {
+                self.emit_optional_method_call_expression(
+                    call_expr,
+                    node,
+                    &call.arguments,
+                    has_optional_call_token,
+                );
+                return;
+            }
+
+            self.emit_optional_call_expression(node, call.expression, &call.arguments);
+            return;
+        }
+
         if self.ctx.target_es5
             && let Some(expr_node) = self.arena.get(call.expression)
         {
@@ -732,6 +761,228 @@ impl<'a> Printer<'a> {
             self.emit_comma_separated(&args.nodes);
         }
         self.write(")");
+    }
+
+    fn emit_call_arguments(&mut self, node: &Node, args: Option<&tsz_parser::parser::NodeList>) {
+        self.write("(");
+        if let Some(args) = args {
+            if let Some(first_arg) = args.nodes.first()
+                && let Some(arg_node) = self.arena.get(*first_arg)
+            {
+                let paren_pos = self.find_open_paren_position(node.pos, arg_node.pos);
+                self.emit_unemitted_comments_between(paren_pos, arg_node.pos);
+            }
+            self.emit_comma_separated(&args.nodes);
+        }
+        self.write(")");
+    }
+
+    fn emit_optional_call_expression(
+        &mut self,
+        node: &Node,
+        callee: NodeIndex,
+        args: &Option<tsz_parser::parser::NodeList>,
+    ) {
+        if self.is_simple_nullish_expression(callee) {
+            self.emit(callee);
+            self.write(" === null || ");
+            self.emit(callee);
+            self.write(" === void 0 ? void 0 : ");
+            self.emit(callee);
+            self.emit_call_arguments(node, args.as_ref());
+        } else {
+            let temp = self.get_temp_var_name();
+            self.write("(");
+            self.write(&temp);
+            self.write(" = ");
+            self.emit(callee);
+            self.write(")");
+            self.write(" === null || ");
+            self.write(&temp);
+            self.write(" === void 0 ? void 0 : ");
+            self.write(&temp);
+            self.emit_call_arguments(node, args.as_ref());
+        }
+    }
+
+    fn emit_optional_method_call_expression(
+        &mut self,
+        access_node: &Node,
+        call_node: &Node,
+        args: &Option<tsz_parser::parser::NodeList>,
+        has_optional_call_token: bool,
+    ) {
+        let Some(access) = self.arena.get_access_expr(access_node) else {
+            return;
+        };
+
+        if !has_optional_call_token {
+            let this_temp = self.get_temp_var_name();
+            self.write("(");
+            self.write(&this_temp);
+            self.write(" = ");
+            self.emit(access.expression);
+            self.write(")");
+            if access.question_dot_token {
+                self.write(" === null || ");
+                self.write(&this_temp);
+                self.write(" === void 0 ? void 0 : ");
+            }
+
+            if access.question_dot_token {
+                self.write(&this_temp);
+            }
+            if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                self.write(".");
+                self.emit(access.name_or_argument);
+            } else {
+                self.write("[");
+                self.emit(access.name_or_argument);
+                self.write("]");
+            }
+            self.emit_call_arguments(call_node, args.as_ref());
+            return;
+        }
+
+        let this_temp = self.get_temp_var_name();
+        let func_temp = self.get_temp_var_name();
+
+        self.write("(");
+        self.write(&func_temp);
+        self.write(" = ");
+        self.write("(");
+        self.write(&this_temp);
+        self.write(" = ");
+        self.emit(access.expression);
+        self.write(")");
+        if access.question_dot_token {
+            self.write(" === null || ");
+            self.write(&this_temp);
+            self.write(" === void 0 ? void 0 : ");
+        }
+        if access_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if access.question_dot_token {
+                self.write(&this_temp);
+            }
+            self.write(".");
+            self.emit(access.name_or_argument);
+        } else {
+            if access.question_dot_token {
+                self.write(&this_temp);
+            }
+            self.write("[");
+            self.emit(access.name_or_argument);
+            self.write("]");
+        }
+        self.write(") === null || ");
+        self.write(&func_temp);
+        self.write(" === void 0 ? void 0 : ");
+        self.write(&func_temp);
+        self.write(".call(");
+        self.write(&this_temp);
+        self.emit_optional_call_tail_arguments(args.as_ref());
+        self.write(")");
+    }
+
+    fn emit_optional_call_tail_arguments(&mut self, args: Option<&tsz_parser::parser::NodeList>) {
+        if let Some(args) = args
+            && !args.nodes.is_empty()
+        {
+            self.write(", ");
+            self.emit_comma_separated(&args.nodes);
+        }
+        self.write(")");
+    }
+
+    const fn is_optional_chain(&self, node: &Node) -> bool {
+        (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
+    }
+
+    fn has_optional_call_token(
+        &self,
+        call_node: &Node,
+        callee: NodeIndex,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> bool {
+        let Some(source) = self.source_text_for_map() else {
+            let Some(callee_node) = self.arena.get(callee) else {
+                return false;
+            };
+            if self.arena.get_access_expr(callee_node).is_none() {
+                return true;
+            }
+            return false;
+        };
+
+        let Some(callee_node) = self.arena.get(callee) else {
+            return false;
+        };
+        let Some(open_paren) = self.find_call_open_paren_position(call_node, args) else {
+            return false;
+        };
+
+        let bytes = source.as_bytes();
+        let mut i = std::cmp::min(open_paren as usize, source.len());
+        let start = std::cmp::min(callee_node.pos as usize, source.len());
+
+        while i > start {
+            if i == 0 {
+                break;
+            }
+            match bytes[i - 1] {
+                b' ' | b'\t' | b'\r' | b'\n' => {
+                    i -= 1;
+                }
+                b'/' if i >= 2 && bytes[i - 2] == b'/' => {
+                    while i > start && bytes[i - 1] != b'\n' {
+                        i -= 1;
+                    }
+                    if i > start {
+                        i -= 1;
+                    }
+                }
+                b'/' if i >= 2 && bytes[i - 2] == b'*' => {
+                    if i >= 2 {
+                        i -= 2;
+                    }
+                    while i >= 2 && !(bytes[i - 2] == b'*' && bytes[i - 1] == b'/') {
+                        i -= 1;
+                    }
+                    if i >= 2 {
+                        i -= 2;
+                    }
+                }
+                b'?' if i >= 2 && bytes[i - 2] == b'.' => {
+                    return true;
+                }
+                b'.' if i >= 2 && bytes[i - 2] == b'?' && bytes[i - 1] == b'.' => {
+                    return true;
+                }
+                _ => return false,
+            }
+        }
+
+        false
+    }
+
+    fn find_call_open_paren_position(
+        &self,
+        call_node: &Node,
+        args: Option<&tsz_parser::parser::NodeList>,
+    ) -> Option<u32> {
+        let text = self.source_text_for_map()?;
+        let bytes = text.as_bytes();
+        let start = std::cmp::min(call_node.pos as usize, bytes.len());
+        let mut end = std::cmp::min(call_node.end as usize, bytes.len());
+        if let Some(args) = args
+            && let Some(first) = args.nodes.first()
+            && let Some(first_node) = self.arena.get(*first)
+        {
+            end = std::cmp::min(first_node.pos as usize, end);
+        }
+        (start..end)
+            .position(|i| bytes[i] == b'(')
+            .map(|offset| (start + offset) as u32)
     }
 
     /// Find the position of the opening parenthesis in a call expression.

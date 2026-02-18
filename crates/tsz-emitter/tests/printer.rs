@@ -150,3 +150,65 @@ fn test_exponentiation_downlevel_to_math_pow() {
     assert!(output.contains("Math.pow(2, 3)"));
     assert!(output.contains("y = Math.pow(y, 3)"));
 }
+
+#[test]
+fn test_optional_call_downlevel_to_conditional() {
+    let source = "const fn = () => 1;\nconst obj = { m() { return this; } };\nfn?.();\nobj?.m();\nobj.m?.();\nobj?.m?.();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2019,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(output.contains("fn === null || fn === void 0 ? void 0 : fn()"));
+    assert!(output.matches(".call(").count() >= 2);
+    assert!(!output.contains("?.("));
+}
+
+#[test]
+fn test_optional_call_es2020_syntax_preserved() {
+    let source = "const fn = () => 1;\nconst obj = { m() { return this; } };\nfn?.();\nobj?.m();\nobj.m?.();\nobj?.m?.();\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(output.contains("fn?.()"));
+    assert!(output.contains("obj?.m()"));
+    assert!(output.contains("obj.m?.()"));
+    assert!(output.contains("obj?.m?.()"));
+    assert!(!output.contains("void 0"));
+}
+
+#[test]
+fn test_optional_call_spread_downlevel_es5() {
+    let source = "const fn = function (...args) { return args; };\nconst obj = { m(...args) { return args; } };\nfn?.(...[1], 2);\nobj?.m(...[1], 2);\nobj.m?.(...[1], 2);\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(output.contains(".__spreadArray"));
+    assert!(output.contains(".apply(void 0,"));
+    assert!(output.contains(".call.apply"));
+    assert!(!output.contains("?.("));
+}
