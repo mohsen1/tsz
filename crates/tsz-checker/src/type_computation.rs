@@ -847,11 +847,26 @@ impl<'a> CheckerState<'a> {
         if !var_decl.initializer.is_none() {
             let init_type = self.get_type_of_node(var_decl.initializer);
 
-            // Rule #10: Literal Widening
+            // Rule #10: Literal Widening (with freshness)
             // For mutable bindings (let/var), widen literals to their primitive type
+            // ONLY when the initializer is a "fresh" literal expression (direct literal
+            // in source code). Types from variable references, narrowing, or computed
+            // expressions are "non-fresh" and should NOT be widened.
             // For const bindings, preserve literal types (unless in array/object context)
             if !self.is_const_variable_declaration(idx) {
-                return self.widen_initializer_type_for_mutable_binding(init_type);
+                let widened = if self.is_fresh_literal_expression(var_decl.initializer) {
+                    self.widen_initializer_type_for_mutable_binding(init_type)
+                } else {
+                    init_type
+                };
+                // When strictNullChecks is off, undefined and null widen to any
+                // (always, regardless of freshness)
+                if !self.ctx.strict_null_checks()
+                    && (widened == TypeId::UNDEFINED || widened == TypeId::NULL)
+                {
+                    return TypeId::ANY;
+                }
+                return widened;
             }
 
             // const: preserve literal type

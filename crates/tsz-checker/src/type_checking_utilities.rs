@@ -245,6 +245,85 @@ impl<'a> CheckerState<'a> {
         self.widen_literal_type(type_id)
     }
 
+    /// Check if an expression produces a "fresh" literal type that should be widened.
+    ///
+    /// In TypeScript, literal types created from literal expressions are "fresh" and get
+    /// widened when assigned to mutable bindings (let/var). Literal types from other
+    /// sources (variable references, type annotations, narrowing) are "non-fresh" and
+    /// should NOT be widened.
+    ///
+    /// ## Examples:
+    /// ```typescript
+    /// let x = "foo";          // "foo" is fresh → widened to string
+    /// let a: "foo" = "foo";
+    /// let y = a;              // a's type is non-fresh → y: "foo" (not widened)
+    /// let z = a || "bar";     // result from || is non-fresh → z: "foo" (not widened)
+    /// ```
+    pub(crate) fn is_fresh_literal_expression(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+
+        let kind = node.kind;
+
+        // Direct literal tokens are always fresh
+        if kind == SyntaxKind::StringLiteral as u16
+            || kind == SyntaxKind::NumericLiteral as u16
+            || kind == SyntaxKind::BigIntLiteral as u16
+            || kind == SyntaxKind::TrueKeyword as u16
+            || kind == SyntaxKind::FalseKeyword as u16
+            || kind == SyntaxKind::NullKeyword as u16
+            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return true;
+        }
+
+        // Parenthesized expressions inherit freshness from inner expression
+        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                return self.is_fresh_literal_expression(paren.expression);
+            }
+        }
+
+        // Prefix unary (+/-) on numeric/bigint literals are fresh
+        if kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            if let Some(prefix) = self.ctx.arena.get_unary_expr(node) {
+                let op = prefix.operator;
+                if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
+                    return self.is_fresh_literal_expression(prefix.operand);
+                }
+            }
+        }
+
+        // Conditional expressions: fresh if both branches produce fresh types
+        if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                return self.is_fresh_literal_expression(cond.when_true)
+                    && self.is_fresh_literal_expression(cond.when_false);
+            }
+        }
+
+        // Object and array literals need widening (property types get widened)
+        if kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            || kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        {
+            return true;
+        }
+
+        // Template expressions (with substitutions) produce string, which doesn't need widening
+        // but we mark them fresh for consistency
+        if kind == syntax_kind_ext::TEMPLATE_EXPRESSION {
+            return true;
+        }
+
+        // Everything else (identifiers, call expressions, binary expressions, etc.)
+        // produces non-fresh types that should NOT be widened
+        false
+    }
+
     /// Map an expanded argument index back to the original argument node index.
     ///
     /// This handles spread arguments that expand to multiple elements.

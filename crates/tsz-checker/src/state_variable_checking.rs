@@ -761,7 +761,14 @@ impl<'a> CheckerState<'a> {
                     return init_type;
                 }
 
-                checker.widen_initializer_type_for_mutable_binding(init_type)
+                // Only widen when the initializer is a "fresh" literal expression
+                // (direct literal in source code). Types from variable references,
+                // narrowing, or computed expressions are "non-fresh" and NOT widened.
+                if checker.is_fresh_literal_expression(var_decl.initializer) {
+                    checker.widen_initializer_type_for_mutable_binding(init_type)
+                } else {
+                    init_type
+                }
             } else {
                 // For for-in/for-of loop variables, the element type has already been cached
                 // by assign_for_in_of_initializer_types. Use that instead of defaulting to any.
