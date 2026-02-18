@@ -820,12 +820,11 @@ impl<'a> CheckerState<'a> {
                     let owner_idx = cpn_ext.parent; // MethodDeclaration, PropertyDeclaration, etc.
                     if let Some(owner_ext) = self.ctx.arena.get_extended(owner_idx) {
                         let class_idx = owner_ext.parent; // ClassDeclaration or ObjectLiteralExpression
-                        if let Some(class_node) = self.ctx.arena.get(class_idx) {
-                            if class_node.kind == CLASS_DECLARATION
-                                || class_node.kind == CLASS_EXPRESSION
-                            {
-                                return true;
-                            }
+                        if let Some(class_node) = self.ctx.arena.get(class_idx)
+                            && (class_node.kind == CLASS_DECLARATION
+                                || class_node.kind == CLASS_EXPRESSION)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -863,7 +862,7 @@ impl<'a> CheckerState<'a> {
     /// - `class C { [{ [super.bar()]: 1 }[0]]() {} }` → true
     ///   (inner obj-lit CPN nested inside outer class-member CPN; no legal container)
     /// - `ctor() { super(); () => { var obj = { [(super(), "prop")]() {} } } }` → true
-    ///   (super() call; arrow fn is boundary; CPN found before boundary)
+    ///   (`super()` call; arrow fn is boundary; CPN found before boundary)
     pub(crate) fn is_super_in_computed_property_name(&self, idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{
             ARROW_FUNCTION, CALL_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION,
@@ -947,8 +946,7 @@ impl<'a> CheckerState<'a> {
             // Regular function boundaries (stopOnFunctions=true): these become the
             // container. They are not legal super-property-access containers (their
             // parent is not class-like), but this is a different error — not TS2466.
-            if parent_node.kind == FUNCTION_DECLARATION || parent_node.kind == FUNCTION_EXPRESSION
-            {
+            if parent_node.kind == FUNCTION_DECLARATION || parent_node.kind == FUNCTION_EXPRESSION {
                 return false;
             }
 
