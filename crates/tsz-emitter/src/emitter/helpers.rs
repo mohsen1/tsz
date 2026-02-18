@@ -630,6 +630,101 @@ impl<'a> Printer<'a> {
         pos as u32
     }
 
+    /// Returns true if the source character just before `c_pos` (skipping spaces/tabs)
+    /// is a newline — meaning the comment at `c_pos` starts on its own line rather than
+    /// being a trailing same-line comment.
+    pub(super) fn comment_preceded_by_newline(&self, c_pos: u32) -> bool {
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let bytes = text.as_bytes();
+        let mut i = c_pos as usize;
+        while i > 0 {
+            i -= 1;
+            match bytes[i] {
+                b' ' | b'\t' => continue,
+                b'\n' | b'\r' => return true,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Find the position of the first top-level ',' in source text after `from` and before `to`.
+    /// Skips over nested brackets, strings, and comments so we don't match commas inside
+    /// nested expressions (e.g. `[a, [b, c], d]` — the inner comma is skipped).
+    pub(super) fn find_comma_pos_after(&self, from: u32, to: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let to = to as usize;
+        let mut i = from as usize;
+        let mut depth = 0i32;
+        while i < to.min(bytes.len()) {
+            match bytes[i] {
+                b',' if depth == 0 => return Some(i as u32),
+                b'(' | b'[' | b'{' => {
+                    depth += 1;
+                    i += 1;
+                }
+                b')' | b']' | b'}' => {
+                    if depth > 0 {
+                        depth -= 1;
+                    } else {
+                        break; // exited our scope
+                    }
+                    i += 1;
+                }
+                b'\'' | b'"' => {
+                    let q = bytes[i];
+                    i += 1;
+                    while i < to.min(bytes.len()) {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                        } else if bytes[i] == q {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                b'`' => {
+                    i += 1;
+                    while i < to.min(bytes.len()) {
+                        if bytes[i] == b'\\' {
+                            i += 2;
+                        } else if bytes[i] == b'`' {
+                            i += 1;
+                            break;
+                        } else {
+                            i += 1;
+                        }
+                    }
+                }
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'/' => {
+                    i += 2;
+                    while i < to.min(bytes.len()) && bytes[i] != b'\n' {
+                        i += 1;
+                    }
+                }
+                b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'*' => {
+                    i += 2;
+                    while i + 1 < to.min(bytes.len()) {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                }
+                _ => {
+                    i += 1;
+                }
+            }
+        }
+        None
+    }
+
     /// Check if modifiers include a specific keyword
     pub(super) fn has_modifier(&self, modifiers: &Option<NodeList>, kind: u16) -> bool {
         if let Some(mods) = modifiers {
@@ -686,32 +781,43 @@ impl<'a> Printer<'a> {
             }
 
             // Skip block comments when scanning backwards.
-            if bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos - 1] == b'*' {
-                pos -= 1;
+            // We land on the `/` of `*/` when scanning right-to-left.
+            if bytes[pos] == b'/' && pos > 0 && bytes[pos - 1] == b'*' {
+                pos -= 1; // now at '*'
+                // Find the matching `/*`
                 while pos > 1 {
-                    if bytes[pos - 1] == b'/' && bytes[pos - 2] == b'*' {
+                    pos -= 1;
+                    if bytes[pos] == b'*' && pos > 0 && bytes[pos - 1] == b'/' {
+                        pos -= 1; // now at '/'
                         break;
                     }
-                    pos -= 1;
-                }
-                if pos > 0 && bytes[pos - 1] == b'/' && bytes[pos - 2] == b'*' {
-                    // keep scanning from before this comment end
-                    pos -= 2;
-                    continue;
-                }
-                // If we couldn't find a matching start, treat as non-comma.
-                return false;
-            }
-
-            // Skip line comments by rewinding to the start of the line.
-            // When scanning backwards we usually land on the second `/`.
-            if (bytes[pos] == b'/' && pos > 0 && bytes[pos - 1] == b'/')
-                || (bytes[pos] == b'/' && pos + 1 < bytes.len() && bytes[pos + 1] == b'/')
-            {
-                while pos > 0 && bytes[pos - 1] != b'\n' {
-                    pos -= 1;
                 }
                 continue;
+            }
+
+            // Skip line comments: either we land on a `/` that's part of `//`,
+            // or we land on any character that belongs to a line comment.
+            // Check whether the current line starts with `//` (after leading whitespace).
+            {
+                // Find the start of the current line.
+                let line_start = {
+                    let mut ls = pos;
+                    while ls > 0 && bytes[ls - 1] != b'\n' {
+                        ls -= 1;
+                    }
+                    ls
+                };
+                // Skip leading whitespace on this line.
+                let mut tok = line_start;
+                while tok < pos && matches!(bytes[tok], b' ' | b'\t') {
+                    tok += 1;
+                }
+                // If the line starts with `//`, skip the entire line.
+                if tok + 1 < bytes.len() && bytes[tok] == b'/' && bytes[tok + 1] == b'/' {
+                    // Rewind to before this line's newline (the '\n' at line_start - 1).
+                    pos = if line_start > 0 { line_start } else { 0 };
+                    continue;
+                }
             }
 
             return bytes[pos] == b',';

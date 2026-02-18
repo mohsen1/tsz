@@ -1065,7 +1065,25 @@ impl<'a> Printer<'a> {
         };
 
         if array.elements.nodes.is_empty() {
-            self.write("[]");
+            // Emit any comments inside the brackets (e.g., `[ /* comment */]`).
+            let bracket_pos = self.skip_trivia_forward(node.pos, node.end);
+            self.write("[");
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_pos > bracket_pos && c_end < node.end {
+                        self.write_space();
+                        let comment_text =
+                            crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                        self.write_comment(comment_text);
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
+            }
+            self.write("]");
             return;
         }
 
@@ -1073,48 +1091,91 @@ impl<'a> Printer<'a> {
         // Check for newlines BETWEEN consecutive elements, not within the overall expression.
         // This avoids treating `[, [\n...\n]]` as multi-line when only the nested array
         // is multi-line, not the outer array's element separation.
-        let is_multiline = array.elements.nodes.len() > 1
-            && self.source_text.is_some_and(|text| {
-                // Check between consecutive elements for newlines
-                for i in 0..array.elements.nodes.len() - 1 {
-                    let curr = array.elements.nodes[i];
-                    let next = array.elements.nodes[i + 1];
-                    if let (Some(curr_node), Some(next_node)) =
-                        (self.arena.get(curr), self.arena.get(next))
-                    {
-                        let curr_end = std::cmp::min(curr_node.end as usize, text.len());
-                        let next_start = std::cmp::min(next_node.pos as usize, text.len());
-                        if curr_end <= next_start && text[curr_end..next_start].contains('\n') {
-                            return true;
-                        }
-                    }
-                }
-                // Also check between '[' and first element
-                if let Some(first_node) = array
-                    .elements
-                    .nodes
-                    .first()
-                    .and_then(|&n| self.arena.get(n))
+        let is_multiline = self.source_text.is_some_and(|text| {
+            // Check between consecutive elements for newlines
+            for i in 0..array.elements.nodes.len().saturating_sub(1) {
+                let curr = array.elements.nodes[i];
+                let next = array.elements.nodes[i + 1];
+                if let (Some(curr_node), Some(next_node)) =
+                    (self.arena.get(curr), self.arena.get(next))
                 {
-                    let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
-                    let first_pos = std::cmp::min(first_node.pos as usize, text.len());
-                    let start = std::cmp::min(bracket_pos, first_pos);
-                    if start < first_pos && text[start..first_pos].contains('\n') {
+                    let curr_end = std::cmp::min(curr_node.end as usize, text.len());
+                    let next_start = std::cmp::min(next_node.pos as usize, text.len());
+                    if curr_end <= next_start && text[curr_end..next_start].contains('\n') {
                         return true;
                     }
                 }
-                false
-            });
+            }
+            // Also check between '[' and first element
+            let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+            if let Some(first_node) = array
+                .elements
+                .nodes
+                .first()
+                .and_then(|&n| self.arena.get(n))
+            {
+                let first_pos = std::cmp::min(first_node.pos as usize, text.len());
+                let start = std::cmp::min(bracket_pos, first_pos);
+                if start < first_pos && text[start..first_pos].contains('\n') {
+                    return true;
+                }
+            } else if !array.elements.nodes.is_empty() {
+                // All elements are NONE (elisions); check for newlines in the array body.
+                let end = std::cmp::min(node.end as usize, text.len());
+                if bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n') {
+                    return true;
+                }
+            }
+            false
+        });
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &array.elements.nodes);
 
         if !is_multiline {
+            // Emit any inline leading comment before the first element.
+            // e.g., `[/* comment */ 1]` or `[/* c */ a, b]`
+            // Skip for NONE-first (elision) arrays; those comments are trailing, handled below.
+            let bracket_pos = self.skip_trivia_forward(node.pos, node.end);
+            let first_elem_is_none = array
+                .elements
+                .nodes
+                .first()
+                .is_some_and(|&idx| idx.is_none());
+            let first_elem_pos = if first_elem_is_none {
+                bracket_pos + 1 // empty range → emit nothing as leading
+            } else {
+                array
+                    .elements
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map(|n| n.pos)
+                    .unwrap_or(node.end)
+            };
             self.write("[");
             self.increase_indent();
+            self.emit_unemitted_comments_between(bracket_pos + 1, first_elem_pos);
             self.emit_comma_separated(&array.elements.nodes);
             // Preserve trailing comma for elisions: [,,] must keep both commas
             // Elided elements are represented as NodeIndex::NONE, not OMITTED_EXPRESSION nodes
             if has_trailing_comma || array.elements.nodes.last().is_some_and(|idx| idx.is_none()) {
                 self.write(",");
+            }
+            // Emit any trailing inline comments between last element and ']'.
+            // e.g., `[1 /* comment */]` or `[1, /* comment */]`
+            if let Some(text) = self.source_text {
+                while self.comment_emit_idx < self.all_comments.len() {
+                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                    if c_end < node.end {
+                        self.write_space();
+                        let comment_text =
+                            crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                        self.write_comment(comment_text);
+                        self.comment_emit_idx += 1;
+                    } else {
+                        break;
+                    }
+                }
             }
             self.decrease_indent();
             self.write("]");
@@ -1132,7 +1193,10 @@ impl<'a> Printer<'a> {
                         let start = std::cmp::min(bracket_pos, end);
                         text[start..end].contains('\n')
                     } else {
-                        false
+                        // NONE (elision) first element: check for newline in array body after '['
+                        let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
+                        let end = std::cmp::min(node.end as usize, text.len());
+                        bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n')
                     }
                 } else {
                     false
@@ -1141,21 +1205,143 @@ impl<'a> Printer<'a> {
 
             if first_elem_on_new_line {
                 // Format: [\n  elem1,\n  elem2\n]
+                //
+                // Key invariant: the comma separator for element i is written AFTER
+                // element i's content (and any "pre-separator" comments that precede the
+                // comma in the source).  This mirrors TypeScript's emitter which treats
+                // the separator comma as a pseudo-token with its own leading trivia.
                 self.write("[");
                 self.increase_indent();
-                for (i, &elem) in array.elements.nodes.iter().enumerate() {
-                    if i > 0 {
-                        self.write(",");
-                    }
+                let elems: Vec<_> = array.elements.nodes.to_vec();
+                let last_idx = elems.len().saturating_sub(1);
+                for (i, &elem) in elems.iter().enumerate() {
+                    let is_elision = elem.is_none();
                     self.write_line();
+
+                    // --- Step A: emit leading comments before this element ---
+                    // Only real elements have source positions; elisions don't.
+                    if !is_elision {
+                        let actual_start = self
+                            .arena
+                            .get(elem)
+                            .map(|n| self.skip_whitespace_forward(n.pos, n.end))
+                            .unwrap_or(0);
+                        if let Some(text) = self.source_text {
+                            while self.comment_emit_idx < self.all_comments.len() {
+                                let c_end = self.all_comments[self.comment_emit_idx].end;
+                                if c_end <= actual_start {
+                                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                                    let comment_text = crate::printer::safe_slice::slice(
+                                        text,
+                                        c_pos as usize,
+                                        c_end as usize,
+                                    );
+                                    self.write_comment(comment_text);
+                                    // Determine separation from what follows (next comment or element):
+                                    // if there's a newline between this comment's end and
+                                    // actual_start, put on a new line; otherwise add a space.
+                                    let c_end_u = c_end as usize;
+                                    let gap_has_newline = c_end_u < actual_start as usize
+                                        && text[c_end_u..actual_start as usize].contains('\n');
+                                    if gap_has_newline {
+                                        self.write_line();
+                                    } else {
+                                        self.write_space();
+                                    }
+                                    self.comment_emit_idx += 1;
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    // --- Step B: emit the element ---
                     self.emit(elem);
+
+                    // --- Step C: emit pre-separator comments then write comma ---
+                    // Only needed for non-last elements.
+                    if i < last_idx {
+                        if is_elision {
+                            // Elisions have no content; write comma directly.
+                            self.write(",");
+                        } else {
+                            // Find the separator comma in the source that follows this element.
+                            let elem_end = self.arena.get(elem).map(|n| n.end).unwrap_or(0);
+                            let comma_pos = self.find_comma_pos_after(elem_end, node.end);
+                            // Emit any comments between the element's end and the comma.
+                            // A comment on its own line → write_line() before it, then ` ,`.
+                            // A same-line comment (e.g. `1 /* c */,`) → write_space(), then `,`.
+                            let mut wrote_pre_sep = false;
+                            let mut last_was_newline_comment = false;
+                            if let (Some(sep), Some(text)) = (comma_pos, self.source_text) {
+                                while self.comment_emit_idx < self.all_comments.len() {
+                                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                                    let c_end = self.all_comments[self.comment_emit_idx].end;
+                                    if c_pos >= elem_end && c_end <= sep {
+                                        let preceded_by_newline =
+                                            self.comment_preceded_by_newline(c_pos);
+                                        if preceded_by_newline {
+                                            self.write_line();
+                                        } else {
+                                            self.write_space();
+                                        }
+                                        let comment_text = crate::printer::safe_slice::slice(
+                                            text,
+                                            c_pos as usize,
+                                            c_end as usize,
+                                        );
+                                        self.write_comment(comment_text);
+                                        wrote_pre_sep = true;
+                                        last_was_newline_comment = preceded_by_newline;
+                                        self.comment_emit_idx += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            if wrote_pre_sep && last_was_newline_comment {
+                                self.write(" ,");
+                            } else {
+                                self.write(",");
+                            }
+                        }
+                    }
                 }
-                // Trailing comma for elisions
+
+                // Trailing comma for elisions (last element is None) or explicit trailing comma.
                 if has_trailing_comma
                     || array.elements.nodes.last().is_some_and(|idx| idx.is_none())
                 {
                     self.write(",");
                 }
+
+                // Emit any comments that appear between the last element and ']'.
+                // Same-line comments (e.g. `, /* comment */`) are written inline with a space;
+                // comments on their own line are written with write_line().
+                if let Some(text) = self.source_text {
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                        if c_end <= node.end {
+                            if self.comment_preceded_by_newline(c_pos) {
+                                self.write_line();
+                            } else {
+                                self.write_space();
+                            }
+                            let comment_text = crate::printer::safe_slice::slice(
+                                text,
+                                c_pos as usize,
+                                c_end as usize,
+                            );
+                            self.write_comment(comment_text);
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
                 self.write_line();
                 self.decrease_indent();
                 self.write("]");
