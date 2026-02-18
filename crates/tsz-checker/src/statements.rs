@@ -620,6 +620,35 @@ impl StatementChecker {
             }
             syntax_kind_ext::ENUM_DECLARATION => {
                 state.check_enum_duplicate_members(stmt_idx);
+                // Walk enum member initializer expressions for semantic checking
+                // (name resolution, etc.). tsc resolves identifiers in initializers
+                // and emits TS2304 for undefined names (e.g., `[e] = id++` → TS2304 for `id`).
+                let initializers: Vec<NodeIndex> = {
+                    let arena = state.arena();
+                    if let Some(node) = arena.get(stmt_idx)
+                        && let Some(enum_data) = arena.get_enum(node)
+                    {
+                        enum_data
+                            .members
+                            .nodes
+                            .iter()
+                            .filter_map(|&member_idx| {
+                                let member_node = arena.get(member_idx)?;
+                                let member_data = arena.get_enum_member(member_node)?;
+                                if member_data.initializer.is_none() {
+                                    None
+                                } else {
+                                    Some(member_data.initializer)
+                                }
+                            })
+                            .collect()
+                    } else {
+                        Vec::new()
+                    }
+                };
+                for init_idx in initializers {
+                    state.get_type_of_node(init_idx);
+                }
             }
             syntax_kind_ext::EMPTY_STATEMENT | syntax_kind_ext::DEBUGGER_STATEMENT => {
                 // No action needed
