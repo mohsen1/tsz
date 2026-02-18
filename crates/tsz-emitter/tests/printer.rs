@@ -277,3 +277,26 @@ fn test_for_await_of_target_es2016_downlevel_to_yield() {
     assert!(output.contains("yield"));
     assert!(output.contains(".next()"));
 }
+
+#[test]
+fn test_nested_for_await_of_targets_nested_return_temps() {
+    let source = "async function f() {\n    for await (const a of xs) {\n        for await (const b of ys) {\n            console.log(a, b);\n        }\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2016,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("for (var"));
+    assert!(output.contains("__asyncValues"));
+    assert!(output.contains("var e_1"));
+    assert!(output.contains("e_2"));
+    assert!(output.contains("_a ="));
+}
