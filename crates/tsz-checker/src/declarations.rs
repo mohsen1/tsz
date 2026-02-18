@@ -789,7 +789,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // A namespace declaration cannot be in a different file from a class/function
             // with which it is merged (TS2433), or located prior to the class/function (TS2434).
             // Only check for non-ambient, non-string-named, instantiated modules (namespaces)
-            if !has_declare && !is_string_named && !module.body.is_none() {
+            if !has_declare
+                && !is_string_named
+                && !module.body.is_none()
+                && !self.is_in_ambient_context(module_idx)
+            {
                 self.check_namespace_merges_with_class_or_function(module_idx, module);
             }
 
