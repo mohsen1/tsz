@@ -77,6 +77,7 @@ pub mod state_type_analysis;
 mod state_type_analysis_computed;
 pub mod state_type_environment;
 pub mod state_type_resolution;
+mod state_type_resolution_module;
 mod state_variable_checking;
 pub mod statements;
 pub mod super_checker;
