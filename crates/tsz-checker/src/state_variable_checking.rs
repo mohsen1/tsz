@@ -843,6 +843,18 @@ impl<'a> CheckerState<'a> {
                 self.ctx.node_types.insert(var_decl.name.0, final_type);
             }
 
+            // Capture the raw declared type of THIS specific declaration for TS2403.
+            // A bare `var y;` (no annotation, no initializer) always declares `any`,
+            // even if the symbol type was previously cached as a concrete type.
+            // `compute_final_type` may return a cached type for for-in/for-of loops,
+            // so we must override that for bare redeclarations.
+            let raw_declared_type =
+                if var_decl.type_annotation.is_none() && var_decl.initializer.is_none() {
+                    TypeId::ANY
+                } else {
+                    final_type
+                };
+
             // Variables without an initializer/annotation can still get a contextual type in some
             // constructs (notably `for-in` / `for-of` initializers). In those cases, the symbol
             // type may already be cached from the contextual typing logic; prefer that over the
@@ -973,12 +985,18 @@ impl<'a> CheckerState<'a> {
                     false
                 };
 
+                // Use raw_declared_type (before contextual override) for TS2403.
+                // A bare `var y;` has declared type `any`, even if the symbol type
+                // was previously cached as `string` from `var y = ""`.
                 if !is_mergeable_declaration
-                    && !self.are_var_decl_types_compatible(prev_type, final_type)
+                    && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
                 {
                     if let Some(ref name) = var_name {
                         self.error_subsequent_variable_declaration(
-                            name, prev_type, final_type, decl_idx,
+                            name,
+                            prev_type,
+                            raw_declared_type,
+                            decl_idx,
                         );
                     }
                 } else {
