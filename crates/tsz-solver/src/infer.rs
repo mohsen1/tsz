@@ -2114,14 +2114,17 @@ impl<'a> InferenceContext<'a> {
         // For example, [string, "hello"] -> string
         let common_base = self.find_common_base_type(&unique);
         if let Some(base) = common_base {
-            // All types share a common base type
-            // Check if using the base type would be more specific than a union
-            if self.all_types_are_narrower_than_base(&unique, base) {
+            // All types share a common base type (e.g. all are strings or derived from Animal).
+            // Using the common base is more specific than a full union only when there's
+            // more than one unique candidate.
+            if unique.len() > 1 {
                 return base;
             }
         }
 
-        // Step 2: Tournament reduction — O(N) to find candidate, O(N) to validate
+        // Step 2: Tournament reduction — O(N) to find potential supertype candidate.
+        // Instead of O(N²) pairwise comparison, we find the "winner" of a tournament
+        // and then verify if it's truly a supertype of all in a second O(N) pass.
         let mut best = unique[0];
         for &candidate in &unique[1..] {
             if self.is_subtype(best, candidate) {
@@ -2315,11 +2318,6 @@ impl<'a> InferenceContext<'a> {
             // No resolver available - can't determine base class
             None
         }
-    }
-
-    /// Check if all types are narrower than (subtypes of) the given base type.
-    fn all_types_are_narrower_than_base(&self, types: &[TypeId], base: TypeId) -> bool {
-        types.iter().all(|&ty| self.is_subtype(ty, base))
     }
 
     /// Check if a candidate type is a suitable common type for all types.

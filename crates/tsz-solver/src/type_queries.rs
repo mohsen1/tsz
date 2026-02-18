@@ -291,6 +291,31 @@ pub fn needs_evaluation_for_merge(db: &dyn TypeDatabase, type_id: TypeId) -> boo
     )
 }
 
+/// Get the return type of a function type.
+///
+/// Returns `TypeId::ERROR` if the type is not a Function.
+pub fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    match db.lookup(type_id) {
+        Some(TypeData::Function(shape_id)) => db.function_shape(shape_id).return_type,
+        _ => TypeId::ERROR,
+    }
+}
+
+/// Get the parameter types of a function type.
+///
+/// Returns an empty vector if the type is not a Function.
+pub fn get_function_parameter_types(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::Function(shape_id)) => db
+            .function_shape(shape_id)
+            .params
+            .iter()
+            .map(|p| p.type_id)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 /// Check if a type is an intrinsic type (any, unknown, never, void, etc.).
 ///
 /// Returns true for `TypeData::Intrinsic`.

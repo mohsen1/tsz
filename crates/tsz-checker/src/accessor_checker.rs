@@ -169,7 +169,6 @@ impl<'a> CheckerState<'a> {
     /// ## Parameters:
     /// - `members`: Slice of class member node indices to check
     pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
-        use tsz_solver::types::TypeData;
         use tsz_solver::TypeId;
 
         // Collect getters and setters by name
@@ -244,28 +243,19 @@ impl<'a> CheckerState<'a> {
                 let getter_type_id = self.get_type_of_function(getter_idx);
                 let setter_type_id = self.get_type_of_function(setter_idx);
 
-                // Resolve shapes
-                let getter_return_type =
-                    if let Some(TypeData::Function(shape_id)) = self.ctx.types.lookup(getter_type_id)
-                    {
-                        let shape = self.ctx.types.function_shape(shape_id);
-                        shape.return_type
-                    } else {
-                        TypeId::ERROR
-                    };
+                // Resolve shapes via Solver query boundaries (Phase 5 - Anti-Pattern removal)
+                let getter_return_type = tsz_solver::type_queries::get_function_return_type(
+                    self.ctx.types,
+                    getter_type_id,
+                );
 
-                let setter_param_type =
-                    if let Some(TypeData::Function(shape_id)) = self.ctx.types.lookup(setter_type_id)
-                    {
-                        let shape = self.ctx.types.function_shape(shape_id);
-                        if let Some(param) = shape.params.first() {
-                            param.type_id
-                        } else {
-                            TypeId::ERROR
-                        }
-                    } else {
-                        TypeId::ERROR
-                    };
+                let setter_param_type = tsz_solver::type_queries::get_function_parameter_types(
+                    self.ctx.types,
+                    setter_type_id,
+                )
+                .first()
+                .copied()
+                .unwrap_or(TypeId::ERROR);
 
                 if getter_return_type == TypeId::ERROR || setter_param_type == TypeId::ERROR {
                     continue;
