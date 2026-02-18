@@ -200,6 +200,9 @@ mod isomorphism_validation;
 #[path = "../tests/keyof_comprehensive_tests.rs"]
 mod keyof_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/mapped_comprehensive_tests.rs"]
+mod mapped_comprehensive_tests;
+#[cfg(test)]
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
 #[cfg(test)]
