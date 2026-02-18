@@ -436,9 +436,19 @@ impl<'a> Printer<'a> {
         Self::with_options(arena, options)
     }
 
-    /// Set whether to target ES5 (classes→IIFEs, arrows→functions).
+    /// Set whether to target ES5 behavior.
+    ///
+    /// This updates both the legacy `target_es5` bool and all derived
+    /// per-version lowering gates in the shared context.
     pub const fn set_target_es5(&mut self, es5: bool) {
-        self.ctx.target_es5 = es5;
+        self.ctx.set_target_es5(es5);
+    }
+
+    /// Set the full script target.
+    ///
+    /// This keeps all derived feature gates synchronized, including `target_es5`.
+    pub const fn set_target(&mut self, target: ScriptTarget) {
+        self.ctx.set_target(target);
     }
 
     /// Set the module kind (`CommonJS`, ESM, etc.).

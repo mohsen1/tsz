@@ -66,6 +66,12 @@ pub enum ScriptTarget {
 }
 
 impl ScriptTarget {
+    /// Check if this target supports ES2016+ features (exponentiation operator).
+    #[must_use]
+    pub const fn supports_es2016(self) -> bool {
+        (self as u8) >= (Self::ES2016 as u8)
+    }
+
     /// Check if this target supports ES2015+ features (classes, arrows, etc.)
     #[must_use]
     pub const fn supports_es2015(self) -> bool {
@@ -90,10 +96,40 @@ impl ScriptTarget {
         (self as u8) >= (Self::ES2018 as u8)
     }
 
+    /// Check if this target supports ES2019+ features (optional catch binding).
+    #[must_use]
+    pub const fn supports_es2019(self) -> bool {
+        (self as u8) >= (Self::ES2019 as u8)
+    }
+
+    /// Check if this target supports ES2021+ features (logical assignment).
+    #[must_use]
+    pub const fn supports_es2021(self) -> bool {
+        (self as u8) >= (Self::ES2021 as u8)
+    }
+
     /// Check if this target supports ES2022+ features (class fields, regex 'd' flag, etc.)
     #[must_use]
     pub const fn supports_es2022(self) -> bool {
         (self as u8) >= (Self::ES2022 as u8)
+    }
+
+    /// Check if this target supports ES2023+ features.
+    #[must_use]
+    pub const fn supports_es2023(self) -> bool {
+        (self as u8) >= (Self::ES2023 as u8)
+    }
+
+    /// Check if this target supports ES2024+ features.
+    #[must_use]
+    pub const fn supports_es2024(self) -> bool {
+        (self as u8) >= (Self::ES2024 as u8)
+    }
+
+    /// Check if this target supports ES2025+ features.
+    #[must_use]
+    pub const fn supports_es2025(self) -> bool {
+        (self as u8) >= (Self::ES2025 as u8)
     }
 
     /// Check if this is an ES5 or earlier target (requires downleveling)
