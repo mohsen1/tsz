@@ -1283,6 +1283,12 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         | Some(TypeData::Intrinsic(crate::IntrinsicKind::String)) => {
             ElementIndexableKind::StringLike
         }
+        // Enums support reverse mapping: E[value] returns the name, E["name"] returns the value.
+        // Treat them as having both string and number index signatures.
+        Some(TypeData::Enum(_, _)) => ElementIndexableKind::ObjectWithIndex {
+            has_string: true,
+            has_number: true,
+        },
         _ => ElementIndexableKind::Other,
     }
 }
