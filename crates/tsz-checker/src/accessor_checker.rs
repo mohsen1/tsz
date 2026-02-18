@@ -153,4 +153,133 @@ impl<'a> CheckerState<'a> {
             self.maybe_report_implicit_any_parameter(param, has_jsdoc);
         }
     }
+
+    // =========================================================================
+    // Accessor Type Compatibility
+    // =========================================================================
+
+    /// Check compatibility between getter and setter types.
+    ///
+    /// TypeScript 5.1+ allows unrelated types for get/set accessors ONLY if both
+    /// have explicit type annotations.
+    ///
+    /// If either lacks an annotation, the types must be consistent:
+    /// - The return type of the getter must be assignable to the parameter type of the setter.
+    ///
+    /// ## Parameters:
+    /// - `members`: Slice of class member node indices to check
+    pub(crate) fn check_accessor_type_compatibility(&mut self, members: &[NodeIndex]) {
+        use tsz_solver::types::TypeData;
+        use tsz_solver::TypeId;
+
+        // Collect getters and setters by name
+        #[derive(Default)]
+        struct AccessorPair {
+            getter: Option<NodeIndex>,
+            setter: Option<NodeIndex>,
+        }
+
+        let mut accessors: FxHashMap<String, AccessorPair> = FxHashMap::default();
+
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+
+            if (node.kind == syntax_kind_ext::GET_ACCESSOR
+                || node.kind == syntax_kind_ext::SET_ACCESSOR)
+                && let Some(accessor) = self.ctx.arena.get_accessor(node)
+            {
+                // Get accessor name
+                if let Some(name) = self.get_property_name(accessor.name) {
+                    let pair = accessors.entry(name).or_default();
+                    if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        pair.getter = Some(member_idx);
+                    } else {
+                        pair.setter = Some(member_idx);
+                    }
+                }
+            }
+        }
+
+        // Check for type incompatibility
+        for (_, pair) in accessors {
+            if let (Some(getter_idx), Some(setter_idx)) = (pair.getter, pair.setter) {
+                let Some(getter_node) = self.ctx.arena.get(getter_idx) else {
+                    continue;
+                };
+                let Some(setter_node) = self.ctx.arena.get(setter_idx) else {
+                    continue;
+                };
+
+                let Some(getter_accessor) = self.ctx.arena.get_accessor(getter_node) else {
+                    continue;
+                };
+                let Some(setter_accessor) = self.ctx.arena.get_accessor(setter_node) else {
+                    continue;
+                };
+
+                // Check for explicit annotations
+                let getter_has_annotation = !getter_accessor.type_annotation.is_none();
+
+                let setter_param_has_annotation =
+                    if let Some(&p_idx) = setter_accessor.parameters.nodes.first() {
+                        let Some(p_node) = self.ctx.arena.get(p_idx) else {
+                            continue;
+                        };
+                        let Some(p) = self.ctx.arena.get_parameter(p_node) else {
+                            continue;
+                        };
+                        !p.type_annotation.is_none()
+                    } else {
+                        false
+                    };
+
+                // If both have explicit annotations, they are allowed to differ (TS 5.1+)
+                if getter_has_annotation && setter_param_has_annotation {
+                    continue;
+                }
+
+                // Get types
+                let getter_type_id = self.get_type_of_function(getter_idx);
+                let setter_type_id = self.get_type_of_function(setter_idx);
+
+                // Resolve shapes
+                let getter_return_type =
+                    if let Some(TypeData::Function(shape_id)) = self.ctx.types.lookup(getter_type_id)
+                    {
+                        let shape = self.ctx.types.function_shape(shape_id);
+                        shape.return_type
+                    } else {
+                        TypeId::ERROR
+                    };
+
+                let setter_param_type =
+                    if let Some(TypeData::Function(shape_id)) = self.ctx.types.lookup(setter_type_id)
+                    {
+                        let shape = self.ctx.types.function_shape(shape_id);
+                        if let Some(param) = shape.params.first() {
+                            param.type_id
+                        } else {
+                            TypeId::ERROR
+                        }
+                    } else {
+                        TypeId::ERROR
+                    };
+
+                if getter_return_type == TypeId::ERROR || setter_param_type == TypeId::ERROR {
+                    continue;
+                }
+
+                // If not assignable, report error on the getter name
+                let error_node = if !getter_accessor.name.is_none() {
+                    getter_accessor.name
+                } else {
+                    getter_idx
+                };
+
+                self.check_assignable_or_report(getter_return_type, setter_param_type, error_node);
+            }
+        }
+    }
 }
