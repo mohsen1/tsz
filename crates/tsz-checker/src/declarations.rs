@@ -597,6 +597,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // When `module {` is parsed as a module declaration with a missing name,
             // TSC also emits TS2580 because `module` could be a Node.js identifier reference.
             let is_namespace = (node.flags as u32) & node_flags::NAMESPACE != 0;
+
             if !is_namespace
                 && let Some(name_node) = self.ctx.arena.get(module.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
@@ -712,6 +713,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         diagnostic_codes::AUGMENTATIONS_FOR_THE_GLOBAL_SCOPE_SHOULD_HAVE_DECLARE_MODIFIER_UNLESS_THEY_APPE,
                     );
                 }
+            }
+
+            // TS2433/TS2434: Check namespace merging with class/function
+            // A namespace declaration cannot be in a different file from a class/function
+            // with which it is merged (TS2433), or located prior to the class/function (TS2434).
+            // Only check for non-ambient, non-string-named, instantiated modules (namespaces)
+            if !has_declare && !is_string_named && !module.body.is_none() {
+                self.check_namespace_merges_with_class_or_function(module_idx, module);
             }
 
             // TS1035: Only ambient modules can use quoted names.
@@ -1560,12 +1569,154 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     if is_ambient {
                         self.check_statement_in_ambient_context(stmt_idx);
                     }
+                    // Also check for nested module declarations in non-ambient context
+                    if let Some(stmt_node) = self.ctx.arena.get(stmt_idx) {
+                        if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                            self.check_module_declaration(stmt_idx);
+                        }
+                        // Check for export declarations that contain nested modules
+                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) {
+                                if let Some(clause_node) =
+                                    self.ctx.arena.get(export_decl.export_clause)
+                                {
+                                    if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+                                        self.check_module_declaration(export_decl.export_clause);
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         } else if node.kind == syntax_kind_ext::MODULE_DECLARATION {
-            // Nested module
+            // Nested module (for dotted namespace syntax like `namespace A.B { }`)
             self.check_module_declaration(body_idx);
         }
+    }
+
+    /// Check TS2433/TS2434: Namespace merging with class/function across files or out of order.
+    ///
+    /// TS2433: A namespace declaration cannot be in a different file from a class or function
+    ///         with which it is merged.
+    /// TS2434: A namespace declaration cannot be located prior to a class or function with
+    ///         which it is merged.
+    ///
+    /// This check applies to non-ambient instantiated namespace declarations that have
+    /// multiple declarations (merged with a class or function).
+    fn check_namespace_merges_with_class_or_function(
+        &mut self,
+        module_idx: NodeIndex,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::node_flags;
+
+        // Get the symbol for this module declaration
+        let Some(&sym_id) = self.ctx.binder.node_symbols.get(&module_idx.0) else {
+            return;
+        };
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return;
+        };
+
+        // Only check if the symbol has multiple declarations (merged)
+        if symbol.declarations.len() <= 1 {
+            return;
+        }
+
+        // Look for a non-ambient class or function declaration among the merged declarations
+        for &decl_idx in &symbol.declarations {
+            if decl_idx == module_idx {
+                continue; // Skip the current namespace declaration
+            }
+
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                continue;
+            };
+
+            let is_class = decl_node.kind == syntax_kind_ext::CLASS_DECLARATION;
+            let is_function = decl_node.kind == syntax_kind_ext::FUNCTION_DECLARATION;
+
+            if !is_class && !is_function {
+                continue;
+            }
+
+            // Check if the declaration is ambient
+            let is_ambient = (decl_node.flags as u32) & node_flags::AMBIENT != 0;
+            if is_ambient {
+                continue;
+            }
+
+            // For functions, they must have a body to be considered a value declaration
+            if is_function {
+                if let Some(func) = self.ctx.arena.get_function(decl_node) {
+                    if func.body.is_none() {
+                        continue; // Function overload signature, not an implementation
+                    }
+                }
+            }
+
+            // Found a non-ambient class or function declaration
+            // Now check if they're in different files (TS2433) or namespace is prior (TS2434)
+
+            // Get the source file of the current namespace declaration
+            let current_file = self.get_source_file_of_node(module_idx);
+            let other_file = self.get_source_file_of_node(decl_idx);
+
+            if current_file != other_file {
+                // TS2433: Different files
+                if let Some(name_node) = self.ctx.arena.get(module.name) {
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W.to_string(),
+                        diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_IN_A_DIFFERENT_FILE_FROM_A_CLASS_OR_FUNCTION_W,
+                    );
+                }
+            } else {
+                // TS2434: Namespace comes before class/function in the same file
+                // Compare positions - only emit error if namespace is before class/function
+                let namespace_pos = self.ctx.arena.get(module_idx).map_or(0, |n| n.pos);
+                let class_or_func_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);
+
+                if namespace_pos < class_or_func_pos {
+                    if let Some(name_node) = self.ctx.arena.get(module.name) {
+                        self.ctx.error(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC.to_string(),
+                            diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
+                        );
+                    }
+                }
+            }
+
+            // Only report error once (for the first matching class/function)
+            break;
+        }
+    }
+
+    /// Get the source file path of a node's declaration.
+    /// Returns the file name if we can determine it, or empty string if unknown.
+    fn get_source_file_of_node(&self, node_idx: NodeIndex) -> String {
+        // Walk up to find the source file
+        let mut current = node_idx;
+        while let Some(ext) = self.ctx.arena.get_extended(current) {
+            let parent = ext.parent;
+            if parent.is_none() {
+                break;
+            }
+            if let Some(parent_node) = self.ctx.arena.get(parent) {
+                if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                    // Found the source file - return the file name from context
+                    return self.ctx.file_name.clone();
+                }
+            }
+            current = parent;
+        }
+        // Fallback to current file name
+        self.ctx.file_name.clone()
     }
 
     /// Check a statement inside an ambient context (declare namespace/module).
