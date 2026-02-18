@@ -768,9 +768,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     if parent.is_none() {
                         true // Top level is valid
                     } else if let Some(parent_node) = self.ctx.arena.get(parent) {
-                        // Valid parents: SourceFile, ModuleBlock, ExportDeclaration
+                        // Valid parents: SourceFile, ModuleBlock, ModuleDeclaration (dotted names),
+                        // ExportDeclaration (export namespace N {})
                         parent_node.kind == syntax_kind_ext::SOURCE_FILE
                             || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                            || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
                             || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     } else {
                         true
@@ -1575,16 +1577,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             self.check_module_declaration(stmt_idx);
                         }
                         // Check for export declarations that contain nested modules
-                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                            if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) {
-                                if let Some(clause_node) =
-                                    self.ctx.arena.get(export_decl.export_clause)
-                                {
-                                    if clause_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                                        self.check_module_declaration(export_decl.export_clause);
-                                    }
-                                }
-                            }
+                        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                            && let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node)
+                            && let Some(clause_node) = self.ctx.arena.get(export_decl.export_clause)
+                            && clause_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                        {
+                            self.check_module_declaration(export_decl.export_clause);
                         }
                     }
                 }
@@ -1649,12 +1647,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             }
 
             // For functions, they must have a body to be considered a value declaration
-            if is_function {
-                if let Some(func) = self.ctx.arena.get_function(decl_node) {
-                    if func.body.is_none() {
-                        continue; // Function overload signature, not an implementation
-                    }
-                }
+            if is_function
+                && let Some(func) = self.ctx.arena.get_function(decl_node)
+                && func.body.is_none()
+            {
+                continue; // Function overload signature, not an implementation
             }
 
             // Found a non-ambient class or function declaration
@@ -1680,15 +1677,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 let namespace_pos = self.ctx.arena.get(module_idx).map_or(0, |n| n.pos);
                 let class_or_func_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);
 
-                if namespace_pos < class_or_func_pos {
-                    if let Some(name_node) = self.ctx.arena.get(module.name) {
-                        self.ctx.error(
+                if namespace_pos < class_or_func_pos
+                    && let Some(name_node) = self.ctx.arena.get(module.name)
+                {
+                    self.ctx.error(
                             name_node.pos,
                             name_node.end - name_node.pos,
                             diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC.to_string(),
                             diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
                         );
-                    }
                 }
             }
 
@@ -1707,11 +1704,11 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             if parent.is_none() {
                 break;
             }
-            if let Some(parent_node) = self.ctx.arena.get(parent) {
-                if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                    // Found the source file - return the file name from context
-                    return self.ctx.file_name.clone();
-                }
+            if let Some(parent_node) = self.ctx.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::SOURCE_FILE
+            {
+                // Found the source file - return the file name from context
+                return self.ctx.file_name.clone();
             }
             current = parent;
         }
