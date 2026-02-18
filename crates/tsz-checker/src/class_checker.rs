@@ -590,17 +590,18 @@ impl<'a> CheckerState<'a> {
                     && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
                 {
                     base_class_name = ident.escaped_text.clone();
+                }
 
-                    // Find the base class declaration via symbol lookup
-                    if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
-                        && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-                    {
-                        // Try value_declaration first, then declarations
-                        if !symbol.value_declaration.is_none() {
-                            base_class_idx = Some(symbol.value_declaration);
-                        } else if let Some(&decl_idx) = symbol.declarations.first() {
-                            base_class_idx = Some(decl_idx);
-                        }
+                // Find the base class declaration via heritage symbol resolution
+                // This handles namespace scoping correctly
+                if let Some(sym_id) = self.resolve_heritage_symbol(expr_idx)
+                    && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                {
+                    // Try value_declaration first, then declarations
+                    if !symbol.value_declaration.is_none() {
+                        base_class_idx = Some(symbol.value_declaration);
+                    } else if let Some(&decl_idx) = symbol.declarations.first() {
+                        base_class_idx = Some(decl_idx);
                     }
                 }
             }
@@ -676,9 +677,9 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut type_args = Vec::new();
-        if let Some(nodes) = base_type_argument_nodes {
+        if let Some(nodes) = base_type_argument_nodes.as_ref() {
             for arg_idx in nodes {
-                type_args.push(self.get_type_from_type_node(arg_idx));
+                type_args.push(self.get_type_from_type_node(*arg_idx));
             }
         }
 
@@ -1043,7 +1044,178 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Check index signature compatibility between derived and base classes (TS2415)
+        self.check_class_index_signature_compatibility(
+            class_data,
+            base_class,
+            &derived_class_name,
+            &base_class_name,
+            &substitution,
+            class_extends_error_reported,
+        );
+
         self.pop_type_parameters(base_type_param_updates);
+    }
+
+    /// Check that index signatures in derived class are compatible with base class (TS2415).
+    /// When a derived class has an index signature, its value type must be assignable
+    /// to the base class's index signature value type (for the same key type).
+    fn check_class_index_signature_compatibility(
+        &mut self,
+        derived_class: &tsz_parser::parser::node::ClassData,
+        base_class: &tsz_parser::parser::node::ClassData,
+        derived_class_name: &str,
+        base_class_name: &str,
+        substitution: &tsz_solver::TypeSubstitution,
+        mut class_extends_error_reported: bool,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE;
+        use tsz_solver::instantiate_type;
+
+        // Collect derived class index signatures
+        let mut derived_string_index: Option<(TypeId, NodeIndex)> = None;
+        let mut derived_number_index: Option<(TypeId, NodeIndex)> = None;
+
+        for &member_idx in &derived_class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != INDEX_SIGNATURE {
+                continue;
+            }
+            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                continue;
+            };
+            if self.has_static_modifier(&index_sig.modifiers) {
+                continue;
+            }
+
+            let param_idx = index_sig
+                .parameters
+                .nodes
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE);
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            let key_type = if param.type_annotation.is_none() {
+                TypeId::ANY
+            } else {
+                self.get_type_from_type_node(param.type_annotation)
+            };
+
+            let value_type = if index_sig.type_annotation.is_none() {
+                TypeId::ANY
+            } else {
+                self.get_type_from_type_node(index_sig.type_annotation)
+            };
+
+            if key_type == TypeId::NUMBER {
+                derived_number_index = Some((value_type, member_idx));
+            } else {
+                derived_string_index = Some((value_type, member_idx));
+            }
+        }
+
+        // Collect base class index signatures
+        let mut base_string_index: Option<TypeId> = None;
+        let mut base_number_index: Option<TypeId> = None;
+
+        for &member_idx in &base_class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != INDEX_SIGNATURE {
+                continue;
+            }
+            let Some(index_sig) = self.ctx.arena.get_index_signature(member_node) else {
+                continue;
+            };
+            if self.has_static_modifier(&index_sig.modifiers) {
+                continue;
+            }
+
+            let param_idx = index_sig
+                .parameters
+                .nodes
+                .first()
+                .copied()
+                .unwrap_or(NodeIndex::NONE);
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            let key_type = if param.type_annotation.is_none() {
+                TypeId::ANY
+            } else {
+                self.get_type_from_type_node(param.type_annotation)
+            };
+
+            let value_type = if index_sig.type_annotation.is_none() {
+                TypeId::ANY
+            } else {
+                self.get_type_from_type_node(index_sig.type_annotation)
+            };
+
+            if key_type == TypeId::NUMBER {
+                base_number_index = Some(value_type);
+            } else {
+                base_string_index = Some(value_type);
+            }
+        }
+
+        // Check string index signature compatibility
+        if let (Some((derived_type, _derived_idx)), Some(base_type)) =
+            (derived_string_index, base_string_index)
+        {
+            let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
+            if !self
+                .ctx
+                .types
+                .is_assignable_to(derived_type, base_type_instantiated)
+                && !class_extends_error_reported {
+                    let derived_type_str = self.format_type(derived_type);
+                    let base_type_str = self.format_type(base_type_instantiated);
+                    self.error_at_node(
+                        derived_class.name,
+                        &format!(
+                            "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  'string' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
+                        ),
+                        crate::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
+                    );
+                    class_extends_error_reported = true;
+                }
+        }
+
+        // Check number index signature compatibility
+        if let (Some((derived_type, _derived_idx)), Some(base_type)) =
+            (derived_number_index, base_number_index)
+        {
+            let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
+            if !self
+                .ctx
+                .types
+                .is_assignable_to(derived_type, base_type_instantiated)
+                && !class_extends_error_reported {
+                    let derived_type_str = self.format_type(derived_type);
+                    let base_type_str = self.format_type(base_type_instantiated);
+                    self.error_at_node(
+                        derived_class.name,
+                        &format!(
+                            "Class '{derived_class_name}' incorrectly extends base class '{base_class_name}'.\n  'number' index signatures are incompatible.\n    Type '{derived_type_str}' is not assignable to type '{base_type_str}'."
+                        ),
+                        crate::diagnostics::diagnostic_codes::CLASS_INCORRECTLY_EXTENDS_BASE_CLASS,
+                    );
+                }
+        }
     }
 
     /// Check that interface correctly extends its base interfaces (error 2430).
