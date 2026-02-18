@@ -381,6 +381,8 @@ fn test_parser_static_block_with_modifiers() {
 
 #[test]
 fn test_parser_enum_computed_property_reports_ts1164() {
+    // TS1164 is now emitted by the checker (grammar check), not the parser,
+    // matching tsc where it's a grammar error. Parser just recovers gracefully.
     let source = "enum E { [e] = 1 }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
@@ -391,14 +393,14 @@ fn test_parser_enum_computed_property_reports_ts1164() {
         .map(|diag| diag.code)
         .collect();
     assert!(
-        codes.contains(&diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS),
-        "Expected TS1164 diagnostics: {:?}",
-        parser.get_diagnostics()
-    );
-    assert!(
         !codes.contains(&diagnostic_codes::EXPECTED),
         "Unexpected TS1005 diagnostics: {:?}",
         parser.get_diagnostics()
+    );
+    // Parser should still produce valid AST
+    assert!(
+        !parser.arena.nodes.is_empty(),
+        "Parser should recover and build AST"
     );
 }
 
@@ -3673,7 +3675,8 @@ fn test_parser_arrow_function_missing_param_type_paren() {
 #[test]
 fn test_parser_enum_computed_property_name() {
     // Test: enum E { [x] = 1 }
-    // Should emit TS1164 (Computed property names are not allowed in enums), not TS1005
+    // TS1164 is now emitted by the checker (grammar check), not the parser.
+    // Parser should recover gracefully and not emit TS1005.
     let source = "enum E { [x] = 1 }";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     parser.parse_source_file();
@@ -3683,11 +3686,6 @@ fn test_parser_enum_computed_property_name() {
         .iter()
         .map(|diag| diag.code)
         .collect();
-    assert!(
-        codes.contains(&diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS),
-        "Expected TS1164 for computed property name in enum: {:?}",
-        parser.get_diagnostics()
-    );
     // Should not emit generic "identifier expected" TS1005
     assert!(
         !codes.contains(&diagnostic_codes::EXPECTED),

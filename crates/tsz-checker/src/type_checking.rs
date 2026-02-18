@@ -237,6 +237,18 @@ impl<'a> CheckerState<'a> {
             let Some(name_node) = self.ctx.arena.get(member.name) else {
                 continue;
             };
+
+            // TS1164: Computed property names are not allowed in enums.
+            // Emitted here (checker grammar check) rather than in the parser to avoid
+            // position-based dedup conflicts with TS1357 (missing comma between members).
+            if name_node.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                self.error_at_node(
+                    member.name,
+                    "Computed property names are not allowed in enums.",
+                    diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS,
+                );
+            }
+
             let name_text = if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 ident.escaped_text.clone()
             } else {
