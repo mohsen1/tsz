@@ -2589,30 +2589,6 @@ impl<'a> FlowAnalyzer<'a> {
                     {
                         // Check if the guard applies to our target reference
                         if self.is_matching_reference(guard_target, target) {
-                            // CRITICAL FIX: Don't apply discriminant guards to property/element access results
-                            // Discriminant guards (like `obj.kind === "a"`) should only narrow the base object (`obj`),
-                            // not property access results (like `obj.value`).
-                            //
-                            // Example:
-                            //   type U = { kind: "a"; value: string } | { kind: "b"; value: number };
-                            //   let obj: U = { kind: "a", value: "ok" };
-                            //   if (obj.kind === "a") {
-                            //     obj.value.toUpperCase(); // obj.value should be narrowed to string via obj
-                            //   }
-                            //
-                            // The discriminant guard narrows `obj` to { kind: "a"; value: string }, and then
-                            // accessing `obj.value` gives us `string`. We should NOT try to narrow `obj.value`
-                            // directly by the discriminant (which would fail since `string | number` has no `kind` property).
-                            let is_discriminant_guard =
-                                matches!(guard, TypeGuard::Discriminant { .. });
-                            let is_property_access = self.is_property_or_element_access(target);
-
-                            if is_discriminant_guard && is_property_access {
-                                // Skip narrowing - the discriminant guard applies to the base, not the property
-                                // The property type will be computed from the already-narrowed base object
-                                return type_id;
-                            }
-
                             // CRITICAL: Invert sense for inequality operators (!== and !=)
                             // This applies to ALL guards, not just typeof
                             // For `x !== "string"` or `x.kind !== "circle"`, the true branch should EXCLUDE
@@ -2992,29 +2968,26 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some((property_path, literal_type, is_optional, base)) =
                 self.discriminant_comparison(bin.left, bin.right, target)
             {
-                // CRITICAL FIX: Don't apply discriminant guards to property/element access results
-                // Discriminant guards (like `obj.kind === "a"`) should only narrow the base object (`obj`),
-                // not property access results (like `obj.value`).
-                let is_property_access = self.is_property_or_element_access(target);
-
-                // CRITICAL FIX: Don't apply discriminant narrowing to let-bound variables
-                // in ALIASED discriminant scenarios.
-                // For aliased discriminants (narrowing `data` based on `success.flag`),
-                // only const-bound variables can be safely narrowed.
-                // But for DIRECT discriminants (narrowing `x` based on `x.kind`),
-                // we should narrow even let-bound variables because the check is on the same object.
+                // Determine whether we should apply discriminant narrowing.
                 //
-                // Example of unsafe aliased discriminant:
-                //   let { data, success } = getResult();
-                //   if (success) { data.method(); }  // ERROR - data is let-bound, success could change
+                // Two scenarios for skipping:
+                // 1. INDIRECT property access: target is a sub-property of base
+                //    (e.g., `if (obj.kind === "a") { obj.kind; }` — target=`obj.kind`, base=`obj`)
+                //    Literal comparison handles this; discriminant narrowing would yield NEVER.
+                // 2. ALIASED + MUTABLE: target is a let-bound variable with an aliased discriminant
+                //    (e.g., aliased condition on a reassignable variable)
                 //
-                // Example of safe direct discriminant:
-                //   let x: { kind: "a" } | { kind: "b" };
-                //   if (x.kind === "a") { x; }  // OK - checking x's own property
+                // IMPORTANT: for DIRECT discriminant narrowing where base == target,
+                // we MUST allow it even when target is a property access.
+                // e.g., `if (this.test.type === "a") { this.test.name; }` — target=`this.test`
+                // must be narrowable since base == target == `this.test`.
                 let is_aliased_discriminant = !self.is_matching_reference(base, target);
+                let is_property_access = self.is_property_or_element_access(target);
                 let is_mutable = self.is_mutable_variable(target);
 
-                if !(is_property_access || is_aliased_discriminant && is_mutable) {
+                // Skip only when: (aliased AND (indirect property access OR mutable target))
+                // Direct discriminant (is_aliased_discriminant = false) always applies.
+                if !(is_aliased_discriminant && (is_property_access || is_mutable)) {
                     let mut base_type = type_id;
                     if is_optional && effective_truth {
                         let narrowed = narrowing.narrow_excluding_type(base_type, TypeId::NULL);
@@ -3027,8 +3000,8 @@ impl<'a> FlowAnalyzer<'a> {
                         effective_truth,
                     );
                 }
-                // For property access targets or aliased let-bound variables, skip discriminant narrowing
-                // The property type will be computed from the already-narrowed base object
+                // Skipped: indirect property access or aliased let-bound variable.
+                // The type will be computed from the already-narrowed base or via literal comparison.
             }
 
             if let Some(literal_type) = self.literal_comparison(bin.left, bin.right, target) {

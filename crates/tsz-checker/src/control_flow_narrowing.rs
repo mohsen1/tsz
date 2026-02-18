@@ -852,6 +852,87 @@ impl<'a> FlowAnalyzer<'a> {
             })
     }
 
+    /// For a const-declared identifier that is a destructuring alias,
+    /// return the (base_initializer, property_name).
+    ///
+    /// Example: `const { type: alias } = obj` → `(obj, "type")`
+    ///
+    /// Returns `None` for non-identifiers, non-const bindings, or nested patterns.
+    fn binding_element_property_alias(&self, node: NodeIndex) -> Option<(NodeIndex, Atom)> {
+        let node_data = self.arena.get(node)?;
+        if node_data.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.binder.resolve_identifier(self.arena, node)?;
+        let symbol = self.binder.get_symbol(sym_id)?;
+        // Must be a block-scoped (const/let) variable
+        if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
+            return None;
+        }
+        let decl_idx = if !symbol.value_declaration.is_none() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let decl_node = self.arena.get(decl_idx)?;
+        // `value_declaration` for destructuring bindings may point to the identifier node
+        // (the name/alias) rather than the BINDING_ELEMENT itself, because the binder calls
+        // `declare_symbol(name_ident, ...)`. In that case, walk up to the parent to find
+        // the actual BINDING_ELEMENT.
+        let decl_idx = if decl_node.kind == SyntaxKind::Identifier as u16 {
+            let ext = self.arena.get_extended(decl_idx)?;
+            ext.parent
+        } else {
+            decl_idx
+        };
+        let decl_node = self.arena.get(decl_idx)?;
+        // Must be a binding element (from object destructuring)
+        if decl_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+            return None;
+        }
+        let be = self.arena.get_binding_element(decl_node)?;
+        // Must not have a default initializer (const { type: alias = "default" } = ...)
+        if !be.initializer.is_none() {
+            return None;
+        }
+        // Get the property name being destructured
+        // `{ type: alias }` → property_name node is "type"
+        // `{ type }` shorthand → name node IS the property name
+        let prop_name_idx = if !be.property_name.is_none() {
+            be.property_name
+        } else {
+            be.name
+        };
+        let prop_name_node = self.arena.get(prop_name_idx)?;
+        let prop_ident = self.arena.get_identifier(prop_name_node)?;
+        let prop_name = self.interner.intern_string(&prop_ident.escaped_text);
+
+        // Walk up: BindingElement → ObjectBindingPattern → VariableDeclaration
+        let be_ext = self.arena.get_extended(decl_idx)?;
+        let binding_pattern_idx = be_ext.parent;
+        if binding_pattern_idx.is_none() {
+            return None;
+        }
+        let bp_ext = self.arena.get_extended(binding_pattern_idx)?;
+        let var_decl_idx = bp_ext.parent;
+        if var_decl_idx.is_none() {
+            return None;
+        }
+        let var_decl_node = self.arena.get(var_decl_idx)?;
+        if var_decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        if !self.is_const_variable_declaration(var_decl_idx) {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(var_decl_node)?;
+        if var_decl.initializer.is_none() {
+            return None;
+        }
+        let base = self.skip_parenthesized(var_decl.initializer);
+        Some((base, prop_name))
+    }
+
     pub(crate) fn discriminant_property_info(
         &self,
         expr: NodeIndex,
@@ -936,52 +1017,142 @@ impl<'a> FlowAnalyzer<'a> {
         right: NodeIndex,
         target: NodeIndex,
     ) -> Option<(Vec<Atom>, TypeId, bool, NodeIndex)> {
-        if let Some((path, is_optional, base)) = self.discriminant_property_info(left, target)
-            && let Some(literal) = self.literal_type_from_node(right)
+        // Use relative_discriminant_path to find the property path from target to left.
+        // This correctly handles both:
+        //   - Direct: `t.kind === "a"` narrowing `t` → path=["kind"], base=t
+        //   - Nested: `this.test.type === "a"` narrowing `this.test` → path=["type"], base=this.test
+        // (discriminant_property_info returns the full path from the root, which is wrong when
+        //  target is not the root — e.g., returns path=["test","type"] base=this for `this.test.type`
+        //  when we need path=["type"] base=this.test relative to target=this.test)
+        if let Some(literal) = self.literal_type_from_node(right)
+            && let Some((rel_path, is_optional)) = self.relative_discriminant_path(left, target)
+            && !rel_path.is_empty()
         {
-            // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
-            // If target is the property access itself (e.g. switch(obj.kind)),
-            // we should use literal comparison, not discriminant narrowing.
-            if self.is_matching_reference(base, target)
-                || self.is_target_access_of_base(base, target)
+            return Some((rel_path, literal, is_optional, target));
+        }
+
+        if let Some(literal) = self.literal_type_from_node(left)
+            && let Some((rel_path, is_optional)) = self.relative_discriminant_path(right, target)
+            && !rel_path.is_empty()
+        {
+            return Some((rel_path, literal, is_optional, target));
+        }
+
+        // Try aliased discriminant: const alias = target.prop (or target.a.b)
+        // where alias is a const identifier initialized from a property access of target.
+        // e.g., `const testType = this.test.type` and target = `this.test`
+        //   → path = ["type"], base = this.test
+        // Also handles destructuring: `const { type: alias } = target`
+        //   → path = ["type"], base = target
+        if let Some(result) = self.aliased_discriminant(left, right, target) {
+            return Some(result);
+        }
+        if let Some(result) = self.aliased_discriminant(right, left, target) {
+            return Some(result);
+        }
+
+        None
+    }
+
+    /// Try to extract a discriminant guard for an aliased condition.
+    ///
+    /// Handles:
+    /// - `const alias = target.prop` → `alias === literal` narrows `target` by `prop`
+    /// - `const { prop: alias } = target` → `alias === literal` narrows `target` by `prop`
+    ///
+    /// Returns `(path, literal_type, is_optional, base)` where `base = target`.
+    fn aliased_discriminant(
+        &self,
+        alias_node: NodeIndex,
+        literal_node: NodeIndex,
+        target: NodeIndex,
+    ) -> Option<(Vec<Atom>, TypeId, bool, NodeIndex)> {
+        let node_data = self.arena.get(self.skip_parenthesized(alias_node))?;
+        if node_data.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let literal = self.literal_type_from_node(literal_node)?;
+
+        // Case 1: Simple const alias `const alias = target.prop` (or deeper: target.a.b)
+        // Resolve alias to its property access initializer, then compute relative path.
+        if let Some((_, initializer)) = self.const_condition_initializer(alias_node) {
+            let init_expr = self.skip_parenthesized(initializer);
+            let init_node = self.arena.get(init_expr)?;
+            if init_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || init_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             {
-                return Some((path, literal, is_optional, base));
+                // Walk from `init_expr` towards the root, collecting segments until we hit `target`.
+                if let Some((rel_path, is_optional)) =
+                    self.relative_discriminant_path(init_expr, target)
+                {
+                    return Some((rel_path, literal, is_optional, target));
+                }
             }
         }
 
-        if let Some((path, is_optional, base)) = self.discriminant_property_info(right, target)
-            && let Some(literal) = self.literal_type_from_node(left)
-        {
-            // CRITICAL FIX: Only apply discriminant narrowing if we are narrowing the BASE object.
-            if self.is_matching_reference(base, target)
-                || self.is_target_access_of_base(base, target)
-            {
-                return Some((path, literal, is_optional, base));
+        // Case 2: Destructuring alias `const { prop: alias } = target`
+        if let Some((base, prop_name)) = self.binding_element_property_alias(alias_node) {
+            if self.is_matching_reference(base, target) {
+                return Some((vec![prop_name], literal, false, target));
             }
         }
 
         None
     }
 
-    /// Check if `target` is a property/element access of `base`.
+    /// Given a property access `prop_access` (e.g. `this.test.type`) and a target node
+    /// (e.g. `this.test`), walk backwards collecting property names until we reach `target`.
     ///
-    /// For example, if `base` is `obj` and `target` is `obj[key]`, this returns true.
-    /// This is used for discriminant narrowing where we have `obj[key] === literal`.
-    fn is_target_access_of_base(&self, base: NodeIndex, target: NodeIndex) -> bool {
-        let target = self.skip_parenthesized(target);
-        let Some(target_node) = self.arena.get(target) else {
-            return false;
-        };
+    /// Returns `(relative_path, is_optional)` where `relative_path` is the list of property
+    /// names from `target` to `prop_access` (e.g. `["type"]`).
+    ///
+    /// Returns `None` if `target` is not found in the access chain.
+    fn relative_discriminant_path(
+        &self,
+        prop_access: NodeIndex,
+        target: NodeIndex,
+    ) -> Option<(Vec<Atom>, bool)> {
+        let mut path: Vec<Atom> = Vec::new();
+        let mut is_optional = false;
+        let mut current = prop_access;
 
-        if target_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || target_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            let Some(access) = self.arena.get_access_expr(target_node) else {
-                return false;
+        loop {
+            let current_node = self.arena.get(current)?;
+            let access = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || current_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                self.arena.get_access_expr(current_node)?
+            } else {
+                // Reached a non-access node without finding target
+                return None;
             };
-            self.is_matching_reference(base, access.expression)
-        } else {
-            false
+
+            if access.question_dot_token {
+                is_optional = true;
+            }
+
+            let prop_name = if current_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let ident = self.arena.get_identifier_at(access.name_or_argument)?;
+                self.interner.intern_string(&ident.escaped_text)
+            } else {
+                self.literal_atom_from_node_or_type(access.name_or_argument)?
+            };
+
+            // This is the prop name at the current level; push it (path is built backwards)
+            path.push(prop_name);
+
+            // Move to the base of this access
+            let base_expr = self.skip_parenthesized(access.expression);
+
+            // Check if the base matches the target
+            if self.is_matching_reference(base_expr, target) {
+                // Found! Reverse path to get correct order.
+                path.reverse();
+                return Some((path, is_optional));
+            }
+
+            current = base_expr;
         }
     }
 
