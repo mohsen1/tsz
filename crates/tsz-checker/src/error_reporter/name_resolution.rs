@@ -564,22 +564,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Also suppress TS2304 for identifiers that appear shortly after a parse error.
-        // These identifiers are likely artifacts of error recovery.
-        // Exception: computed property name expressions — tsc always emits TS2304 for these.
-        if !force_emit_for_ambiguous_generic
-            && !is_in_computed_property
-            && !self.ctx.syntax_parse_error_positions.is_empty()
-            && let Some(node) = self.ctx.arena.get(idx)
-        {
-            let ident_pos = node.pos;
-            for &err_pos in &self.ctx.syntax_parse_error_positions {
-                if err_pos < ident_pos && (ident_pos - err_pos) <= 4 {
-                    return;
-                }
-            }
-        }
-
         // In files with real syntax errors, unresolved names inside `typeof` type queries
         // are often cascades from malformed declaration syntax; TypeScript commonly keeps
         // the primary parse diagnostic only for these.
