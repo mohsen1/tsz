@@ -957,11 +957,9 @@ impl ParserState {
             // Numeric literals are parsed as names for error recovery (TS2452 reported by checker).
             // Computed property names ([x]) are not valid in enums but we recover gracefully.
             let name = if self.is_token(SyntaxKind::OpenBracketToken) {
-                // Handle computed property name - emit TS1164 and recover
-                self.parse_error_at_current_token(
-                    "Computed property names are not allowed in enums.",
-                    diagnostic_codes::COMPUTED_PROPERTY_NAMES_ARE_NOT_ALLOWED_IN_ENUMS,
-                );
+                // Parse computed property name for recovery. TS1164 is emitted by the
+                // checker (grammar check), not the parser, matching tsc's behavior.
+                // This avoids position-based dedup conflicts with TS1357.
                 self.parse_property_name()
             } else if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
@@ -1053,13 +1051,17 @@ impl ParserState {
             // Parse comma or recover with missing comma
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 // Recovery: If the next token looks like the start of a valid enum member,
-                // emit TS1005 and continue parsing instead of breaking
+                // emit TS1357 and continue parsing instead of breaking.
+                // tsc uses TS1357 (enum-specific) rather than generic TS1005 here.
                 if self.is_token(SyntaxKind::Identifier)
                     || self.is_token(SyntaxKind::StringLiteral)
                     || self.is_token(SyntaxKind::PrivateIdentifier)
                     || self.is_token(SyntaxKind::OpenBracketToken)
                 {
-                    self.parse_error_at_current_token("',' expected", diagnostic_codes::EXPECTED);
+                    self.parse_error_at_current_token(
+                        "An enum member name must be followed by a ',', '=', or '}'.",
+                        diagnostic_codes::AN_ENUM_MEMBER_NAME_MUST_BE_FOLLOWED_BY_A_OR,
+                    );
                     // Continue to next iteration to parse the next member
                     continue;
                 }
