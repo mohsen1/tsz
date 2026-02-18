@@ -1093,9 +1093,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Case 2: Destructuring alias `const { prop: alias } = target`
         if let Some((base, prop_name)) = self.binding_element_property_alias(alias_node)
-            && self.is_matching_reference(base, target) {
-                return Some((vec![prop_name], literal, false, target));
-            }
+            && self.is_matching_reference(base, target)
+        {
+            return Some((vec![prop_name], literal, false, target));
+        }
 
         None
     }
