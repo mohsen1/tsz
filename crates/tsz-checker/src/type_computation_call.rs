@@ -1362,8 +1362,18 @@ impl<'a> CheckerState<'a> {
                         // Flow type is just the initializer literal - use widened declared type
                         declared_type
                     } else {
-                        // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
-                        flow_type
+                        // Also check the reverse: if declared_type is a non-widened literal
+                        // (e.g., "foo" from `declare var a: "foo"; let b = a`) and flow_type
+                        // is its widened form (string), flow is just returning the widened
+                        // version of our literal declared type - use declared_type.
+                        let widened_declared =
+                            tsz_solver::widening::widen_type(self.ctx.types, declared_type);
+                        if widened_declared == flow_type {
+                            declared_type
+                        } else {
+                            // Genuine narrowing (e.g., discriminant narrowing) - use narrowed type
+                            flow_type
+                        }
                     }
                 } else {
                     // No narrowing or error - use declared type to preserve widening

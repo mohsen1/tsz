@@ -838,16 +838,22 @@ impl<'a> CheckerState<'a> {
                     // Fall back to inferring from initializer
                     if !var_decl.initializer.is_none() {
                         let inferred_type = self.get_type_of_node(var_decl.initializer);
-                        // FIX: Widen literal types for non-const variables (let/var)
-                        // TypeScript widens "hello" -> string, 42 -> number for mutable variables
-                        // but preserves literal types for const variables and `as const` assertions.
+                        // Literal Widening for mutable bindings (let/var):
+                        // Only widen when the initializer is a "fresh" literal expression
+                        // (direct literal in source code). Types from variable references,
+                        // narrowing, or computed expressions are "non-fresh" and NOT widened.
                         // `let x = "div" as const` should have type "div", not string.
                         if !self.is_const_variable_declaration(resolved_value_decl)
                             && !self.is_const_assertion_initializer(var_decl.initializer)
                         {
                             let widened_type =
-                                self.widen_initializer_type_for_mutable_binding(inferred_type);
+                                if self.is_fresh_literal_expression(var_decl.initializer) {
+                                    self.widen_initializer_type_for_mutable_binding(inferred_type)
+                                } else {
+                                    inferred_type
+                                };
                             // When strictNullChecks is off, undefined and null widen to any
+                            // (always, regardless of freshness)
                             if !self.ctx.strict_null_checks()
                                 && (widened_type == TypeId::UNDEFINED
                                     || widened_type == TypeId::NULL)

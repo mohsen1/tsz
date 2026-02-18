@@ -869,7 +869,17 @@ impl<'a> CheckerState<'a> {
 
             if should_narrow {
                 // Apply flow narrowing to get the context-specific type
-                return self.apply_flow_narrowing(idx, cached);
+                let narrowed = self.apply_flow_narrowing(idx, cached);
+                // FIX: If flow analysis returns a widened version of a literal cached type
+                // (e.g., cached="foo" but flow returns string), use the cached type.
+                // This prevents zombie freshness where flow analysis undoes literal preservation.
+                if narrowed != cached && narrowed != TypeId::ERROR {
+                    let widened_cached = tsz_solver::widening::widen_type(self.ctx.types, cached);
+                    if widened_cached == narrowed {
+                        return cached;
+                    }
+                }
+                return narrowed;
             }
 
             // TS 5.1+ divergent accessor types: when in a write context
@@ -936,6 +946,18 @@ impl<'a> CheckerState<'a> {
                 use tsz_solver::freshness::{is_fresh_object_type, widen_freshness};
                 if is_fresh_object_type(self.ctx.types, narrowed) {
                     narrowed = widen_freshness(self.ctx.types, narrowed);
+                }
+            }
+            // FIX: For mutable variables with non-widened literal declared types
+            // (e.g., `declare var a: "foo"; let b = a` → b has declared type "foo"),
+            // flow analysis may return the widened primitive (string) even though
+            // there's no actual narrowing. Detect this case: if widen(result) == narrowed,
+            // the flow is just widening our literal, not genuinely narrowing.
+            if narrowed != result && narrowed != TypeId::ERROR {
+                let widened_result = tsz_solver::widening::widen_type(self.ctx.types, result);
+                if widened_result == narrowed {
+                    // Flow just widened our literal type - use the original result
+                    narrowed = result;
                 }
             }
             tracing::trace!(
