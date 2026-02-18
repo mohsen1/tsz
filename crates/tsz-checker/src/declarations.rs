@@ -831,23 +831,40 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // This applies to non-string-named module/namespace declarations that are inside labeled statements
             // or other non-module constructs.
             if !is_string_named {
-                // Check if the parent is a valid context for namespace declarations.
+                // Check if the parent is a valid context
                 // Valid parents:
-                //   - SourceFile: top-level namespace
-                //   - ModuleBlock: namespace inside another namespace's body
-                //   - ModuleDeclaration: dotted namespace name (e.g. `namespace A.B`)
-                //   - ExportDeclaration: `export namespace Foo`
+                // - SourceFile (top-level namespace)
+                // - ModuleBlock (namespace inside namespace body)
+                // - ModuleDeclaration (dotted namespace like namespace A.B { })
+                // - ExportDeclaration (export namespace X { })
                 let is_valid_context = if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
                     let parent = ext.parent;
                     if parent.is_none() {
                         true // Top level is valid
                     } else if let Some(parent_node) = self.ctx.arena.get(parent) {
-                        // Valid parents: SourceFile, ModuleBlock, ModuleDeclaration (dotted names),
-                        // ExportDeclaration (export namespace N {})
-                        parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                        // Valid parents: SourceFile, ModuleBlock, ModuleDeclaration
+                        if parent_node.kind == syntax_kind_ext::SOURCE_FILE
                             || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
                             || parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
-                            || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                        {
+                            true
+                        } else if parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                            // Check if the export declaration is inside a valid context
+                            if let Some(parent_ext) = self.ctx.arena.get_extended(parent) {
+                                let grandparent = parent_ext.parent;
+                                if let Some(gp_node) = self.ctx.arena.get(grandparent) {
+                                    gp_node.kind == syntax_kind_ext::SOURCE_FILE
+                                        || gp_node.kind == syntax_kind_ext::MODULE_BLOCK
+                                        || gp_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                                } else {
+                                    true
+                                }
+                            } else {
+                                true
+                            }
+                        } else {
+                            false
+                        }
                     } else {
                         true
                     }
