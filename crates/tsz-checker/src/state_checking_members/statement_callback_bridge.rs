@@ -743,6 +743,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_truthy_or_falsy(self, node_idx);
     }
 
+    fn check_for_in_expression_type(&mut self, expr_type: TypeId, expression: NodeIndex) {
+        CheckerState::check_for_in_expression_type(self, expr_type, expression);
+    }
+
     fn assign_for_in_of_initializer_types(
         &mut self,
         decl_list_idx: NodeIndex,

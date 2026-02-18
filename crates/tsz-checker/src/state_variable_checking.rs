@@ -160,6 +160,62 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// TS2407: The right-hand side of a 'for...in' statement must be of type 'any',
+    /// an object type or a type parameter.
+    pub(crate) fn check_for_in_expression_type(
+        &mut self,
+        expr_type: TypeId,
+        expression: NodeIndex,
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::query_boundaries::dispatch as query;
+
+        // Skip if type is error
+        if expr_type == TypeId::ERROR {
+            return;
+        }
+
+        // Valid types: any, unknown, object types, type parameters
+        // Invalid types: primitive types like void, null, undefined, number, string, boolean, bigint, symbol
+        let is_valid = expr_type == TypeId::ANY
+            || expr_type == TypeId::UNKNOWN
+            || query::is_type_parameter(self.ctx.types, expr_type)
+            || query::is_object_like_type(self.ctx.types, expr_type)
+            // Also allow union types that contain valid types
+            || self.for_in_expr_type_is_valid_union(expr_type);
+
+        if !is_valid {
+            let type_str = self.format_type(expr_type);
+            let message = format_message(
+                diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYPE_OR,
+                &[&type_str],
+            );
+            self.error_at_node(expression, &message, diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYPE_OR);
+        }
+    }
+
+    /// Helper for TS2407: Check if a union type contains at least one valid for-in expression type.
+    fn for_in_expr_type_is_valid_union(&mut self, expr_type: TypeId) -> bool {
+        use crate::query_boundaries::dispatch as query;
+
+        if let Some(members) = query::union_members(self.ctx.types, expr_type) {
+            for &member in &members {
+                if member == TypeId::ANY
+                    || member == TypeId::UNKNOWN
+                    || query::is_type_parameter(self.ctx.types, member)
+                    || query::is_object_like_type(self.ctx.types, member)
+                {
+                    return true;
+                }
+                // Recursively check nested unions
+                if self.for_in_expr_type_is_valid_union(member) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Check assignability for for-in/of expression initializer (non-declaration case).
     ///
     /// For `for (v of expr)` where `v` is a pre-declared variable (not `var v`/`let v`/`const v`),
@@ -230,6 +286,25 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
                     );
                 }
+            }
+        }
+
+        // TS2405: For for-in, also check that the LHS type is string or any.
+        // This applies to identifiers and property/element access expressions.
+        if !is_for_of {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+            let var_type = self.get_type_of_node(initializer);
+            // The LHS type must be string, any, or a type assignable to string
+            if var_type != TypeId::STRING
+                && var_type != TypeId::ANY
+                && var_type != TypeId::UNKNOWN
+                && !self.is_assignable_to(TypeId::STRING, var_type)
+            {
+                self.error_at_node(
+                    initializer,
+                    diagnostic_messages::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                    diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_MUST_BE_OF_TYPE_STRING_OR_ANY,
+                );
             }
         }
 

@@ -78,6 +78,13 @@ pub trait StatementCheckCallbacks {
     /// Check if a condition expression is always truthy/falsy (TS2872/TS2873).
     fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex);
 
+    /// TS2407: Check that the right-hand side of a for-in statement is of type 'any',
+    /// an object type, or a type parameter.
+    fn check_for_in_expression_type(&mut self, expr_type: TypeId, expression: NodeIndex) {
+        // Default: no check
+        let _ = (expr_type, expression);
+    }
+
     /// Assign types for for-in/for-of initializers.
     /// `is_for_in` should be true for for-in loops (to emit TS2404 on type annotations).
     fn assign_for_in_of_initializer_types(
@@ -393,6 +400,8 @@ impl StatementChecker {
                         state.check_for_of_iterability(expr_type, expression, await_modifier);
                         state.for_of_element_type(expr_type)
                     } else {
+                        // TS2407: for-in expression must be any, object type, or type parameter
+                        state.check_for_in_expression_type(expr_type, expression);
                         // `for (x in obj)` iterates keys (string in TS).
                         TypeId::STRING
                     };
