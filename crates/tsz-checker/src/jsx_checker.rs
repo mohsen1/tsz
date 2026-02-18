@@ -213,6 +213,22 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Evaluate the props type to resolve IndexAccess types like
+        // JSX.IntrinsicElements['tagName'] to the actual props object type
+        let props_type = self.evaluate_type_with_env(props_type);
+
+        // Debug: Log the evaluated props type
+        tracing::debug!(
+            "JSX attribute checking: evaluated props_type = {:?}",
+            props_type
+        );
+
+        // Skip if evaluation resulted in any or error
+        if props_type == TypeId::ANY || props_type == TypeId::ERROR {
+            tracing::debug!("JSX attribute checking: skipping due to ANY or ERROR type");
+            return;
+        }
+
         // Check each attribute
         for &attr_idx in &attrs.properties.nodes {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -237,12 +253,23 @@ impl<'a> CheckerState<'a> {
 
                 // Get expected type from props
                 use tsz_solver::operations_property::PropertyAccessResult;
-                let expected_type =
-                    match self.resolve_property_access_with_env(props_type, &attr_name) {
-                        PropertyAccessResult::Success { type_id, .. } => type_id,
-                        // Property doesn't exist in props - this is handled elsewhere (excess property check)
-                        _ => continue,
-                    };
+                let expected_type = match self
+                    .resolve_property_access_with_env(props_type, &attr_name)
+                {
+                    PropertyAccessResult::Success { type_id, .. } => {
+                        tracing::debug!("JSX attr '{}': expected type = {:?}", attr_name, type_id);
+                        type_id
+                    }
+                    // Property doesn't exist in props - this is handled elsewhere (excess property check)
+                    other => {
+                        tracing::debug!(
+                            "JSX attr '{}': not found in props, result = {:?}",
+                            attr_name,
+                            other
+                        );
+                        continue;
+                    }
+                };
 
                 // Get actual type of the attribute value
                 if attr_data.initializer.is_none() {
@@ -251,15 +278,36 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let actual_type = self.compute_type_of_node(attr_data.initializer);
+                // The initializer might be a JSX expression wrapper or a string literal
+                let value_node_idx =
+                    if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
+                        if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
+                            // Unwrap JSX expression to get the actual expression
+                            if let Some(jsx_expr) = self.ctx.arena.get_jsx_expression(init_node) {
+                                jsx_expr.expression
+                            } else {
+                                continue;
+                            }
+                        } else {
+                            // String literal or other expression
+                            attr_data.initializer
+                        }
+                    } else {
+                        continue;
+                    };
+
+                let actual_type = self.compute_type_of_node(value_node_idx);
+
+                tracing::debug!(
+                    "JSX attr '{}': actual type = {:?}, expected type = {:?}",
+                    attr_name,
+                    actual_type,
+                    expected_type
+                );
 
                 // Check assignability
                 if actual_type != TypeId::ANY && actual_type != TypeId::ERROR {
-                    self.check_assignable_or_report(
-                        actual_type,
-                        expected_type,
-                        attr_data.initializer,
-                    );
+                    self.check_assignable_or_report(actual_type, expected_type, value_node_idx);
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
                 // Spread attribute: {...obj}
