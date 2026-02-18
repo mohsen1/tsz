@@ -764,10 +764,19 @@ impl<'a> CheckerState<'a> {
                 // Only widen when the initializer is a "fresh" literal expression
                 // (direct literal in source code). Types from variable references,
                 // narrowing, or computed expressions are "non-fresh" and NOT widened.
-                if checker.is_fresh_literal_expression(var_decl.initializer) {
+                let widened = if checker.is_fresh_literal_expression(var_decl.initializer) {
                     checker.widen_initializer_type_for_mutable_binding(init_type)
                 } else {
                     init_type
+                };
+                // When strictNullChecks is off, undefined and null widen to any
+                // regardless of freshness (this applies to destructured bindings too)
+                if !checker.ctx.strict_null_checks()
+                    && (widened == TypeId::UNDEFINED || widened == TypeId::NULL)
+                {
+                    TypeId::ANY
+                } else {
+                    widened
                 }
             } else {
                 // For for-in/for-of loop variables, the element type has already been cached
@@ -1151,7 +1160,17 @@ impl<'a> CheckerState<'a> {
             if name_node.kind == SyntaxKind::Identifier as u16
                 && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name)
             {
-                self.cache_symbol_type(sym_id, element_type);
+                // When strictNullChecks is off, undefined and null widen to any
+                // for mutable destructured bindings (var/let).
+                // This includes unions like `undefined | null`.
+                let final_type = if !self.ctx.strict_null_checks()
+                    && self.is_only_undefined_or_null(element_type)
+                {
+                    TypeId::ANY
+                } else {
+                    element_type
+                };
+                self.cache_symbol_type(sym_id, final_type);
             }
 
             // Nested binding patterns: check iterability for array patterns, then recurse
@@ -1548,5 +1567,21 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.types.factory().array(tuple_member_type)
         }
+    }
+
+    /// Check if a type consists only of `undefined` and/or `null`.
+    /// Used for widening to `any` under `strict: false`.
+    /// Returns true for: `undefined`, `null`, `undefined | null`
+    fn is_only_undefined_or_null(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::UNDEFINED || type_id == TypeId::NULL {
+            return true;
+        }
+        // Check for union of undefined/null
+        if let Some(members) = query::union_members(self.ctx.types, type_id) {
+            return members
+                .iter()
+                .all(|&m| m == TypeId::UNDEFINED || m == TypeId::NULL || m == type_id);
+        }
+        false
     }
 }
