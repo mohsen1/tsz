@@ -34,6 +34,7 @@ mod context_resolver;
 pub mod control_flow;
 mod control_flow_assignment;
 mod control_flow_narrowing;
+mod control_flow_type_guards;
 pub mod declarations;
 pub mod decorators;
 pub mod dispatch;
