@@ -3831,6 +3831,8 @@ impl ParserState {
 
     /// Parse class members
     pub(crate) fn parse_class_members(&mut self) -> NodeList {
+        use tsz_common::diagnostics::diagnostic_codes;
+
         let mut members = Vec::new();
 
         while !self.is_token(SyntaxKind::CloseBraceToken)
@@ -3840,6 +3842,21 @@ impl ParserState {
             if !member.is_none() {
                 self.parse_optional(SyntaxKind::SemicolonToken);
                 members.push(member);
+
+                // After a successfully parsed member without a trailing semicolon,
+                // if the next token cannot start a new class member, emit TS1005
+                // "';' expected" and skip. This matches tsc's behavior when expression
+                // continuations across line breaks (e.g., `= 0[e2]`) leave trailing
+                // tokens like `:` or `{` that can't start a class member.
+                if !self.is_token(SyntaxKind::CloseBraceToken)
+                    && !self.is_token(SyntaxKind::EndOfFileToken)
+                    && !self.is_token(SyntaxKind::SemicolonToken)
+                    && !self.is_token(SyntaxKind::AtToken) // decorator
+                    && !self.is_property_name()
+                {
+                    self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+                    self.next_token();
+                }
             }
         }
 
