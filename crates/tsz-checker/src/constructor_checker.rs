@@ -399,6 +399,15 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         base_instance_type: TypeId,
     ) -> TypeId {
+        // Resolve Lazy types before classification.
+        let ctor_type = {
+            let resolved = self.resolve_lazy_type(ctor_type);
+            if resolved != ctor_type {
+                resolved
+            } else {
+                ctor_type
+            }
+        };
         match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
             ConstructorReturnMergeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
@@ -465,6 +474,15 @@ impl<'a> CheckerState<'a> {
             return ctor_type;
         }
 
+        // Resolve Lazy types before classification.
+        let ctor_type = {
+            let resolved = self.resolve_lazy_type(ctor_type);
+            if resolved != ctor_type {
+                resolved
+            } else {
+                ctor_type
+            }
+        };
         match classify_for_constructor_return_merge(self.ctx.types, ctor_type) {
             ConstructorReturnMergeKind::Callable(shape_id) => {
                 let shape = self.ctx.types.callable_shape(shape_id);
