@@ -186,6 +186,27 @@ pub struct EmitContext {
     /// Whether to emit ES5 (classes→IIFEs, arrows→functions)
     pub target_es5: bool,
 
+    /// Whether exponentiation (`**` / `**=`) needs downleveling (target < ES2016)
+    pub needs_es2016_lowering: bool,
+
+    /// Whether ES2019 features need downleveling (optional catch binding).
+    pub needs_es2019_lowering: bool,
+
+    /// Whether ES2020 features need downleveling (optional chaining/nullish/coalescing).
+    pub needs_es2020_lowering: bool,
+
+    /// Whether ES2021 features need downleveling (logical assignment operators).
+    pub needs_es2021_lowering: bool,
+
+    /// Whether ES2022 features need downleveling (class fields/private fields/static blocks).
+    pub needs_es2022_lowering: bool,
+
+    /// Whether ES2024 features need downleveling (decorators, ...).
+    pub needs_es2024_lowering: bool,
+
+    /// Whether ES2025 features need downleveling (using/await using).
+    pub needs_es2025_lowering: bool,
+
     /// Whether async/await needs lowering (target < ES2017)
     /// ES2015/ES2016 use __awaiter + generators (yield)
     /// ES5 additionally lowers generators to state machines (__generator)
@@ -226,14 +247,18 @@ impl EmitContext {
 
     /// Create a new `EmitContext` with the given options
     pub fn with_options(options: PrinterOptions) -> Self {
-        let target_es5 = matches!(options.target, ScriptTarget::ES3 | ScriptTarget::ES5);
-        let needs_async_lowering = !options.target.supports_es2017();
-
-        Self {
+        let mut ctx = Self {
             options,
             flags: EmitFlags::default(),
-            target_es5,
-            needs_async_lowering,
+            target_es5: false,
+            needs_es2016_lowering: false,
+            needs_es2019_lowering: false,
+            needs_es2020_lowering: false,
+            needs_es2021_lowering: false,
+            needs_es2022_lowering: false,
+            needs_es2024_lowering: false,
+            needs_es2025_lowering: false,
+            needs_async_lowering: false,
             arrow_state: ArrowTransformState::default(),
             destructuring_state: DestructuringState::default(),
             module_state: ModuleTransformState::default(),
@@ -242,24 +267,52 @@ impl EmitContext {
             emit_await_as_yield: false,
             auto_detect_module: false,
             original_module_kind: None,
-        }
+        };
+        ctx.sync_target_gates();
+        ctx
+    }
+
+    const fn sync_target_gates(&mut self) {
+        let target = self.options.target;
+        self.target_es5 = matches!(target, ScriptTarget::ES3 | ScriptTarget::ES5);
+        self.needs_es2016_lowering = !target.supports_es2016();
+        self.needs_es2019_lowering = !target.supports_es2019();
+        self.needs_es2020_lowering = !target.supports_es2020();
+        self.needs_es2021_lowering = !target.supports_es2021();
+        self.needs_es2022_lowering = !target.supports_es2022();
+        self.needs_es2024_lowering = !target.supports_es2024();
+        self.needs_es2025_lowering = !target.supports_es2025();
+        self.needs_async_lowering = !target.supports_es2017();
+    }
+
+    /// Set the full script target and refresh all derived target gates.
+    pub const fn set_target(&mut self, target: ScriptTarget) {
+        self.options.target = target;
+        self.sync_target_gates();
+    }
+
+    /// Set whether we are targeting ES5-like output.
+    ///
+    /// Keeps `target_es5`, `options.target`, and feature gates in sync.
+    pub const fn set_target_es5(&mut self, es5: bool) {
+        self.set_target(if es5 {
+            ScriptTarget::ES5
+        } else {
+            ScriptTarget::ES2015
+        })
     }
 
     /// Create an `EmitContext` targeting ES5
     pub fn es5() -> Self {
         let mut ctx = Self::new();
-        ctx.target_es5 = true;
-        ctx.needs_async_lowering = true;
-        ctx.options.target = ScriptTarget::ES5;
+        ctx.set_target_es5(true);
         ctx
     }
 
     /// Create an `EmitContext` targeting ES6+
     pub fn es6() -> Self {
         let mut ctx = Self::new();
-        ctx.target_es5 = false;
-        ctx.needs_async_lowering = true; // ES2015 still needs async lowering
-        ctx.options.target = ScriptTarget::ES2015;
+        ctx.set_target_es5(false);
         ctx
     }
 

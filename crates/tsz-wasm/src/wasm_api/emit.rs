@@ -148,14 +148,14 @@ pub fn transpile_module(source: &str, options_json: &str) -> String {
     let printer_opts = options.to_printer_options();
     let mut ctx = EmitContext::with_options(printer_opts.clone());
     ctx.auto_detect_module = true;
-    ctx.target_es5 = matches!(printer_opts.target, ScriptTarget::ES3 | ScriptTarget::ES5);
+    ctx.set_target(printer_opts.target);
 
     // Run transforms
     let transforms = LoweringPass::new(&arena, &ctx).run(root_idx);
 
     // Emit
     let mut printer = Printer::with_transforms_and_options(&arena, transforms, printer_opts);
-    printer.set_target_es5(ctx.target_es5);
+    printer.set_target(ctx.options.target);
     printer.set_auto_detect_module(ctx.auto_detect_module);
     printer.set_source_text(source);
     printer.emit(root_idx);
@@ -211,14 +211,14 @@ pub fn transpile(source: &str, target: Option<u8>, module: Option<u8>) -> String
     let module_kind = opts.module;
     let mut ctx = EmitContext::with_options(opts.clone());
     ctx.auto_detect_module = true;
-    ctx.target_es5 = matches!(opts.target, ScriptTarget::ES3 | ScriptTarget::ES5);
+    ctx.set_target(opts.target);
 
     // Run transforms
     let transforms = LoweringPass::new(&arena, &ctx).run(root_idx);
 
     // Emit
     let mut printer = Printer::with_transforms_and_options(&arena, transforms, opts);
-    printer.set_target_es5(ctx.target_es5);
+    printer.set_target(ctx.options.target);
     printer.set_auto_detect_module(ctx.auto_detect_module);
     printer.set_source_text(source);
     printer.emit(root_idx);
@@ -258,12 +258,12 @@ pub(crate) fn emit_file(
 
     let mut ctx = EmitContext::with_options(opts.clone());
     ctx.auto_detect_module = true;
-    ctx.target_es5 = matches!(target, ScriptTarget::ES3 | ScriptTarget::ES5);
+    ctx.set_target(target);
 
     let transforms = LoweringPass::new(arena, &ctx).run(root_idx);
 
     let mut printer = Printer::with_transforms_and_options(arena, transforms, opts);
-    printer.set_target_es5(ctx.target_es5);
+    printer.set_target(ctx.options.target);
     printer.set_auto_detect_module(ctx.auto_detect_module);
     printer.set_source_text(source_text);
     printer.emit(root_idx);

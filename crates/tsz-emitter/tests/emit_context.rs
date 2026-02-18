@@ -64,3 +64,15 @@ fn test_module_state() {
     assert_eq!(exports, vec!["foo", "bar"]);
     assert!(state.pending_exports.is_empty());
 }
+
+#[test]
+fn test_emit_context_set_target_syncs_flags() {
+    let mut ctx = EmitContext::new();
+    ctx.set_target(ScriptTarget::ES2018);
+
+    assert!(!ctx.is_es5());
+    assert!(!ctx.needs_es2016_lowering);
+    assert!(ctx.needs_es2019_lowering);
+    assert!(ctx.needs_es2020_lowering);
+    assert!(ctx.needs_es2021_lowering);
+}

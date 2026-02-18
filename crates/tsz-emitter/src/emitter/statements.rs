@@ -682,6 +682,8 @@ impl<'a> Printer<'a> {
             self.write(" (");
             self.emit(catch.variable_declaration);
             self.write(")");
+        } else if self.ctx.needs_es2019_lowering {
+            self.write(" (_unused)");
         }
 
         self.write(" ");

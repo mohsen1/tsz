@@ -243,10 +243,7 @@ impl<'a> Printer<'a> {
     /// Print the AST starting from the given root node.
     pub fn print(&mut self, root: NodeIndex) {
         // Configure target-specific settings
-        self.inner.set_target_es5(matches!(
-            self.options.target,
-            ScriptTarget::ES3 | ScriptTarget::ES5
-        ));
+        self.inner.set_target(self.options.target);
 
         // Configure module settings
         self.inner.set_module_kind(self.options.module);

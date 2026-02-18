@@ -1,4 +1,5 @@
 use super::*;
+use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::ParserState;
 
 #[test]
@@ -99,4 +100,33 @@ fn test_es6_generator_param_named_yield_keeps_identifier_text() {
 
     let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
     assert_eq!(output, "function* foo(a = yield, yield) { }\n");
+}
+
+#[test]
+fn test_optional_catch_binding_downlevel_to_param() {
+    let source = "try {\n} catch {\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2018,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(output.contains("catch (_unused)"));
+
+    let output_es2020 = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2020,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(!output_es2020.contains("catch (_unused)"));
 }

@@ -7,6 +7,18 @@ fn test_script_target_comparisons() {
     assert!(!ScriptTarget::ES2015.is_es5());
     assert!(ScriptTarget::ES2015.supports_es2015());
     assert!(!ScriptTarget::ES5.supports_es2015());
+    assert!(!ScriptTarget::ES5.supports_es2016());
+    assert!(ScriptTarget::ES2016.supports_es2016());
+    assert!(!ScriptTarget::ES2016.supports_es2019());
+    assert!(!ScriptTarget::ES2016.supports_es2020());
+    assert!(ScriptTarget::ES2019.supports_es2019());
+    assert!(ScriptTarget::ES2025.supports_es2025());
+    assert!(!ScriptTarget::ES2019.supports_es2024());
+    assert!(ScriptTarget::ES2024.supports_es2024());
+    assert!(ScriptTarget::ES2025.supports_es2024());
+    assert!(!ScriptTarget::ES2022.supports_es2023());
+    assert!(ScriptTarget::ES2023.supports_es2023());
+    assert!(!ScriptTarget::ES5.supports_es2019());
 }
 
 #[test]
