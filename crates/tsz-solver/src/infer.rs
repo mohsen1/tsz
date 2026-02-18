@@ -1142,6 +1142,16 @@ impl<'a> InferenceContext<'a> {
                 self.infer_from_types(source_idx, target_idx, priority)?;
             }
 
+            // ReadonlyType: unwrap if both are readonly (e.g. readonly [T] vs readonly [number])
+            (Some(TypeData::ReadonlyType(source_inner)), Some(TypeData::ReadonlyType(target_inner))) => {
+                self.infer_from_types(source_inner, target_inner, priority)?;
+            }
+
+            // Unwrap ReadonlyType when only target is readonly (mutable source is compatible)
+            (_, Some(TypeData::ReadonlyType(target_inner))) => {
+                self.infer_from_types(source, target_inner, priority)?;
+            }
+
             // Task #40: Template literal deconstruction for infer patterns
             // Handles: source extends `prefix${infer T}suffix` ? true : false
             (Some(source_key), Some(TypeData::TemplateLiteral(target_id))) => {
