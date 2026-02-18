@@ -2550,12 +2550,18 @@ fn collect_diagnostics(
             }
             checker.ctx.resolved_modules = Some(resolved_modules);
             checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
-            checker.ctx.has_syntax_parse_errors =
-                file.parse_diagnostics.iter().any(|d| d.code != 1185);
+            // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
+            // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
+            // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior,
+            // which is used to suppress TS1108/TS1105 grammar errors.
+            checker.ctx.has_syntax_parse_errors = file
+                .parse_diagnostics
+                .iter()
+                .any(|d| d.code != 1185 && d.code != 1009);
             checker.ctx.syntax_parse_error_positions = file
                 .parse_diagnostics
                 .iter()
-                .filter(|d| d.code != 1185)
+                .filter(|d| d.code != 1185 && d.code != 1009)
                 .map(|d| d.start)
                 .collect();
             let mut file_diagnostics = Vec::new();
@@ -2813,11 +2819,17 @@ fn check_file_for_parallel<'a>(context: CheckFileForParallelContext<'a>) -> Vec<
     checker.ctx.is_external_module_by_file = Some(Arc::clone(is_external_module_by_file));
     checker.ctx.resolved_modules = Some(resolved_modules);
     checker.ctx.has_parse_errors = !file.parse_diagnostics.is_empty();
-    checker.ctx.has_syntax_parse_errors = file.parse_diagnostics.iter().any(|d| d.code != 1185);
+    // TS1009 (Trailing comma not allowed) is emitted by our parser but is a
+    // checker grammar error in TSC (not in parseDiagnostics). Exclude it from
+    // has_syntax_parse_errors so we match TSC's hasParseDiagnostics() behavior.
+    checker.ctx.has_syntax_parse_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| d.code != 1185 && d.code != 1009);
     checker.ctx.syntax_parse_error_positions = file
         .parse_diagnostics
         .iter()
-        .filter(|d| d.code != 1185)
+        .filter(|d| d.code != 1185 && d.code != 1009)
         .map(|d| d.start)
         .collect();
 

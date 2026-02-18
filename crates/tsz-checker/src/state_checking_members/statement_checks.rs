@@ -252,6 +252,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Like TSC's grammarErrorOnNode, suppress all grammar errors (TS1105, TS1107, TS1116)
+        // for break/continue when the file has parser-generated syntax errors.
+        // TSC checks hasParseDiagnostics(sourceFile) before emitting these grammar errors.
+        if self.has_syntax_parse_errors() {
+            return;
+        }
+
         // Get the label if any
         let label_name = self
             .ctx
@@ -317,6 +324,12 @@ impl<'a> CheckerState<'a> {
 
         // In .d.ts files, TS1036 is emitted instead of TS1104
         if self.ctx.is_in_ambient_declaration_file {
+            return;
+        }
+
+        // Like TSC's grammarErrorOnNode, suppress grammar errors (TS1104, TS1107, TS1115)
+        // for continue when the file has parser-generated syntax errors.
+        if self.has_syntax_parse_errors() {
             return;
         }
 
