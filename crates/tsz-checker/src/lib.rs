@@ -81,6 +81,7 @@ pub mod triple_slash_validator;
 pub mod tuple_type;
 pub mod type_api;
 pub mod type_checking;
+mod type_checking_global;
 mod type_checking_queries;
 mod type_checking_utilities;
 pub mod type_computation;

@@ -6009,11 +6009,12 @@ class C {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // After scope_finder improvements, `this` in static computed names emits
-    // TS2465 (keyword not allowed) + TS1166 (decorator not valid) instead of TS2339.
+    // tsc emits TS2465 ("'this' keyword is not allowed in class element computed names")
+    // rather than TS2339 when 'this' is used in a computed property name — the property
+    // access is not type-checked once the illegal 'this' is detected.
     assert!(
-        codes.contains(&2465) || codes.contains(&2339),
-        "Expected 2465 or 2339 for computed name with this, got: {:?}",
+        codes.contains(&2465),
+        "Expected 2465 for 'this' in computed name, got: {:?}",
         codes
     );
 }
@@ -6056,13 +6057,12 @@ class C {
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // After scope_finder improvements, `this` in static computed names emits
-    // TS2465 (keyword not allowed) + TS1166 instead of TS2339.
-    let count_2339 = codes.iter().filter(|&&c| c == 2339).count();
-    let count_2465 = codes.iter().filter(|&&c| c == 2465).count();
-    assert!(
-        count_2339 == 2 || count_2465 == 2,
-        "Expected two 2339 or 2465 errors for class expression computed this, got: {:?}",
+    // tsc emits TS2465 for each 'this' in computed property names within the inner class,
+    // not TS2339 — property access is not type-checked on an illegal 'this'.
+    let count = codes.iter().filter(|&&c| c == 2465).count();
+    assert_eq!(
+        count, 2,
+        "Expected two 2465 errors for class expression computed this, got: {:?}",
         codes
     );
 }
