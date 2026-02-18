@@ -186,6 +186,13 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
         if callee_type == TypeId::ERROR {
+            // Still evaluate type arguments to catch TS2304 for unresolved type names
+            // (e.g., `this.super<T>(0)` where T is undeclared)
+            if let Some(ref type_args_list) = call.type_arguments {
+                for &arg_idx in &type_args_list.nodes {
+                    self.get_type_from_type_node(arg_idx);
+                }
+            }
             // Still need to check arguments for definite assignment (TS2454) and other errors
             let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
             let check_excess_properties = false;

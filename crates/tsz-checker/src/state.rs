@@ -439,6 +439,24 @@ impl<'a> CheckerState<'a> {
     /// Check if a node's span overlaps with or is very close to a parse error position.
     /// Used to suppress cascading checker diagnostics (e.g. TS2391, TS2364) when the
     /// node is likely a parser-recovery artifact.
+    /// Check if a parse error falls directly within the node's span (no margin).
+    /// Used for tight suppression checks where the generous margin of
+    /// `node_has_nearby_parse_error` would cause false positives.
+    pub(crate) fn node_span_contains_parse_error(&self, idx: NodeIndex) -> bool {
+        if !self.has_syntax_parse_errors() || self.ctx.syntax_parse_error_positions.is_empty() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        for &err_pos in &self.ctx.syntax_parse_error_positions {
+            if err_pos >= node.pos && err_pos < node.end {
+                return true;
+            }
+        }
+        false
+    }
+
     pub(crate) fn node_has_nearby_parse_error(&self, idx: NodeIndex) -> bool {
         if !self.has_syntax_parse_errors() || self.ctx.syntax_parse_error_positions.is_empty() {
             return false;

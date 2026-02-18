@@ -571,7 +571,11 @@ impl<'a> CheckerState<'a> {
         // In files with real syntax errors, unresolved names inside `typeof` type queries
         // are often cascades from malformed declaration syntax; TypeScript commonly keeps
         // the primary parse diagnostic only for these.
-        if self.has_syntax_parse_errors() {
+        // Only suppress when a parse error falls directly within the identifier's span.
+        // The wider `node_has_nearby_parse_error` margin (8 bytes) would incorrectly
+        // suppress TS2304 for `A` in `typeof A.` where the error is the missing
+        // identifier after the dot, not A itself.
+        if self.has_syntax_parse_errors() && self.node_span_contains_parse_error(idx) {
             let mut current = idx;
             let mut guard = 0;
             while !current.is_none() {
