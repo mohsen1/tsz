@@ -528,6 +528,10 @@ impl<'a> CheckerState<'a> {
                         self.check_type_literal_computed_property_name(sig.name);
                     }
                 }
+                // TS2411: Check that properties are assignable to index signature types.
+                // Type literals don't inherit, so we pass ERROR as the "parent type"
+                // and rely on direct member scanning inside the method.
+                self.check_index_signature_compatibility(&type_lit.members.nodes, TypeId::ERROR);
             }
         }
         // Recursively check array types, union types, intersection types, etc.

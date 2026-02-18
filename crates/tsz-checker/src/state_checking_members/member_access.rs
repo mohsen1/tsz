@@ -460,6 +460,17 @@ impl<'a> CheckerState<'a> {
             || has_own_index_sig
         {
             self.check_index_signature_compatibility(&iface.members.nodes, iface_type);
+
+            // Also check inherited members from base interfaces against index
+            // signatures. The AST-based check above only sees own members; inherited
+            // properties live in the solver's resolved type and must be checked too.
+            if iface.heritage_clauses.is_some() {
+                self.check_inherited_properties_against_index_signatures(
+                    iface_type,
+                    &iface.members.nodes,
+                    stmt_idx,
+                );
+            }
         }
 
         // Check that interface correctly extends base interfaces (error 2430)
@@ -743,85 +754,106 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            // Extract property name and type annotation based on member kind
-            let (prop_name, name_idx, type_annotation_idx) = if member_node.kind
-                == syntax_kind_ext::PROPERTY_SIGNATURE
-                || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
-            {
-                // Interface members
-                let Some(sig) = self.ctx.arena.get_signature(member_node) else {
-                    continue;
-                };
-                let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                (name, sig.name, sig.type_annotation)
-            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                // Class property declarations
-                let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
-                    continue;
-                };
-                // Skip private fields (#name) - they are not subject to index signature checks
-                if let Some(name_node) = self.ctx.arena.get(prop.name)
-                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+            // Extract property name, name node index, and property type based on
+            // member kind. Each branch computes prop_type using the appropriate
+            // method for that member kind.
+            let (prop_name, name_idx, prop_type) =
+                if member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
+                    // Interface property members — use type annotation or node type
+                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    let name = self.get_member_name_text(sig.name).unwrap_or_default();
+                    let prop_type = if !sig.type_annotation.is_none() {
+                        self.get_type_from_type_node(sig.type_annotation)
+                    } else {
+                        self.get_type_of_node(member_idx)
+                    };
+                    (name, sig.name, prop_type)
+                } else if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                    // Interface method members — property type is the function type
+                    // (not the return type annotation)
+                    let Some(sig) = self.ctx.arena.get_signature(member_node) else {
+                        continue;
+                    };
+                    let name = self.get_member_name_text(sig.name).unwrap_or_default();
+                    let prop_type = self.get_type_of_interface_member_simple(member_idx);
+                    (name, sig.name, prop_type)
+                } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    // Class property declarations
+                    let Some(prop) = self.ctx.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    // Skip private fields (#name)
+                    if let Some(name_node) = self.ctx.arena.get(prop.name)
+                        && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                    {
+                        continue;
+                    }
+                    let name = self.get_member_name_text(prop.name).unwrap_or_default();
+                    let prop_type = if !prop.type_annotation.is_none() {
+                        self.get_type_from_type_node(prop.type_annotation)
+                    } else {
+                        self.get_type_of_node(member_idx)
+                    };
+                    (name, prop.name, prop_type)
+                } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                    // Class method declarations — property type is the function type
+                    let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    // Skip private methods (#name)
+                    if let Some(name_node) = self.ctx.arena.get(method.name)
+                        && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                    {
+                        continue;
+                    }
+                    let name = self.get_member_name_text(method.name).unwrap_or_default();
+                    let prop_type = self.get_type_of_function(member_idx);
+                    (name, method.name, prop_type)
+                } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                    || member_node.kind == syntax_kind_ext::SET_ACCESSOR
                 {
-                    continue;
-                }
-                let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                (name, prop.name, prop.type_annotation)
-            } else if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
-                // Class method declarations
-                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
-                    continue;
-                };
-                // Skip private methods (#name)
-                if let Some(name_node) = self.ctx.arena.get(method.name)
-                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
-                {
-                    continue;
-                }
-                let name = self.get_member_name_text(method.name).unwrap_or_default();
-                (name, method.name, NodeIndex::NONE) // Methods use member_idx for type
-            } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
-                || member_node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
-                // Getter/setter accessor declarations
-                let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
-                    continue;
-                };
-                // Skip private accessors (#name)
-                if let Some(name_node) = self.ctx.arena.get(accessor.name)
-                    && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
-                {
-                    continue;
-                }
-                let name = self.get_member_name_text(accessor.name).unwrap_or_default();
-                // For getters, the property type is the return type annotation.
-                // For setters, the property type comes from the first parameter.
-                let type_ann = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                    accessor.type_annotation
+                    // Getter/setter accessor declarations
+                    let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    // Skip private accessors (#name)
+                    if let Some(name_node) = self.ctx.arena.get(accessor.name)
+                        && name_node.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
+                    {
+                        continue;
+                    }
+                    let name = self.get_member_name_text(accessor.name).unwrap_or_default();
+                    let prop_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
+                        // For getters, the property type is the return type (T), not
+                        // the function type (() => T)
+                        if !accessor.type_annotation.is_none() {
+                            self.get_type_from_type_node(accessor.type_annotation)
+                        } else {
+                            self.infer_getter_return_type(accessor.body)
+                        }
+                    } else {
+                        // Setter: property type comes from the first parameter's type
+                        let type_ann = accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| self.ctx.arena.get(param_idx))
+                            .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                            .map(|param| param.type_annotation)
+                            .unwrap_or(NodeIndex::NONE);
+                        if !type_ann.is_none() {
+                            self.get_type_from_type_node(type_ann)
+                        } else {
+                            self.get_type_of_node(member_idx)
+                        }
+                    };
+                    (name, accessor.name, prop_type)
                 } else {
-                    // Setter: get type from the first parameter
-                    accessor
-                        .parameters
-                        .nodes
-                        .first()
-                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
-                        .map(|param| param.type_annotation)
-                        .unwrap_or(NodeIndex::NONE)
+                    // Skip other member kinds (index signatures, constructors, etc.)
+                    continue;
                 };
-                (name, accessor.name, type_ann)
-            } else {
-                // Skip other member kinds (index signatures, constructors, etc.)
-                continue;
-            };
-
-            // Get property type from type annotation if available, otherwise from member node
-            let prop_type = if !type_annotation_idx.is_none() {
-                self.get_type_from_type_node(type_annotation_idx)
-            } else {
-                // For methods without type annotations, use the member node type
-                self.get_type_of_node(member_idx)
-            };
 
             // Skip members with unresolved/cascading error types; checker will
             // report those separately and avoid TS2411 cascades.
@@ -856,6 +888,103 @@ impl<'a> CheckerState<'a> {
 
                 self.error_at_node_msg(
                     name_idx,
+                    diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                    &[&prop_name, &prop_type_str, "string", &index_type_str],
+                );
+            }
+        }
+    }
+
+    /// Check inherited properties (from base interfaces) against the combined
+    /// index signatures of the derived interface. This catches cases like:
+    /// ```ts
+    /// interface A { [s: string]: { a; }; }
+    /// interface C { m: {}; }
+    /// interface D extends A, C { } // TS2411: C.m not assignable to A's index
+    /// ```
+    /// The AST-based `check_index_signature_compatibility` only sees own members;
+    /// inherited properties live in the solver's resolved object shape.
+    fn check_inherited_properties_against_index_signatures(
+        &mut self,
+        iface_type: TypeId,
+        own_members: &[NodeIndex],
+        iface_node: NodeIndex,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Collect names of own members so we skip them (already checked by AST walk)
+        let mut own_names = std::collections::HashSet::new();
+        for &member_idx in own_members {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                continue;
+            }
+            if (member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
+                || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE)
+                && let Some(sig) = self.ctx.arena.get_signature(member_node)
+                    && let Some(name) = self.get_member_name_text(sig.name) {
+                        own_names.insert(name);
+                    }
+        }
+
+        // Get combined index signatures (includes inherited)
+        let index_info = self.ctx.types.get_index_signatures(iface_type);
+        if index_info.string_index.is_none() && index_info.number_index.is_none() {
+            return;
+        }
+
+        // Get the object shape from the resolved type to find all properties.
+        // Interfaces with index sigs use ObjectWithIndex, so check both variants.
+        let shape_id = tsz_solver::object_shape_id(self.ctx.types, iface_type)
+            .or_else(|| tsz_solver::object_with_index_shape_id(self.ctx.types, iface_type));
+        let Some(shape_id) = shape_id else {
+            return;
+        };
+        let shape = self.ctx.types.object_shape(shape_id);
+
+        for prop in &shape.properties {
+            let prop_name = self.ctx.types.resolve_atom(prop.name);
+            // Skip own members (already checked via AST walk)
+            if own_names.contains(&prop_name) {
+                continue;
+            }
+
+            let prop_type = prop.type_id;
+            if self.type_contains_error(prop_type) {
+                continue;
+            }
+
+            let is_numeric_property = prop_name.parse::<f64>().is_ok();
+
+            // Check against number index signature
+            if let Some(ref number_idx) = index_info.number_index
+                && is_numeric_property
+                && !self.is_assignable_to(prop_type, number_idx.value_type)
+            {
+                let prop_type_str = self.format_type(prop_type);
+                let index_type_str = self.format_type(number_idx.value_type);
+
+                // Report on the interface declaration node itself since the
+                // inherited property has no local AST node to point to
+                self.error_at_node_msg(
+                    iface_node,
+                    diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                    &[&prop_name, &prop_type_str, "number", &index_type_str],
+                );
+            }
+
+            // Check against string index signature
+            if let Some(ref string_idx) = index_info.string_index
+                && !self.is_assignable_to(prop_type, string_idx.value_type)
+            {
+                let prop_type_str = self.format_type(prop_type);
+                let index_type_str = self.format_type(string_idx.value_type);
+
+                self.error_at_node_msg(
+                    iface_node,
                     diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                     &[&prop_name, &prop_type_str, "string", &index_type_str],
                 );
