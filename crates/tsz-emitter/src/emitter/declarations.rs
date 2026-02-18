@@ -325,6 +325,10 @@ impl<'a> Printer<'a> {
         let needs_class_field_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
 
+        // Check if we need to lower static blocks to IIFEs (for targets < ES2022)
+        let needs_static_block_lowering = needs_class_field_lowering;
+        let mut deferred_static_blocks: Vec<NodeIndex> = Vec::new();
+
         // Collect property initializers that need lowering
         let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
         let mut static_field_inits: Vec<(String, NodeIndex, u32)> = Vec::new(); // (name, init, member_pos)
@@ -436,6 +440,16 @@ impl<'a> Printer<'a> {
                 if let Some(member_node) = self.arena.get(member_idx) {
                     self.skip_comments_for_erased_node(member_node);
                 }
+                continue;
+            }
+
+            // Skip static blocks that need lowering to IIFEs after the class.
+            // Don't skip comments — they'll be emitted when the block body is emitted.
+            if needs_static_block_lowering
+                && let Some(member_node) = self.arena.get(member_idx)
+                && member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                deferred_static_blocks.push(member_idx);
                 continue;
             }
 
@@ -691,8 +705,22 @@ impl<'a> Printer<'a> {
                         self.emit_expression(*init_idx);
                         self.write(";");
                     }
+                    self.write_line();
                 }
             }
+        }
+
+        // Emit deferred static blocks as IIFEs after the class body
+        for static_block_idx in deferred_static_blocks {
+            self.write_line();
+            self.write("(() => ");
+            if let Some(static_node) = self.arena.get(static_block_idx) {
+                // Static block uses the same data as a Block node
+                self.emit_block(static_node, static_block_idx);
+            } else {
+                self.write("{ }");
+            }
+            self.write(")();");
         }
 
         // Track class name to prevent duplicate var declarations for merged namespaces.
