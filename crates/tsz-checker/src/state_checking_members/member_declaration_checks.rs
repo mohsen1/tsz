@@ -1210,6 +1210,7 @@ impl<'a> CheckerState<'a> {
                                 k if k == SyntaxKind::PublicKeyword as u16 => Some("public"),
                                 k if k == SyntaxKind::PrivateKeyword as u16 => Some("private"),
                                 k if k == SyntaxKind::ProtectedKeyword as u16 => Some("protected"),
+                                k if k == SyntaxKind::ExportKeyword as u16 => Some("export"),
                                 _ => None,
                             };
                             if let Some(name) = modifier_name {
