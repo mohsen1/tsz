@@ -925,9 +925,10 @@ impl<'a> CheckerState<'a> {
             if (member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
                 || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE)
                 && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                    && let Some(name) = self.get_member_name_text(sig.name) {
-                        own_names.insert(name);
-                    }
+                && let Some(name) = self.get_member_name_text(sig.name)
+            {
+                own_names.insert(name);
+            }
         }
 
         // Get combined index signatures (includes inherited)
