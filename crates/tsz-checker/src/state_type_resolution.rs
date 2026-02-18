@@ -2915,6 +2915,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let evaluated = self.evaluate_application_type(type_id);
+        // Resolve Lazy types so the classifier sees actual type structure.
+        let evaluated = {
+            let resolved = self.resolve_lazy_type(evaluated);
+            if resolved != evaluated {
+                resolved
+            } else {
+                evaluated
+            }
+        };
         if !visited.insert(evaluated) {
             return;
         }
