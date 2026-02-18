@@ -129,6 +129,10 @@ pub use tsz_checker as checker;
 #[path = "../tests/checker_state_tests.rs"]
 mod checker_state_tests;
 
+#[cfg(test)]
+#[path = "../tests/variable_redeclaration_tests.rs"]
+mod variable_redeclaration_tests;
+
 // Cross-file module resolution tests
 #[cfg(test)]
 #[path = "../tests/module_resolution_tests.rs"]
