@@ -775,6 +775,199 @@ impl<'a> CheckerState<'a> {
         None
     }
 
+    /// Check if `this` is inside a class member's computed property name (TS2465).
+    ///
+    /// Walks up the parent chain without crossing function boundaries (including
+    /// arrow functions). When a `ComputedPropertyName` is found:
+    /// - If its owner's parent is a class (`ClassDeclaration`/`ClassExpression`) → return true
+    /// - Otherwise (object literal computed property) → keep walking
+    ///
+    /// This correctly handles nested cases like `class C { [{ [this.x]: 1 }[0]]() {} }`
+    /// where `this` is in an object-literal computed property that is itself inside a
+    /// class member's computed property.
+    pub(crate) fn is_this_in_class_member_computed_property_name(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CLASS_DECLARATION, CLASS_EXPRESSION, COMPUTED_PROPERTY_NAME,
+            CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION, GET_ACCESSOR,
+            METHOD_DECLARATION, SET_ACCESSOR,
+        };
+        let mut current = idx;
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            // Stop at all function boundaries (arrow functions ARE boundaries for `this`)
+            if parent_node.kind == FUNCTION_DECLARATION
+                || parent_node.kind == FUNCTION_EXPRESSION
+                || parent_node.kind == ARROW_FUNCTION
+                || parent_node.kind == METHOD_DECLARATION
+                || parent_node.kind == CONSTRUCTOR
+                || parent_node.kind == GET_ACCESSOR
+                || parent_node.kind == SET_ACCESSOR
+            {
+                return false;
+            }
+            if parent_node.kind == COMPUTED_PROPERTY_NAME {
+                // Check if this computed property's owner's parent is a class
+                if let Some(cpn_ext) = self.ctx.arena.get_extended(parent_idx) {
+                    let owner_idx = cpn_ext.parent; // MethodDeclaration, PropertyDeclaration, etc.
+                    if let Some(owner_ext) = self.ctx.arena.get_extended(owner_idx) {
+                        let class_idx = owner_ext.parent; // ClassDeclaration or ObjectLiteralExpression
+                        if let Some(class_node) = self.ctx.arena.get(class_idx) {
+                            if class_node.kind == CLASS_DECLARATION
+                                || class_node.kind == CLASS_EXPRESSION
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                // Not a class member computed property; keep walking to find an outer one
+            }
+            current = parent_idx;
+        }
+    }
+
+    /// Check if `super` is inside a computed property name in an illegal context (TS2466).
+    ///
+    /// Mirrors TSC's `getSuperContainer(node, stopOnFunctions=true)` skip semantics:
+    ///
+    /// When `getSuperContainer` encounters a `ComputedPropertyName`, it performs a
+    /// double-advance (skips to the CPN's parent, then advances again), meaning the
+    /// direct owner of the computed property name does NOT become the super container.
+    /// We simulate this by skipping to the CPN's parent when we encounter one and
+    /// continuing the walk from there.
+    ///
+    /// Legal super containers (reached without skipping through a CPN): methods,
+    /// constructors, accessors, static blocks. When found, `super` has a valid context
+    /// and we return `false` (not a 2466 error).
+    ///
+    /// Arrow function handling depends on whether `super` is a call:
+    /// - `super()` call: arrow functions ARE boundaries (become the container).
+    ///   If the arrow function is the container and we found a CPN → return true.
+    /// - `super.x` access: arrow functions are transparent (walked through).
+    ///
+    /// Correctly handles:
+    /// - `class C { [super.bar()]() {} }` → true (class member CPN, no legal container)
+    /// - `class C { foo() { var obj = { [super.bar()]() {} }; } }` → false
+    ///   (obj-lit CPN inside method `foo()` which IS a legal container)
+    /// - `class B { bar() { return class { [super.foo()]() {} } } }` → false
+    ///   (nested-class CPN; super's actual container is outer `bar()`)
+    /// - `class C { [{ [super.bar()]: 1 }[0]]() {} }` → true
+    ///   (inner obj-lit CPN nested inside outer class-member CPN; no legal container)
+    /// - `ctor() { super(); () => { var obj = { [(super(), "prop")]() {} } } }` → true
+    ///   (super() call; arrow fn is boundary; CPN found before boundary)
+    pub(crate) fn is_super_in_computed_property_name(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext::{
+            ARROW_FUNCTION, CALL_EXPRESSION, CLASS_STATIC_BLOCK_DECLARATION,
+            COMPUTED_PROPERTY_NAME, CONSTRUCTOR, FUNCTION_DECLARATION, FUNCTION_EXPRESSION,
+            GET_ACCESSOR, METHOD_DECLARATION, PROPERTY_DECLARATION, SET_ACCESSOR,
+        };
+
+        // Determine whether this `super` is used as a call (`super()`).
+        // For super() calls, TSC does not walk through arrow functions when searching
+        // for the super container. For super property accesses, arrow functions are
+        // transparent (walked through to find the outer container).
+        let is_super_call = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .and_then(|ext| self.ctx.arena.get(ext.parent).map(|n| (ext.parent, n.kind)))
+            .is_some_and(|(parent_idx, parent_kind)| {
+                if parent_kind != CALL_EXPRESSION {
+                    return false;
+                }
+                // `super` must be the callee of the call expression
+                self.ctx
+                    .arena
+                    .get_call_expr(self.ctx.arena.get(parent_idx).unwrap())
+                    .is_some_and(|call| call.expression == idx)
+            });
+
+        let mut current = idx;
+        let mut found_computed_property = false;
+
+        loop {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                // Walked off the top of the tree.
+                return found_computed_property;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return found_computed_property;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return found_computed_property;
+            };
+
+            if parent_node.kind == COMPUTED_PROPERTY_NAME {
+                // TSC's getSuperContainer skips ComputedPropertyName by advancing to
+                // CPN.parent (the member owner), then the loop advances once more to
+                // the member owner's parent. We simulate this: mark that we've found
+                // a CPN, then jump to CPN.parent so the next iteration processes
+                // CPN.parent.parent.
+                found_computed_property = true;
+                let Some(cpn_ext) = self.ctx.arena.get_extended(parent_idx) else {
+                    return found_computed_property;
+                };
+                let cpn_owner = cpn_ext.parent;
+                if cpn_owner.is_none() {
+                    return found_computed_property;
+                }
+                current = cpn_owner;
+                continue;
+            }
+
+            // Arrow functions:
+            // - For super() calls (isCallExpression=true in TSC): ArrowFunction stops
+            //   the getSuperContainer walk and becomes the immediate container. Since
+            //   ArrowFunction is never a legal super container (isLegalUsageOfSuperExpression
+            //   returns false for it), if we've seen a CPN by now we return true.
+            // - For super property accesses: arrow functions are transparent; TSC's
+            //   post-container while loop continues through them.
+            if parent_node.kind == ARROW_FUNCTION {
+                if is_super_call {
+                    // Arrow function is the container for this super() call.
+                    // isLegalUsageOfSuperExpression(ArrowFunction) = false, so if we
+                    // found a CPN between super and this arrow fn, emit TS2466.
+                    return found_computed_property;
+                }
+                // Not a call: transparent, keep walking.
+                current = parent_idx;
+                continue;
+            }
+
+            // Regular function boundaries (stopOnFunctions=true): these become the
+            // container. They are not legal super-property-access containers (their
+            // parent is not class-like), but this is a different error — not TS2466.
+            if parent_node.kind == FUNCTION_DECLARATION || parent_node.kind == FUNCTION_EXPRESSION
+            {
+                return false;
+            }
+
+            // Legal super container kinds. When reached directly (not via a CPN skip),
+            // super is inside a valid class member body and TS2466 does not apply.
+            if parent_node.kind == METHOD_DECLARATION
+                || parent_node.kind == CONSTRUCTOR
+                || parent_node.kind == GET_ACCESSOR
+                || parent_node.kind == SET_ACCESSOR
+                || parent_node.kind == CLASS_STATIC_BLOCK_DECLARATION
+                || parent_node.kind == PROPERTY_DECLARATION
+            {
+                return false;
+            }
+
+            current = parent_idx;
+        }
+    }
+
     // =========================================================================
     // Heritage Clause Enclosure
     // =========================================================================
