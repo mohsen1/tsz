@@ -748,6 +748,38 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
 
+            // TS1235: A namespace declaration is only allowed at the top level of a namespace or module.
+            // This applies to non-string-named module/namespace declarations that are inside labeled statements
+            // or other non-module constructs.
+            if !is_string_named {
+                // Check if the parent is a valid context (SourceFile or ModuleBlock)
+                let is_valid_context = if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
+                    let parent = ext.parent;
+                    if parent.is_none() {
+                        true // Top level is valid
+                    } else if let Some(parent_node) = self.ctx.arena.get(parent) {
+                        // Valid parents: SourceFile, ModuleBlock
+                        parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                            || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                };
+
+                if !is_valid_context {
+                    if let Some(name_node) = self.ctx.arena.get(module.name) {
+                        self.ctx.error(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            diagnostic_messages::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL.to_string(),
+                            diagnostic_codes::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL,
+                        );
+                    }
+                }
+            }
+
             // TS5061: Check for relative module names in ambient declarations
             // declare module "./foo" { } -> Error (only in script/non-module files)
             // In module files, `declare module "./foo"` is a module augmentation, not
