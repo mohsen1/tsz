@@ -849,6 +849,13 @@ impl ScannerState {
                         }
                         if !comment_closed {
                             self.token_flags |= TokenFlags::Unterminated as u32;
+                            // TS1010: "'*/' expected."
+                            self.scanner_diagnostics.push(ScannerDiagnostic {
+                                pos: self.pos,
+                                length: 0,
+                                message: "'*/' expected.",
+                                code: 1010,
+                            });
                         }
                         if self.skip_trivia {
                             continue;
