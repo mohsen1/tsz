@@ -283,25 +283,28 @@ impl<'a> CheckerState<'a> {
 
         // Parenthesized expressions inherit freshness from inner expression
         if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node) {
-                return self.is_fresh_literal_expression(paren.expression);
-            }
+            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
+        {
+            return self.is_fresh_literal_expression(paren.expression);
+        }
 
         // Prefix unary (+/-) on numeric/bigint literals are fresh
         if kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
-            && let Some(prefix) = self.ctx.arena.get_unary_expr(node) {
-                let op = prefix.operator;
-                if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
-                    return self.is_fresh_literal_expression(prefix.operand);
-                }
+            && let Some(prefix) = self.ctx.arena.get_unary_expr(node)
+        {
+            let op = prefix.operator;
+            if op == SyntaxKind::PlusToken as u16 || op == SyntaxKind::MinusToken as u16 {
+                return self.is_fresh_literal_expression(prefix.operand);
             }
+        }
 
         // Conditional expressions: fresh if both branches produce fresh types
         if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-            && let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
-                return self.is_fresh_literal_expression(cond.when_true)
-                    && self.is_fresh_literal_expression(cond.when_false);
-            }
+            && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
+        {
+            return self.is_fresh_literal_expression(cond.when_true)
+                && self.is_fresh_literal_expression(cond.when_false);
+        }
 
         // Object and array literals need widening (property types get widened)
         if kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
