@@ -539,8 +539,12 @@ impl<'a> FlowAnalyzer<'a> {
         let expr = self.skip_parens_and_assertions(expr);
         let sym_id = self.binder.resolve_identifier(self.arena, expr)?;
         let symbol = self.binder.get_symbol(sym_id)?;
+        let symbol_ref = tsz_solver::SymbolRef(sym_id.0);
         if (symbol.flags & symbol_flags::CLASS) != 0 {
-            return Some(self.interner.reference(tsz_solver::SymbolRef(sym_id.0)));
+            return Some(
+                self.resolve_symbol_to_lazy(symbol_ref)
+                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
+            );
         }
 
         // Global constructor variables (e.g., `declare var Array: ArrayConstructor`)
@@ -550,7 +554,10 @@ impl<'a> FlowAnalyzer<'a> {
         if (symbol.flags & symbol_flags::INTERFACE) != 0
             && (symbol.flags & symbol_flags::VARIABLE) != 0
         {
-            return Some(self.interner.reference(tsz_solver::SymbolRef(sym_id.0)));
+            return Some(
+                self.resolve_symbol_to_lazy(symbol_ref)
+                    .unwrap_or_else(|| self.interner.reference(symbol_ref)),
+            );
         }
 
         None
