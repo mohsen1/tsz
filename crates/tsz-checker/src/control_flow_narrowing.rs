@@ -853,7 +853,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// For a const-declared identifier that is a destructuring alias,
-    /// return the (base_initializer, property_name).
+    /// return the (`base_initializer`, `property_name`).
     ///
     /// Example: `const { type: alias } = obj` → `(obj, "type")`
     ///
@@ -1092,11 +1092,10 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         // Case 2: Destructuring alias `const { prop: alias } = target`
-        if let Some((base, prop_name)) = self.binding_element_property_alias(alias_node) {
-            if self.is_matching_reference(base, target) {
+        if let Some((base, prop_name)) = self.binding_element_property_alias(alias_node)
+            && self.is_matching_reference(base, target) {
                 return Some((vec![prop_name], literal, false, target));
             }
-        }
 
         None
     }

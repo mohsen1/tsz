@@ -73,6 +73,7 @@ pub mod state_checking;
 mod state_checking_members;
 mod state_property_checking;
 pub mod state_type_analysis;
+mod state_type_analysis_computed;
 pub mod state_type_environment;
 pub mod state_type_resolution;
 mod state_variable_checking;

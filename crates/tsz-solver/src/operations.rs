@@ -3888,14 +3888,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // report TS2345 (the inner type error) instead of TS2769. This matches tsc's
         // "best candidate" behavior: when one overload clearly matches by arity but
         // fails on types, that overload's type error is surfaced directly.
-        if !has_non_count_non_type_failure && type_mismatch_count == 1
-            && let Some((index, expected, actual)) = sole_type_mismatch {
-                return CallResult::ArgumentTypeMismatch {
-                    index,
-                    expected,
-                    actual,
-                };
-            }
+        if !has_non_count_non_type_failure
+            && type_mismatch_count == 1
+            && let Some((index, expected, actual)) = sole_type_mismatch
+        {
+            return CallResult::ArgumentTypeMismatch {
+                index,
+                expected,
+                actual,
+            };
+        }
 
         // If we got here, no signature matched
         CallResult::NoOverloadMatch {
@@ -4083,14 +4085,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // Same "best candidate" heuristic as resolve_callable_call.
-        if !has_non_count_non_type_failure && type_mismatch_count == 1
-            && let Some((index, expected, actual)) = sole_type_mismatch {
-                return CallResult::ArgumentTypeMismatch {
-                    index,
-                    expected,
-                    actual,
-                };
-            }
+        if !has_non_count_non_type_failure
+            && type_mismatch_count == 1
+            && let Some((index, expected, actual)) = sole_type_mismatch
+        {
+            return CallResult::ArgumentTypeMismatch {
+                index,
+                expected,
+                actual,
+            };
+        }
 
         CallResult::NoOverloadMatch {
             func_type: self.interner.callable(shape.clone()),
