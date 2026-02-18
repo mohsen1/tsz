@@ -424,30 +424,28 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // In parse-recovery inside class bodies, contextual modifier keywords
-        // can appear as pseudo-identifiers (e.g. `static f = 3` in a ctor).
-        // Suppress TS2304 for those to avoid cascades after the primary syntax error.
-        // Exception: computed property name expressions like `[public]` — tsc emits
-        // TS2304 for these even in class/object-literal contexts with parse errors.
-        // But NOT in enum contexts — tsc only emits TS1164 for enum computed names.
-        let is_in_computed_property = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .and_then(|ext| {
-                let parent = self.ctx.arena.get(ext.parent)?;
-                if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    return None;
-                }
-                // Exclude enum member context — tsc doesn't emit TS2304 for enum computed names
-                let gp_ext = self.ctx.arena.get_extended(ext.parent)?;
-                let gp = self.ctx.arena.get(gp_ext.parent)?;
-                if gp.kind == syntax_kind_ext::ENUM_MEMBER {
-                    return None;
-                }
-                Some(true)
-            })
-            .is_some();
+        // Detect computed property name context: class/object vs enum.
+        // tsc emits TS2304 for computed property expressions in class/object-literal
+        // contexts, but NOT in enum contexts (only TS1164 is emitted for enum computed names).
+        let computed_ctx = self.ctx.arena.get_extended(idx).and_then(|ext| {
+            let parent = self.ctx.arena.get(ext.parent)?;
+            if parent.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                return None;
+            }
+            let gp_ext = self.ctx.arena.get_extended(ext.parent)?;
+            let gp = self.ctx.arena.get(gp_ext.parent)?;
+            if gp.kind == syntax_kind_ext::ENUM_MEMBER {
+                Some(false) // enum context: suppress TS2304/TS2552
+            } else {
+                Some(true) // class/object context: allow TS2304
+            }
+        });
+        // Suppress TS2304/TS2552 for identifiers inside enum computed property names.
+        // tsc only emits TS1164 for these and doesn't resolve the expressions.
+        if computed_ctx == Some(false) {
+            return;
+        }
+        let is_in_computed_property = computed_ctx == Some(true);
         // When there are parse errors, modifier keywords appearing as identifiers
         // are parser-recovery artifacts. Suppress TS2304 for these to avoid cascades.
         // Exception: computed property name expressions like `[public]` — tsc emits
