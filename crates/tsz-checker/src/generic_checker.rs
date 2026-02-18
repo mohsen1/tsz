@@ -121,6 +121,12 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                // Skip constraint checking when the type argument is an error type
+                // (avoids cascading errors from unresolved references)
+                if type_arg == TypeId::ERROR {
+                    continue;
+                }
+
                 // Skip constraint checking when the type argument contains unresolved type parameters
                 // (they'll be checked later when fully instantiated)
                 if query::contains_type_parameters(self.ctx.types, type_arg) {
@@ -226,6 +232,12 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                // Skip constraint checking when the type argument is an error type
+                // (avoids cascading errors from unresolved references)
+                if type_arg == TypeId::ERROR {
+                    continue;
+                }
+
                 // Skip validation when type arguments contain unresolved type parameters
                 // or infer types. TypeScript defers constraint checking when args aren't
                 // fully concrete (e.g., indexed access `T[K]`, conditional types, etc.)
@@ -306,6 +318,12 @@ impl<'a> CheckerState<'a> {
 
         for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
             if let Some(constraint) = param.constraint {
+                // Skip constraint checking when the type argument is an error type
+                // (avoids cascading errors from unresolved references)
+                if type_arg == TypeId::ERROR {
+                    continue;
+                }
+
                 // Skip constraint checking when the type argument contains unresolved type parameters
                 // (they'll be checked later when fully instantiated)
                 if query::contains_type_parameters(self.ctx.types, type_arg) {

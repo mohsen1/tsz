@@ -423,8 +423,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         .is_some()
                 {
                     // TS2683: 'this' implicitly has type 'any'
-                    // Suppressed in JS files: tsc infers `this` types for JS functions
-                    // from constructor patterns (this.x = ...) and prototype assignments.
+                    // Suppressed in JS files: tsc infers `this` for constructor/prototype
+                    // patterns and JSDoc-typed functions.
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.checker.error_at_node(
                         idx,
