@@ -366,10 +366,9 @@ impl<'a> CheckerState<'a> {
                             {
                                 let props_name = self.format_type(props_type);
                                 let message = format!(
-                                    "Type '{{{}}}' is not assignable to type '{}'.\n  \
+                                    "Type '{{{attr_name}}}' is not assignable to type '{props_name}'.\n  \
                                      Object literal may only specify known properties, \
-                                     and '{}' does not exist in type '{}'.",
-                                    attr_name, props_name, attr_name, props_name
+                                     and '{attr_name}' does not exist in type '{props_name}'."
                                 );
                                 use crate::diagnostics::diagnostic_codes;
                                 self.error_at_node(
@@ -473,8 +472,7 @@ impl<'a> CheckerState<'a> {
             };
             let target_type = self.format_type(props_type);
             let message = format!(
-                "Property '{}' is missing in type '{}' but required in type '{}'.",
-                prop_name, source_type, target_type
+                "Property '{prop_name}' is missing in type '{source_type}' but required in type '{target_type}'."
             );
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(

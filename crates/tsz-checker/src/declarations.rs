@@ -51,6 +51,31 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         false
     }
 
+    /// Check if a node (class or function declaration) has the `declare` keyword modifier.
+    fn node_has_declare_modifier(
+        &self,
+        _node_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let modifiers = if let Some(class) = self.ctx.arena.get_class(node) {
+            &class.modifiers
+        } else if let Some(func) = self.ctx.arena.get_function(node) {
+            &func.modifiers
+        } else {
+            return false;
+        };
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
+                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Check a declaration node.
     ///
     /// This dispatches to specialized handlers based on declaration kind.
@@ -1644,9 +1669,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 continue;
             }
 
-            // Check if the declaration is ambient
-            let is_ambient = (decl_node.flags as u32) & node_flags::AMBIENT != 0;
-            if is_ambient {
+            // Check if the declaration is ambient (node_flags::AMBIENT for nested context,
+            // or `declare` keyword modifier for top-level `declare class`/`declare function`)
+            if (decl_node.flags as u32) & node_flags::AMBIENT != 0 {
+                continue;
+            }
+            if self.node_has_declare_modifier(decl_idx, decl_node) {
                 continue;
             }
 
