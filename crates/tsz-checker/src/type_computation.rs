@@ -2170,9 +2170,19 @@ impl<'a> CheckerState<'a> {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             result_type = match result {
-                PropertyAccessResult::Success { type_id, .. } => {
+                PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } => {
                     use_index_signature_check = false;
-                    Some(type_id)
+                    // In write context (assignment target), prefer the setter type.
+                    let effective = if self.ctx.skip_flow_narrowing {
+                        write_type.unwrap_or(type_id)
+                    } else {
+                        type_id
+                    };
+                    Some(effective)
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     use_index_signature_check = false;
@@ -2286,9 +2296,19 @@ impl<'a> CheckerState<'a> {
             let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
             let result = self.resolve_property_access_with_env(resolved_type, &property_name);
             result_type = match result {
-                PropertyAccessResult::Success { type_id, .. } => {
+                PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } => {
                     use_index_signature_check = false;
-                    Some(type_id)
+                    // In write context (assignment target), prefer the setter type.
+                    let effective = if self.ctx.skip_flow_narrowing {
+                        write_type.unwrap_or(type_id)
+                    } else {
+                        type_id
+                    };
+                    Some(effective)
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
                     use_index_signature_check = false;
