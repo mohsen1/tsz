@@ -354,34 +354,35 @@ impl<'a> CheckerState<'a> {
 
                 // Get expected type from props
                 use tsz_solver::operations_property::PropertyAccessResult;
-                let expected_type =
-                    match self.resolve_property_access_with_env(props_type, &attr_name) {
-                        PropertyAccessResult::Success { type_id, .. } => type_id,
-                        PropertyAccessResult::PropertyNotFound { .. } => {
-                            // Excess property: attribute doesn't exist in props type
-                            // Skip if props has a string index signature or if attr starts with "data-" or "aria-"
-                            if !has_string_index
-                                && !attr_name.starts_with("data-")
-                                && !attr_name.starts_with("aria-")
-                            {
-                                let props_name = self.format_type(props_type);
-                                let message = format!(
-                                    "Type '{{{attr_name}}}' is not assignable to type '{props_name}'.\n  \
+                let expected_type = match self
+                    .resolve_property_access_with_env(props_type, &attr_name)
+                {
+                    PropertyAccessResult::Success { type_id, .. } => type_id,
+                    PropertyAccessResult::PropertyNotFound { .. } => {
+                        // Excess property: attribute doesn't exist in props type
+                        // Skip if props has a string index signature or if attr starts with "data-" or "aria-"
+                        if !has_string_index
+                            && !attr_name.starts_with("data-")
+                            && !attr_name.starts_with("aria-")
+                        {
+                            let props_name = self.format_type(props_type);
+                            let message = format!(
+                                "Type '{{{attr_name}}}' is not assignable to type '{props_name}'.\n  \
                                      Object literal may only specify known properties, \
                                      and '{attr_name}' does not exist in type '{props_name}'."
-                                );
-                                use crate::diagnostics::diagnostic_codes;
-                                self.error_at_node(
-                                    attr_idx,
-                                    &message,
-                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                );
-                                has_excess_property_error = true;
-                            }
-                            continue;
+                            );
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node(
+                                attr_idx,
+                                &message,
+                                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                            );
+                            has_excess_property_error = true;
                         }
-                        _ => continue,
-                    };
+                        continue;
+                    }
+                    _ => continue,
+                };
 
                 // Get actual type of the attribute value
                 if attr_data.initializer.is_none() {
