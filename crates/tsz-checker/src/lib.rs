@@ -100,6 +100,7 @@ mod type_checking_global;
 mod type_checking_queries;
 mod type_checking_queries_class;
 mod type_checking_queries_lib;
+mod type_checking_unused;
 mod type_checking_utilities;
 mod type_checking_utilities_jsdoc;
 pub mod type_computation;
