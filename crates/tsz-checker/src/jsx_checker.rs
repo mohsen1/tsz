@@ -195,7 +195,9 @@ impl<'a> CheckerState<'a> {
     /// Check JSX attributes against the expected props type.
     ///
     /// For each attribute, checks that the assigned value is assignable to the
-    /// expected property type from the props interface. Emits TS2322 for mismatches.
+    /// expected property type from the props interface. Emits:
+    /// - TS2322 for type mismatches and excess properties
+    /// - TS2741 for missing required properties
     pub(crate) fn check_jsx_attributes_against_props(
         &mut self,
         attributes_idx: NodeIndex,
@@ -222,6 +224,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Check if the props type has a string index signature (e.g., [s: string]: any).
+        // When it does, any attribute name is valid, so skip excess property checking.
+        let has_string_index =
+            tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+                .is_some_and(|shape| shape.string_index.is_some());
+
+        // Track provided attribute names for missing-required-property check
+        let mut provided_attrs: Vec<String> = Vec::new();
+        let mut has_spread = false;
+        let mut has_excess_property_error = false;
+
         // Check each attribute
         for &attr_idx in &attrs.properties.nodes {
             let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
@@ -244,12 +257,37 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                provided_attrs.push(attr_name.clone());
+
                 // Get expected type from props
                 use tsz_solver::operations_property::PropertyAccessResult;
                 let expected_type =
                     match self.resolve_property_access_with_env(props_type, &attr_name) {
                         PropertyAccessResult::Success { type_id, .. } => type_id,
-                        // Property doesn't exist in props - this is handled elsewhere (excess property check)
+                        PropertyAccessResult::PropertyNotFound { .. } => {
+                            // Excess property: attribute doesn't exist in props type
+                            // Skip if props has a string index signature or if attr starts with "data-" or "aria-"
+                            if !has_string_index
+                                && !attr_name.starts_with("data-")
+                                && !attr_name.starts_with("aria-")
+                            {
+                                let props_name = self.format_type(props_type);
+                                let message = format!(
+                                    "Type '{{{}}}' is not assignable to type '{}'.\n  \
+                                     Object literal may only specify known properties, \
+                                     and '{}' does not exist in type '{}'.",
+                                    attr_name, props_name, attr_name, props_name
+                                );
+                                use crate::diagnostics::diagnostic_codes;
+                                self.error_at_node(
+                                    attr_idx,
+                                    &message,
+                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                                );
+                                has_excess_property_error = true;
+                            }
+                            continue;
+                        }
                         _ => continue,
                     };
 
@@ -285,18 +323,14 @@ impl<'a> CheckerState<'a> {
                     self.check_assignable_or_report(actual_type, expected_type, value_node_idx);
                 }
             } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
+                has_spread = true;
                 // Spread attribute: {...obj}
-                // Check that all properties of the spread object are assignable
                 let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
                     continue;
                 };
 
                 let spread_type = self.compute_type_of_node(spread_data.expression);
 
-                // For spread attributes, we need to check that each property in the spread
-                // is assignable to the corresponding property in props.
-                // This is more complex and may require iterating over the spread type's properties.
-                // For now, we do a simpler check: the spread type should be assignable to the props type.
                 if spread_type != TypeId::ANY && spread_type != TypeId::ERROR {
                     self.check_assignable_or_report(
                         spread_type,
@@ -305,6 +339,56 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+        }
+
+        // Check for missing required properties (TS2741)
+        // Skip if there's a spread attribute (spread may provide the missing props)
+        // Skip if we already reported excess property errors (tsc doesn't pile on with TS2741)
+        if !has_spread && !has_excess_property_error {
+            self.check_missing_required_jsx_props(props_type, &provided_attrs, attributes_idx);
+        }
+    }
+
+    /// Check that all required properties in the props type are provided as JSX attributes.
+    /// Emits TS2741 for each missing required property.
+    fn check_missing_required_jsx_props(
+        &mut self,
+        props_type: TypeId,
+        provided_attrs: &[String],
+        attributes_idx: NodeIndex,
+    ) {
+        let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, props_type)
+        else {
+            return;
+        };
+
+        for prop in &shape.properties {
+            if prop.optional {
+                continue;
+            }
+
+            let prop_name = self.ctx.types.resolve_atom(prop.name);
+            if provided_attrs.iter().any(|a| a == &prop_name) {
+                continue;
+            }
+
+            // Build the "source type" name from provided attributes
+            let source_type = if provided_attrs.is_empty() {
+                "{}".to_string()
+            } else {
+                format!("{{ {} }}", provided_attrs.join(", "))
+            };
+            let target_type = self.format_type(props_type);
+            let message = format!(
+                "Property '{}' is missing in type '{}' but required in type '{}'.",
+                prop_name, source_type, target_type
+            );
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                attributes_idx,
+                &message,
+                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+            );
         }
     }
 }
