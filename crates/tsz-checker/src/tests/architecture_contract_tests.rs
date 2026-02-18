@@ -200,8 +200,13 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "type_literal_checker should use solver readonly constructor APIs, not TypeData::ReadonlyType"
     );
 
-    let type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
+    let mut type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
         .expect("failed to read src/state_type_resolution.rs for architecture guard");
+    // Include split-off module that is part of the state_type_resolution logical module
+    type_resolution_src.push_str(
+        &fs::read_to_string("src/state_type_resolution_module.rs")
+            .expect("failed to read src/state_type_resolution_module.rs"),
+    );
     assert!(
         !type_resolution_src.contains("TypeData::ReadonlyType"),
         "state_type_resolution should use solver readonly constructor APIs, not TypeData::ReadonlyType"
@@ -513,8 +518,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "parameter initializer assignability should route through check_assignable_or_report"
     );
 
-    let state_type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
+    let mut state_type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
         .expect("failed to read src/state_type_resolution.rs for architecture guard");
+    // Include split-off module that is part of the state_type_resolution logical module
+    state_type_resolution_src.push_str(
+        &fs::read_to_string("src/state_type_resolution_module.rs")
+            .expect("failed to read src/state_type_resolution_module.rs"),
+    );
     assert!(
         state_type_resolution_src.contains("ensure_relation_input_ready("),
         "state_type_resolution relation precondition setup should route through ensure_relation_input_ready"
