@@ -443,13 +443,13 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            // Skip static blocks that need lowering to IIFEs after the class.
-            // Don't skip comments — they'll be emitted when the block body is emitted.
+            // Skip static blocks that need lowering to IIFEs after the class
             if needs_static_block_lowering
                 && let Some(member_node) = self.arena.get(member_idx)
                 && member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 deferred_static_blocks.push(member_idx);
+                self.skip_comments_for_erased_node(member_node);
                 continue;
             }
 
