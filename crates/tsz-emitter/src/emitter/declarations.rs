@@ -321,12 +321,16 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
 
-        // Check if we need to lower class fields to constructor (for targets < ES2022)
-        let needs_class_field_lowering =
-            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
+        // Check if we need to lower class fields to constructor.
+        // This is needed when target < ES2022 OR when useDefineForClassFields is false
+        // (legacy behavior where fields are assigned in the constructor).
+        let needs_class_field_lowering = (self.ctx.options.target as u32)
+            < (ScriptTarget::ES2022 as u32)
+            || !self.ctx.options.use_define_for_class_fields;
 
         // Check if we need to lower static blocks to IIFEs (for targets < ES2022)
-        let needs_static_block_lowering = needs_class_field_lowering;
+        let needs_static_block_lowering =
+            (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         let mut deferred_static_blocks: Vec<NodeIndex> = Vec::new();
 
         // Collect property initializers that need lowering

@@ -3541,6 +3541,10 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if let Some(use_define_for_class_fields) = args.use_define_for_class_fields {
         options.printer.use_define_for_class_fields = use_define_for_class_fields;
+    } else {
+        // Default: true for target >= ES2022, false otherwise (matches tsc behavior)
+        options.printer.use_define_for_class_fields =
+            (options.printer.target as u32) >= (tsz::emitter::ScriptTarget::ES2022 as u32);
     }
     if args.rewrite_relative_import_extensions {
         options.rewrite_relative_import_extensions = true;
