@@ -186,7 +186,14 @@ build_runner() {
     fi
 
     if ! resolve_tsc_binary; then
-        if [[ -f "$SCRIPT_DIR/package.json" || -f "$SCRIPT_DIR/package-lock.json" ]]; then
+        if [[ -f "$scripts_dir/package.json" || -f "$scripts_dir/package-lock.json" ]]; then
+            log_step "Trying scripts package dependencies fallback..."
+            if [[ ! -d "$scripts_dir/node_modules" ]]; then
+                log_step "Installing scripts package dependencies..."
+                (cd "$scripts_dir" && npm install --include=dev --no-fund --no-audit)
+            fi
+            resolve_tsc_binary || true
+        elif [[ -f "$SCRIPT_DIR/package.json" || -f "$SCRIPT_DIR/package-lock.json" ]]; then
             log_step "Trying emitter-local dependencies fallback..."
             if [[ ! -d "$SCRIPT_DIR/node_modules" ]]; then
                 log_step "Installing emitter-local dependencies..."
