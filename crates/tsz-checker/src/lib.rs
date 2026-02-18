@@ -91,6 +91,7 @@ mod type_checking_queries_lib;
 mod type_checking_utilities;
 mod type_checking_utilities_jsdoc;
 pub mod type_computation;
+mod type_computation_access;
 mod type_computation_complex;
 pub mod type_literal_checker;
 pub mod type_node;
