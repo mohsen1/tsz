@@ -6166,7 +6166,6 @@ const value = 1;
     );
 }
 
-
 #[test]
 fn compile_binary_file_reports_errors() {
     let temp = TempDir::new().expect("temp dir");
@@ -6190,8 +6189,16 @@ fn compile_binary_file_reports_errors() {
     let result = compile(&args, base).expect("compile should succeed");
 
     let has_ts1490 = result.diagnostics.iter().any(|d| d.code == 1490);
-    assert!(has_ts1490, "Expected TS1490 (File appears to be binary). Diagnostics: {:?}", result.diagnostics);
+    assert!(
+        has_ts1490,
+        "Expected TS1490 (File appears to be binary). Diagnostics: {:?}",
+        result.diagnostics
+    );
 
     let has_other_errors = result.diagnostics.iter().any(|d| d.code != 1490);
-    assert!(has_other_errors, "Expected other errors (e.g. TS1127) indicating the file was parsed. Diagnostics: {:?}", result.diagnostics);
+    assert!(
+        has_other_errors,
+        "Expected other errors (e.g. TS1127) indicating the file was parsed. Diagnostics: {:?}",
+        result.diagnostics
+    );
 }
