@@ -2639,10 +2639,15 @@ pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_n
             property_is_readonly(interner, resolved, prop_name)
         }
         Some(TypeData::ReadonlyType(inner)) => {
-            if let Some(TypeData::Array(_) | TypeData::Tuple(_)) = interner.lookup(inner)
-                && is_numeric_index_name(prop_name)
-            {
-                return true;
+            if let Some(TypeData::Array(_) | TypeData::Tuple(_)) = interner.lookup(inner) {
+                // Numeric indices are readonly on readonly arrays/tuples
+                if is_numeric_index_name(prop_name) {
+                    return true;
+                }
+                // The 'length' property is also readonly on readonly arrays/tuples
+                if prop_name == "length" {
+                    return true;
+                }
             }
             property_is_readonly(interner, inner, prop_name)
         }
