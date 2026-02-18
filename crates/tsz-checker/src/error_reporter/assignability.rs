@@ -717,7 +717,7 @@ impl<'a> CheckerState<'a> {
                 let source_str = self.format_type_for_assignability_message(source);
                 let target_str = self.format_type_for_assignability_message(target);
                 let message = format_message(
-                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    diagnostic_messages::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                     &[&source_str, &target_str],
                 );
                 Diagnostic::error(
@@ -725,7 +725,7 @@ impl<'a> CheckerState<'a> {
                     start,
                     length,
                     message,
-                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    diagnostic_codes::TYPE_HAS_NO_PROPERTIES_IN_COMMON_WITH_TYPE,
                 )
             }
 
