@@ -654,7 +654,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // In ES5 mode (without downlevelIteration), array destructuring requires actual arrays.
-        // Emit TS2461 if the type is not an array type.
+        // - Emit TS2802 if the type has Symbol.iterator (iterable but requires ES2015/downlevelIteration).
+        // - Emit TS2461 if the type is not an array type.
         if self.ctx.compiler_options.target.is_es5() && !is_assignment_array_target {
             // Nested binding patterns can be fed an over-widened union from positional
             // destructuring inference (e.g. `[a, [b]] = [1, ["x"]]`). tsc does not report
@@ -680,14 +681,31 @@ impl<'a> CheckerState<'a> {
             };
             if let Some((start, end)) = self.get_node_span(error_idx) {
                 let type_str = self.format_type(pattern_type);
-                let message =
-                    format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
-                self.error(
-                    start,
-                    end.saturating_sub(start),
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                );
+                // Check if the type has Symbol.iterator (iterable but not usable in ES5
+                // without downlevelIteration). These emit TS2802 instead of TS2461.
+                if self.is_iterable_type(resolved_type) {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                    );
+                }
             }
             return false;
         }
