@@ -515,8 +515,17 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_type_resolution relation precondition setup should route through ensure_relation_input_ready"
     );
 
-    let state_checking_src = fs::read_to_string("src/state_checking.rs")
+    let mut state_checking_src = fs::read_to_string("src/state_checking.rs")
         .expect("failed to read src/state_checking.rs for architecture guard");
+    // Include split-off modules that are part of the state_checking logical module
+    state_checking_src.push_str(
+        &fs::read_to_string("src/state_variable_checking.rs")
+            .expect("failed to read src/state_variable_checking.rs for architecture guard"),
+    );
+    state_checking_src.push_str(
+        &fs::read_to_string("src/state_property_checking.rs")
+            .expect("failed to read src/state_property_checking.rs for architecture guard"),
+    );
     assert!(
         state_checking_src.contains("check_assignable_or_report(")
             || state_checking_src.contains("check_assignable_or_report_at("),
