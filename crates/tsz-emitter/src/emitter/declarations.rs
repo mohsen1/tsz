@@ -604,11 +604,29 @@ impl<'a> Printer<'a> {
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 emitted_any_member = true;
                 // Emit trailing comments on the same line as the member.
-                // node.end includes trailing trivia (comments), so we scan backward
-                // to find the actual end of the last token, then scan forward for comments.
+                // For property declarations, member_node.end can include the leading trivia
+                // of the next member (because the parser records token_end() = scanner.pos
+                // which is after the lookahead token). Use the AST initializer/name end
+                // to get the true end of the property's last token.
                 if let Some(member_node) = self.arena.get(member_idx) {
-                    let token_end =
-                        self.find_token_end_before_trivia(member_node.pos, member_node.end);
+                    let token_end = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                        // For property declarations, compute token end from the last AST node
+                        // to avoid scanning into the next member's line.
+                        if let Some(prop) = self.arena.get_property_decl(member_node) {
+                            let last_node_end = if !prop.initializer.is_none() {
+                                self.arena.get(prop.initializer).map(|n| n.end)
+                            } else {
+                                self.arena.get(prop.name).map(|n| n.end)
+                            };
+                            last_node_end.unwrap_or_else(|| {
+                                self.find_token_end_before_trivia(member_node.pos, member_node.end)
+                            })
+                        } else {
+                            self.find_token_end_before_trivia(member_node.pos, member_node.end)
+                        }
+                    } else {
+                        self.find_token_end_before_trivia(member_node.pos, member_node.end)
+                    };
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
