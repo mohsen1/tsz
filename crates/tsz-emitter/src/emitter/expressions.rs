@@ -1378,6 +1378,24 @@ impl<'a> Printer<'a> {
         }
 
         // ES5 computed/spread lowering is handled via TransformDirective::ES5ObjectLiteral.
+        // For ES2015-ES2017 targets, object spread must be lowered to Object.assign().
+        // (ES2018+ supports native object spread syntax.)
+        {
+            use super::ScriptTarget;
+            let has_spread = obj.elements.nodes.iter().any(|&idx| {
+                self.arena
+                    .get(idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+            });
+            let target_num = self.ctx.options.target as u32;
+            let es2018_num = ScriptTarget::ES2018 as u32;
+            if has_spread && target_num < es2018_num {
+                // Target is ES2015/ES2016/ES2017: lower to Object.assign()
+                let elems: Vec<NodeIndex> = obj.elements.nodes.to_vec();
+                self.emit_object_literal_with_object_assign(&elems);
+                return;
+            }
+        }
 
         // Check if source had a trailing comma after the last element
         let has_trailing_comma = self.has_trailing_comma_in_source(node, &obj.elements.nodes);
@@ -1677,5 +1695,105 @@ impl<'a> Printer<'a> {
     fn node_text_contains_newline(&self, start: usize, end: usize) -> bool {
         self.source_text
             .is_some_and(|text| start < end && end <= text.len() && text[start..end].contains('\n'))
+    }
+
+    /// Emit object literal with spread elements as Object.assign() for pre-ES2018 targets.
+    ///
+    /// TypeScript's object spread lowering for ES2015-ES2017:
+    /// - `{ ...a }` → `Object.assign({}, a)`
+    /// - `{ x: 1, ...a }` → `Object.assign({ x: 1 }, a)`
+    /// - `{ ...a, x: 1 }` → `Object.assign(Object.assign({}, a), { x: 1 })`
+    /// - `{ ...a, x: 1, ...b }` → `Object.assign(Object.assign(Object.assign({}, a), { x: 1 }), b)`
+    ///
+    /// The pattern left-folds: each spread/segment adds one more `Object.assign` wrapping.
+    fn emit_object_literal_with_object_assign(&mut self, elements: &[NodeIndex]) {
+        // Segment elements into alternating spans of regular props and spread elements.
+        // Each segment is either a slice of regular properties or a single spread node.
+        #[derive(Clone)]
+        enum Seg<'a> {
+            Props(&'a [NodeIndex]),
+            Spread(NodeIndex),
+        }
+
+        let mut segs: Vec<Seg<'_>> = Vec::new();
+        let mut seg_start = 0usize;
+        for (i, &idx) in elements.iter().enumerate() {
+            let is_spread = self
+                .arena
+                .get(idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::SPREAD_ASSIGNMENT);
+            if is_spread {
+                if seg_start < i {
+                    segs.push(Seg::Props(&elements[seg_start..i]));
+                }
+                segs.push(Seg::Spread(idx));
+                seg_start = i + 1;
+            }
+        }
+        if seg_start < elements.len() {
+            segs.push(Seg::Props(&elements[seg_start..]));
+        }
+
+        // Count how many Object.assign calls we need:
+        // one for each spread + one if the first segment is a spread (needs empty {} seed).
+        let num_assign = segs.len();
+        // Opening parens for left-folding: (num_assign - 1) calls wrapping the first.
+        // Write the opening Object.assign( calls.
+        for _ in 0..num_assign.saturating_sub(1) {
+            self.write("Object.assign(");
+        }
+
+        // Emit the first segment (the "seed" accumulator).
+        let first_seg = segs.first().cloned();
+        match &first_seg {
+            Some(Seg::Props(props)) => {
+                self.emit_inline_object_props(props);
+            }
+            Some(Seg::Spread(spread_idx)) => {
+                // Starts with spread: seed is {}
+                self.write("Object.assign({}, ");
+                self.emit_spread_expression_node(*spread_idx);
+                self.write(")");
+            }
+            None => {
+                self.write("{}");
+                return;
+            }
+        }
+
+        // Emit remaining segments, each adding `, seg)` to close one Object.assign.
+        for seg in segs.iter().skip(1) {
+            self.write(", ");
+            match seg {
+                Seg::Props(props) => {
+                    self.emit_inline_object_props(props);
+                }
+                Seg::Spread(spread_idx) => {
+                    self.emit_spread_expression_node(*spread_idx);
+                }
+            }
+            self.write(")");
+        }
+    }
+
+    /// Emit `{ prop, prop, ... }` as an inline object literal (no lowering).
+    fn emit_inline_object_props(&mut self, props: &[NodeIndex]) {
+        self.write("{ ");
+        for (i, &prop) in props.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit(prop);
+        }
+        self.write(" }");
+    }
+
+    /// Emit the expression part of a SPREAD_ASSIGNMENT node (the `x` in `...x`).
+    fn emit_spread_expression_node(&mut self, spread_idx: NodeIndex) {
+        if let Some(spread_node) = self.arena.get(spread_idx) {
+            if let Some(spread) = self.arena.get_spread(spread_node) {
+                self.emit_expression(spread.expression);
+            }
+        }
     }
 }

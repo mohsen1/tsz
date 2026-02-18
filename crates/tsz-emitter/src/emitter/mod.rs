@@ -1851,6 +1851,15 @@ impl<'a> Printer<'a> {
                 self.emit_shorthand_property(node);
             }
 
+            // Spread assignment in object literal: `{ ...expr }` (ES2018+ native spread)
+            // For pre-ES2018 targets this is handled by emit_object_literal_with_object_assign.
+            k if k == syntax_kind_ext::SPREAD_ASSIGNMENT => {
+                if let Some(spread) = self.arena.get_spread(node) {
+                    self.write("...");
+                    self.emit_expression(spread.expression);
+                }
+            }
+
             // Parameter declaration
             k if k == syntax_kind_ext::PARAMETER => {
                 self.emit_parameter(node);
