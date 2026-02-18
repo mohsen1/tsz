@@ -632,14 +632,6 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
                     );
                 }
-            } else if param.question_token {
-                // Optional rest param without annotation (e.g., `...arg?`).
-                // The effective type includes undefined, making it non-array.
-                self.error_at_node(
-                    param_idx,
-                    "A rest parameter must be of an array type.",
-                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                );
             }
         }
     }

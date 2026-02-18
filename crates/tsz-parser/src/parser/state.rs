@@ -1227,8 +1227,21 @@ impl ParserState {
         self.parse_error_at_current_token("Type expected", diagnostic_codes::TYPE_EXPECTED);
     }
 
-    /// Error: Identifier expected (TS1003)
+    /// Error: Identifier expected (TS1003), or Invalid character (TS1127)
     pub(crate) fn error_identifier_expected(&mut self) {
+        // When the current token is Unknown (invalid character), emit TS1127
+        // instead of TS1003, matching tsc's behavior where the scanner's
+        // TS1127 shadows the parser's TS1003 via position-based dedup.
+        if self.is_token(SyntaxKind::Unknown) {
+            if self.should_report_error() {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Invalid character.",
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+            }
+            return;
+        }
         // Only emit error if we haven't already emitted one at this position
         // This prevents cascading errors when a missing token causes identifier to be expected
         // Use centralized error suppression heuristic
