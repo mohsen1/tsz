@@ -41,6 +41,7 @@ pub mod error_handler;
 pub mod error_reporter;
 pub mod expr;
 pub mod flow_analysis;
+mod flow_analysis_usage;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod flow_narrowing;
