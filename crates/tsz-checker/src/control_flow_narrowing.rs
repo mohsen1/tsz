@@ -1115,7 +1115,7 @@ impl<'a> FlowAnalyzer<'a> {
     ) -> Option<(Vec<Atom>, bool)> {
         let mut path: Vec<Atom> = Vec::new();
         let mut is_optional = false;
-        let mut current = prop_access;
+        let mut current = self.skip_parenthesized(prop_access);
 
         loop {
             let current_node = self.arena.get(current)?;
