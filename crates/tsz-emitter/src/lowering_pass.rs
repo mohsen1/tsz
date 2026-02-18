@@ -797,13 +797,16 @@ impl<'a> LoweringPass<'a> {
         let Some(for_in_of) = self.arena.get_for_in_of(node) else {
             return;
         };
+        let should_lower_for_of_sync = self.ctx.target_es5 && !for_in_of.await_modifier;
+        let should_lower_for_await_of =
+            for_in_of.await_modifier && !self.ctx.options.target.supports_es2018();
 
-        if self.ctx.target_es5 && !for_in_of.await_modifier {
+        if should_lower_for_of_sync || should_lower_for_await_of {
             self.transforms
                 .insert(idx, TransformDirective::ES5ForOf { for_of_node: idx });
-            // Only mark __values helper when --downlevelIteration is enabled.
-            // Without it, tsc uses simple array indexing (no __values helper).
-            if self.ctx.options.downlevel_iteration {
+            if for_in_of.await_modifier {
+                self.transforms.helpers_mut().async_values = true;
+            } else if self.ctx.options.downlevel_iteration {
                 self.transforms.helpers_mut().values = true;
             }
         }

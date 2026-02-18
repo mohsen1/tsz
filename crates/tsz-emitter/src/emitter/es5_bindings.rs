@@ -2488,8 +2488,9 @@ impl<'a> Printer<'a> {
         for_of_idx: NodeIndex,
         for_in_of: &ForInOfData,
     ) {
-        // Check if downlevelIteration is enabled
-        if self.ctx.options.downlevel_iteration {
+        if for_in_of.await_modifier {
+            self.emit_for_of_statement_es5_async_iterator(for_of_idx, for_in_of);
+        } else if self.ctx.options.downlevel_iteration {
             self.emit_for_of_statement_es5_iterator(for_of_idx, for_in_of);
         } else {
             self.emit_for_of_statement_es5_array_indexing(for_in_of);
@@ -2670,6 +2671,198 @@ impl<'a> Printer<'a> {
         self.iterator_for_of_depth = self.iterator_for_of_depth.saturating_sub(1);
     }
 
+    /// Emit for-await-of using async iterator protocol (`__asyncValues`).
+    ///
+    /// Transforms:
+    /// ```typescript
+    /// for await (const item of iterable) { body }
+    /// ```
+    /// Into:
+    /// ```javascript
+    /// var e_1, _a, e_1_1;
+    /// try {
+    ///     for (var _c = true, iterable_1 = __asyncValues(iterable), iterable_1_1 = yield iterable_1.next(), _a = iterable_1_1.done, !_a; _c = true) {
+    ///         var _d = iterable_1_1.value;
+    ///         _c = false;
+    ///         var item = _d;
+    ///         body
+    ///     }
+    /// }
+    /// catch (e_1_1) { e_1 = { error: e_1_1 }; }
+    /// finally {
+    ///     try {
+    ///         if (!_c && !_a && (_b = iterable_1.return)) yield _b.call(iterable_1);
+    ///     }
+    ///     finally { if (e_1) throw e_1.error; }
+    /// }
+    /// ```
+    fn emit_for_of_statement_es5_async_iterator(
+        &mut self,
+        for_of_idx: NodeIndex,
+        for_in_of: &ForInOfData,
+    ) {
+        let counter = self.ctx.destructuring_state.for_of_counter;
+
+        // TypeScript's variable naming pattern:
+        // Top-level: e_N (error container), _a (temp for return function)
+        // For loop: _b (iterator), _c (result), _d (done), _e (guard)
+        // Catch: e_N_1 (error value, not pre-declared)
+        let error_container_name = format!("e_{}", counter + 1);
+        let return_temp_name = self
+            .reserved_iterator_return_temps
+            .remove(&for_of_idx)
+            .unwrap_or_else(|| self.get_temp_var_name()); // _a, _b, ...
+        let is_nested_iterator_for_of = self.iterator_for_of_depth > 0;
+        self.iterator_for_of_depth += 1;
+
+        // Reserve return temps for nested iterator for-of loops in this body before
+        // allocating this loop's iterator/result vars.
+        self.preallocate_nested_iterator_return_temps(for_in_of.statement);
+
+        let loop_iterator_name = self.get_temp_var_name(); // _b
+        let loop_result_name = self.get_temp_var_name(); // _c
+        let loop_done_name = self.get_temp_var_name(); // _d
+        let loop_guard_name = self.get_temp_var_name(); // _e
+        let catch_error_name = format!("e_{}_1", counter + 1);
+
+        self.ctx.destructuring_state.for_of_counter += 1;
+
+        // Hoist error container + return temp to the top of the source file scope.
+        self.hoisted_for_of_temps.push(error_container_name.clone());
+        self.hoisted_for_of_temps.push(return_temp_name.clone());
+
+        // try block
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        // Leading comments for downlevel for-await-of are deferred by statement emitters
+        // and emitted here so they stay attached to the transformed loop body.
+        if let Some(for_of_node) = self.arena.get(for_of_idx) {
+            let actual_start = self.skip_whitespace_forward(for_of_node.pos, for_of_node.end);
+            self.emit_comments_before_pos(actual_start);
+        }
+
+        // for (var _e = true, iterable_1 = __asyncValues(iterable), iterable_1_1 = [await/yield] iterable_1.next(), _d = iterable_1_1.done, !_d; _e = true) {
+        let await_or_yield = if self.ctx.emit_await_as_yield {
+            "yield"
+        } else {
+            "await"
+        };
+        self.write("for (var ");
+        self.write(&loop_guard_name);
+        self.write(" = true, ");
+        self.write(&loop_iterator_name);
+        self.write(" = ");
+        if is_nested_iterator_for_of {
+            self.write("(");
+            self.write(&error_container_name);
+            self.write(" = void 0, __asyncValues(");
+            self.emit_expression(for_in_of.expression);
+            self.write(")), ");
+        } else {
+            self.write("__asyncValues(");
+            self.emit_expression(for_in_of.expression);
+            self.write("), ");
+        }
+        self.write(&loop_result_name);
+        self.write(" = ");
+        self.write(await_or_yield);
+        self.write(" ");
+        self.write(&loop_iterator_name);
+        self.write(".next(), ");
+        self.write(&loop_done_name);
+        self.write(" = ");
+        self.write(&loop_result_name);
+        self.write(".done; !");
+        self.write(&loop_done_name);
+        self.write("; ");
+        self.write(&loop_guard_name);
+        self.write(" = true) {");
+        self.write_line();
+        self.increase_indent();
+
+        // Enter a new scope for the loop body to track variable shadowing
+        self.ctx.block_scope_state.enter_scope();
+
+        // Pre-register loop variables before emitting (needed for shadowing)
+        // Note: We only pre-register for VARIABLE_DECLARATION_LIST nodes, not assignment targets
+        self.pre_register_for_of_loop_variable(for_in_of.initializer);
+
+        // Emit the value binding: var item = _c.value;
+        self.emit_for_of_value_binding_iterator_es5_async(for_in_of.initializer, &loop_result_name);
+        self.write_line();
+        self.write(&loop_guard_name);
+        self.write(" = false;");
+        self.write_line();
+
+        // Emit the loop body
+        self.emit_for_of_body(for_in_of.statement);
+
+        // Exit the loop body scope
+        self.ctx.block_scope_state.exit_scope();
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        // catch block
+        self.write("catch (");
+        self.write(&catch_error_name);
+        self.write(") { ");
+        self.write(&error_container_name);
+        self.write(" = { error: ");
+        self.write(&catch_error_name);
+        self.write(" }; }");
+        self.write_line();
+
+        // finally block
+        self.write("finally {");
+        self.write_line();
+        self.increase_indent();
+
+        self.write("try {");
+        self.write_line();
+        self.increase_indent();
+
+        // Cleanup: if (!_e && !_d && (_a = _b.return)) [await/yield] _a.call(_b);
+        self.write("if (!");
+        self.write(&loop_guard_name);
+        self.write(" && !");
+        self.write(&loop_done_name);
+        self.write(" && (");
+        self.write(&return_temp_name);
+        self.write(" = ");
+        self.write(&loop_iterator_name);
+        self.write(".return)) ");
+        self.write(await_or_yield);
+        self.write(" ");
+        self.write(&return_temp_name);
+        self.write(".call(");
+        self.write(&loop_iterator_name);
+        self.write(");");
+
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.write_line();
+
+        self.write("finally { if (");
+        self.write(&error_container_name);
+        self.write(") throw ");
+        self.write(&error_container_name);
+        self.write(".error; }");
+
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
+        self.iterator_for_of_depth = self.iterator_for_of_depth.saturating_sub(1);
+    }
+
     fn preallocate_nested_iterator_return_temps(&mut self, stmt_idx: NodeIndex) {
         self.visit_for_of_return_temp_prealloc(stmt_idx);
     }
@@ -2683,9 +2876,7 @@ impl<'a> Printer<'a> {
         };
 
         if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
-            if let Some(for_in_of) = self.arena.get_for_in_of(node)
-                && !for_in_of.await_modifier
-            {
+            if let Some(for_in_of) = self.arena.get_for_in_of(node) {
                 if !self.reserved_iterator_return_temps.contains_key(&idx) {
                     let temp = self.get_temp_var_name();
                     self.reserved_iterator_return_temps.insert(idx, temp);
@@ -2997,6 +3188,68 @@ impl<'a> Printer<'a> {
                             }
                             first = false;
                             // Simple identifier binding
+                            self.emit(decl.name);
+                            self.write(" = ");
+                            self.write(result_name);
+                            self.write(".value");
+                        }
+                    }
+                }
+            }
+            self.write_semicolon();
+        } else if self.is_binding_pattern(initializer) {
+            self.write("var ");
+            let mut first = true;
+            self.emit_es5_destructuring_from_value(
+                initializer,
+                &format!("{result_name}.value"),
+                &mut first,
+            );
+            self.write_semicolon();
+        } else {
+            self.emit_expression(initializer);
+            self.write(" = ");
+            self.write(result_name);
+            self.write(".value");
+            self.write_semicolon();
+        }
+    }
+
+    /// Emit value binding for async iterator protocol: `var item = _a.value;`
+    /// Uses direct `.value` access (no `__read`) for `for await...of` downleveling.
+    fn emit_for_of_value_binding_iterator_es5_async(
+        &mut self,
+        initializer: NodeIndex,
+        result_name: &str,
+    ) {
+        if initializer.is_none() {
+            return;
+        }
+
+        let Some(init_node) = self.arena.get(initializer) else {
+            return;
+        };
+
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            self.write("var ");
+            if let Some(decl_list) = self.arena.get_variable(init_node) {
+                let mut first = true;
+                for &decl_idx in &decl_list.declarations.nodes {
+                    if let Some(decl_node) = self.arena.get(decl_idx)
+                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
+                    {
+                        if self.is_binding_pattern(decl.name) {
+                            let mut first = true;
+                            self.emit_es5_destructuring_from_value(
+                                decl.name,
+                                &format!("{result_name}.value"),
+                                &mut first,
+                            );
+                        } else {
+                            if !first {
+                                self.write(", ");
+                            }
+                            first = false;
                             self.emit(decl.name);
                             self.write(" = ");
                             self.write(result_name);

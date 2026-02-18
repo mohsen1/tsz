@@ -944,7 +944,6 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ForOf { for_of_node } => {
                 if let Some(for_of_node_ref) = self.arena.get(for_of_node)
                     && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node_ref)
-                    && !for_in_of.await_modifier
                 {
                     self.emit_for_of_statement_es5(for_of_node, for_in_of);
                     return;
@@ -1379,7 +1378,6 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5ForOf { for_of_node } => {
                 if let Some(for_of_node_ref) = self.arena.get(*for_of_node)
                     && let Some(for_in_of) = self.arena.get_for_in_of(for_of_node_ref)
-                    && !for_in_of.await_modifier
                 {
                     self.emit_for_of_statement_es5(*for_of_node, for_in_of);
                     return;
@@ -2635,9 +2633,8 @@ impl<'a> Printer<'a> {
                 // These are truly "leading" comments for this statement.
                 // Comments inside expressions (like call arguments) have positions AFTER
                 // the statement's first token, so they won't be emitted here.
-                let defer_for_of_comments = self.ctx.target_es5
-                    && self.ctx.options.downlevel_iteration
-                    && stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT;
+                let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    && self.should_defer_for_of_comments(stmt_node);
                 if !defer_for_of_comments && let Some(text) = self.source_text {
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c_pos = self.all_comments[self.comment_emit_idx].pos;
@@ -2751,6 +2748,21 @@ impl<'a> Printer<'a> {
 
         // Exit root scope for block-scoped variable tracking
         self.ctx.block_scope_state.exit_scope();
+    }
+}
+
+impl<'a> Printer<'a> {
+    fn should_defer_for_of_comments(&self, node: &Node) -> bool {
+        let for_of = match self.arena.get_for_in_of(node) {
+            Some(for_of) => for_of,
+            None => return false,
+        };
+
+        if for_of.await_modifier {
+            return !self.ctx.options.target.supports_es2018();
+        }
+
+        self.ctx.target_es5 && self.ctx.options.downlevel_iteration
     }
 }
 

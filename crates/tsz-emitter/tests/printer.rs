@@ -212,3 +212,68 @@ fn test_optional_call_spread_downlevel_es5() {
     assert!(output.contains(".call.apply"));
     assert!(!output.contains("?.("));
 }
+
+#[test]
+fn test_for_await_of_target_es2018_preserved() {
+    let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2018,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("for await (const x of iterable)"));
+    assert!(!output.contains("__asyncValues"));
+}
+
+#[test]
+fn test_for_await_of_target_es2017_downlevel_to_await() {
+    let source = "const iterable = [];\nasync function f() {\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("__asyncValues"));
+    assert!(output.contains("for (var"));
+    assert!(output.contains(".next()"));
+    assert!(output.contains("await"));
+    assert!(!output.contains("yield iterable_1.next()"));
+}
+
+#[test]
+fn test_for_await_of_target_es2016_downlevel_to_yield() {
+    let source = "const iterable = [];\nasync function f() {\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2016,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("__awaiter"));
+    assert!(output.contains("__asyncValues"));
+    assert!(output.contains("yield"));
+    assert!(output.contains(".next()"));
+}

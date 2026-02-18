@@ -111,9 +111,8 @@ impl<'a> Printer<'a> {
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate() {
             // Emit leading comments before this statement
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                let defer_for_of_comments = self.ctx.target_es5
-                    && self.ctx.options.downlevel_iteration
-                    && stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT;
+                let defer_for_of_comments = stmt_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+                    && self.should_defer_for_of_comments(stmt_node);
                 // Only skip whitespace, not comments - comments inside expressions
                 // should be handled by expression emitters
                 let actual_start = self.skip_whitespace_forward(stmt_node.pos, stmt_node.end);
