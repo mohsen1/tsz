@@ -1456,6 +1456,27 @@ impl<'a> FlowAnalyzer<'a> {
         false
     }
 
+    /// Get the declared annotation type for a variable declaration node, if available.
+    ///
+    /// Returns `Some(type_id)` when `assignment_node` is a VARIABLE_DECLARATION with a
+    /// type annotation whose type has already been computed and cached in `node_types`.
+    /// Returns `None` otherwise (no annotation, wrong node kind, or not cached yet).
+    ///
+    /// The type annotation node index is used as the cache key (not the declaration node),
+    /// matching how `get_type_from_type_node` caches in `node_types`.
+    fn annotation_type_from_var_decl_node(&self, assignment_node: NodeIndex) -> Option<TypeId> {
+        let decl_data = self.arena.get(assignment_node)?;
+        if decl_data.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(decl_data)?;
+        if var_decl.type_annotation.is_none() {
+            return None;
+        }
+        let node_types = self.node_types?;
+        node_types.get(&var_decl.type_annotation.0).copied()
+    }
+
     /// Check if an assignment node represents a destructuring assignment.
     /// Destructuring assignments widen literals to primitives, unlike direct assignments.
     fn is_destructuring_assignment(&self, node: NodeIndex) -> bool {
@@ -1642,6 +1663,24 @@ impl<'a> FlowAnalyzer<'a> {
                         literal_type,
                     ));
                 }
+                // For const variable declarations with type annotations, if the literal
+                // type (null or undefined) is not assignable to the declared annotation
+                // type, return None (use the declared type). This prevents TS18047 false
+                // positives like `const x: IAsyncEnumerator<number> = null` where
+                // subsequent uses of x should see IAsyncEnumerator<number>, not null.
+                // Note: annotation type is keyed by annotation node index in node_types,
+                // not by the variable declaration node index.
+                // We use strict null check mode (flags=1) because the question is whether
+                // null semantically belongs to the declared type — a strict-mode concept.
+                if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
+                    && let Some(annotation_type) =
+                        self.annotation_type_from_var_decl_node(assignment_node)
+                    && !self
+                        .interner
+                        .is_assignable_to_with_flags(literal_type, annotation_type, 1)
+                {
+                    return None;
+                }
                 return Some(literal_type);
             }
             // For variable declarations with type annotations, preserve the declared
@@ -1664,11 +1703,17 @@ impl<'a> FlowAnalyzer<'a> {
                     return None;
                 }
             }
-            // Nullish literals (null, undefined) as initializers should narrow to
-            // their literal type — but only AFTER the type annotation check above.
-            // For `var x: SomeType = null`, the declared type is authoritative;
-            // for `const x = null` (no annotation), we narrow to null.
+            // `undefined` identifier (not a keyword) as initializer: if the variable
+            // has a type annotation that doesn't include undefined, use the declared type.
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
+                if let Some(annotation_type) =
+                    self.annotation_type_from_var_decl_node(assignment_node)
+                    && !self
+                        .interner
+                        .is_assignable_to_with_flags(nullish_type, annotation_type, 1)
+                {
+                    return None;
+                }
                 return Some(nullish_type);
             }
             if let Some(node_types) = self.node_types
