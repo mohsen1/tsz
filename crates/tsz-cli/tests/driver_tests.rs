@@ -6165,3 +6165,33 @@ const value = 1;
             .collect::<Vec<_>>()
     );
 }
+
+
+#[test]
+fn compile_binary_file_reports_errors() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    let binary_path = base.join("binary.ts");
+    let content = b"G@\xFFG@\xFFG@";
+    std::fs::write(&binary_path, content).expect("failed to write binary file");
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es2015"
+          },
+          "files": ["binary.ts"]
+        }"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    let has_ts1490 = result.diagnostics.iter().any(|d| d.code == 1490);
+    assert!(has_ts1490, "Expected TS1490 (File appears to be binary). Diagnostics: {:?}", result.diagnostics);
+
+    let has_other_errors = result.diagnostics.iter().any(|d| d.code != 1490);
+    assert!(has_other_errors, "Expected other errors (e.g. TS1127) indicating the file was parsed. Diagnostics: {:?}", result.diagnostics);
+}
