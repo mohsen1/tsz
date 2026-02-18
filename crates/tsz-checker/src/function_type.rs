@@ -457,6 +457,16 @@ impl<'a> CheckerState<'a> {
         // Save/restore the arguments tracking flag for nested function handling
         let saved_uses_arguments = self.ctx.js_body_uses_arguments;
         self.ctx.js_body_uses_arguments = false;
+
+        // Push this_type BEFORE parameter initializer checks so that default
+        // values like `a = this.getNumber()` see the correct `this` type and
+        // don't trigger false TS2683.
+        let mut pushed_this_type_early = false;
+        if let Some(tt) = this_type {
+            self.ctx.this_type_stack.push(tt);
+            pushed_this_type_early = true;
+        }
+
         self.check_non_impl_parameter_initializers(&parameters.nodes, false, !body.is_none());
         if !body.is_none() {
             // Track that we're inside a nested function for abstract property access checks.
@@ -491,13 +501,7 @@ impl<'a> CheckerState<'a> {
                     (false, false, NodeIndex::NONE)
                 };
 
-            // Push this_type EARLY so that infer_return_type_from_body has
-            // the correct `this` context (prevents false TS2683 during inference)
-            let mut pushed_this_type_early = false;
-            if let Some(tt) = this_type {
-                self.ctx.this_type_stack.push(tt);
-                pushed_this_type_early = true;
-            }
+            // this_type was already pushed early (before parameter initializer checks)
 
             // Push contextual yield type EARLY (before infer_return_type_from_body)
             // so yield expressions get contextual typing during inference.
@@ -767,9 +771,8 @@ impl<'a> CheckerState<'a> {
             // For functions with explicit this parameter: use that type
             // For arrow functions: use outer this type (already captured in this_type)
             // For regular functions without explicit this: this_type is None, which triggers TS2683 when this is used
-            // this_type was already pushed early (before infer_return_type_from_body)
+            // this_type was already pushed early (before parameter initializer checks)
             // so we don't need to push it again here
-            let pushed_this_type = pushed_this_type_early;
 
             // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
             // return statements should be checked against TReturn (R), not the full Generator type.
@@ -863,10 +866,6 @@ impl<'a> CheckerState<'a> {
             self.pop_return_type();
             self.ctx.pop_yield_type();
 
-            if pushed_this_type {
-                self.ctx.this_type_stack.pop();
-            }
-
             // Exit async context
             if is_async_for_context {
                 self.ctx.exit_async_context();
@@ -874,6 +873,11 @@ impl<'a> CheckerState<'a> {
 
             // Restore function_depth (incremented at body entry)
             self.ctx.function_depth -= 1;
+        }
+
+        // Pop this_type that was pushed before parameter initializer checks
+        if pushed_this_type_early {
+            self.ctx.this_type_stack.pop();
         }
 
         // In JS files, functions that reference `arguments` in their body should accept

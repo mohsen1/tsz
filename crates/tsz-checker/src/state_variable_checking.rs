@@ -945,7 +945,13 @@ impl<'a> CheckerState<'a> {
             // Note: This applies specifically to 'var' merging where types must match.
             // let/const duplicates are caught earlier by the binder (TS2451).
             // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
-            if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
+            let is_block_scoped =
+                self.ctx.binder.symbols.get(sym_id).is_some_and(|s| {
+                    s.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
+                });
+            if !is_block_scoped
+                && let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied()
+            {
                 // Check if this is a mergeable declaration by looking at the node kind.
                 // Mergeable declarations: namespace/module, enum, class, interface, function.
                 // When these are declared with the same name, they merge instead of conflicting.
