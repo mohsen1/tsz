@@ -656,7 +656,16 @@ impl<'a> CheckerState<'a> {
                         if !(decl_has_body && other_has_body) {
                             continue;
                         }
-                        // Both have bodies -> duplicate function implementations
+                        // Both have bodies - but check if they're in different block scopes.
+                        // In ES6, block-scoped functions can shadow outer functions.
+                        let decl_scope = self.get_enclosing_block_scope(decl_idx);
+                        let other_scope = self.get_enclosing_block_scope(other_idx);
+                        // If one is in a block scope and the other is not (or they're in
+                        // different block scopes), they don't conflict - they shadow.
+                        if decl_scope != other_scope {
+                            continue;
+                        }
+                        // Both have bodies in the same scope -> duplicate function implementations
                         // Force-add to conflicts since declarations_conflict returns false
                         // for FUNCTION vs FUNCTION (they don't exclude each other).
                         conflicts.insert(decl_idx);
