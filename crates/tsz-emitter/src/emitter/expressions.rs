@@ -1604,11 +1604,13 @@ impl<'a> Printer<'a> {
                 // Check if next property is on the same line in source
                 if !is_last {
                     let next_prop = obj.elements.nodes[i + 1];
-                    self.emit_unemitted_comments_between(
+                    let wrote_newline = self.emit_unemitted_comments_between(
                         prop_node.end,
                         self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos),
                     );
-                    if self.are_on_same_line_in_source(prop, next_prop) {
+                    if wrote_newline {
+                        // Line comment wrote the newline already — don't add another
+                    } else if self.are_on_same_line_in_source(prop, next_prop) {
                         // Keep on same line
                         self.write(" ");
                     } else {
@@ -1616,8 +1618,11 @@ impl<'a> Printer<'a> {
                         self.write_line();
                     }
                 } else {
-                    self.emit_unemitted_comments_between(prop_node.end, node.end);
-                    self.write_line();
+                    let wrote_newline =
+                        self.emit_unemitted_comments_between(prop_node.end, node.end);
+                    if !wrote_newline {
+                        self.write_line();
+                    }
                 }
             }
             self.decrease_indent();
