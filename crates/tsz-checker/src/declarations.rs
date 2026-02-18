@@ -761,15 +761,17 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // This applies to non-string-named module/namespace declarations that are inside labeled statements
             // or other non-module constructs.
             if !is_string_named {
-                // Check if the parent is a valid context (SourceFile or ModuleBlock)
+                // Check if the parent is a valid context (SourceFile, ModuleBlock, or ExportDeclaration)
+                // ExportDeclaration is valid because `export namespace Foo` wraps the namespace in an export node.
                 let is_valid_context = if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
                     let parent = ext.parent;
                     if parent.is_none() {
                         true // Top level is valid
                     } else if let Some(parent_node) = self.ctx.arena.get(parent) {
-                        // Valid parents: SourceFile, ModuleBlock
+                        // Valid parents: SourceFile, ModuleBlock, ExportDeclaration
                         parent_node.kind == syntax_kind_ext::SOURCE_FILE
                             || parent_node.kind == syntax_kind_ext::MODULE_BLOCK
+                            || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     } else {
                         true
                     }
@@ -777,15 +779,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     true
                 };
 
-                if !is_valid_context {
-                    if let Some(name_node) = self.ctx.arena.get(module.name) {
-                        self.ctx.error(
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                            diagnostic_messages::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL.to_string(),
-                            diagnostic_codes::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL,
-                        );
-                    }
+                if !is_valid_context && let Some(name_node) = self.ctx.arena.get(module.name) {
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        diagnostic_messages::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL.to_string(),
+                        diagnostic_codes::A_NAMESPACE_DECLARATION_IS_ONLY_ALLOWED_AT_THE_TOP_LEVEL_OF_A_NAMESPACE_OR_MODUL,
+                    );
                 }
             }
 
