@@ -49,13 +49,35 @@ impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
 impl<'a> CheckerState<'a> {
     /// Whether an argument node needs contextual typing from the callee signature.
     ///
-    /// Most argument expressions (identifiers, property access, literals) have a
-    /// stable type independent of contextual type. Restricting contextual typing to
-    /// genuinely sensitive nodes avoids redundant checker work on hot call paths.
+    /// Literal expressions need contextual typing to preserve literal types when
+    /// the expected parameter type is a literal union (e.g., `"A"` should remain
+    /// `"A"` when passed to a parameter of type `"A" | "B"`).
+    ///
+    /// Other expressions like arrow functions, object literals, etc. also need
+    /// contextual typing for their internal structure.
     fn argument_needs_contextual_type(&self, idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
+
+        // Literal expressions need contextual typing to preserve literal types
+        // when the expected type is a literal union or specific literal type.
+        let is_literal = matches!(
+            node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::BigIntLiteral as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        );
+
+        if is_literal {
+            return true;
+        }
 
         matches!(
             node.kind,
