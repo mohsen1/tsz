@@ -285,6 +285,20 @@ impl<'a> CheckerState<'a> {
     // JSX Attribute Type Checking
     // =========================================================================
 
+    /// Check if a string is a valid JavaScript identifier.
+    /// Used to avoid type-checking invalid JSX attribute names that should be parser errors.
+    fn is_valid_js_identifier(s: &str) -> bool {
+        if s.is_empty() {
+            return false;
+        }
+        // JavaScript identifiers must start with letter, $, or _
+        let first = s.chars().next().unwrap();
+        if !('a'..='z' as char).contains(&first) || !['$'].contains(&first) {
+            return false;
+        }
+        true
+    }
+
     /// Check JSX attributes against the expected props type.
     ///
     /// For each attribute, checks that the assigned value is assignable to the
@@ -350,6 +364,12 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
+                // Skip type-checking invalid attribute names (parser should catch these)
+                if !Self::is_valid_js_identifier(&attr_name) {
+                    continue;
+                }
+
+                // Only track valid identifiers for missing-prop checking
                 provided_attrs.push(attr_name.clone());
 
                 // Get expected type from props
