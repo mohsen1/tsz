@@ -1309,8 +1309,20 @@ impl<'a> CheckerState<'a> {
                     && flow_type != TypeId::ERROR;
 
                 if has_narrowing {
-                    // Genuine narrowing (e.g., array element narrowing) - use narrowed type
-                    flow_type
+                    // Check if this is "zombie freshness" - flow returning the widened
+                    // version of our declared literal type. If widen(declared) == flow,
+                    // use declared_type instead.
+                    // IMPORTANT: Evaluate the declared type first to expand type aliases
+                    // and lazy references, so widen_type can see the actual union members.
+                    let evaluated_declared = self.evaluate_type_for_assignability(declared_type);
+                    let widened_declared =
+                        tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
+                    if widened_declared == flow_type {
+                        declared_type
+                    } else {
+                        // Genuine narrowing (e.g., array element narrowing) - use narrowed type
+                        flow_type
+                    }
                 } else {
                     // No narrowing or error - check if we should preserve declared_type
                     let has_index_sig = {
@@ -1366,8 +1378,12 @@ impl<'a> CheckerState<'a> {
                         // (e.g., "foo" from `declare var a: "foo"; let b = a`) and flow_type
                         // is its widened form (string), flow is just returning the widened
                         // version of our literal declared type - use declared_type.
+                        // IMPORTANT: Evaluate the declared type first to expand type aliases
+                        // and lazy references, so widen_type can see the actual union members.
+                        let evaluated_declared =
+                            self.evaluate_type_for_assignability(declared_type);
                         let widened_declared =
-                            tsz_solver::widening::widen_type(self.ctx.types, declared_type);
+                            tsz_solver::widening::widen_type(self.ctx.types, evaluated_declared);
                         if widened_declared == flow_type {
                             declared_type
                         } else {
@@ -1394,7 +1410,6 @@ impl<'a> CheckerState<'a> {
                     return widen_freshness(self.ctx.types, result_type);
                 }
             }
-
             return result_type;
         }
 
