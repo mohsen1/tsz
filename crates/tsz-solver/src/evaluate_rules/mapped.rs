@@ -105,6 +105,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         (false, false)
     }
 
+    /// Get the DECLARED type of a property from source_object, without adding
+    /// `| undefined` for optional properties. This is distinct from IndexedAccess
+    /// evaluation which adds `| undefined` for optional properties.
+    ///
+    /// Used in homomorphic mapped types where the template type should use the
+    /// property's declared type, not the accessed type.
+    fn get_declared_property_type_for_key(
+        &mut self,
+        source_object: Option<TypeId>,
+        key_name: Atom,
+    ) -> Option<TypeId> {
+        let source_obj = source_object?;
+        match collect_properties(source_obj, self.interner(), self.resolver()) {
+            PropertyCollectionResult::Properties { properties, .. } => {
+                for prop in properties {
+                    if prop.name == key_name {
+                        // Return the declared type, NOT optional_property_type which adds | undefined
+                        return Some(prop.type_id);
+                    }
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     /// Helper to compute modifiers for a mapped type property.
     fn get_mapped_modifiers(
         &mut self,
@@ -320,7 +346,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             subst.insert(mapped.type_param.name, key_literal);
 
             // Substitute into the template
-            let property_type =
+            let mut property_type =
                 self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
             // Check if evaluation hit depth limit
@@ -331,6 +357,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             // Get modifiers for this specific key (preserves homomorphic behavior)
             let (optional, readonly) =
                 self.get_mapped_modifiers(mapped, is_homomorphic, source_object, key_name);
+
+            // TypeScript homomorphic mapped type behavior: when `-?` removes optionality
+            // from an optional source property, the property type should be the DECLARED
+            // type (without the `| undefined` that IndexedAccess adds for optional properties).
+            //
+            // Example: `Required<{a?: string}>` = `{a: string}`, NOT `{a: string|undefined}`.
+            // The IndexedAccess `T["a"]` evaluates to `string | undefined` for optional `a`,
+            // but the mapped type template should use the declared type `string`.
+            // This matches TypeScript's `getTypeOfPropertyOfType` behavior in mapped types.
+            if !optional
+                && matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
+                && is_homomorphic
+            {
+                let source_was_optional = self
+                    .get_property_modifiers_for_key(source_object, key_name)
+                    .0;
+                if source_was_optional {
+                    // Use the declared type directly to strip the | undefined from optionality
+                    if let Some(declared) =
+                        self.get_declared_property_type_for_key(source_object, key_name)
+                    {
+                        property_type = declared;
+                    }
+                }
+            }
 
             for remapped_name in remapped_names {
                 properties.push(PropertyInfo {
@@ -611,29 +662,55 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// A mapped type is homomorphic if:
     /// 1. The constraint is `keyof T` for some type T
     /// 2. The template is `T[K]` where T is the same type and K is the iteration parameter
+    ///
+    /// Also handles the post-instantiation case where the `keyof T` constraint was
+    /// eagerly evaluated to a union of string literals during `instantiate_type`.
+    /// In that case, we verify that `template = obj[P]` and `keyof obj == constraint`.
     fn is_homomorphic_mapped_type(&mut self, mapped: &MappedType) -> bool {
-        // Extract the source type from the constraint (keyof T)
-        let Some(source_from_constraint) = self.extract_source_from_keyof(mapped.constraint) else {
-            return false;
-        };
-
-        // Check if template is an IndexAccess type T[K]
-        match self.interner().lookup(mapped.template) {
-            Some(TypeData::IndexAccess(obj, idx)) => {
-                // CRITICAL: Must verify that the object being indexed is the same T
-                // from keyof T in the constraint
-                if obj != source_from_constraint {
-                    return false;
+        // Method 1: Constraint is explicitly `keyof T` (pre-evaluation form)
+        if let Some(source_from_constraint) = self.extract_source_from_keyof(mapped.constraint) {
+            // Check if template is an IndexAccess type T[K]
+            return match self.interner().lookup(mapped.template) {
+                Some(TypeData::IndexAccess(obj, idx)) => {
+                    if obj != source_from_constraint {
+                        return false;
+                    }
+                    match self.interner().lookup(idx) {
+                        Some(TypeData::TypeParameter(param)) => {
+                            param.name == mapped.type_param.name
+                        }
+                        _ => false,
+                    }
                 }
+                _ => false,
+            };
+        }
 
-                // Check if the index is our type parameter K
-                match self.interner().lookup(idx) {
-                    Some(TypeData::TypeParameter(param)) => param.name == mapped.type_param.name,
-                    _ => false,
+        // Method 2: Post-instantiation form where `keyof T` was eagerly evaluated
+        // to a union of string literals. The template still has the original structure
+        // `T[P]` with the concrete object. Verify by computing `keyof obj` and
+        // comparing with the constraint.
+        // Key remapping (`as` clause / name_type) breaks homomorphism.
+        if mapped.name_type.is_none()
+            && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(mapped.template)
+        {
+            if let Some(TypeData::TypeParameter(param)) = self.interner().lookup(idx) {
+                if param.name == mapped.type_param.name {
+                    // Don't match if obj is still a type parameter (not yet instantiated)
+                    if matches!(
+                        self.interner().lookup(obj),
+                        Some(TypeData::TypeParameter(_))
+                    ) {
+                        return false;
+                    }
+                    // Verify: the constraint is exactly the keys of obj
+                    let expected_keys = self.evaluate_keyof(obj);
+                    return expected_keys == mapped.constraint;
                 }
             }
-            _ => false,
         }
+
+        false
     }
 
     /// Extract the source type T from a `keyof T` constraint.
