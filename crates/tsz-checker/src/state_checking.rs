@@ -351,7 +351,7 @@ impl<'a> CheckerState<'a> {
             // Export declarations may wrap other declarations
             syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx)
-                    && !export_decl.export_clause.is_none()
+                    && export_decl.export_clause.is_some()
                 {
                     self.check_js_grammar_statement(export_decl.export_clause);
                 }
@@ -378,7 +378,7 @@ impl<'a> CheckerState<'a> {
         }
 
         for child_idx in self.ctx.arena.get_children(expr_idx) {
-            if !child_idx.is_none() {
+            if child_idx.is_some() {
                 self.check_js_grammar_expression(child_idx);
             }
         }
@@ -474,7 +474,7 @@ impl<'a> CheckerState<'a> {
     fn error_if_ts_only_type_annotation(&mut self, type_annotation: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        if !type_annotation.is_none() {
+        if type_annotation.is_some() {
             self.error_at_node(
                 type_annotation,
                 diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -653,7 +653,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // TS8010: Type annotation on parameter
-            if !param.type_annotation.is_none() {
+            if param.type_annotation.is_some() {
                 self.error_at_node(
                     param.type_annotation,
                     diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -772,7 +772,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
                     {
                         // TS8010: Type annotation on variable
-                        if !var_decl.type_annotation.is_none() {
+                        if var_decl.type_annotation.is_some() {
                             self.error_at_node(
                                         var_decl.type_annotation,
                                         diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -976,7 +976,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut candidate_decls = symbol.declarations.clone();
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             candidate_decls.push(symbol.value_declaration);
         }
 

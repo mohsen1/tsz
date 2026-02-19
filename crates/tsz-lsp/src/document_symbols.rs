@@ -204,7 +204,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .unwrap_or_else(|| "<anonymous>".to_string());
 
                     let range = self.get_range(node_idx);
-                    let selection_range = if !name_node.is_none() {
+                    let selection_range = if name_node.is_some() {
                         self.get_range(name_node)
                     } else {
                         self.get_range_keyword(node_idx, 8) // "function".len()
@@ -246,7 +246,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .unwrap_or_else(|| "<class>".to_string());
 
                     let range = self.get_range(node_idx);
-                    let selection_range = if !name_node.is_none() {
+                    let selection_range = if name_node.is_some() {
                         self.get_range(name_node)
                     } else {
                         self.get_range_keyword(node_idx, 5) // "class".len()
@@ -283,7 +283,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .unwrap_or_else(|| "<interface>".to_string());
 
                     let range = self.get_range(node_idx);
-                    let selection_range = if !name_node.is_none() {
+                    let selection_range = if name_node.is_some() {
                         self.get_range(name_node)
                     } else {
                         self.get_range_keyword(node_idx, 9) // "interface".len()
@@ -320,7 +320,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         .unwrap_or_else(|| "<type>".to_string());
 
                     let range = self.get_range(node_idx);
-                    let selection_range = if !name_node.is_none() {
+                    let selection_range = if name_node.is_some() {
                         self.get_range(name_node)
                     } else {
                         self.get_range_keyword(node_idx, 4) // "type".len()
@@ -639,7 +639,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&module.modifiers);
 
-                    let children = if !module.body.is_none() {
+                    let children = if module.body.is_some() {
                         self.collect_symbols(module.body, Some(&name))
                     } else {
                         vec![]
@@ -681,7 +681,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let is_default = export.is_default_export;
                     let export_clause = export.export_clause;
 
-                    if !export_clause.is_none()
+                    if export_clause.is_some()
                         && let Some(clause_node) = self.arena.get(export_clause)
                         && self.is_declaration(clause_node.kind)
                     {

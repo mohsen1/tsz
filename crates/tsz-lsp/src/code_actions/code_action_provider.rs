@@ -737,7 +737,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn import_removal_target(&self, node_idx: NodeIndex) -> Option<(NodeIndex, ImportRemoval)> {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
                 let name = self.specifier_local_name(current)?;
@@ -781,7 +781,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn find_import_decl(&self, start: NodeIndex) -> Option<NodeIndex> {
         let mut current = start;
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
                 return Some(current);
@@ -794,7 +794,7 @@ impl<'a> CodeActionProvider<'a> {
     fn specifier_local_name(&self, spec_idx: NodeIndex) -> Option<String> {
         let spec_node = self.arena.get(spec_idx)?;
         let spec = self.arena.get_specifier(spec_node)?;
-        let local_ident = if !spec.name.is_none() {
+        let local_ident = if spec.name.is_some() {
             spec.name
         } else {
             spec.property_name
@@ -818,7 +818,7 @@ impl<'a> CodeActionProvider<'a> {
         let clause_node = self.arena.get(import_data.import_clause)?;
         let clause = self.arena.get_import_clause(clause_node)?;
 
-        let mut default_name = if !clause.name.is_none() {
+        let mut default_name = if clause.name.is_some() {
             self.arena
                 .get_identifier_text(clause.name)
                 .map(std::string::ToString::to_string)
@@ -829,7 +829,7 @@ impl<'a> CodeActionProvider<'a> {
         let mut namespace_name = None;
         let mut named_specs = Vec::new();
 
-        if !clause.named_bindings.is_none() {
+        if clause.named_bindings.is_some() {
             let bindings_node = self.arena.get(clause.named_bindings)?;
             if bindings_node.kind == SyntaxKind::Identifier as u16 {
                 namespace_name = self
@@ -840,12 +840,12 @@ impl<'a> CodeActionProvider<'a> {
                 for &spec_idx in &named.elements.nodes {
                     let spec_node = self.arena.get(spec_idx)?;
                     let spec = self.arena.get_specifier(spec_node)?;
-                    let import_ident = if !spec.property_name.is_none() {
+                    let import_ident = if spec.property_name.is_some() {
                         spec.property_name
                     } else {
                         spec.name
                     };
-                    let local_ident = if !spec.name.is_none() {
+                    let local_ident = if spec.name.is_some() {
                         spec.name
                     } else {
                         spec.property_name
@@ -1022,7 +1022,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn import_usage_for_node(&self, node_idx: NodeIndex) -> ImportUsage {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(extended) = self.arena.get_extended(current) else {
                 break;
             };
@@ -1226,7 +1226,7 @@ impl<'a> CodeActionProvider<'a> {
                 continue;
             }
 
-            if !clause.name.is_none() {
+            if clause.name.is_some() {
                 if let Some(name) = self.arena.get_identifier_text(clause.name)
                     && name == candidate.local_name
                 {
@@ -1300,7 +1300,7 @@ impl<'a> CodeActionProvider<'a> {
                 continue;
             }
 
-            if !clause.named_bindings.is_none() {
+            if clause.named_bindings.is_some() {
                 let bindings_idx = clause.named_bindings;
                 let Some(bindings_node) = self.arena.get(bindings_idx) else {
                     continue;
@@ -1351,7 +1351,7 @@ impl<'a> CodeActionProvider<'a> {
             let Some(spec) = self.arena.get_specifier(spec_node) else {
                 continue;
             };
-            let local_ident = if !spec.name.is_none() {
+            let local_ident = if spec.name.is_some() {
                 spec.name
             } else {
                 spec.property_name
@@ -1437,7 +1437,7 @@ impl<'a> CodeActionProvider<'a> {
         if let Some(&last) = elements.last() {
             let last_node = self.arena.get(last)?;
             let last_spec = self.arena.get_specifier(last_node)?;
-            let last_ident = if !last_spec.name.is_none() {
+            let last_ident = if last_spec.name.is_some() {
                 last_spec.name
             } else {
                 last_spec.property_name
@@ -1508,7 +1508,7 @@ impl<'a> CodeActionProvider<'a> {
 
         let clause_node = self.arena.get(import_data.import_clause)?;
         let clause = self.arena.get_import_clause(clause_node)?;
-        if clause.name.is_none() || !clause.named_bindings.is_none() {
+        if clause.name.is_none() || clause.named_bindings.is_some() {
             return None;
         }
         if clause.is_type_only && !candidate.is_type_only {
@@ -1618,7 +1618,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn property_access_info(&self, node_idx: NodeIndex) -> Option<PropertyAccessInfo> {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = self.arena.get_access_expr(node)?;
@@ -1866,7 +1866,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn find_enclosing_class(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::CLASS_DECLARATION
                 || node.kind == syntax_kind_ext::CLASS_EXPRESSION
@@ -2542,7 +2542,7 @@ impl<'a> CodeActionProvider<'a> {
 
     fn find_enclosing_scope_id(&self, node_idx: NodeIndex) -> Option<ScopeId> {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(&scope_id) = self.binder.node_scope_ids.get(&current.0) {
                 return Some(scope_id);
             }
@@ -2557,7 +2557,7 @@ impl<'a> CodeActionProvider<'a> {
     }
 
     fn collect_scope_names(&self, mut scope_id: ScopeId, names: &mut FxHashSet<String>) {
-        while !scope_id.is_none() {
+        while scope_id.is_some() {
             let scope = match self.binder.scopes.get(scope_id.0 as usize) {
                 Some(scope) => scope,
                 None => break,
@@ -2576,7 +2576,7 @@ impl<'a> CodeActionProvider<'a> {
         end: u32,
     ) -> Option<NodeIndex> {
         let mut current = find_node_at_offset(self.arena, start);
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.pos <= start && node.end >= end && self.is_expression(node.kind) {
                 return Some(current);
@@ -2591,7 +2591,7 @@ impl<'a> CodeActionProvider<'a> {
     /// Find the enclosing statement for a given node.
     fn find_enclosing_statement(&self, _root: NodeIndex, node_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if self.is_statement(node.kind) {
                 return Some(current);

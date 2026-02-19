@@ -77,7 +77,7 @@ impl BinderState {
                 }
             }
 
-            if !decl.initializer.is_none() {
+            if decl.initializer.is_some() {
                 self.bind_node(arena, decl.initializer);
                 let flow = self.create_flow_assignment(idx);
                 self.current_flow = flow;
@@ -175,7 +175,7 @@ impl BinderState {
                 }
             }
 
-            if !param.initializer.is_none() {
+            if param.initializer.is_some() {
                 self.bind_node(arena, param.initializer);
             }
         }
@@ -309,7 +309,7 @@ impl BinderState {
                 binder.bind_parameter(arena, param_idx);
             }
 
-            if !body.is_none() {
+            if body.is_some() {
                 binder.bind_node(arena, body);
             }
         });
@@ -450,7 +450,7 @@ impl BinderState {
                             self.node_symbols.insert(prop.name.0, sym_id);
                         }
 
-                        if !prop.initializer.is_none() {
+                        if prop.initializer.is_some() {
                             self.bind_node(arena, prop.initializer);
                         }
                     }
@@ -658,7 +658,7 @@ impl BinderState {
                     // Bind the initializer expression so that nested functions,
                     // IIFEs, and closures within enum member initializers get
                     // their scopes and symbols properly bound.
-                    if !member.initializer.is_none() {
+                    if member.initializer.is_some() {
                         self.bind_expression(arena, member.initializer);
                     }
                 }
@@ -703,7 +703,7 @@ impl BinderState {
                         self.switch_clause_to_switch.insert(clause_idx.0, idx);
 
                         self.current_flow = pre_switch_flow;
-                        if !clause.expression.is_none() {
+                        if clause.expression.is_some() {
                             self.bind_expression(arena, clause.expression);
                         }
 
@@ -782,7 +782,7 @@ impl BinderState {
             let post_try_flow = self.current_flow;
 
             // Bind catch clause
-            if !try_data.catch_clause.is_none()
+            if try_data.catch_clause.is_some()
                 && let Some(catch_node) = arena.get(try_data.catch_clause)
                 && let Some(catch) = arena.get_catch_clause(catch_node)
             {
@@ -792,7 +792,7 @@ impl BinderState {
                 self.current_flow = pre_try_flow;
 
                 // Bind catch variable and mark it assigned.
-                if !catch.variable_declaration.is_none() {
+                if catch.variable_declaration.is_some() {
                     self.bind_node(arena, catch.variable_declaration);
                     let flow = self.create_flow_assignment(catch.variable_declaration);
                     self.current_flow = flow;
@@ -1037,7 +1037,7 @@ impl BinderState {
     /// Record the current flow node for an AST node.
     /// Called during binding to track flow position for identifiers and other expressions.
     pub(crate) fn record_flow(&mut self, node: NodeIndex) {
-        if !self.current_flow.is_none() {
+        if self.current_flow.is_some() {
             use tracing::trace;
             if let Some(flow_node) = self.flow_nodes.get(self.current_flow) {
                 trace!(
@@ -1071,7 +1071,7 @@ impl BinderState {
         // For closures (arrow functions and function expressions), capture the enclosing flow
         // so that const/let variables can preserve narrowing from the outer scope
         if capture_enclosing
-            && !prev_flow.is_none()
+            && prev_flow.is_some()
             && let Some(start_node) = self.flow_nodes.get_mut(start_flow)
         {
             start_node.antecedent.push(prev_flow);
@@ -1231,10 +1231,10 @@ impl BinderState {
                         if let Some(bin) = arena.get_binary_expr(node) {
                             if Self::is_assignment_operator(bin.operator_token) {
                                 stack.push(WorkItem::PostAssign(idx));
-                                if !bin.right.is_none() {
+                                if bin.right.is_some() {
                                     stack.push(WorkItem::Visit(bin.right));
                                 }
-                                if !bin.left.is_none() {
+                                if bin.left.is_some() {
                                     stack.push(WorkItem::Visit(bin.left));
                                 }
                                 continue;
@@ -1253,10 +1253,10 @@ impl BinderState {
                                 );
                                 continue;
                             }
-                            if !bin.right.is_none() {
+                            if bin.right.is_some() {
                                 stack.push(WorkItem::Visit(bin.right));
                             }
-                            if !bin.left.is_none() {
+                            if bin.left.is_some() {
                                 stack.push(WorkItem::Visit(bin.left));
                             }
                         }
@@ -1508,7 +1508,7 @@ impl BinderState {
                 return;
             };
             // Skip if has explicit type annotation — expando doesn't apply
-            if !var_decl.type_annotation.is_none() {
+            if var_decl.type_annotation.is_some() {
                 return;
             }
             if var_decl.initializer.is_none() {
@@ -1554,7 +1554,7 @@ impl BinderState {
         }
 
         for sym in self.symbols.iter() {
-            if !sym.value_declaration.is_none() {
+            if sym.value_declaration.is_some() {
                 let has_node_mapping = self.node_symbols.contains_key(&sym.value_declaration.0);
                 if !has_node_mapping {
                     errors.push(ValidationError::InvalidValueDeclaration {

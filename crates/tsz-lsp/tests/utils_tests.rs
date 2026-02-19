@@ -10,7 +10,7 @@ fn test_find_node_at_offset_simple() {
 
     // Offset 6 should be at 'x'
     let node = find_node_at_offset(arena, 6);
-    assert!(!node.is_none(), "Should find a node at offset 6");
+    assert!(node.is_some(), "Should find a node at offset 6");
 
     // Check that we got the identifier, not a larger container
     if let Some(n) = arena.get(node) {

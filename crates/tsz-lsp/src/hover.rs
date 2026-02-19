@@ -141,7 +141,7 @@ impl<'a> HoverProvider<'a> {
         *type_cache = Some(checker.extract_cache());
 
         // 4. Get the declaration node for determining keyword and modifiers
-        let decl_node_idx = if !symbol.value_declaration.is_none() {
+        let decl_node_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first) = symbol.declarations.first() {
             first
@@ -159,7 +159,7 @@ impl<'a> HoverProvider<'a> {
         let display_string = self.build_display_string(symbol, &kind, &type_string, decl_node_idx);
 
         // 8. Extract Documentation (JSDoc)
-        let raw_documentation = if !decl_node_idx.is_none() {
+        let raw_documentation = if decl_node_idx.is_some() {
             jsdoc_for_node(self.arena, root, decl_node_idx, self.source_text)
         } else {
             String::new()
@@ -387,7 +387,7 @@ impl<'a> HoverProvider<'a> {
             modifiers.push("protected");
         }
 
-        if !decl_node_idx.is_none()
+        if decl_node_idx.is_some()
             && let Some(ext) = self.arena.get_extended(decl_node_idx)
         {
             let mflags = ext.modifier_flags;

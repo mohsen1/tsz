@@ -179,7 +179,7 @@ impl Server {
             // Compute the textSpan for the word at the cursor position
             let ref_offset = line_map.position_to_offset(position, &source_text)?;
             let node_idx = tsz::lsp::utils::find_node_at_offset(&arena, ref_offset);
-            let text_span = if !node_idx.is_none() {
+            let text_span = if node_idx.is_some() {
                 if let Some(node) = arena.get(node_idx) {
                     let start_pos = line_map.offset_to_position(node.pos, &source_text);
                     let end_pos = line_map.offset_to_position(node.end, &source_text);
@@ -232,7 +232,7 @@ impl Server {
             let symbol_name = {
                 let ref_offset = line_map.position_to_offset(position, &source_text)?;
                 let node_idx = tsz::lsp::utils::find_node_at_offset(&arena, ref_offset);
-                if !node_idx.is_none() {
+                if node_idx.is_some() {
                     arena
                         .get_identifier_text(node_idx)
                         .map(std::string::ToString::to_string)
@@ -351,7 +351,7 @@ impl Server {
             // Get definition info for context spans
             let def_provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let def_infos = if !symbol_id.is_none() {
+            let def_infos = if symbol_id.is_some() {
                 def_provider.definition_infos_from_symbol(symbol_id)
             } else {
                 None

@@ -213,7 +213,7 @@ impl<'a> TypeHierarchyProvider<'a> {
             && let Some(ext) = self.arena.get_extended(node_idx)
         {
             let parent = ext.parent;
-            if !parent.is_none()
+            if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
                 && self.is_type_declaration(parent_node.kind)
             {

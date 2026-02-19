@@ -1324,7 +1324,7 @@ impl ParserState {
                 continue;
             }
 
-            if !member.is_none() {
+            if member.is_some() {
                 members.push(member);
             }
 

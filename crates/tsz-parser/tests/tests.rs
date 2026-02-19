@@ -22,7 +22,7 @@ fn test_modifier_flags() {
 fn test_node_index() {
     let index = NodeIndex(0);
     assert!(index.is_some());
-    assert!(!index.is_none());
+    assert!(index.is_some());
 
     let none = NodeIndex::NONE;
     assert!(none.is_none());

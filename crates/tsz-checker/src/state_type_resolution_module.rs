@@ -555,7 +555,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.modules_with_ts2307_emitted.insert(module_key);
 
         // Try to find the import declaration node to get the module specifier span
-        let (start, length) = if !decl_node.is_none() {
+        let (start, length) = if decl_node.is_some() {
             if let Some(node) = self.ctx.arena.get(decl_node) {
                 // For import equals declarations, try to get the module specifier node
                 if node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
@@ -760,7 +760,7 @@ impl<'a> CheckerState<'a> {
                 current = parent;
             }
 
-            if !import_decl_idx.is_none()
+            if import_decl_idx.is_some()
                 && let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx)
                 && let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node)
                 && let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause)
@@ -807,7 +807,7 @@ impl<'a> CheckerState<'a> {
         // because TS2732 should be emitted even in single-file mode
         if module_specifier.ends_with(".json") && !self.ctx.compiler_options.resolve_json_module {
             // Get span from declaration node
-            let (start, length) = if !decl_node.is_none() {
+            let (start, length) = if decl_node.is_some() {
                 if let Some(node) = self.ctx.arena.get(decl_node) {
                     (node.pos, node.end - node.pos)
                 } else {
@@ -843,7 +843,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get span from declaration node
-        let (start, length) = if !decl_node.is_none() {
+        let (start, length) = if decl_node.is_some() {
             if let Some(node) = self.ctx.arena.get(decl_node) {
                 (node.pos, node.end - node.pos)
             } else {
@@ -1079,7 +1079,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get span from declaration node
-        let (start, length) = if !decl_node.is_none() {
+        let (start, length) = if decl_node.is_some() {
             if let Some(node) = self.ctx.arena.get(decl_node) {
                 (node.pos, node.end - node.pos)
             } else {

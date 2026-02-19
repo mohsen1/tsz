@@ -64,7 +64,7 @@ impl BinderState {
                     k if k == syntax_kind_ext::IF_STATEMENT => {
                         if let Some(if_stmt) = arena.get_if_statement(node) {
                             self.collect_hoisted_from_node(arena, if_stmt.then_statement);
-                            if !if_stmt.else_statement.is_none() {
+                            if if_stmt.else_statement.is_some() {
                                 self.collect_hoisted_from_node(arena, if_stmt.else_statement);
                             }
                         }
@@ -80,7 +80,7 @@ impl BinderState {
                         if let Some(loop_data) = arena.get_loop(node) {
                             // Hoist var declarations from initializer (e.g., `for (var i = 0; ...)`)
                             let init = loop_data.initializer;
-                            if !init.is_none()
+                            if init.is_some()
                                 && let Some(init_node) = arena.get(init)
                                 && init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                             {
@@ -110,14 +110,14 @@ impl BinderState {
                             // Hoist from try block
                             self.collect_hoisted_from_node(arena, try_data.try_block);
                             // Hoist from catch clause's block
-                            if !try_data.catch_clause.is_none()
+                            if try_data.catch_clause.is_some()
                                 && let Some(catch_data) =
                                     arena.get_catch_clause_at(try_data.catch_clause)
                             {
                                 self.collect_hoisted_from_node(arena, catch_data.block);
                             }
                             // Hoist from finally block
-                            if !try_data.finally_block.is_none() {
+                            if try_data.finally_block.is_some() {
                                 self.collect_hoisted_from_node(arena, try_data.finally_block);
                             }
                         }
@@ -427,7 +427,7 @@ impl BinderState {
                 if let Some(loop_data) = arena.get_loop(node) {
                     let _ = self.current_flow;
                     let loop_label = self.create_loop_label();
-                    if !self.current_flow.is_none() {
+                    if self.current_flow.is_some() {
                         self.add_antecedent(loop_label, self.current_flow);
                     }
                     self.current_flow = loop_label;
@@ -492,7 +492,7 @@ impl BinderState {
 
                     let _ = self.current_flow;
                     let loop_label = self.create_loop_label();
-                    if !self.current_flow.is_none() {
+                    if self.current_flow.is_some() {
                         self.add_antecedent(loop_label, self.current_flow);
                     }
                     self.current_flow = loop_label;
@@ -545,7 +545,7 @@ impl BinderState {
                     self.enter_scope(ContainerKind::Block, idx);
                     self.bind_node(arena, for_data.initializer);
                     let loop_label = self.create_loop_label();
-                    if !self.current_flow.is_none() {
+                    if self.current_flow.is_some() {
                         self.add_antecedent(loop_label, self.current_flow);
                     }
                     self.current_flow = loop_label;
@@ -555,7 +555,7 @@ impl BinderState {
                     self.break_targets.push(post_loop);
 
                     self.bind_expression(arena, for_data.expression);
-                    if !for_data.initializer.is_none() {
+                    if for_data.initializer.is_some() {
                         let flow = self.create_flow_assignment(for_data.initializer);
                         self.current_flow = flow;
                     }
@@ -677,7 +677,7 @@ impl BinderState {
                 || k == syntax_kind_ext::THROW_STATEMENT =>
             {
                 if let Some(ret) = arena.get_return_statement(node)
-                    && !ret.expression.is_none()
+                    && ret.expression.is_some()
                 {
                     tracing::debug!(
                         return_idx = idx.0,
@@ -861,7 +861,7 @@ impl BinderState {
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                 if let Some(prop) = arena.get_shorthand_property(node) {
                     self.bind_node(arena, prop.name);
-                    if !prop.object_assignment_initializer.is_none() {
+                    if prop.object_assignment_initializer.is_some() {
                         self.bind_node(arena, prop.object_assignment_initializer);
                     }
                 }
@@ -1170,7 +1170,7 @@ impl BinderState {
             k if k == syntax_kind_ext::IF_STATEMENT => {
                 if let Some(if_stmt) = arena.get_if_statement(node) {
                     self.collect_hoisted_file_scope_from_node(arena, if_stmt.then_statement, out);
-                    if !if_stmt.else_statement.is_none() {
+                    if if_stmt.else_statement.is_some() {
                         self.collect_hoisted_file_scope_from_node(
                             arena,
                             if_stmt.else_statement,
@@ -1250,12 +1250,12 @@ impl BinderState {
             && let Some(clause_node) = arena.get(import.import_clause)
             && let Some(clause) = arena.get_import_clause(clause_node)
         {
-            if !clause.name.is_none()
+            if clause.name.is_some()
                 && let Some(name) = Self::get_identifier_name(arena, clause.name)
             {
                 out.insert(name.to_string());
             }
-            if !clause.named_bindings.is_none()
+            if clause.named_bindings.is_some()
                 && let Some(bindings_node) = arena.get(clause.named_bindings)
             {
                 if bindings_node.kind == SyntaxKind::Identifier as u16 {
@@ -1355,10 +1355,10 @@ impl BinderState {
             && let Some(clause_node) = arena.get(import.import_clause)
             && let Some(clause) = arena.get_import_clause(clause_node)
         {
-            if !clause.name.is_none() {
+            if clause.name.is_some() {
                 out.push(clause.name);
             }
-            if !clause.named_bindings.is_none()
+            if clause.named_bindings.is_some()
                 && let Some(bindings_node) = arena.get(clause.named_bindings)
             {
                 if bindings_node.kind == SyntaxKind::Identifier as u16 {
@@ -1374,7 +1374,7 @@ impl BinderState {
                             } else {
                                 spec.name
                             };
-                            if !local_ident.is_none() {
+                            if local_ident.is_some() {
                                 out.push(local_ident);
                             }
                         }
@@ -1654,7 +1654,7 @@ impl BinderState {
         // Keep source-file declarations visible through file_locals.
         // This is required for nested module scopes resolving references to
         // top-level ambient symbols (e.g. `import alias = demoNS` inside `declare module`).
-        if !self.current_scope_id.is_none()
+        if self.current_scope_id.is_some()
             && self
                 .scopes
                 .get(self.current_scope_id.0 as usize)

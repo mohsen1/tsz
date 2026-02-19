@@ -275,7 +275,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::JSX_EXPRESSION => {
                 // For JSX expressions, recurse into the expression
                 if let Some(jsx_expr) = self.ctx.arena.get_jsx_expression(node)
-                    && !jsx_expr.expression.is_none()
+                    && jsx_expr.expression.is_some()
                 {
                     self.collect_static_accesses_recursive(
                         jsx_expr.expression,
@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::JSX_ATTRIBUTE => {
                 // Check JSX attribute initializer
                 if let Some(attr) = self.ctx.arena.get_jsx_attribute(node)
-                    && !attr.initializer.is_none()
+                    && attr.initializer.is_some()
                 {
                     self.collect_static_accesses_recursive(attr.initializer, class_name, accesses);
                 }
@@ -734,7 +734,7 @@ impl<'a> CheckerState<'a> {
         // Walk up the parent chain looking for ModuleDeclaration nodes
         let mut current = func_idx;
 
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check if this node is a ModuleDeclaration (namespace or module)
                 if node.kind == syntax_kind_ext::MODULE_DECLARATION {
@@ -773,7 +773,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut current = var_idx;
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check if this node has the AMBIENT flag set
                 if (node.flags as u32) & node_flags::AMBIENT != 0 {
@@ -1847,7 +1847,7 @@ impl<'a> CheckerState<'a> {
         let Some(method) = self.ctx.arena.get_method_decl(node) else {
             return false;
         };
-        !method.body.is_none()
+        method.body.is_some()
     }
 
     /// Get the name node of a declaration for error reporting.

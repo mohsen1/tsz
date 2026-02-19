@@ -94,7 +94,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if !symbol.value_declaration.is_none()
+        if symbol.value_declaration.is_some()
             && self.is_node_within(symbol.value_declaration, root_idx)
         {
             return true;
@@ -138,7 +138,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut decl_nodes = symbol.declarations.clone();
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             decl_nodes.push(symbol.value_declaration);
         }
 
@@ -190,12 +190,12 @@ impl<'a> CheckerState<'a> {
             for &param_idx in &func.parameters.nodes {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                    && !param.initializer.is_none()
+                    && param.initializer.is_some()
                 {
                     self.collect_unqualified_identifier_references(param.initializer, refs);
                 }
             }
-            if !func.body.is_none() {
+            if func.body.is_some() {
                 self.collect_unqualified_identifier_references(func.body, refs);
             }
             return;
@@ -224,7 +224,7 @@ impl<'a> CheckerState<'a> {
                                 if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                                     && let Some(var_decl) =
                                         self.ctx.arena.get_variable_declaration(decl_node)
-                                    && !var_decl.initializer.is_none()
+                                    && var_decl.initializer.is_some()
                                 {
                                     self.collect_unqualified_identifier_references(
                                         var_decl.initializer,
@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
         self.check_async_modifier_on_declaration(&iface.modifiers);
 
         // Check for reserved interface names (error 2427)
-        if !iface.name.is_none()
+        if iface.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(iface.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
@@ -425,7 +425,7 @@ impl<'a> CheckerState<'a> {
         // This includes both directly declared and inherited index signatures.
         // Get the interface type to check for any index signatures (direct or inherited)
         // NOTE: Use get_type_of_symbol to get the cached type, avoiding recursion issues
-        let iface_type = if !iface.name.is_none() {
+        let iface_type = if iface.name.is_some() {
             // Get symbol from the interface name and resolve its type
             if let Some(name_node) = self.ctx.arena.get(iface.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
@@ -788,7 +788,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name = self.get_member_name_text(sig.name).unwrap_or_default();
-                    let prop_type = if !sig.type_annotation.is_none() {
+                    let prop_type = if sig.type_annotation.is_some() {
                         self.get_type_from_type_node(sig.type_annotation)
                     } else {
                         self.get_type_of_node(member_idx)
@@ -815,7 +815,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     let name = self.get_member_name_text(prop.name).unwrap_or_default();
-                    let prop_type = if !prop.type_annotation.is_none() {
+                    let prop_type = if prop.type_annotation.is_some() {
                         self.get_type_from_type_node(prop.type_annotation)
                     } else {
                         self.get_type_of_node(member_idx)
@@ -852,7 +852,7 @@ impl<'a> CheckerState<'a> {
                     let prop_type = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         // For getters, the property type is the return type (T), not
                         // the function type (() => T)
-                        if !accessor.type_annotation.is_none() {
+                        if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
                             self.infer_getter_return_type(accessor.body)
@@ -867,7 +867,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .map(|param| param.type_annotation)
                             .unwrap_or(NodeIndex::NONE);
-                        if !type_ann.is_none() {
+                        if type_ann.is_some() {
                             self.get_type_from_type_node(type_ann)
                         } else {
                             self.get_type_of_node(member_idx)
@@ -1114,13 +1114,13 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get_signature(member_node)
                 .map(|sig| sig.name)
-                .filter(|idx: &NodeIndex| !idx.is_none()),
+                .filter(|idx: &NodeIndex| idx.is_some()),
             k if k == syntax_kind_ext::METHOD_SIGNATURE => self
                 .ctx
                 .arena
                 .get_signature(member_node)
                 .map(|sig| sig.name)
-                .filter(|idx: &NodeIndex| !idx.is_none()),
+                .filter(|idx: &NodeIndex| idx.is_some()),
             _ => None,
         }
     }
@@ -1137,7 +1137,7 @@ impl<'a> CheckerState<'a> {
                 let name = prop.and_then(|p| self.get_member_name_text(p.name));
                 let node = prop
                     .map(|p| p.name)
-                    .filter(|idx| !idx.is_none())
+                    .filter(|idx| idx.is_some())
                     .unwrap_or(member_idx);
                 (name, node)
             }
@@ -1146,7 +1146,7 @@ impl<'a> CheckerState<'a> {
                 let name = method.and_then(|m| self.get_member_name_text(m.name));
                 let node = method
                     .map(|m| m.name)
-                    .filter(|idx| !idx.is_none())
+                    .filter(|idx| idx.is_some())
                     .unwrap_or(member_idx);
                 (name, node)
             }
@@ -1155,7 +1155,7 @@ impl<'a> CheckerState<'a> {
                 let name = accessor.and_then(|a| self.get_member_name_text(a.name));
                 let node = accessor
                     .map(|a| a.name)
-                    .filter(|idx| !idx.is_none())
+                    .filter(|idx| idx.is_some())
                     .unwrap_or(member_idx);
                 (name, node)
             }
@@ -1206,16 +1206,16 @@ impl<'a> CheckerState<'a> {
         let is_static = self.has_static_modifier(&accessor.modifiers);
 
         let type_id = if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-            if !accessor.type_annotation.is_none() {
+            if accessor.type_annotation.is_some() {
                 self.get_type_from_type_node(accessor.type_annotation)
-            } else if !accessor.body.is_none() {
+            } else if accessor.body.is_some() {
                 self.infer_getter_return_type(accessor.body)
             } else {
                 TypeId::ANY
             }
         } else if let Some(&first_param_idx) = accessor.parameters.nodes.first() {
             if let Some(param) = self.ctx.arena.get_parameter_at(first_param_idx) {
-                if !param.type_annotation.is_none() {
+                if param.type_annotation.is_some() {
                     self.get_type_from_type_node(param.type_annotation)
                 } else {
                     TypeId::ANY
@@ -1284,7 +1284,7 @@ impl<'a> CheckerState<'a> {
                     .arena
                     .get_method_decl(member_node)
                     .and_then(|method| {
-                        let has_body = !method.body.is_none();
+                        let has_body = method.body.is_some();
                         let is_static = self.has_static_modifier(&method.modifiers);
                         self.get_member_name_text(method.name)
                             .map(|n| (n, false, has_body, is_static))
@@ -1324,7 +1324,7 @@ impl<'a> CheckerState<'a> {
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
                     if let Some(constructor) = self.ctx.arena.get_constructor(member_node)
-                        && !constructor.body.is_none()
+                        && constructor.body.is_some()
                     {
                         constructor_implementations.push(member_idx);
                     }
@@ -1438,7 +1438,7 @@ impl<'a> CheckerState<'a> {
                         let error_node = member_node
                             .and_then(|n| self.ctx.arena.get_method_decl(n))
                             .map(|m| m.name)
-                            .filter(|idx| !idx.is_none())
+                            .filter(|idx| idx.is_some())
                             .unwrap_or(idx);
                         self.error_at_node(
                             error_node,
@@ -1530,9 +1530,9 @@ impl<'a> CheckerState<'a> {
             if self.type_contains_error(first_type) {
                 continue;
             }
-            let current_type = if !prop.type_annotation.is_none() {
+            let current_type = if prop.type_annotation.is_some() {
                 self.get_type_from_type_node(prop.type_annotation)
-            } else if !prop.initializer.is_none() {
+            } else if prop.initializer.is_some() {
                 self.get_type_of_node(prop.initializer)
             } else {
                 TypeId::ANY

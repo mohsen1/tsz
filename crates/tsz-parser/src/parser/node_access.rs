@@ -2445,7 +2445,7 @@ pub trait NodeAccess {
 
     /// Check if a node exists
     fn exists(&self, index: NodeIndex) -> bool {
-        !index.is_none() && self.kind(index).is_some()
+        index.is_some() && self.kind(index).is_some()
     }
 
     /// Get identifier text (if this is an identifier node)

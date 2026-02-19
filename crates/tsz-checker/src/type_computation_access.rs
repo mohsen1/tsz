@@ -649,7 +649,7 @@ impl<'a> CheckerState<'a> {
         });
 
         if is_super_call || is_static_context {
-            if !extends_expr_idx.is_none()
+            if extends_expr_idx.is_some()
                 && let Some(ctor_type) = self.base_constructor_type_from_expression(
                     extends_expr_idx,
                     extends_type_args.as_ref(),
@@ -670,7 +670,7 @@ impl<'a> CheckerState<'a> {
             return self.get_class_constructor_type(base_class_idx, base_class);
         }
 
-        if !extends_expr_idx.is_none()
+        if extends_expr_idx.is_some()
             && let Some(instance_type) = self
                 .base_instance_type_from_expression(extends_expr_idx, extends_type_args.as_ref())
         {
@@ -1314,7 +1314,7 @@ impl<'a> CheckerState<'a> {
                             Some(name.clone()),
                             Some(accessor.name),
                             accessor_type,
-                            !accessor.type_annotation.is_none(),
+                            accessor.type_annotation.is_some(),
                             false,
                             elem_idx,
                         );
@@ -1322,7 +1322,7 @@ impl<'a> CheckerState<'a> {
 
                     // TS2378: A 'get' accessor must return a value.
                     // Check if the getter has a body but no return statement with a value.
-                    if elem_node.kind == syntax_kind_ext::GET_ACCESSOR && !accessor.body.is_none() {
+                    if elem_node.kind == syntax_kind_ext::GET_ACCESSOR && accessor.body.is_some() {
                         let has_return = self.body_has_return_with_value(accessor.body);
                         let falls_through = self.function_body_falls_through(accessor.body);
 
@@ -1414,7 +1414,7 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_function(elem_idx);
 
                         // TS2378: A 'get' accessor must return a value.
-                        if !accessor.body.is_none() {
+                        if accessor.body.is_some() {
                             let has_return = self.body_has_return_with_value(accessor.body);
                             let falls_through = self.function_body_falls_through(accessor.body);
                             if !has_return && falls_through {

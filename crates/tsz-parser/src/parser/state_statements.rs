@@ -1322,7 +1322,7 @@ impl ParserState {
         // Skip for catch clause bindings (flags bit 3 = CATCH_CLAUSE_BINDING)
         // and for-in/for-of loop variables, which are destructuring without initializers.
         let is_catch_clause = (flags & 0x8) != 0;
-        if is_catch_clause && !initializer.is_none() {
+        if is_catch_clause && initializer.is_some() {
             let (pos, len) = self
                 .arena
                 .get(initializer)
@@ -1366,11 +1366,11 @@ impl ParserState {
     ) -> u32 {
         let mut end_pos = self.token_end();
         // Calculate end position from the last component present (child node, not token)
-        if !initializer.is_none() {
+        if initializer.is_some() {
             self.arena
                 .get(initializer)
                 .map_or_else(|| self.token_pos(), |n| n.end)
-        } else if !type_annotation.is_none() {
+        } else if type_annotation.is_some() {
             self.arena
                 .get(type_annotation)
                 .map_or_else(|| self.token_pos(), |n| n.end)
@@ -3874,7 +3874,7 @@ impl ParserState {
             && !self.is_token(SyntaxKind::EndOfFileToken)
         {
             let member = self.parse_class_member();
-            if !member.is_none() {
+            if member.is_some() {
                 self.parse_optional(SyntaxKind::SemicolonToken);
                 members.push(member);
 

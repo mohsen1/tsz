@@ -198,7 +198,7 @@ impl NodeArena {
     /// This is called during node creation to maintain parent pointers.
     #[inline]
     fn set_parent(&mut self, child: NodeIndex, parent: NodeIndex) {
-        if !child.is_none() {
+        if child.is_some() {
             // Safety: child index is guaranteed to be valid and < current index
             // because we build bottom-up (children are created before parents).
             if let Some(info) = self.extended_info.get_mut(child.0 as usize) {

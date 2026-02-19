@@ -80,7 +80,7 @@ impl<'a> SelectionRangeProvider<'a> {
         let mut ranges: Vec<Range> = Vec::new();
 
         // Collect all ranges from innermost to outermost
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             let range = self.node_to_range(current)?;
 

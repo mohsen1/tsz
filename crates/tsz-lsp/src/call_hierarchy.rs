@@ -348,7 +348,7 @@ impl<'a> CallHierarchyProvider<'a> {
             && let Some(ext) = self.arena.get_extended(node_idx)
         {
             let parent = ext.parent;
-            if !parent.is_none()
+            if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
                 && self.is_function_like(parent_node.kind)
             {
@@ -528,7 +528,7 @@ impl<'a> CallHierarchyProvider<'a> {
             k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                 // For property access (a.b), the identifier is name_or_argument
                 if let Some(access) = self.arena.get_access_expr(expr_node) {
-                    if !access.name_or_argument.is_none() {
+                    if access.name_or_argument.is_some() {
                         access.name_or_argument
                     } else {
                         NodeIndex::NONE

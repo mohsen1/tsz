@@ -323,7 +323,7 @@ impl<'a> GoToImplementationProvider<'a> {
         name_idx: NodeIndex,
     ) -> Option<Location> {
         // Use the name node if available for a tighter range
-        let target_idx = if !name_idx.is_none() {
+        let target_idx = if name_idx.is_some() {
             name_idx
         } else {
             decl_idx

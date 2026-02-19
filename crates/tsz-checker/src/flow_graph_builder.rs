@@ -152,7 +152,7 @@ impl<'a> FlowGraphBuilder<'a> {
         );
 
         for &stmt_idx in &statements.nodes {
-            if !stmt_idx.is_none() {
+            if stmt_idx.is_some() {
                 self.build_statement(stmt_idx);
             }
         }
@@ -297,7 +297,7 @@ impl<'a> FlowGraphBuilder<'a> {
             syntax_kind_ext::VARIABLE_STATEMENT | syntax_kind_ext::VARIABLE_DECLARATION_LIST => {
                 if let Some(var_data) = self.arena.get_variable(node) {
                     for &decl_idx in &var_data.declarations.nodes {
-                        if !decl_idx.is_none() {
+                        if decl_idx.is_some() {
                             self.build_statement(decl_idx);
                         }
                     }
@@ -371,7 +371,7 @@ impl<'a> FlowGraphBuilder<'a> {
                 // Collect and execute any finally blocks on the stack
                 let mut finally_flows: Vec<NodeIndex> = Vec::new();
                 for ctx in self.flow_stack.iter().rev() {
-                    if !ctx.finally_block.is_none() && ctx.context_type == FlowContextType::Try {
+                    if ctx.finally_block.is_some() && ctx.context_type == FlowContextType::Try {
                         finally_flows.push(ctx.finally_block);
                     }
                 }
@@ -411,7 +411,7 @@ impl<'a> FlowGraphBuilder<'a> {
     /// * `block` - The block statement to build flow graph for
     pub fn build_block(&mut self, block: &tsz_parser::parser::node::BlockData) {
         for &stmt_idx in &block.statements.nodes {
-            if !stmt_idx.is_none() {
+            if stmt_idx.is_some() {
                 self.build_statement(stmt_idx);
             }
         }
@@ -429,7 +429,7 @@ impl<'a> FlowGraphBuilder<'a> {
         if pre_condition_flow == self.graph.unreachable_flow {
             // Build branches for error checking but don't resurrect flow
             self.build_statement(if_stmt.then_statement);
-            if !if_stmt.else_statement.is_none() {
+            if if_stmt.else_statement.is_some() {
                 self.build_statement(if_stmt.else_statement);
             }
             // Stay unreachable - don't resurrect with merge label
@@ -452,7 +452,7 @@ impl<'a> FlowGraphBuilder<'a> {
         let merge_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
 
         // Handle else branch if present
-        if !if_stmt.else_statement.is_none() {
+        if if_stmt.else_statement.is_some() {
             // Create flow node for the false branch
             let false_flow = self.create_flow_node(
                 flow_flags::FALSE_CONDITION,
@@ -487,7 +487,7 @@ impl<'a> FlowGraphBuilder<'a> {
     fn build_while_statement(&mut self, loop_data: &tsz_parser::parser::node::LoopData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
-        if !self.current_flow.is_none()
+        if self.current_flow.is_some()
             && let Some(node) = self.graph.nodes.get_mut(loop_label)
         {
             node.antecedent.push(self.current_flow);
@@ -536,7 +536,7 @@ impl<'a> FlowGraphBuilder<'a> {
     fn build_do_while_statement(&mut self, loop_data: &tsz_parser::parser::node::LoopData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
-        if !self.current_flow.is_none()
+        if self.current_flow.is_some()
             && let Some(node) = self.graph.nodes.get_mut(loop_label)
         {
             node.antecedent.push(self.current_flow);
@@ -592,7 +592,7 @@ impl<'a> FlowGraphBuilder<'a> {
     fn build_for_statement(&mut self, loop_data: &tsz_parser::parser::node::LoopData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
-        if !self.current_flow.is_none()
+        if self.current_flow.is_some()
             && let Some(node) = self.graph.nodes.get_mut(loop_label)
         {
             node.antecedent.push(self.current_flow);
@@ -611,7 +611,7 @@ impl<'a> FlowGraphBuilder<'a> {
         });
 
         // Track initializer (variable declaration or expression)
-        if !loop_data.initializer.is_none() {
+        if loop_data.initializer.is_some() {
             self.build_statement(loop_data.initializer);
             self.add_antecedent(loop_label, self.current_flow);
         }
@@ -619,7 +619,7 @@ impl<'a> FlowGraphBuilder<'a> {
         self.current_flow = loop_label;
 
         // Handle condition if present
-        if !loop_data.condition.is_none() {
+        if loop_data.condition.is_some() {
             // Bug #2.1: Track assignments in condition expression
             self.handle_expression_for_assignments(loop_data.condition);
 
@@ -644,7 +644,7 @@ impl<'a> FlowGraphBuilder<'a> {
         }
 
         // Handle incrementor
-        if !loop_data.incrementor.is_none() {
+        if loop_data.incrementor.is_some() {
             let flow = self.create_flow_node(
                 flow_flags::ASSIGNMENT,
                 self.current_flow,
@@ -662,7 +662,7 @@ impl<'a> FlowGraphBuilder<'a> {
     fn build_for_in_statement(&mut self, for_in_of: &tsz_parser::parser::node::ForInOfData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
-        if !self.current_flow.is_none()
+        if self.current_flow.is_some()
             && let Some(node) = self.graph.nodes.get_mut(loop_label)
         {
             node.antecedent.push(self.current_flow);
@@ -681,7 +681,7 @@ impl<'a> FlowGraphBuilder<'a> {
         });
 
         // Track initializer (variable declaration)
-        if !for_in_of.initializer.is_none() {
+        if for_in_of.initializer.is_some() {
             self.build_statement(for_in_of.initializer);
         }
 
@@ -702,7 +702,7 @@ impl<'a> FlowGraphBuilder<'a> {
     fn build_for_of_statement(&mut self, for_in_of: &tsz_parser::parser::node::ForInOfData) {
         // Create loop label
         let loop_label = self.graph.nodes.alloc(flow_flags::LOOP_LABEL);
-        if !self.current_flow.is_none()
+        if self.current_flow.is_some()
             && let Some(node) = self.graph.nodes.get_mut(loop_label)
         {
             node.antecedent.push(self.current_flow);
@@ -721,7 +721,7 @@ impl<'a> FlowGraphBuilder<'a> {
         });
 
         // Track initializer (variable declaration)
-        if !for_in_of.initializer.is_none() {
+        if for_in_of.initializer.is_some() {
             self.build_statement(for_in_of.initializer);
         }
 
@@ -790,7 +790,7 @@ impl<'a> FlowGraphBuilder<'a> {
 
                             // Bind statements in clause
                             for &stmt_idx in &clause.statements.nodes {
-                                if !stmt_idx.is_none() {
+                                if stmt_idx.is_some() {
                                     self.build_statement(stmt_idx);
                                 }
                             }
@@ -815,7 +815,7 @@ impl<'a> FlowGraphBuilder<'a> {
                             self.current_flow = clause_flow;
 
                             for &stmt_idx in &clause.statements.nodes {
-                                if !stmt_idx.is_none() {
+                                if stmt_idx.is_some() {
                                     self.build_statement(stmt_idx);
                                 }
                             }
@@ -852,7 +852,7 @@ impl<'a> FlowGraphBuilder<'a> {
     /// Build flow graph for a try statement.
     fn build_try_statement(&mut self, try_data: &tsz_parser::parser::node::TryData) {
         let pre_try_flow = self.current_flow;
-        let has_finally = !try_data.finally_block.is_none();
+        let has_finally = try_data.finally_block.is_some();
 
         // Create merge label for after try/catch (before finally)
         let pre_finally_label = self.graph.nodes.alloc(flow_flags::BRANCH_LABEL);
@@ -875,14 +875,14 @@ impl<'a> FlowGraphBuilder<'a> {
         let post_try_flow = self.current_flow;
 
         // Bind catch clause if present
-        let post_catch_flow = if !try_data.catch_clause.is_none() {
+        let post_catch_flow = if try_data.catch_clause.is_some() {
             if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
                 if let Some(catch) = self.arena.get_catch_clause(catch_node) {
                     // Reset flow - catch can be entered from any point in try
                     self.current_flow = pre_try_flow;
 
                     // Bind catch variable if present
-                    if !catch.variable_declaration.is_none() {
+                    if catch.variable_declaration.is_some() {
                         self.build_statement(catch.variable_declaration);
                     }
 
@@ -961,7 +961,7 @@ impl<'a> FlowGraphBuilder<'a> {
         self.track_variable_declaration(var_decl, idx);
 
         // Check for await/yield expressions in initializer
-        if !var_decl.initializer.is_none() {
+        if var_decl.initializer.is_some() {
             self.handle_expression_for_suspension_points(var_decl.initializer);
         }
     }
@@ -983,7 +983,7 @@ impl<'a> FlowGraphBuilder<'a> {
         let mut target_label = FlowNodeId::NONE;
 
         // Get the label text if this is a labeled break
-        let label_text = if !break_label.is_none() {
+        let label_text = if break_label.is_some() {
             self.arena
                 .get(break_label)
                 .and_then(|node| self.arena.get_identifier(node))
@@ -993,13 +993,13 @@ impl<'a> FlowGraphBuilder<'a> {
         };
 
         for ctx in self.flow_stack.iter().rev() {
-            if !ctx.finally_block.is_none() && ctx.context_type == FlowContextType::Try {
+            if ctx.finally_block.is_some() && ctx.context_type == FlowContextType::Try {
                 finally_blocks.push(ctx.finally_block);
             }
 
             // If this break has a label, find the matching labeled statement
             if let Some(label) = label_text {
-                if !ctx.label.is_none()
+                if ctx.label.is_some()
                     && let Some(ctx_label_node) = self.arena.get(ctx.label)
                     && let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node)
                     && ctx_label_data.escaped_text == label
@@ -1022,7 +1022,7 @@ impl<'a> FlowGraphBuilder<'a> {
         }
 
         // Add break target antecedent
-        if !target_label.is_none() {
+        if target_label.is_some() {
             self.add_antecedent(target_label, self.current_flow);
         }
         self.current_flow = self.graph.unreachable_flow;
@@ -1045,7 +1045,7 @@ impl<'a> FlowGraphBuilder<'a> {
         let mut target_label = FlowNodeId::NONE;
 
         // Get the label text if this is a labeled continue
-        let label_text = if !continue_label_idx.is_none() {
+        let label_text = if continue_label_idx.is_some() {
             self.arena
                 .get(continue_label_idx)
                 .and_then(|node| self.arena.get_identifier(node))
@@ -1055,13 +1055,13 @@ impl<'a> FlowGraphBuilder<'a> {
         };
 
         for ctx in self.flow_stack.iter().rev() {
-            if !ctx.finally_block.is_none() && ctx.context_type == FlowContextType::Try {
+            if ctx.finally_block.is_some() && ctx.context_type == FlowContextType::Try {
                 finally_blocks.push(ctx.finally_block);
             }
 
             // If this continue has a label, find the matching labeled statement
             if let Some(label) = label_text {
-                if !ctx.label.is_none()
+                if ctx.label.is_some()
                     && let Some(ctx_label_node) = self.arena.get(ctx.label)
                     && let Some(ctx_label_data) = self.arena.get_identifier(ctx_label_node)
                     && ctx_label_data.escaped_text == label
@@ -1085,7 +1085,7 @@ impl<'a> FlowGraphBuilder<'a> {
         }
 
         // Add continue target antecedent
-        if !target_label.is_none() {
+        if target_label.is_some() {
             self.add_antecedent(target_label, self.current_flow);
         }
         self.current_flow = self.graph.unreachable_flow;
@@ -1106,7 +1106,7 @@ impl<'a> FlowGraphBuilder<'a> {
 
         let id = self.graph.nodes.alloc(flags);
         if let Some(flow) = self.graph.nodes.get_mut(id) {
-            if !antecedent.is_none() && antecedent != self.graph.unreachable_flow {
+            if antecedent.is_some() && antecedent != self.graph.unreachable_flow {
                 flow.antecedent.push(antecedent);
             }
             flow.node = node;
@@ -1124,10 +1124,10 @@ impl<'a> FlowGraphBuilder<'a> {
         let id = self.graph.nodes.alloc(flow_flags::SWITCH_CLAUSE);
         if let Some(node) = self.graph.nodes.get_mut(id) {
             node.node = expression;
-            if !pre_switch.is_none() && pre_switch != self.graph.unreachable_flow {
+            if pre_switch.is_some() && pre_switch != self.graph.unreachable_flow {
                 node.antecedent.push(pre_switch);
             }
-            if !fallthrough.is_none() && fallthrough != self.graph.unreachable_flow {
+            if fallthrough.is_some() && fallthrough != self.graph.unreachable_flow {
                 node.antecedent.push(fallthrough);
             }
         }
@@ -1149,7 +1149,7 @@ impl<'a> FlowGraphBuilder<'a> {
 
     /// Record the current flow node for an AST node.
     fn record_node_flow(&mut self, node: NodeIndex) {
-        if !self.current_flow.is_none() {
+        if self.current_flow.is_some() {
             self.graph.node_flow.insert(node.0, self.current_flow);
 
             // Mark node as unreachable if current flow is unreachable
@@ -1192,7 +1192,7 @@ impl<'a> FlowGraphBuilder<'a> {
         self.record_node_flow(decl_node);
 
         // If the variable has an initializer, track it as an assignment
-        if !var_decl.initializer.is_none() {
+        if var_decl.initializer.is_some() {
             self.track_assignment(decl_node);
         }
     }
@@ -1246,7 +1246,7 @@ impl<'a> FlowGraphBuilder<'a> {
             self.handle_yield_expression(expr_idx);
             // Also check the operand of the yield expression (stored as UnaryExprDataEx)
             if let Some(unary_data) = self.arena.get_unary_expr_ex(node)
-                && !unary_data.expression.is_none()
+                && unary_data.expression.is_some()
             {
                 self.handle_expression_for_suspension_points(unary_data.expression);
             }
@@ -1273,7 +1273,7 @@ impl<'a> FlowGraphBuilder<'a> {
                     self.handle_expression_for_suspension_points(call.expression);
                     if let Some(args) = &call.arguments {
                         for &arg in &args.nodes {
-                            if !arg.is_none() {
+                            if arg.is_some() {
                                 self.handle_expression_for_suspension_points(arg);
                             }
                         }
@@ -1284,7 +1284,7 @@ impl<'a> FlowGraphBuilder<'a> {
             | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
                     self.handle_expression_for_suspension_points(access.expression);
-                    if !access.name_or_argument.is_none() {
+                    if access.name_or_argument.is_some() {
                         self.handle_expression_for_suspension_points(access.name_or_argument);
                     }
                 }
@@ -1399,7 +1399,7 @@ impl<'a> FlowGraphBuilder<'a> {
                     self.handle_expression_for_assignments(call.expression);
                     if let Some(args) = &call.arguments {
                         for &arg in &args.nodes {
-                            if !arg.is_none() {
+                            if arg.is_some() {
                                 self.handle_expression_for_assignments(arg);
                             }
                         }
@@ -1416,7 +1416,7 @@ impl<'a> FlowGraphBuilder<'a> {
             | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
                 if let Some(access) = self.arena.get_access_expr(node) {
                     self.handle_expression_for_assignments(access.expression);
-                    if !access.name_or_argument.is_none() {
+                    if access.name_or_argument.is_some() {
                         self.handle_expression_for_assignments(access.name_or_argument);
                     }
                 }
@@ -1502,7 +1502,7 @@ impl<'a> FlowGraphBuilder<'a> {
         let id = self.graph.nodes.alloc(flow_flags::ARRAY_MUTATION);
         if let Some(node) = self.graph.nodes.get_mut(id) {
             node.node = call_idx;
-            if !self.current_flow.is_none() && self.current_flow != self.graph.unreachable_flow {
+            if self.current_flow.is_some() && self.current_flow != self.graph.unreachable_flow {
                 node.antecedent.push(self.current_flow);
             }
         }
@@ -1618,8 +1618,7 @@ impl<'a> FlowGraphBuilder<'a> {
                         }
 
                         // Static initializer executes
-                        if self.has_static_modifier(&prop_modifiers) && !prop_initializer.is_none()
-                        {
+                        if self.has_static_modifier(&prop_modifiers) && prop_initializer.is_some() {
                             self.handle_expression_for_suspension_points(prop_initializer);
                             // Track assignment for static fields
                             let flow = self.create_flow_node(

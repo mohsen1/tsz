@@ -778,7 +778,7 @@ impl BinderState {
             if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
                 // Walk up the scope chain
                 let mut scope_depth = 0;
-                while !scope_id.is_none() {
+                while scope_id.is_some() {
                     if let Some(scope) = self.scopes.get(scope_id.0 as usize) {
                         if let Some(sym_id) = scope.table.get(name) {
                             debug!(
@@ -882,7 +882,7 @@ impl BinderState {
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             let mut iterations = 0;
-            while !scope_id.is_none() {
+            while scope_id.is_some() {
                 iterations += 1;
                 if iterations > MAX_SCOPE_WALK_ITERATIONS {
                     break;
@@ -961,7 +961,7 @@ impl BinderState {
 
         if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
             let mut iterations = 0;
-            while !scope_id.is_none() {
+            while scope_id.is_some() {
                 iterations += 1;
                 if iterations > MAX_SCOPE_WALK_ITERATIONS {
                     break;
@@ -1010,7 +1010,7 @@ impl BinderState {
         };
 
         let mut iterations = 0;
-        while !scope_id.is_none() {
+        while scope_id.is_some() {
             iterations += 1;
             if iterations > MAX_SCOPE_WALK_ITERATIONS {
                 break;
@@ -1038,7 +1038,7 @@ impl BinderState {
     ) -> Option<SymbolId> {
         if self.scopes.is_empty() {
             let mut current = node_idx;
-            while !current.is_none() {
+            while current.is_some() {
                 let node = arena.get(current)?;
                 if let Some(func) = arena.get_function(node) {
                     for &param_idx in &func.parameters.nodes {
@@ -1206,7 +1206,7 @@ impl BinderState {
         let mut current = node_idx;
 
         // Walk up the AST using parent pointers to find the nearest scope
-        while !current.is_none() {
+        while current.is_some() {
             // Check if this node creates a scope
             if let Some(&scope_id) = self.node_scope_ids.get(&current.0) {
                 return Some(scope_id);
@@ -1238,7 +1238,7 @@ impl BinderState {
         self.scopes.push(new_scope);
 
         // Map node to this scope
-        if !node.is_none() {
+        if node.is_some() {
             self.node_scope_ids.insert(node.0, new_scope_id);
         }
 
@@ -1248,7 +1248,7 @@ impl BinderState {
 
     /// Exit the current persistent scope.
     pub(crate) fn exit_persistent_scope(&mut self) {
-        if !self.current_scope_id.is_none()
+        if self.current_scope_id.is_some()
             && let Some(scope) = self.scopes.get(self.current_scope_id.0 as usize)
         {
             self.current_scope_id = scope.parent;
@@ -1258,7 +1258,7 @@ impl BinderState {
     /// Declare a symbol in the current persistent scope.
     /// This adds the symbol to the persistent scope table for later querying.
     pub(crate) fn declare_in_persistent_scope(&mut self, name: String, sym_id: SymbolId) {
-        if !self.current_scope_id.is_none()
+        if self.current_scope_id.is_some()
             && let Some(scope) = self.scopes.get_mut(self.current_scope_id.0 as usize)
         {
             scope.table.set(name, sym_id);
@@ -1557,8 +1557,7 @@ impl BinderState {
         }
 
         let mut declarations = symbol.declarations.clone();
-        if !symbol.value_declaration.is_none() && !declarations.contains(&symbol.value_declaration)
-        {
+        if symbol.value_declaration.is_some() && !declarations.contains(&symbol.value_declaration) {
             declarations.push(symbol.value_declaration);
         }
 
@@ -1602,7 +1601,7 @@ impl BinderState {
         let export_assignment_targets = |sym: &Symbol| -> Vec<String> {
             let mut targets = Vec::new();
             let mut declarations = sym.declarations.clone();
-            if !sym.value_declaration.is_none() && !declarations.contains(&sym.value_declaration) {
+            if sym.value_declaration.is_some() && !declarations.contains(&sym.value_declaration) {
                 declarations.push(sym.value_declaration);
             }
 
