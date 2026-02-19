@@ -410,7 +410,7 @@ impl BinderState {
                         {
                             self.bind_node(arena, method.name);
                         }
-                        if let Some(name) = Self::get_identifier_name(arena, method.name) {
+                        if let Some(name) = Self::get_property_name(arena, method.name) {
                             let mut flags = symbol_flags::METHOD;
                             if Self::has_abstract_modifier(arena, method.modifiers.as_ref()) {
                                 flags |= symbol_flags::ABSTRACT;
@@ -421,7 +421,7 @@ impl BinderState {
                             if Self::has_private_modifier(arena, method.modifiers.as_ref()) {
                                 flags |= symbol_flags::PRIVATE;
                             }
-                            let sym_id = self.declare_symbol(name, flags, idx, false);
+                            let sym_id = self.declare_symbol(&name, flags, idx, false);
                             self.node_symbols.insert(method.name.0, sym_id);
                         }
                         self.bind_callable_body(arena, &method.parameters, method.body, idx);
@@ -435,7 +435,7 @@ impl BinderState {
                         {
                             self.bind_node(arena, prop.name);
                         }
-                        if let Some(name) = Self::get_identifier_name(arena, prop.name) {
+                        if let Some(name) = Self::get_property_name(arena, prop.name) {
                             let mut flags = symbol_flags::PROPERTY;
                             if Self::has_abstract_modifier(arena, prop.modifiers.as_ref()) {
                                 flags |= symbol_flags::ABSTRACT;
@@ -446,7 +446,7 @@ impl BinderState {
                             if Self::has_private_modifier(arena, prop.modifiers.as_ref()) {
                                 flags |= symbol_flags::PRIVATE;
                             }
-                            let sym_id = self.declare_symbol(name, flags, idx, false);
+                            let sym_id = self.declare_symbol(&name, flags, idx, false);
                             self.node_symbols.insert(prop.name.0, sym_id);
                         }
 
@@ -463,7 +463,7 @@ impl BinderState {
                         {
                             self.bind_node(arena, accessor.name);
                         }
-                        if let Some(name) = Self::get_identifier_name(arena, accessor.name) {
+                        if let Some(name) = Self::get_property_name(arena, accessor.name) {
                             let mut flags = if node.kind == syntax_kind_ext::GET_ACCESSOR {
                                 symbol_flags::GET_ACCESSOR
                             } else {
@@ -478,7 +478,7 @@ impl BinderState {
                             if Self::has_private_modifier(arena, accessor.modifiers.as_ref()) {
                                 flags |= symbol_flags::PRIVATE;
                             }
-                            let sym_id = self.declare_symbol(name, flags, idx, false);
+                            let sym_id = self.declare_symbol(&name, flags, idx, false);
                             self.node_symbols.insert(accessor.name.0, sym_id);
                         }
                         self.bind_callable_body(arena, &accessor.parameters, accessor.body, idx);
