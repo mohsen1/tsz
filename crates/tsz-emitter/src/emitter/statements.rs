@@ -500,6 +500,10 @@ impl<'a> Printer<'a> {
 
         self.write("if (");
         self.emit(if_stmt.expression);
+        // Map closing `)` to its source position
+        if let Some(expr_node) = self.arena.get(if_stmt.expression) {
+            self.map_token_after(expr_node.end, node.end, b')');
+        }
         self.write(")");
         if then_is_multiline_in_source {
             self.write_line();
@@ -534,6 +538,10 @@ impl<'a> Printer<'a> {
 
         self.write("while (");
         self.emit(loop_stmt.condition);
+        // Map closing `)` to its source position
+        if let Some(cond_node) = self.arena.get(loop_stmt.condition) {
+            self.map_token_after(cond_node.end, node.end, b')');
+        }
         self.write(")");
         self.emit_loop_body(loop_stmt.statement);
     }
@@ -555,6 +563,23 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit(loop_stmt.incrementor);
         }
+        // Map closing `)` to its source position
+        {
+            let search_start = if !loop_stmt.incrementor.is_none() {
+                self.arena
+                    .get(loop_stmt.incrementor)
+                    .map_or(node.pos, |n| n.end)
+            } else if !loop_stmt.condition.is_none() {
+                self.arena
+                    .get(loop_stmt.condition)
+                    .map_or(node.pos, |n| n.end)
+            } else {
+                self.arena
+                    .get(loop_stmt.initializer)
+                    .map_or(node.pos, |n| n.end)
+            };
+            self.map_token_after(search_start, node.end, b')');
+        }
         self.write(")");
         self.emit_loop_body(loop_stmt.statement);
     }
@@ -568,6 +593,10 @@ impl<'a> Printer<'a> {
         self.emit(for_in_of.initializer);
         self.write(" in ");
         self.emit(for_in_of.expression);
+        // Map closing `)` to its source position
+        if let Some(expr_node) = self.arena.get(for_in_of.expression) {
+            self.map_token_after(expr_node.end, node.end, b')');
+        }
         self.write(")");
         self.emit_loop_body(for_in_of.statement);
     }
@@ -585,6 +614,10 @@ impl<'a> Printer<'a> {
         self.emit(for_in_of.initializer);
         self.write(" of ");
         self.emit(for_in_of.expression);
+        // Map closing `)` to its source position
+        if let Some(expr_node) = self.arena.get(for_in_of.expression) {
+            self.map_token_after(expr_node.end, node.end, b')');
+        }
         self.write(")");
         self.emit_loop_body(for_in_of.statement);
     }
