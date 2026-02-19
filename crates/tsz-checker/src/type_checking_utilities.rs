@@ -728,7 +728,6 @@ impl<'a> CheckerState<'a> {
         keys: &[tsz_common::interner::Atom],
     ) -> Option<TypeId> {
         use tsz_solver::operations_property::PropertyAccessResult;
-        let factory = self.ctx.types.factory();
 
         if keys.is_empty() {
             return None;
@@ -768,11 +767,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if types.len() == 1 {
-            Some(types[0])
-        } else {
-            Some(factory.union(types))
-        }
+        Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
     }
 
     /// Get element access type for literal number keys.
@@ -802,7 +797,6 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keys: &[f64],
     ) -> Option<TypeId> {
-        let factory = self.ctx.types.factory();
         if keys.is_empty() {
             return None;
         }
@@ -816,11 +810,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if types.len() == 1 {
-            Some(types[0])
-        } else {
-            Some(factory.union(types))
-        }
+        Some(tsz_solver::utils::union_or_single(self.ctx.types, types))
     }
 
     /// Check if a type is array-like (supports numeric indexing).

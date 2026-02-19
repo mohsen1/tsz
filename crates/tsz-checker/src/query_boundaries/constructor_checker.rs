@@ -1,7 +1,8 @@
 use tsz_solver::{CallSignature, TypeDatabase, TypeId};
 
+pub(crate) use tsz_solver::type_queries_classifiers::ConstructorAccessKind;
 pub(crate) use tsz_solver::type_queries_extended::{
-    AbstractConstructorKind, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
+    AbstractConstructorKind, ConstructorReturnMergeKind, InstanceTypeKind,
 };
 
 pub(crate) fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

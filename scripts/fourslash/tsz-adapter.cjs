@@ -63,7 +63,7 @@ class TszServerBridge {
      */
     start() {
         return new Promise((resolve, reject) => {
-            this._worker = new Worker(path.join(__dirname, "tsz-worker.js"), {
+            this._worker = new Worker(path.join(__dirname, "tsz-worker.cjs"), {
                 workerData: {
                     controlBuffer: this.controlBuffer,
                     dataBuffer: this.dataBuffer,

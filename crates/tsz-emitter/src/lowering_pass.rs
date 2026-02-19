@@ -1525,7 +1525,7 @@ impl<'a> LoweringPass<'a> {
                 return;
             }
 
-            let captures_this = contains_this_reference(self.arena, idx) || arrow.is_async;
+            let captures_this = contains_this_reference(self.arena, idx);
             let captures_arguments = contains_arguments_reference(self.arena, idx);
 
             tracing::debug!(
@@ -1596,7 +1596,7 @@ impl<'a> LoweringPass<'a> {
 
         // Restore capture level after visiting the arrow function body
         if self.ctx.target_es5 {
-            let captures_this = contains_this_reference(self.arena, idx) || arrow.is_async;
+            let captures_this = contains_this_reference(self.arena, idx);
             if captures_this {
                 self.this_capture_level -= 1;
             }

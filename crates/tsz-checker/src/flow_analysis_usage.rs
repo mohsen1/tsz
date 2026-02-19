@@ -345,7 +345,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // If the variable is declared in a for-in or for-of loop header,
-        // it's always assigned by the loop iteration itself
+        // it's assigned by the loop iteration itself - but only when usage is at or after the loop.
+        // A usage BEFORE the loop in source order (e.g. `v; for (var v of [0]) {}`) must still
+        // be checked for definite assignment.
         if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id) {
             let decl_list_idx = decl_list_info.parent;
             if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
@@ -357,7 +359,16 @@ impl<'a> CheckerState<'a> {
                     && (for_node.kind == syntax_kind_ext::FOR_IN_STATEMENT
                         || for_node.kind == syntax_kind_ext::FOR_OF_STATEMENT)
                 {
-                    return false;
+                    // Only skip the check if the usage is at or after the start of the loop.
+                    // If the usage precedes the loop in source order, fall through to DAA.
+                    if let Some(usage_node) = self.ctx.arena.get(idx) {
+                        if usage_node.pos >= for_node.pos {
+                            return false;
+                        }
+                        // Usage is before the loop - continue to definite assignment check
+                    } else {
+                        return false;
+                    }
                 }
             }
         }

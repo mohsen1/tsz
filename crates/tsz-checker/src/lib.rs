@@ -30,12 +30,14 @@ pub mod conditional_type;
 pub mod constructor_checker;
 pub mod context;
 mod context_constructors;
+mod context_def_mapping;
 mod context_resolver;
 pub mod control_flow;
 mod control_flow_assignment;
 mod control_flow_narrowing;
 mod control_flow_type_guards;
 pub mod declarations;
+mod declarations_module_helpers;
 pub mod decorators;
 pub mod dispatch;
 pub mod enum_checker;
@@ -83,6 +85,7 @@ mod state_class_checking;
 mod state_property_checking;
 pub mod state_type_analysis;
 mod state_type_analysis_computed;
+mod state_type_analysis_cross_file;
 pub mod state_type_environment;
 pub mod state_type_resolution;
 mod state_type_resolution_module;
@@ -96,6 +99,7 @@ pub mod tuple_type;
 pub mod type_api;
 pub mod type_checking;
 mod type_checking_declarations;
+mod type_checking_declarations_utils;
 mod type_checking_global;
 mod type_checking_queries;
 mod type_checking_queries_class;
@@ -107,6 +111,7 @@ mod type_checking_utilities_jsdoc;
 pub mod type_computation;
 mod type_computation_access;
 mod type_computation_call;
+mod type_computation_call_helpers;
 mod type_computation_complex;
 pub mod type_literal_checker;
 pub mod type_node;
@@ -127,6 +132,9 @@ mod conformance_issues;
 #[cfg(test)]
 #[path = "../tests/control_flow_tests.rs"]
 mod control_flow_tests;
+#[cfg(test)]
+#[path = "../tests/control_flow_type_guard_tests.rs"]
+mod control_flow_type_guard_tests;
 #[cfg(test)]
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;

@@ -1001,7 +1001,12 @@ impl<'a> CheckerState<'a> {
                         }
                         TypeId::ANY
                     } else {
-                        self.get_type_of_node(elem_idx)
+                        // Use shorthand_name_idx (the identifier) so that get_type_of_identifier
+                        // is invoked, which calls check_flow_usage and can emit TS2454
+                        // if the variable is used before assignment.
+                        // Using elem_idx (SHORTHAND_PROPERTY_ASSIGNMENT) would return TypeId::ERROR
+                        // since that node kind has no dispatch handler, silently suppressing TS2454.
+                        self.get_type_of_node(shorthand_name_idx)
                     };
 
                     // Restore context

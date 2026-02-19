@@ -14,7 +14,7 @@
 
 const path = require("path");
 const fs = require("fs");
-const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter");
+const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
 
 // Per-test timeout (ms) - tests taking longer are killed
 const TEST_TIMEOUT_MS = 15000;

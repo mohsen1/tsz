@@ -433,7 +433,7 @@ impl<'a> CheckerState<'a> {
                     .and_then(|v| v.first())
                     .map(|a| &**a);
                 let arena = arena_opt.unwrap_or(self.ctx.arena);
-                let is_local = arena_opt.is_none();
+                let is_local = arena_opt.is_none_or(|a| std::ptr::eq(a, self.ctx.arena));
 
                 if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
                     if has_libs

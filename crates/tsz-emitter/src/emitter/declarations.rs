@@ -104,10 +104,20 @@ impl<'a> Printer<'a> {
         // Name
         if !func.name.is_none() {
             self.write_space();
-            self.emit(func.name);
+            self.emit_decl_name(func.name);
         } else {
             // Space before ( for anonymous functions: `function ()` not `function()`
             self.write(" ");
+        }
+
+        // Skip comments inside type parameter list (e.g., `<T, U /*extends T*/>`)
+        // since type parameters are stripped in JS output
+        if let Some(ref type_params) = func.type_parameters {
+            for &tp_idx in &type_params.nodes {
+                if let Some(tp_node) = self.arena.get(tp_idx) {
+                    self.skip_comments_in_range(tp_node.pos, tp_node.end);
+                }
+            }
         }
 
         // Parameters - only emit names, not types for JavaScript
@@ -185,7 +195,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit(decl.name);
+        self.emit_decl_name(decl.name);
 
         // Skip type annotation for JavaScript emit
 
@@ -274,8 +284,11 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     // Skip TypeScript-only modifiers (abstract, declare, etc.)
+                    // Also skip `async` — it's an error on class declarations but
+                    // TSC still emits the class without the modifier.
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                        || mod_node.kind == SyntaxKind::AsyncKeyword as u16
                     {
                         continue;
                     }
@@ -292,9 +305,15 @@ impl<'a> Printer<'a> {
 
         self.write("class");
 
-        if !class.name.is_none() {
+        let override_name = self.anonymous_default_export_name.clone();
+        if class.name.is_none() {
+            if let Some(name) = override_name {
+                self.write_space();
+                self.write(&name);
+            }
+        } else {
             self.write_space();
-            self.emit(class.name);
+            self.emit_decl_name(class.name);
         }
 
         if let Some(ref heritage_clauses) = class.heritage_clauses {
@@ -1164,6 +1183,48 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Collect exported *variable* names from a namespace body for identifier qualification.
+    ///
+    /// Only `export var` names need qualification because their local declaration is replaced
+    /// by a namespace property assignment (`ns.x = expr;`).
+    /// Exported classes/functions/enums keep their local declaration, so their names
+    /// remain in scope without qualification.
+    fn collect_namespace_exported_names(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(body_node) = self.arena.get(module.body) else {
+            return names;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            let inner_kind = self.arena.get(export.export_clause).map_or(0, |n| n.kind);
+            // Only collect variable names - classes/functions/enums keep their local bindings
+            if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                let export_names = self.get_export_names_from_clause(export.export_clause);
+                for name in export_names {
+                    names.insert(name);
+                }
+            }
+        }
+        names
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -1175,6 +1236,9 @@ impl<'a> Printer<'a> {
             && let Some(block) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block.statements
         {
+            // Collect exported names for identifier qualification in emit_identifier
+            let prev_exported = std::mem::take(&mut self.namespace_exported_names);
+            self.namespace_exported_names = self.collect_namespace_exported_names(module);
             for &stmt_idx in &stmts.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
@@ -1285,6 +1349,8 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
             }
+            // Restore previous exported names
+            self.namespace_exported_names = prev_exported;
         }
     }
 
@@ -1334,7 +1400,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Iterate declaration lists → declarations
+        // Collect all initialized (name, initializer) pairs across declaration lists.
+        // TSC emits multiple exports as a comma expression: `ns.a = 1, ns.c = 2;`
+        let mut assignments: Vec<(String, NodeIndex)> = Vec::new();
+
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
                 continue;
@@ -1351,27 +1420,34 @@ impl<'a> Printer<'a> {
                     continue;
                 };
 
+                if decl.initializer.is_none() {
+                    continue;
+                }
+
                 let mut names = Vec::new();
                 self.collect_binding_names(decl.name, &mut names);
-
-                for name in &names {
-                    // Skip uninitialized exports - they don't produce assignment
-                    if decl.initializer.is_none() {
-                        continue;
-                    }
-                    self.write(ns_name);
-                    self.write(".");
-                    self.write(name);
-                    self.write(" = ");
-                    self.emit_expression(decl.initializer);
-                    self.write(";");
-                    // Emit trailing comments from the outer export statement
-                    let token_end =
-                        self.find_token_end_before_trivia(outer_stmt.pos, outer_stmt.end);
-                    self.emit_trailing_comments(token_end);
-                    self.write_line();
+                for name in names {
+                    assignments.push((name, decl.initializer));
                 }
             }
+        }
+
+        // Emit as comma expression: ns.a = 1, ns.c = 2;
+        if !assignments.is_empty() {
+            for (i, (name, init)) in assignments.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(ns_name);
+                self.write(".");
+                self.write(name);
+                self.write(" = ");
+                self.emit_expression(*init);
+            }
+            self.write(";");
+            let token_end = self.find_token_end_before_trivia(outer_stmt.pos, outer_stmt.end);
+            self.emit_trailing_comments(token_end);
+            self.write_line();
         }
     }
 

@@ -55,14 +55,14 @@ impl<'a> Printer<'a> {
         if !elem.property_name.is_none() {
             // Check for shorthand: { name } where property_name text == name text
             if self.is_shorthand_binding(elem.property_name, elem.name) {
-                self.emit(elem.name);
+                self.emit_decl_name(elem.name);
             } else {
                 self.emit(elem.property_name);
                 self.write(": ");
-                self.emit(elem.name);
+                self.emit_decl_name(elem.name);
             }
         } else {
-            self.emit(elem.name);
+            self.emit_decl_name(elem.name);
         }
 
         // Default value: = expr

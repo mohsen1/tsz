@@ -991,12 +991,7 @@ impl<'a> CheckerState<'a> {
     /// // never
     /// ```
     pub(crate) fn get_keyof_type(&mut self, operand: TypeId) -> TypeId {
-        use tsz_solver::{
-            type_queries::KeyOfTypeKind,
-            type_queries_extended::{
-                TypeResolutionKind, classify_for_keyof, classify_for_type_resolution,
-            },
-        };
+        use tsz_solver::type_queries_extended::{TypeResolutionKind, classify_for_type_resolution};
 
         // Handle Lazy types by attempting to resolve them first
         // This allows keyof Lazy(DefId) to work correctly for circular dependencies
@@ -1016,22 +1011,8 @@ impl<'a> CheckerState<'a> {
             TypeResolutionKind::Resolved => {}
         }
 
-        match classify_for_keyof(self.ctx.types, operand) {
-            KeyOfTypeKind::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                if shape.properties.is_empty() {
-                    return TypeId::NEVER;
-                }
-                let factory = self.ctx.types.factory();
-                let key_types: Vec<TypeId> = shape
-                    .properties
-                    .iter()
-                    .map(|p| self.ctx.types.literal_string_atom(p.name))
-                    .collect();
-                factory.union(key_types)
-            }
-            KeyOfTypeKind::NoKeys => TypeId::NEVER,
-        }
+        tsz_solver::type_queries::keyof_object_properties(self.ctx.types, operand)
+            .unwrap_or(TypeId::NEVER)
     }
 
     /// Extract string literal keys from a union or single literal type.

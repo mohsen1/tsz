@@ -2,7 +2,9 @@
 
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -381,6 +383,153 @@ impl<'a> CheckerState<'a> {
                 crate::diagnostics::diagnostic_codes::THE_LEFT_HAND_SIDE_OF_A_FOR_IN_STATEMENT_CANNOT_BE_A_DESTRUCTURING_PATTERN,
             );
         }
+    }
+
+    fn find_circular_reference_in_type_node(
+        &self,
+        type_idx: NodeIndex,
+        target_sym: SymbolId,
+        in_lazy_context: bool,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_idx)?;
+
+        // Function types are safe boundaries (recursion always allowed)
+        if matches!(
+            node.kind,
+            syntax_kind_ext::FUNCTION_TYPE | syntax_kind_ext::CONSTRUCTOR_TYPE
+        ) {
+            return None;
+        }
+
+        // Type literals and mapped types introduce a lazy context where "bare" recursion is allowed
+        let is_lazy_boundary = matches!(
+            node.kind,
+            syntax_kind_ext::TYPE_LITERAL | syntax_kind_ext::MAPPED_TYPE
+        );
+        let current_lazy = in_lazy_context || is_lazy_boundary;
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            if let Some(query) = self.ctx.arena.get_type_query(node) {
+                // Check if the query references the target symbol
+                // We need to know if it's a "bare" reference or a property access
+                let expr_node = self.ctx.arena.get(query.expr_name)?;
+
+                let is_bare_identifier =
+                    expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16;
+
+                // Extract the symbol referenced by the query
+                let mut referenced_sym = None;
+                let mut error_node = query.expr_name;
+
+                if is_bare_identifier {
+                    referenced_sym =
+                        self.ctx
+                            .binder
+                            .get_node_symbol(query.expr_name)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .resolve_identifier(self.ctx.arena, query.expr_name)
+                            });
+                } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                    if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
+                        // Check left side
+                        if let Some(node) = self.ctx.arena.get(qn.left)
+                            && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                        {
+                            referenced_sym =
+                                self.ctx.binder.get_node_symbol(qn.left).or_else(|| {
+                                    self.ctx.binder.resolve_identifier(self.ctx.arena, qn.left)
+                                });
+                            error_node = qn.left;
+                        }
+                    }
+                } else if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                {
+                    // Check expression
+                    if let Some(node) = self.ctx.arena.get(access.expression)
+                        && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    {
+                        referenced_sym = self
+                            .ctx
+                            .binder
+                            .get_node_symbol(access.expression)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .resolve_identifier(self.ctx.arena, access.expression)
+                            });
+                        error_node = access.expression;
+                    }
+                }
+
+                if let Some(sym) = referenced_sym
+                    && sym == target_sym
+                {
+                    // Found a reference to the target symbol!
+                    // If we are in a lazy context AND it's a bare identifier, it's safe.
+                    if current_lazy && is_bare_identifier {
+                        return None;
+                    }
+                    return Some(error_node);
+                }
+
+                // Also check type arguments if any (always recursive)
+                if let Some(ref args) = query.type_arguments {
+                    for &arg_idx in &args.nodes {
+                        if let Some(found) = self.find_circular_reference_in_type_node(
+                            arg_idx,
+                            target_sym,
+                            current_lazy,
+                        ) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+
+        // Explicitly recurse into type annotations of members, as generic get_children might miss them
+        if matches!(
+            node.kind,
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
+        ) {
+            if let Some(accessor) = self.ctx.arena.get_accessor(node)
+                && !accessor.type_annotation.is_none()
+                && let Some(found) = self.find_circular_reference_in_type_node(
+                    accessor.type_annotation,
+                    target_sym,
+                    current_lazy,
+                )
+            {
+                return Some(found);
+            }
+        } else if matches!(
+            node.kind,
+            syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::PROPERTY_DECLARATION
+        ) && let Some(prop) = self.ctx.arena.get_property_decl(node)
+            && !prop.type_annotation.is_none()
+            && let Some(found) = self.find_circular_reference_in_type_node(
+                prop.type_annotation,
+                target_sym,
+                current_lazy,
+            )
+        {
+            return Some(found);
+        }
+
+        // Recursive descent
+        for child in self.ctx.arena.get_children(type_idx) {
+            if let Some(found) =
+                self.find_circular_reference_in_type_node(child, target_sym, current_lazy)
+            {
+                return Some(found);
+            }
+        }
+
+        None
     }
 
     /// Check a single variable declaration.
@@ -835,20 +984,30 @@ impl<'a> CheckerState<'a> {
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
-            if !var_decl.type_annotation.is_none()
-                && tsz_solver::type_queries::has_type_query_for_symbol(
-                    self.ctx.types,
-                    final_type,
-                    sym_id.0,
-                    |ty| self.resolve_lazy_type(ty),
-                )
-                && let Some(ref name) = var_name
-            {
-                let message = format!(
-                    "'{name}' is referenced directly or indirectly in its own type annotation."
-                );
-                self.error_at_node(var_decl.name, &message, 2502);
-                final_type = TypeId::ANY;
+            if !var_decl.type_annotation.is_none() {
+                // Try AST-based check first (catches complex circularities that confuse the solver)
+                let ast_circular = self
+                    .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
+                    .is_some();
+
+                // Then try semantic check
+                let semantic_circular = !ast_circular
+                    && tsz_solver::type_queries::has_type_query_for_symbol(
+                        self.ctx.types,
+                        final_type,
+                        sym_id.0,
+                        |ty| self.resolve_lazy_type(ty),
+                    );
+
+                if (ast_circular || semantic_circular)
+                    && let Some(ref name) = var_name
+                {
+                    let message = format!(
+                        "'{name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(var_decl.name, &message, 2502);
+                    final_type = TypeId::ANY;
+                }
             }
 
             if !self.ctx.compiler_options.sound_mode {
@@ -1714,39 +1873,31 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN;
         }
 
-        if let Some(prop_name_str) = property_name {
+        if let Some(ref prop_name_str) = property_name {
             // Look up the property type in the parent type.
             // For union types, resolve the property in each member and union the results.
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut prop_types = Vec::new();
-                let factory = self.ctx.types.factory();
                 for member in members {
-                    if let Some(shape) = query::object_shape(self.ctx.types, member) {
-                        for prop in shape.properties.as_slice() {
-                            if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str
-                            {
-                                prop_types
-                                    .push(property_optional_type(prop.type_id, prop.optional));
-                                break;
-                            }
-                        }
+                    if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
+                        self.ctx.types,
+                        member,
+                        prop_name_str,
+                    ) {
+                        prop_types.push(property_optional_type(prop.type_id, prop.optional));
                     }
                 }
                 if prop_types.is_empty() {
                     TypeId::ANY
-                } else if prop_types.len() == 1 {
-                    prop_types[0]
                 } else {
-                    factory.union(prop_types)
+                    tsz_solver::utils::union_or_single(self.ctx.types, prop_types)
                 }
-            } else if let Some(shape) = query::object_shape(self.ctx.types, parent_type) {
-                // Find the property by comparing names
-                for prop in shape.properties.as_slice() {
-                    if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str {
-                        return property_optional_type(prop.type_id, prop.optional);
-                    }
-                }
-                TypeId::ANY
+            } else if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
+                self.ctx.types,
+                parent_type,
+                prop_name_str,
+            ) {
+                property_optional_type(prop.type_id, prop.optional)
             } else {
                 TypeId::ANY
             }

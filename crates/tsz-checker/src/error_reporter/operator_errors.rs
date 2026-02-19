@@ -147,7 +147,21 @@ impl<'a> CheckerState<'a> {
         let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
             && matches!(
                 op,
-                "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+                "+" | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "**"
+                    | "&"
+                    | "|"
+                    | "^"
+                    | "<<"
+                    | ">>"
+                    | ">>>"
+                    | "<"
+                    | ">"
+                    | "<="
+                    | ">="
             );
 
         // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
@@ -197,11 +211,6 @@ impl<'a> CheckerState<'a> {
                 });
                 emitted_nullish_error = true;
             }
-        }
-
-        // If BOTH operands are null/undefined AND we emitted TS18050 for them, we're done
-        if left_is_nullish && right_is_nullish && emitted_nullish_error {
-            return;
         }
 
         use tsz_solver::BinaryOpEvaluator;
@@ -279,6 +288,40 @@ impl<'a> CheckerState<'a> {
         let is_bitwise = matches!(op, "&" | "|" | "^" | "<<" | ">>" | ">>>");
         let requires_numeric_operands = is_arithmetic || is_bitwise;
 
+        // TS2447: For &, |, ^ with both boolean operands, emit special error
+        // This must be checked before TS2362/TS2363 because boolean is not a valid arithmetic operand
+        if is_bitwise {
+            let left_is_boolean = evaluator.is_boolean_like(left_type);
+            let right_is_boolean = evaluator.is_boolean_like(right_type);
+            let is_boolean_bitwise =
+                matches!(op, "&" | "|" | "^") && left_is_boolean && right_is_boolean;
+
+            if is_boolean_bitwise {
+                let suggestion = if op == "&" {
+                    "&&"
+                } else if op == "|" {
+                    "||"
+                } else {
+                    "!=="
+                };
+                if let Some(loc) = self.get_source_location(node_idx) {
+                    let message = format!(
+                        "The '{op}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
+                    );
+                    self.ctx.diagnostics.push(Diagnostic {
+                        code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
+                        category: DiagnosticCategory::Error,
+                        message_text: message,
+                        file: self.ctx.file_name.clone(),
+                        start: loc.start,
+                        length: loc.length(),
+                        related_information: Vec::new(),
+                    });
+                }
+                return;
+            }
+        }
+
         // Evaluate types to resolve unevaluated conditional/mapped types before checking.
         // e.g., DeepPartial<number> | number → number
         let eval_left = self.evaluate_type_for_binary_ops(left_type);
@@ -317,9 +360,9 @@ impl<'a> CheckerState<'a> {
         if requires_numeric_operands {
             // For arithmetic and bitwise operators, emit specific left/right errors (TS2362, TS2363)
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
+            // tsc suppresses TS2362/TS2363 when TS18050 was already emitted for the operand.
             let mut emitted_specific_error = emitted_nullish_error;
-            if !left_is_valid_arithmetic
-                && (!left_is_nullish || !emitted_nullish_error)
+            if !(left_is_valid_arithmetic || left_is_nullish && should_emit_nullish_error)
                 && let Some(loc) = self.get_source_location(left_idx)
             {
                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -334,8 +377,7 @@ impl<'a> CheckerState<'a> {
                     });
                 emitted_specific_error = true;
             }
-            if !right_is_valid_arithmetic
-                && (!right_is_nullish || !emitted_nullish_error)
+            if !(right_is_valid_arithmetic || right_is_nullish && should_emit_nullish_error)
                 && let Some(loc) = self.get_source_location(right_idx)
             {
                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
@@ -373,105 +415,22 @@ impl<'a> CheckerState<'a> {
         // These require both operands to be comparable. When types have no relationship,
         // emit TS2365: "Operator '<' cannot be applied to types 'X' and 'Y'."
         let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
-        if is_relational {
-            if let Some(loc) = self.get_source_location(node_idx) {
-                let message = format!(
-                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-                );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
-            }
-            return;
-        }
-
-        // Handle bitwise operators: &, |, ^, <<, >>, >>>
-        let is_bitwise = matches!(op, "&" | "|" | "^" | "<<" | ">>" | ">>>");
-        if is_bitwise {
-            // TS2447: For &, |, ^ with both boolean operands, emit special error
-            let left_is_boolean = evaluator.is_boolean_like(left_type);
-            let right_is_boolean = evaluator.is_boolean_like(right_type);
-            let is_boolean_bitwise =
-                matches!(op, "&" | "|" | "^") && left_is_boolean && right_is_boolean;
-
-            if is_boolean_bitwise {
-                let suggestion = if op == "&" {
-                    "&&"
-                } else if op == "|" {
-                    "||"
-                } else {
-                    "!=="
-                };
-                if let Some(loc) = self.get_source_location(node_idx) {
-                    let message = format!(
-                        "The '{op}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
-                    );
-                    self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
-                }
-            } else {
-                // For other invalid bitwise operands, emit TS2362/TS2363
-                let mut emitted_specific_error = emitted_nullish_error;
-                if !left_is_valid_arithmetic
-                    && (!left_is_nullish || !emitted_nullish_error)
-                    && let Some(loc) = self.get_source_location(left_idx)
-                {
-                    let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                    self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
-                    emitted_specific_error = true;
-                }
-                if !right_is_valid_arithmetic
-                    && (!right_is_nullish || !emitted_nullish_error)
-                    && let Some(loc) = self.get_source_location(right_idx)
-                {
-                    let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                    self.ctx.diagnostics.push(Diagnostic {
-                            code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                            category: DiagnosticCategory::Error,
-                            message_text: message,
-                            file: self.ctx.file_name.clone(),
-                            start: loc.start,
-                            length: loc.length(),
-                            related_information: Vec::new(),
-                        });
-                    emitted_specific_error = true;
-                }
-                if !emitted_specific_error && let Some(loc) = self.get_source_location(node_idx) {
-                    let message = format!(
-                        "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-                    );
-                    self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
-                }
-            }
+        if is_relational
+            && !emitted_nullish_error
+            && let Some(loc) = self.get_source_location(node_idx)
+        {
+            let message = format!(
+                "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
         }
     }
 }

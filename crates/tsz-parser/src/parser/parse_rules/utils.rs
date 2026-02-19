@@ -24,6 +24,23 @@ where
     result
 }
 
+/// Look ahead to check if current token is followed on the **same line** by a token matching `check`.
+/// Returns false if the next token has a preceding line break (ASI would apply).
+pub fn look_ahead_is_on_same_line<F>(
+    scanner: &mut ScannerState,
+    _current_token: SyntaxKind,
+    check: F,
+) -> bool
+where
+    F: FnOnce(SyntaxKind) -> bool,
+{
+    let snapshot = scanner.save_state();
+    let next = scanner.scan();
+    let result = !scanner.has_preceding_line_break() && check(next);
+    scanner.restore_state(snapshot);
+    result
+}
+
 /// Look ahead to check if "async" is followed by a declaration keyword.
 pub fn look_ahead_is_async_declaration(
     scanner: &mut ScannerState,
@@ -59,12 +76,13 @@ pub fn look_ahead_is_abstract_declaration(
     })
 }
 
-/// Look ahead to check if `namespace`/`module` is followed by a declaration name.
+/// Look ahead to check if `namespace`/`module` is followed by a declaration name on the same line.
+/// ASI prevents treating `namespace\nfoo` as a namespace declaration.
 pub fn look_ahead_is_module_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
 ) -> bool {
-    look_ahead_is(scanner, current_token, |token| {
+    look_ahead_is_on_same_line(scanner, current_token, |token| {
         matches!(
             token,
             SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
@@ -75,11 +93,12 @@ pub fn look_ahead_is_module_declaration(
 }
 
 /// Look ahead to check if `type` begins a type alias declaration.
+/// ASI prevents treating `type\nFoo = ...` as a type alias declaration.
 pub fn look_ahead_is_type_alias_declaration(
     scanner: &mut ScannerState,
     current_token: SyntaxKind,
 ) -> bool {
-    look_ahead_is(scanner, current_token, is_identifier_or_keyword)
+    look_ahead_is_on_same_line(scanner, current_token, is_identifier_or_keyword)
 }
 
 /// Look ahead to check if we have `const enum`.

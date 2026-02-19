@@ -1,6 +1,6 @@
 use super::Printer;
 use crate::printer::safe_slice;
-use crate::source_writer::SourcePosition;
+use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -31,6 +31,14 @@ impl<'a> Printer<'a> {
         } else {
             self.writer.write(text);
         }
+    }
+
+    /// Emit a node as a declaration name (suppress namespace qualification).
+    pub(super) fn emit_decl_name(&mut self, idx: NodeIndex) {
+        let prev = self.suppress_ns_qualification;
+        self.suppress_ns_qualification = true;
+        self.emit(idx);
+        self.suppress_ns_qualification = prev;
     }
 
     /// Write a single character.
@@ -78,6 +86,173 @@ impl<'a> Printer<'a> {
     /// Decrease indentation.
     pub(super) const fn decrease_indent(&mut self) {
         self.writer.decrease_indent();
+    }
+
+    // =========================================================================
+    // Source Map Helpers
+    // =========================================================================
+
+    /// Set `pending_source_pos` to the opening `{` position of a block/node.
+    /// Scans forward from node.pos to find the `{` in the source text.
+    pub(super) fn map_opening_brace(&mut self, node: &Node) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = node.pos as usize;
+            let end = (node.end as usize).min(bytes.len());
+            if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                self.pending_source_pos =
+                    Some(source_position_from_offset(text, (start + offset) as u32));
+            }
+        }
+    }
+
+    /// Set `pending_source_pos` to the first occurrence of `token` byte found
+    /// by scanning forward from `from_pos` within the source text.
+    pub(super) fn map_token_after(&mut self, from_pos: u32, limit: u32, token: u8) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = from_pos as usize;
+            let end = (limit as usize).min(bytes.len());
+            if let Some(offset) = bytes
+                .get(start..end)
+                .and_then(|s| s.iter().position(|&b| b == token))
+            {
+                self.pending_source_pos =
+                    Some(source_position_from_offset(text, (start + offset) as u32));
+            }
+        }
+    }
+
+    /// Set `pending_source_pos` to the first non-whitespace character after
+    /// `from_pos`, scanning up to `limit`. Used for mapping operator tokens
+    /// between subexpressions.
+    pub(super) fn map_token_after_skipping_whitespace(&mut self, from_pos: u32, limit: u32) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = from_pos as usize;
+            let end = (limit as usize).min(bytes.len());
+            if let Some(offset) = bytes
+                .get(start..end)
+                .and_then(|s| s.iter().position(|&b| !b.is_ascii_whitespace()))
+            {
+                self.pending_source_pos =
+                    Some(source_position_from_offset(text, (start + offset) as u32));
+            }
+        }
+    }
+
+    /// Set `pending_source_pos` to the closing `}` position of a block/node.
+    /// Scans backwards from node.end to find the `}` in the source text.
+    pub(super) fn map_closing_brace(&mut self, node: &Node) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+            let end = (node.end as usize).min(bytes.len());
+            // Find the matching `}` by tracking brace depth from the opening `{`
+            let mut depth: i32 = 0;
+            let mut closing_pos = None;
+            let mut i = start;
+            while i < end {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            closing_pos = Some(i);
+                            break;
+                        }
+                    }
+                    b'"' | b'\'' | b'`' => {
+                        // Skip string literals to avoid counting braces inside strings
+                        let quote = bytes[i];
+                        i += 1;
+                        while i < end && bytes[i] != quote {
+                            if bytes[i] == b'\\' {
+                                i += 1; // skip escaped char
+                            }
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                        // Skip line comments
+                        while i < end && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                        // Skip block comments
+                        i += 2;
+                        while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                            i += 1;
+                        }
+                        if i + 1 < end {
+                            i += 1; // skip past */
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if let Some(pos) = closing_pos {
+                self.pending_source_pos = Some(source_position_from_offset(text, pos as u32));
+            }
+        }
+    }
+
+    /// Set `pending_source_pos` to the trailing `;` of a statement node.
+    /// Uses `find_token_end_before_trivia` to locate the last significant token,
+    /// then checks if that token was `;`.
+    pub(super) fn map_trailing_semicolon(&mut self, node: &Node) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = node.pos as usize;
+            let end = (node.end as usize).min(bytes.len());
+            let mut depth: i32 = 0;
+            let mut last_semi = None;
+            let mut i = start;
+            while i < end {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth < 0 {
+                            break;
+                        }
+                    }
+                    b';' if depth == 0 => last_semi = Some(i),
+                    b'\'' | b'"' | b'`' => {
+                        let quote = bytes[i];
+                        i += 1;
+                        while i < end && bytes[i] != quote {
+                            if bytes[i] == b'\\' {
+                                i += 1;
+                            }
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                        i += 2;
+                        while i < end && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                        i += 2;
+                        while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                            i += 1;
+                        }
+                        if i + 1 < end {
+                            i += 1;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if let Some(pos) = last_semi {
+                self.pending_source_pos = Some(source_position_from_offset(text, pos as u32));
+            }
+        }
     }
 
     // =========================================================================

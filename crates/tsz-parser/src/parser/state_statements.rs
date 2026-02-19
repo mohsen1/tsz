@@ -377,7 +377,15 @@ impl ParserState {
                 self.next_token();
                 self.parse_statement()
             }
-            SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+            SyntaxKind::InterfaceKeyword => {
+                // ASI: `interface\nI {}` should be parsed as expression statement
+                // 'interface' followed by identifier 'I', not InterfaceDeclaration.
+                if self.look_ahead_next_is_identifier_or_keyword_on_same_line() {
+                    self.parse_interface_declaration()
+                } else {
+                    self.parse_expression_statement()
+                }
+            }
             SyntaxKind::TypeKeyword => self.parse_statement_type_keyword(),
             SyntaxKind::EnumKeyword => self.parse_enum_declaration(),
             SyntaxKind::DeclareKeyword => {
@@ -625,29 +633,31 @@ impl ParserState {
         is_decl
     }
 
-    /// Check if `declare` is followed by a valid declaration keyword.
+    /// Check if `declare` is followed by a valid declaration keyword on the same line.
     /// Used to distinguish `declare class ...` (ambient declaration) from
     /// `declare instanceof C` (expression using `declare` as identifier).
+    /// ASI prevents treating `declare\nclass ...` as an ambient declaration.
     fn look_ahead_is_declare_before_declaration(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
         self.next_token(); // skip `declare`
-        let is_decl = matches!(
-            self.token(),
-            SyntaxKind::ClassKeyword
-                | SyntaxKind::InterfaceKeyword
-                | SyntaxKind::EnumKeyword
-                | SyntaxKind::NamespaceKeyword
-                | SyntaxKind::ModuleKeyword
-                | SyntaxKind::FunctionKeyword
-                | SyntaxKind::AbstractKeyword
-                | SyntaxKind::ConstKeyword
-                | SyntaxKind::VarKeyword
-                | SyntaxKind::LetKeyword
-                | SyntaxKind::TypeKeyword
-                | SyntaxKind::GlobalKeyword
-                | SyntaxKind::AsyncKeyword
-        );
+        let is_decl = !self.scanner.has_preceding_line_break()
+            && matches!(
+                self.token(),
+                SyntaxKind::ClassKeyword
+                    | SyntaxKind::InterfaceKeyword
+                    | SyntaxKind::EnumKeyword
+                    | SyntaxKind::NamespaceKeyword
+                    | SyntaxKind::ModuleKeyword
+                    | SyntaxKind::FunctionKeyword
+                    | SyntaxKind::AbstractKeyword
+                    | SyntaxKind::ConstKeyword
+                    | SyntaxKind::VarKeyword
+                    | SyntaxKind::LetKeyword
+                    | SyntaxKind::TypeKeyword
+                    | SyntaxKind::GlobalKeyword
+                    | SyntaxKind::AsyncKeyword
+            );
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
