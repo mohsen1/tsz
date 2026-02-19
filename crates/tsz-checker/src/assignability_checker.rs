@@ -1203,16 +1203,107 @@ impl<'a> CheckerState<'a> {
 
         let flags = self.ctx.pack_relation_flags();
         // Delegate to the Solver's Lawyer layer for redeclaration identity checking
+        {
+            let env = self.ctx.type_env.borrow();
+            if is_redeclaration_identical_with_resolver(
+                self.ctx.types,
+                &*env,
+                prev_type,
+                current_type,
+                flags,
+                &self.ctx.inheritance_graph,
+                self.ctx.sound_mode(),
+            ) {
+                return true;
+            }
+        }
+
+        // TS2403 enum-object fallback: When one type is an enum type and the other is
+        // a structural object type, TypeScript considers them compatible if the object
+        // type matches the enum's "typeof" shape (its property object form).
+        //
+        // Example: `var e = E1` (inferred: Enum(E1_def, ...)) vs
+        //          `var e: { readonly A: E1.A; readonly B: E1.B; readonly C: E1.C; [n: number]: string; }`
+        //
+        // In TSC, `var e = E1` gives `e` the type `typeof E1` which is structurally
+        // equivalent to the explicit object literal annotation. Our solver stores the
+        // inferred type as TypeData::Enum(def_id, member_union), so we need to
+        // substitute the enum's object shape and retry the check.
+        if let Some(result) = self.try_enum_object_redeclaration_check(prev_type, current_type) {
+            return result;
+        }
+
+        false
+    }
+
+    /// Try checking redeclaration compatibility using enum object shape substitution.
+    ///
+    /// When one type is a nominal enum type (TypeData::Enum) and the other is a
+    /// structural non-enum type, attempts to replace the enum type with its
+    /// "typeof enum" object shape and retries the compatibility check.
+    ///
+    /// This handles: `var e = E1; var e: { readonly A: E1.A; ... }`
+    /// where TSC considers both to be `typeof E1`.
+    ///
+    /// Returns Some(bool) if enum substitution was applicable, None otherwise.
+    fn try_enum_object_redeclaration_check(
+        &mut self,
+        prev_type: TypeId,
+        current_type: TypeId,
+    ) -> Option<bool> {
+        use tsz_binder::symbol_flags;
+        use tsz_solver::visitor::enum_components;
+
+        // Extract the SymbolId for a type if it's an enum TYPE (not a member).
+        // Separated from the closure to allow reborrowing.
+        fn get_enum_type_sym(
+            type_id: TypeId,
+            types: &dyn tsz_solver::TypeDatabase,
+            ctx: &crate::context::CheckerContext<'_>,
+        ) -> Option<tsz_binder::SymbolId> {
+            let (def_id, _) = enum_components(types, type_id)?;
+            let sym_id = ctx.def_to_symbol_id(def_id)?;
+            let symbol = ctx.binder.get_symbol(sym_id)?;
+            // Must be an enum but NOT an enum member (we want the enum type itself)
+            if (symbol.flags & symbol_flags::ENUM) != 0
+                && (symbol.flags & symbol_flags::ENUM_MEMBER) == 0
+            {
+                Some(sym_id)
+            } else {
+                None
+            }
+        }
+
+        let prev_enum_sym = get_enum_type_sym(prev_type, self.ctx.types, &self.ctx);
+        let current_enum_sym = get_enum_type_sym(current_type, self.ctx.types, &self.ctx);
+
+        // Only proceed if exactly one side is an enum type and the other is NOT.
+        // If both are enums, they were already handled (correctly rejected) by the
+        // solver's enum_redeclaration_check.
+        let (enum_sym, non_enum_type) = match (prev_enum_sym, current_enum_sym) {
+            (Some(sym), None) => (sym, current_type),
+            (None, Some(sym)) => (sym, prev_type),
+            _ => return None, // Both enum or both non-enum: delegate to solver result
+        };
+
+        // Build the "typeof Enum" object shape using checker's enum_object_type helper.
+        // This creates: { readonly A: E.A; readonly B: E.B; ... [n: number]: string }
+        let enum_obj_type = self.enum_object_type(enum_sym)?;
+
+        // Retry the check with the enum's object shape substituted in.
+        // We check bidirectionally: enum_obj matches non_enum, AND non_enum matches enum_obj.
+        let flags = self.ctx.pack_relation_flags();
         let env = self.ctx.type_env.borrow();
-        is_redeclaration_identical_with_resolver(
+        let compatible = is_redeclaration_identical_with_resolver(
             self.ctx.types,
             &*env,
-            prev_type,
-            current_type,
+            enum_obj_type,
+            non_enum_type,
             flags,
             &self.ctx.inheritance_graph,
             self.ctx.sound_mode(),
-        )
+        );
+        Some(compatible)
     }
 
     /// Check if source type is assignable to ANY member of a target union.
