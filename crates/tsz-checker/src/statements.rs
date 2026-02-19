@@ -675,7 +675,8 @@ impl StatementChecker {
             syntax_kind_ext::MODULE_DECLARATION => {
                 state.check_module_declaration(stmt_idx);
             }
-            syntax_kind_ext::CLASS_DECLARATION => {
+            syntax_kind_ext::CLASS_DECLARATION
+            | syntax_kind_ext::CLASS_EXPRESSION => {
                 state.check_class_declaration(stmt_idx);
             }
             syntax_kind_ext::WITH_STATEMENT => {
