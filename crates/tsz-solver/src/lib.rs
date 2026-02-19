@@ -197,8 +197,20 @@ mod isomorphism_tests;
 mod isomorphism_validation;
 // solver_refactoring_tests: kept in root crate (depends on checker types)
 #[cfg(test)]
+#[path = "../tests/array_comprehensive_tests.rs"]
+mod array_comprehensive_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/function_comprehensive_tests.rs"]
+mod function_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/index_access_comprehensive_tests.rs"]
+mod index_access_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/interface_comprehensive_tests.rs"]
+mod interface_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_comprehensive_tests.rs"]
 mod keyof_comprehensive_tests;
@@ -206,11 +218,20 @@ mod keyof_comprehensive_tests;
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/template_literal_comprehensive_tests.rs"]
+mod template_literal_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/tuple_comprehensive_tests.rs"]
+mod tuple_comprehensive_tests;
+#[cfg(test)]
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
 #[cfg(test)]
 #[path = "tests/typedata_contract_tests.rs"]
 mod typedata_contract_tests;
+#[cfg(test)]
+#[path = "../tests/union_intersection_comprehensive_tests.rs"]
+mod union_intersection_comprehensive_tests;
 #[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;

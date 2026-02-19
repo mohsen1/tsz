@@ -332,6 +332,17 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let expected = type_params.len();
+        if got != expected {
+            // TS2558: Expected N type arguments, but got M.
+            self.error_at_node_msg(
+                call_idx,
+                crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
+                &[&expected.to_string(), &got.to_string()],
+            );
+            return;
+        }
+
         // Collect the provided type arguments
         let type_args: Vec<TypeId> = type_args_list
             .nodes

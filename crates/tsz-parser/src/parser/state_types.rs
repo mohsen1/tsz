@@ -2190,6 +2190,17 @@ impl ParserState {
         &mut self,
         in_expression_context: bool,
     ) -> NodeIndex {
+        self.parse_jsx_element_or_self_closing_or_fragment_inner(in_expression_context, None)
+    }
+
+    /// Internal JSX parse with parent tag context for mismatch detection.
+    /// `currently_opened_tag` is the parent element's opening tag name (if any),
+    /// used to distinguish TS17008 (closer matches parent) from TS17002 (wrong closer).
+    fn parse_jsx_element_or_self_closing_or_fragment_inner(
+        &mut self,
+        in_expression_context: bool,
+        currently_opened_tag: Option<NodeIndex>,
+    ) -> NodeIndex {
         let start_pos = self.token_pos();
         let opening = self.parse_jsx_opening_or_self_closing_or_fragment(in_expression_context);
 
@@ -2197,9 +2208,56 @@ impl ParserState {
         let kind = self.arena.get(opening).map_or(0, |n| n.kind);
 
         if kind == syntax_kind_ext::JSX_OPENING_ELEMENT {
-            // Parse children and closing element
-            let children = self.parse_jsx_children();
-            let closing = self.parse_jsx_closing_element();
+            // Get the tag name from the opening element for error reporting
+            let opening_tag_name = self
+                .arena
+                .get(opening)
+                .and_then(|n| self.arena.get_jsx_opening(n))
+                .map(|data| data.tag_name);
+
+            // Parse children, passing our opening tag name for parent-match detection
+            let children = self.parse_jsx_children(opening_tag_name);
+
+            // Check if last child is a JsxElement whose closing tag "stole" our closer
+            let last_child_stole_closer =
+                self.check_last_child_stole_closer(&children, opening_tag_name);
+
+            let closing = if let Some((child_opening_tag, child_closing_idx)) =
+                last_child_stole_closer
+            {
+                // TS17008: The child element was never properly closed
+                // (dedup at same position handles double emission from inner + outer)
+                self.emit_jsx_unclosed_tag_error(child_opening_tag);
+                // Reuse the child's closing element as our own
+                child_closing_idx
+            } else {
+                // Parse our own closing element
+                let closing = self.parse_jsx_closing_element();
+                // Check for tag name mismatch
+                if let Some(open_tag) = opening_tag_name {
+                    if let Some(close_node) = self.arena.get(closing) {
+                        if let Some(close_data) = self.arena.get_jsx_closing(close_node) {
+                            let close_tag = close_data.tag_name;
+                            let open_text = self.get_jsx_tag_name_text(open_tag);
+                            let close_text = self.get_jsx_tag_name_text(close_tag);
+                            if open_text != close_text {
+                                // Check if closing matches parent's tag (tsc pattern)
+                                let matches_parent = currently_opened_tag
+                                    .is_some_and(|pt| self.get_jsx_tag_name_text(pt) == close_text);
+                                if matches_parent {
+                                    // TS17008: Our tag is unclosed (closer belongs to parent)
+                                    self.emit_jsx_unclosed_tag_error(open_tag);
+                                } else {
+                                    // TS17002: Wrong closing tag
+                                    self.emit_jsx_mismatched_closing_tag_error(open_tag, close_tag);
+                                }
+                            }
+                        }
+                    }
+                }
+                closing
+            };
+
             let end_pos = self.token_end();
 
             self.arena.add_jsx_element(
@@ -2214,7 +2272,7 @@ impl ParserState {
             )
         } else if kind == syntax_kind_ext::JSX_OPENING_FRAGMENT {
             // Parse children and closing fragment
-            let children = self.parse_jsx_children();
+            let children = self.parse_jsx_children(None);
             let closing = self.parse_jsx_closing_fragment();
             let end_pos = self.token_end();
 
@@ -2537,7 +2595,9 @@ impl ParserState {
     }
 
     /// Parse JSX children (elements, text, expressions).
-    pub(crate) fn parse_jsx_children(&mut self) -> NodeList {
+    /// `opening_tag_name` is the NodeIndex of the opening element's tag name,
+    /// used to emit TS17008 if we hit EOF without a corresponding closing tag.
+    pub(crate) fn parse_jsx_children(&mut self, opening_tag_name: Option<NodeIndex>) -> NodeList {
         let mut children = Vec::new();
 
         loop {
@@ -2552,8 +2612,20 @@ impl ParserState {
                     break;
                 }
                 SyntaxKind::LessThanToken => {
-                    // Nested JSX element
-                    children.push(self.parse_jsx_element_or_self_closing_or_fragment(false));
+                    // Nested JSX element — pass our opening tag as parent context
+                    let child = self.parse_jsx_element_or_self_closing_or_fragment_inner(
+                        false,
+                        opening_tag_name,
+                    );
+                    children.push(child);
+                    // Check if this child stole our closing tag (tsc pattern):
+                    // If the child is a JsxElement with mismatched tags and its
+                    // closing tag matches our opening tag, break early.
+                    if let Some(parent_tag) = opening_tag_name {
+                        if self.jsx_child_stole_closer(child, parent_tag) {
+                            break;
+                        }
+                    }
                 }
                 SyntaxKind::OpenBraceToken => {
                     // JSX expression: {expr}
@@ -2564,6 +2636,10 @@ impl ParserState {
                     children.push(self.parse_jsx_text());
                 }
                 SyntaxKind::EndOfFileToken => {
+                    // TS17008: JSX element has no corresponding closing tag
+                    if let Some(tag_name_idx) = opening_tag_name {
+                        self.emit_jsx_unclosed_tag_error(tag_name_idx);
+                    }
                     break;
                 }
                 _ => {
@@ -2592,6 +2668,157 @@ impl ParserState {
                 contains_only_trivia_white_spaces: false,
             },
         )
+    }
+
+    /// Get the text of a JSX tag name node from source text.
+    /// Works for identifiers, property access (Foo.Bar), and namespaced names (a:b).
+    /// For property access nodes, finds the tight end by using the last name child.
+    fn get_jsx_tag_name_text(&self, tag_name: NodeIndex) -> String {
+        if let Some(node) = self.arena.get(tag_name) {
+            let source = self.scanner.source_text();
+            let start = node.pos as usize;
+            // For property access expressions, the node.end may be too broad
+            // (includes trailing token position). Find the tight end by looking
+            // at the name child of the property access chain.
+            let end = self.get_jsx_tag_name_end(tag_name) as usize;
+            if start < end && end <= source.len() {
+                return source[start..end].to_string();
+            }
+            // Fallback to node boundaries
+            let end = node.end as usize;
+            if start < end && end <= source.len() {
+                return source[start..end].to_string();
+            }
+        }
+        String::new()
+    }
+
+    /// Get the tight end position of a JSX tag name, following property access chains.
+    fn get_jsx_tag_name_end(&self, tag_name: NodeIndex) -> u32 {
+        if let Some(node) = self.arena.get(tag_name) {
+            // For property access expressions (Foo.Bar), use the name child's end
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                if let Some(access) = self.arena.get_access_expr(node) {
+                    return self.get_jsx_tag_name_end(access.name_or_argument);
+                }
+            }
+            node.end
+        } else {
+            0
+        }
+    }
+
+    /// Emit TS17008: JSX element '{0}' has no corresponding closing tag.
+    /// Points at the opening tag name span (tight end for property access chains).
+    fn emit_jsx_unclosed_tag_error(&mut self, tag_name: NodeIndex) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let tag_text = self.get_jsx_tag_name_text(tag_name);
+        if let Some(node) = self.arena.get(tag_name) {
+            let start = node.pos;
+            let end = self.get_jsx_tag_name_end(tag_name);
+            self.parse_error_at(
+                start,
+                end - start,
+                &format!(
+                    "JSX element '{}' has no corresponding closing tag.",
+                    tag_text
+                ),
+                diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+            );
+        }
+    }
+
+    /// Emit TS17002: Expected corresponding JSX closing tag for '{0}'.
+    /// Points at the closing tag name span (where the mismatch is).
+    fn emit_jsx_mismatched_closing_tag_error(
+        &mut self,
+        open_tag_name: NodeIndex,
+        close_tag_name: NodeIndex,
+    ) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let open_text = self.get_jsx_tag_name_text(open_tag_name);
+        if let Some(close_node) = self.arena.get(close_tag_name) {
+            let start = close_node.pos;
+            let length = close_node.end - close_node.pos;
+            self.parse_error_at(
+                start,
+                length,
+                &format!(
+                    "Expected corresponding JSX closing tag for '{}'.",
+                    open_text
+                ),
+                diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR,
+            );
+        }
+    }
+
+    /// Check if a child JsxElement has mismatched tags where its closing tag
+    /// matches the given parent opening tag name. This implements the tsc pattern
+    /// where a child element "steals" the parent's closing tag.
+    fn jsx_child_stole_closer(&self, child: NodeIndex, parent_tag_name: NodeIndex) -> bool {
+        let child_node = match self.arena.get(child) {
+            Some(n) if n.kind == syntax_kind_ext::JSX_ELEMENT => n,
+            _ => return false,
+        };
+        let elem_data = match self.arena.get_jsx_element(child_node) {
+            Some(d) => d.clone(),
+            None => return false,
+        };
+        // Get the child's opening and closing tag names
+        let child_open_tag = self
+            .arena
+            .get(elem_data.opening_element)
+            .and_then(|n| self.arena.get_jsx_opening(n))
+            .map(|d| d.tag_name);
+        let child_close_tag = self
+            .arena
+            .get(elem_data.closing_element)
+            .and_then(|n| self.arena.get_jsx_closing(n))
+            .map(|d| d.tag_name);
+        match (child_open_tag, child_close_tag) {
+            (Some(open), Some(close)) => {
+                let open_text = self.get_jsx_tag_name_text(open);
+                let close_text = self.get_jsx_tag_name_text(close);
+                let parent_text = self.get_jsx_tag_name_text(parent_tag_name);
+                // Child has mismatched tags AND its closing matches our opening
+                open_text != close_text && close_text == parent_text
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if the last child in a NodeList stole the parent's closing tag.
+    /// Returns (child_opening_tag_name, child_closing_element) if so.
+    fn check_last_child_stole_closer(
+        &self,
+        children: &NodeList,
+        parent_tag_name: Option<NodeIndex>,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let parent_tag = parent_tag_name?;
+        let last_child = *children.nodes.last()?;
+        let child_node = self.arena.get(last_child)?;
+        if child_node.kind != syntax_kind_ext::JSX_ELEMENT {
+            return None;
+        }
+        let elem_data = self.arena.get_jsx_element(child_node)?.clone();
+        let child_open_tag = self
+            .arena
+            .get(elem_data.opening_element)
+            .and_then(|n| self.arena.get_jsx_opening(n))
+            .map(|d| d.tag_name)?;
+        let child_close_tag = self
+            .arena
+            .get(elem_data.closing_element)
+            .and_then(|n| self.arena.get_jsx_closing(n))
+            .map(|d| d.tag_name)?;
+        let open_text = self.get_jsx_tag_name_text(child_open_tag);
+        let close_text = self.get_jsx_tag_name_text(child_close_tag);
+        let parent_text = self.get_jsx_tag_name_text(parent_tag);
+        if open_text != close_text && close_text == parent_text {
+            Some((child_open_tag, elem_data.closing_element))
+        } else {
+            None
+        }
     }
 
     /// Parse a JSX closing element: </Foo>
