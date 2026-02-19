@@ -1665,10 +1665,10 @@ impl<'a> CheckerState<'a> {
             return symbol_flags::BLOCK_SCOPED_VARIABLE_EXCLUDES;
         }
         if (flags & symbol_flags::FUNCTION) != 0 {
-            return symbol_flags::FUNCTION_EXCLUDES;
+            return symbol_flags::CLASS;
         }
         if (flags & symbol_flags::CLASS) != 0 {
-            return symbol_flags::CLASS_EXCLUDES;
+            return symbol_flags::FUNCTION;
         }
         if (flags & symbol_flags::INTERFACE) != 0 {
             return symbol_flags::INTERFACE_EXCLUDES;
