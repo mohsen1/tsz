@@ -89,3 +89,14 @@ fn test_declare_var_with_type_no_ts2403() {
         "Should NOT emit TS2403 for declare var console with object type, but got: {codes:?}"
     );
 }
+
+#[test]
+fn test_var_redecl_unknown_type_no_ts2403() {
+    // When previous type is unknown (unresolved lib global), skip TS2403
+    // This avoids false positives from incomplete lib type coverage
+    let codes = get_error_codes("var console: { log(msg: string): void; };");
+    assert!(
+        !codes.contains(&2403),
+        "Should NOT emit TS2403 when prior type is unknown (lib not fully typed), but got: {codes:?}"
+    );
+}
