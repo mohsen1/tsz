@@ -17138,7 +17138,7 @@ fn test_sourcemap_parity_switch() {
     }
 
     // Track parity progress
-    const EXPECTED_MISSING: usize = 18;
+    const EXPECTED_MISSING: usize = 16;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(

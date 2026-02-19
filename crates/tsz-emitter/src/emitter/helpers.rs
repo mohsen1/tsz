@@ -106,6 +106,23 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Set `pending_source_pos` to the first occurrence of `token` byte found
+    /// by scanning forward from `from_pos` within the source text.
+    pub(super) fn map_token_after(&mut self, from_pos: u32, limit: u32, token: u8) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = from_pos as usize;
+            let end = (limit as usize).min(bytes.len());
+            if let Some(offset) = bytes
+                .get(start..end)
+                .and_then(|s| s.iter().position(|&b| b == token))
+            {
+                self.pending_source_pos =
+                    Some(source_position_from_offset(text, (start + offset) as u32));
+            }
+        }
+    }
+
     /// Set `pending_source_pos` to the closing `}` position of a block/node.
     /// Scans backwards from node.end to find the `}` in the source text.
     pub(super) fn map_closing_brace(&mut self, node: &Node) {
