@@ -31,6 +31,7 @@ pub mod freshness;
 mod index_signatures;
 mod infer;
 mod infer_bct;
+mod infer_resolve;
 pub mod inheritance;
 mod instantiate;
 mod intern;
