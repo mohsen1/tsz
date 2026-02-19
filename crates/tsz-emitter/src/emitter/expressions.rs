@@ -92,13 +92,12 @@ impl<'a> Printer<'a> {
             }
             self.write(", ");
         } else {
-            self.write_space();
-            // Map the operator token to its source position
-            if let Some(left_node) = self.arena.get(binary.left)
-                && let Some(right_node) = self.arena.get(binary.right)
-            {
-                self.map_token_after_skipping_whitespace(left_node.end, right_node.pos);
+            // Map the operator region to its source position (at left operand end,
+            // matching tsc's pattern of mapping the transition point)
+            if let Some(left_node) = self.arena.get(binary.left) {
+                self.map_source_offset(left_node.end);
             }
+            self.write(" ");
             self.write(get_operator_text(binary.operator_token));
             if has_newline_before_right {
                 self.write_line();

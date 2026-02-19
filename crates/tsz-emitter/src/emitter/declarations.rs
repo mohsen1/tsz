@@ -235,6 +235,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Map the `=` to the source position after the name (matching tsc)
+        if let Some(name_node) = self.arena.get(decl.name) {
+            self.map_source_offset(name_node.end);
+        }
         self.write(" = ");
         self.emit_expression(decl.initializer);
     }
