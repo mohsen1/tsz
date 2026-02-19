@@ -85,30 +85,31 @@ pub mod symbol_flags {
     // Exclusion flags for redeclaration checks
     // Note: Operator precedence in Rust has & binding tighter than |, so we need parentheses
     // to match TypeScript's semantics for declaration merging rules.
-    pub const FUNCTION_SCOPED_VARIABLE_EXCLUDES: u32 = VALUE & !FUNCTION_SCOPED_VARIABLE;
-    pub const BLOCK_SCOPED_VARIABLE_EXCLUDES: u32 = VALUE;
-    pub const PARAMETER_EXCLUDES: u32 = VALUE;
+    pub const FUNCTION_SCOPED_VARIABLE_EXCLUDES: u32 = (VALUE | ALIAS) & !FUNCTION_SCOPED_VARIABLE;
+    pub const BLOCK_SCOPED_VARIABLE_EXCLUDES: u32 = VALUE | ALIAS;
+    pub const PARAMETER_EXCLUDES: u32 = VALUE | ALIAS;
     pub const PROPERTY_EXCLUDES: u32 = NONE;
-    pub const ENUM_MEMBER_EXCLUDES: u32 = VALUE | TYPE;
+    pub const ENUM_MEMBER_EXCLUDES: u32 = VALUE | TYPE | ALIAS;
     // Function can merge with: namespace/module (VALUE_MODULE) and class
-    pub const FUNCTION_EXCLUDES: u32 = VALUE & !FUNCTION & !VALUE_MODULE & !CLASS;
+    pub const FUNCTION_EXCLUDES: u32 = (VALUE | ALIAS) & !FUNCTION & !VALUE_MODULE & !CLASS;
     // Class can merge with: interface, function, and namespace/module
-    pub const CLASS_EXCLUDES: u32 = (VALUE | TYPE) & !VALUE_MODULE & !INTERFACE & !FUNCTION;
+    pub const CLASS_EXCLUDES: u32 =
+        (VALUE | TYPE | ALIAS) & !VALUE_MODULE & !INTERFACE & !FUNCTION;
     // Interface can merge with: interface, class
-    pub const INTERFACE_EXCLUDES: u32 = TYPE & !INTERFACE & !CLASS;
+    pub const INTERFACE_EXCLUDES: u32 = (TYPE | ALIAS) & !INTERFACE & !CLASS;
     // Enum can merge with: namespace/module and same-kind enum
-    pub const REGULAR_ENUM_EXCLUDES: u32 = (VALUE | TYPE) & !REGULAR_ENUM & !VALUE_MODULE;
-    pub const CONST_ENUM_EXCLUDES: u32 = (VALUE | TYPE) & !CONST_ENUM & !VALUE_MODULE;
+    pub const REGULAR_ENUM_EXCLUDES: u32 = (VALUE | TYPE | ALIAS) & !REGULAR_ENUM & !VALUE_MODULE;
+    pub const CONST_ENUM_EXCLUDES: u32 = (VALUE | TYPE | ALIAS) & !CONST_ENUM & !VALUE_MODULE;
     // Value module (namespace with values) can merge with: function, class, enum, and other value modules
     pub const VALUE_MODULE_EXCLUDES: u32 =
-        VALUE & !FUNCTION & !CLASS & !REGULAR_ENUM & !VALUE_MODULE;
+        (VALUE | ALIAS) & !FUNCTION & !CLASS & !REGULAR_ENUM & !VALUE_MODULE;
     // Pure namespace module can merge with anything
     pub const NAMESPACE_MODULE_EXCLUDES: u32 = NONE;
-    pub const METHOD_EXCLUDES: u32 = VALUE & !METHOD;
-    pub const GET_ACCESSOR_EXCLUDES: u32 = VALUE & !SET_ACCESSOR;
-    pub const SET_ACCESSOR_EXCLUDES: u32 = VALUE & !GET_ACCESSOR;
-    pub const TYPE_PARAMETER_EXCLUDES: u32 = TYPE & !TYPE_PARAMETER;
-    pub const TYPE_ALIAS_EXCLUDES: u32 = TYPE;
+    pub const METHOD_EXCLUDES: u32 = (VALUE | ALIAS) & !METHOD;
+    pub const GET_ACCESSOR_EXCLUDES: u32 = (VALUE | ALIAS) & !SET_ACCESSOR;
+    pub const SET_ACCESSOR_EXCLUDES: u32 = (VALUE | ALIAS) & !GET_ACCESSOR;
+    pub const TYPE_PARAMETER_EXCLUDES: u32 = (TYPE | ALIAS) & !TYPE_PARAMETER;
+    pub const TYPE_ALIAS_EXCLUDES: u32 = TYPE | ALIAS;
     pub const ALIAS_EXCLUDES: u32 = ALIAS;
 }
 

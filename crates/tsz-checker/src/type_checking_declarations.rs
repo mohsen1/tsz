@@ -1884,6 +1884,26 @@ impl<'a> CheckerState<'a> {
                 let enum_decl = self.ctx.arena.get_enum(node)?;
                 Some(enum_decl.name)
             }
+            syntax_kind_ext::IMPORT_CLAUSE => {
+                let clause = self.ctx.arena.get_import_clause(node)?;
+                Some(clause.name)
+            }
+            syntax_kind_ext::NAMESPACE_IMPORT => {
+                let named = self.ctx.arena.get_named_imports(node)?;
+                Some(named.name)
+            }
+            syntax_kind_ext::IMPORT_SPECIFIER | syntax_kind_ext::EXPORT_SPECIFIER => {
+                let spec = self.ctx.arena.get_specifier(node)?;
+                if spec.name.is_some() {
+                    Some(spec.name)
+                } else {
+                    Some(spec.property_name)
+                }
+            }
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                let import = self.ctx.arena.get_import_decl(node)?;
+                Some(import.import_clause)
+            }
             _ => None,
         }
     }

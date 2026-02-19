@@ -843,9 +843,9 @@ impl BinderState {
                 if !clause.name.is_none()
                     && let Some(name) = Self::get_identifier_name(arena, clause.name)
                 {
-                    let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
+                    // Use import_clause node as the declaration node
+                    let sym_id = self.declare_symbol(name, symbol_flags::ALIAS, import.import_clause, false);
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
-                        sym.declarations.push(clause.name);
                         sym.is_type_only = clause_type_only;
                         // Track module for cross-file resolution
                         if let Some(ref specifier) = module_specifier {
@@ -855,7 +855,6 @@ impl BinderState {
                             sym.import_name = Some("default".to_string());
                         }
                     }
-                    self.current_scope.set(name.to_string(), sym_id);
                     self.node_symbols.insert(clause.name.0, sym_id);
                 }
 
@@ -866,16 +865,19 @@ impl BinderState {
                     if bindings_node.kind == SyntaxKind::Identifier as u16 {
                         if let Some(name) = Self::get_identifier_name(arena, clause.named_bindings)
                         {
-                            let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
+                            let sym_id = self.declare_symbol(
+                                name,
+                                symbol_flags::ALIAS,
+                                clause.named_bindings,
+                                false,
+                            );
                             if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                sym.declarations.push(clause.named_bindings);
                                 sym.is_type_only = clause_type_only;
                                 // Track module for cross-file resolution
                                 if let Some(ref specifier) = module_specifier {
                                     sym.import_module = Some(specifier.clone());
                                 }
                             }
-                            self.current_scope.set(name.to_string(), sym_id);
                             self.node_symbols.insert(clause.named_bindings.0, sym_id);
                         }
                     } else if let Some(named) = arena.get_named_imports(bindings_node) {
@@ -883,16 +885,16 @@ impl BinderState {
                         if !named.name.is_none()
                             && let Some(name) = Self::get_identifier_name(arena, named.name)
                         {
-                            let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
+                            // Use named_bindings (NamespaceImport) as the declaration node
+                            let sym_id =
+                                self.declare_symbol(name, symbol_flags::ALIAS, clause.named_bindings, false);
                             if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                sym.declarations.push(named.name);
                                 sym.is_type_only = clause_type_only;
                                 // Track module for cross-file resolution
                                 if let Some(ref specifier) = module_specifier {
                                     sym.import_module = Some(specifier.clone());
                                 }
                             }
-                            self.current_scope.set(name.to_string(), sym_id);
                             self.node_symbols.insert(named.name.0, sym_id);
                             self.node_symbols.insert(clause.named_bindings.0, sym_id);
                         }
@@ -910,8 +912,12 @@ impl BinderState {
                                 let local_name = Self::get_identifier_name(arena, local_ident);
 
                                 if let Some(name) = local_name {
-                                    let sym_id =
-                                        self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
+                                    let sym_id = self.declare_symbol(
+                                        name,
+                                        symbol_flags::ALIAS,
+                                        spec_idx,
+                                        false,
+                                    );
 
                                     // Get property name before mutable borrow to avoid borrow checker error
                                     let prop_name =
@@ -922,7 +928,6 @@ impl BinderState {
                                         };
 
                                     if let Some(sym) = self.symbols.get_mut(sym_id) {
-                                        sym.declarations.push(local_ident);
                                         sym.is_type_only = spec_type_only;
                                         // Track module and original name for cross-file resolution
                                         if let Some(ref specifier) = module_specifier {
@@ -938,7 +943,6 @@ impl BinderState {
                                             }
                                         }
                                     }
-                                    self.current_scope.set(name.to_string(), sym_id);
                                     self.node_symbols.insert(spec_idx.0, sym_id);
                                     self.node_symbols.insert(local_ident.0, sym_id);
                                 }
