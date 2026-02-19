@@ -692,116 +692,75 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Resolve the noImplicitAny setting from source file comments.
-    pub(crate) fn resolve_no_implicit_any_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitany") {
+    /// Resolve a boolean compiler option from source file comments.
+    /// Checks for the option-specific pragma first, then optionally checks `@strict`,
+    /// and falls back to the provided default.
+    fn resolve_bool_option(text: &str, pragma: &str, strict_fallback: bool, default: bool) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, pragma) {
             return value;
         }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
+        if strict_fallback {
+            if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+                return strict;
+            }
         }
-        self.ctx.no_implicit_any() // Use the value from the strict flag
+        default
     }
 
-    /// Resolve the noImplicitReturns setting from source file comments.
-    pub(crate) fn resolve_no_implicit_returns_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitreturns") {
-            return value;
-        }
-        // noImplicitReturns is NOT enabled by strict mode by default
-        false
-    }
-
-    /// Resolve the useUnknownInCatchVariables setting from source file comments.
-    pub(crate) fn resolve_use_unknown_in_catch_variables_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@useunknownincatchvariables") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.use_unknown_in_catch_variables() // Use the value from the strict flag
-    }
-
-    /// Resolve the noImplicitThis setting from source file comments.
-    pub(crate) fn resolve_no_implicit_this_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitthis") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.no_implicit_this()
-    }
-
-    /// Resolve the noImplicitOverride setting from source file comments.
-    pub(crate) fn resolve_no_implicit_override_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@noimplicitoverride") {
-            return value;
-        }
-        self.ctx.no_implicit_override()
-    }
-
-    /// Resolve the strictPropertyInitialization setting from source file comments.
-    pub(crate) fn resolve_strict_property_initialization_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@strictpropertyinitialization") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.compiler_options.strict_property_initialization
-    }
-
-    /// Resolve the strictNullChecks setting from source file comments.
-    pub(crate) fn resolve_strict_null_checks_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@strictnullchecks") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.strict_null_checks()
-    }
-
-    /// Resolve the strictFunctionTypes setting from source file comments.
-    pub(crate) fn resolve_strict_function_types_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@strictfunctiontypes") {
-            return value;
-        }
-        if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
-            return strict;
-        }
-        self.ctx.compiler_options.strict_function_types
-    }
-
-    pub(crate) fn resolve_allow_unreachable_code_from_source(&self, text: &str) -> Option<bool> {
-        if let Some(value) = Self::parse_test_option_bool(text, "@allowunreachablecode") {
-            return Some(value);
-        }
-        self.ctx.compiler_options.allow_unreachable_code
-    }
-
-    pub(crate) fn resolve_no_unused_locals_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@nounusedlocals") {
-            return value;
-        }
-        self.ctx.compiler_options.no_unused_locals
-    }
-
-    pub(crate) fn resolve_no_unused_parameters_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@nounusedparameters") {
-            return value;
-        }
-        self.ctx.compiler_options.no_unused_parameters
-    }
-
-    /// Resolve the alwaysStrict setting from source file comments.
-    pub(crate) fn resolve_always_strict_from_source(&self, text: &str) -> bool {
-        if let Some(value) = Self::parse_test_option_bool(text, "@alwaysstrict") {
-            return value;
-        }
-        self.ctx.compiler_options.always_strict
+    /// Resolve all compiler options from source file comment pragmas.
+    /// Called once per file to override compiler options with test pragmas.
+    pub(crate) fn resolve_compiler_options_from_source(&mut self, text: &str) {
+        // Snapshot current defaults before mutation to avoid aliased borrows.
+        let defaults = self.ctx.compiler_options.clone();
+        let opts = &mut self.ctx.compiler_options;
+        // Options that fall back to @strict
+        opts.no_implicit_any =
+            Self::resolve_bool_option(text, "@noimplicitany", true, defaults.no_implicit_any);
+        opts.use_unknown_in_catch_variables = Self::resolve_bool_option(
+            text,
+            "@useunknownincatchvariables",
+            true,
+            defaults.use_unknown_in_catch_variables,
+        );
+        opts.no_implicit_this =
+            Self::resolve_bool_option(text, "@noimplicitthis", true, defaults.no_implicit_this);
+        opts.strict_property_initialization = Self::resolve_bool_option(
+            text,
+            "@strictpropertyinitialization",
+            true,
+            defaults.strict_property_initialization,
+        );
+        opts.strict_null_checks =
+            Self::resolve_bool_option(text, "@strictnullchecks", true, defaults.strict_null_checks);
+        opts.strict_function_types = Self::resolve_bool_option(
+            text,
+            "@strictfunctiontypes",
+            true,
+            defaults.strict_function_types,
+        );
+        // Options without @strict fallback
+        opts.no_implicit_returns =
+            Self::resolve_bool_option(text, "@noimplicitreturns", false, false);
+        opts.no_implicit_override = Self::resolve_bool_option(
+            text,
+            "@noimplicitoverride",
+            false,
+            defaults.no_implicit_override,
+        );
+        opts.no_unused_locals =
+            Self::resolve_bool_option(text, "@nounusedlocals", false, defaults.no_unused_locals);
+        opts.no_unused_parameters = Self::resolve_bool_option(
+            text,
+            "@nounusedparameters",
+            false,
+            defaults.no_unused_parameters,
+        );
+        opts.always_strict =
+            Self::resolve_bool_option(text, "@alwaysstrict", false, defaults.always_strict);
+        // Option<bool> variant
+        opts.allow_unreachable_code = Self::parse_test_option_bool(text, "@allowunreachablecode")
+            .map(Some)
+            .unwrap_or(defaults.allow_unreachable_code);
     }
 
     // =========================================================================
