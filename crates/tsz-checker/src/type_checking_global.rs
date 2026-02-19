@@ -432,7 +432,10 @@ impl<'a> CheckerState<'a> {
             let mut declarations = Vec::new();
             for &decl_idx in &symbol.declarations {
                 // Resolve the arena for this declaration
-                let arena_opt = self.ctx.binder.declaration_arenas
+                let arena_opt = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
                     .get(&(sym_id, decl_idx))
                     .and_then(|v| v.first())
                     .map(|a| &**a);
@@ -441,7 +444,10 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
                     // When libs are loaded, verify the declaration name matches the symbol.
-                    if has_libs && is_local && !self.declaration_name_matches(decl_idx, &symbol.escaped_name) {
+                    if has_libs
+                        && is_local
+                        && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
+                    {
                         continue;
                     }
                     declarations.push((decl_idx, flags, is_local));
@@ -460,9 +466,9 @@ impl<'a> CheckerState<'a> {
                 const SPACE_NAMESPACE: u32 = 4;
 
                 let any_in_declare_context = self.ctx.file_name.ends_with(".d.ts")
-                    || declarations
-                        .iter()
-                        .any(|&(decl_idx, _, is_local)| is_local && self.is_in_declare_namespace_or_module(decl_idx));
+                    || declarations.iter().any(|&(decl_idx, _, is_local)| {
+                        is_local && self.is_in_declare_namespace_or_module(decl_idx)
+                    });
 
                 let mut error_nodes: Vec<NodeIndex> = Vec::new();
 
@@ -644,14 +650,14 @@ impl<'a> CheckerState<'a> {
                         let decl_has_body = decl_is_local && self.function_has_body(decl_idx);
                         // Skip remote function body check
                         if !other_is_local {
-                             continue; 
+                            continue;
                         }
                         let other_has_body = self.function_has_body(other_idx);
-                        
+
                         if !(decl_has_body && other_has_body) {
                             continue;
                         }
-                        
+
                         if decl_is_local && other_is_local {
                             let decl_scope = self.get_enclosing_block_scope(decl_idx);
                             let other_scope = self.get_enclosing_block_scope(other_idx);
@@ -659,22 +665,11 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                         }
-                        
-                        // Both have bodies in same scope - report TS2393
+
                         if decl_is_local {
-                            self.error_at_node(
-                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
-                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                            );
                             conflicts.insert(decl_idx);
                         }
                         if other_is_local {
-                            self.error_at_node(
-                                self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
-                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                            );
                             conflicts.insert(other_idx);
                         }
                         continue;
@@ -730,7 +725,7 @@ impl<'a> CheckerState<'a> {
                         if !decl_is_local || !other_is_local {
                             continue;
                         }
-                        
+
                         let (namespace_idx, function_idx) = if decl_is_namespace {
                             (decl_idx, other_idx)
                         } else {
@@ -747,7 +742,7 @@ impl<'a> CheckerState<'a> {
                         if self.is_ambient_function_declaration(function_idx) {
                             continue;
                         }
-                        
+
                         if namespace_idx.0 < function_idx.0 {
                             namespace_order_errors.insert(namespace_idx);
                         }
@@ -854,18 +849,30 @@ impl<'a> CheckerState<'a> {
                         if !decl_is_local || !other_is_local {
                             continue;
                         }
-                        let namespace_idx = if decl_is_namespace { decl_idx } else { other_idx };
+                        let namespace_idx = if decl_is_namespace {
+                            decl_idx
+                        } else {
+                            other_idx
+                        };
                         if self.is_namespace_declaration_instantiated(namespace_idx) {
-                            if decl_is_local { conflicts.insert(decl_idx); }
-                            if other_is_local { conflicts.insert(other_idx); }
+                            if decl_is_local {
+                                conflicts.insert(decl_idx);
+                            }
+                            if other_is_local {
+                                conflicts.insert(other_idx);
+                            }
                         }
                         continue;
                     }
 
                     // General conflict check for other combinations
                     if Self::declarations_conflict(decl_flags, other_flags) {
-                        if decl_is_local { conflicts.insert(decl_idx); }
-                        if other_is_local { conflicts.insert(other_idx); }
+                        if decl_is_local {
+                            conflicts.insert(decl_idx);
+                        }
+                        if other_is_local {
+                            conflicts.insert(other_idx);
+                        }
                     }
                 }
             }

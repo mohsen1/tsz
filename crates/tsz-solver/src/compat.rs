@@ -1759,20 +1759,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        // 2. Error propagation only — suppress cascading errors from ERROR types.
-        // IMPORTANT: `any` is NOT treated as identical to other types here.
-        // TS2403 specifically requires `any !== number`, `any !== string`, etc.
-        // Only `any === any` (caught by the identity check above).
+        // 2. Error/any propagation — suppress cascading errors from ERROR types,
+        // and treat `any` as compatible with everything for redeclaration.
+        // In tsc, `var x: any; var x: string;` does NOT produce TS2403.
         if a == TypeId::ERROR || b == TypeId::ERROR {
             return true;
         }
-
-        // 3. `any` is NOT identical to non-`any` types for redeclaration (TS2403).
-        // In TypeScript, `any` is both a subtype and supertype of all types,
-        // but for redeclaration checking, `var x: any; var x: number;` must error.
-        // The bidirectional subtype check would incorrectly say they're identical.
         if a == TypeId::ANY || b == TypeId::ANY {
-            return false;
+            return true;
         }
 
         // 4. Enum Nominality Check

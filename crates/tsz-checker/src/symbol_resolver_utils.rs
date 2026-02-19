@@ -796,6 +796,14 @@ impl<'a> CheckerState<'a> {
         self.ctx.compiler_options.no_unused_parameters
     }
 
+    /// Resolve the alwaysStrict setting from source file comments.
+    pub(crate) fn resolve_always_strict_from_source(&self, text: &str) -> bool {
+        if let Some(value) = Self::parse_test_option_bool(text, "@alwaysstrict") {
+            return value;
+        }
+        self.ctx.compiler_options.always_strict
+    }
+
     // =========================================================================
     // Duplicate Declaration Resolution
     // =========================================================================
