@@ -745,10 +745,12 @@ impl<'a> Printer<'a> {
 
         self.write("case ");
         self.emit(clause.expression);
+        // Map the `:` after the case expression
+        let label_end = self.arena.get(clause.expression).map_or(0, |n| n.end);
+        self.map_token_after(label_end, node.end, b':');
         self.write(":");
 
         // Use expression end position for same-line detection
-        let label_end = self.arena.get(clause.expression).map_or(0, |n| n.end);
         self.emit_case_clause_body(&clause.statements, label_end);
     }
 
