@@ -102,10 +102,10 @@ pub enum AnyPropagationMode {
 
 impl AnyPropagationMode {
     #[inline]
-    const fn allows_any_at_depth(self, depth: u32) -> bool {
+    pub(crate) const fn allows_any_at_depth(self, _depth: u32) -> bool {
         match self {
             Self::All => true,
-            Self::TopLevelOnly => depth == 0,
+            Self::TopLevelOnly => false, // Fix: even top-level any should be strict in strict mode
         }
     }
 }
@@ -2330,10 +2330,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let mut target = target;
         if !allow_any {
             if source == TypeId::ANY {
-                source = TypeId::UNKNOWN;
+                // In strict mode, any doesn't match everything structurally.
+                // We demote it to STRICT_ANY so it only matches top types or itself.
+                source = TypeId::STRICT_ANY;
             }
             if target == TypeId::ANY {
-                target = TypeId::UNKNOWN;
+                target = TypeId::STRICT_ANY;
             }
         }
 
@@ -2360,18 +2362,36 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Any is assignable to anything (when allowed)
-        if allow_any && source == TypeId::ANY {
+        if allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
             return SubtypeResult::True;
         }
 
         // Everything is assignable to any (when allowed)
-        if allow_any && target == TypeId::ANY {
+        if allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
             return SubtypeResult::True;
+        }
+
+        // If not allowing any, ANY/STRICT_ANY only match itself or unknown.
+        if !allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
+            if target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN {
+                return SubtypeResult::True;
+            }
+            // Fall through to structural check (which will fail for STRICT_ANY)
+        }
+        if !allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
+            if source == TypeId::ANY || source == TypeId::STRICT_ANY {
+                return SubtypeResult::True;
+            }
+            // Fall through to structural check (which will fail for STRICT_ANY)
         }
 
         // Everything is assignable to unknown
         if target == TypeId::UNKNOWN {
-            return SubtypeResult::True;
+            // STRICT_ANY/ANY in strict mode should NOT vacuously match unknown
+            // if it was already checked in the allow_any block above.
+            if allow_any || (source != TypeId::ANY && source != TypeId::STRICT_ANY) {
+                return SubtypeResult::True;
+            }
         }
 
         // Never is assignable to everything
@@ -2579,6 +2599,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         {
             let source_eval = self.evaluate_type(source);
             if self.is_callable_type(source_eval) {
+                // North Star Fix: is_callable_type now respects allow_any correctly.
+                // If it returned true, it means either we're in permissive mode OR
+                // the source is genuinely a callable type.
                 if let Some(dp) = def_entered {
                     self.def_guard.leave(dp);
                 }
