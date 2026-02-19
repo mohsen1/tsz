@@ -299,6 +299,10 @@ pub struct Printer<'a> {
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(super) current_namespace_name: Option<String>,
 
+    /// Override name for anonymous default exports (e.g., "default_1").
+    /// When set, class/function emitters use this instead of leaving the name blank.
+    pub(super) anonymous_default_export_name: Option<String>,
+
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(super) declared_namespace_names: FxHashSet<String>,
 
@@ -398,6 +402,7 @@ impl<'a> Printer<'a> {
             namespace_export_inner: false,
             emitting_function_body_block: false,
             current_namespace_name: None,
+            anonymous_default_export_name: None,
             declared_namespace_names: FxHashSet::default(),
             namespace_exported_names: FxHashSet::default(),
             suppress_ns_qualification: false,
@@ -910,7 +915,26 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::CommonJSExportDefaultExpr => {
-                self.emit_commonjs_default_export_expr(node, idx);
+                // Check if this is an anonymous class/function that needs a synthetic name
+                let is_anonymous = match node.kind {
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.arena.get_class(node).is_some_and(|c| c.name.is_none())
+                    }
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.arena.get_function(node).is_some_and(|f| {
+                            let name = self.get_identifier_text_idx(f.name);
+                            name.is_empty()
+                                || name == "function"
+                                || !is_valid_identifier_name(&name)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_anonymous {
+                    self.emit_commonjs_anonymous_default_as_named(node, idx);
+                } else {
+                    self.emit_commonjs_default_export_expr(node, idx);
+                }
             }
 
             EmitDirective::CommonJSExportDefaultClassES5 { class_node } => {
@@ -1342,13 +1366,32 @@ impl<'a> Printer<'a> {
                 });
             }
             EmitDirective::CommonJSExportDefaultExpr => {
-                self.emit_commonjs_default_export_assignment(|this| {
-                    if index == 0 {
-                        this.emit_commonjs_default_export_expr_inner(node, idx);
-                    } else {
-                        this.emit_chained_directive(node, idx, directives, index - 1);
+                // Check if this is an anonymous class/function
+                let is_anonymous = match node.kind {
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.arena.get_class(node).is_some_and(|c| c.name.is_none())
                     }
-                });
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.arena.get_function(node).is_some_and(|f| {
+                            let name = self.get_identifier_text_idx(f.name);
+                            name.is_empty()
+                                || name == "function"
+                                || !is_valid_identifier_name(&name)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_anonymous {
+                    self.emit_commonjs_anonymous_default_as_named(node, idx);
+                } else {
+                    self.emit_commonjs_default_export_assignment(|this| {
+                        if index == 0 {
+                            this.emit_commonjs_default_export_expr_inner(node, idx);
+                        } else {
+                            this.emit_chained_directive(node, idx, directives, index - 1);
+                        }
+                    });
+                }
             }
             EmitDirective::CommonJSExportDefaultClassES5 { class_node } => {
                 self.emit_commonjs_default_export_class_es5(*class_node);
