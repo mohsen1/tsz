@@ -351,6 +351,16 @@ pub struct CheckerContext<'a> {
     /// O(1) lookup set for node resolution stack.
     pub node_resolution_set: FxHashSet<NodeIndex>,
 
+    /// Set of class declaration nodes currently being checked.
+    /// Used to prevent infinite recursion in `check_class_declaration` when
+    /// class checking triggers type resolution that circles back to the same class.
+    pub checking_classes: FxHashSet<NodeIndex>,
+
+    /// Set of class declaration nodes that have been fully checked.
+    /// Used to avoid re-checking the same class multiple times (e.g. once via
+    /// dependency resolution and once via the main source file traversal).
+    pub checked_classes: FxHashSet<NodeIndex>,
+
     // --- Scopes & Context ---
     /// Current type parameter scope.
     pub type_parameter_scope: FxHashMap<String, TypeId>,
