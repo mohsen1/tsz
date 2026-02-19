@@ -726,6 +726,10 @@ impl<'a> Printer<'a> {
 
         self.write("switch (");
         self.emit(switch.expression);
+        // Map closing `)` — scan forward from expression end
+        if let Some(expr_node) = self.arena.get(switch.expression) {
+            self.map_token_after(expr_node.end, node.end, b')');
+        }
         self.write(") ");
         // case_block is a NodeIndex pointing to a CaseBlock node
         self.emit(switch.case_block);
@@ -880,6 +884,8 @@ impl<'a> Printer<'a> {
         }
         self.write("while (");
         self.emit(loop_stmt.condition);
+        // Map closing `)` — scan backward from node end (past `;`)
+        self.map_closing_paren_backward(node.pos, node.end);
         self.write(")");
         self.map_trailing_semicolon(node);
         self.write_semicolon();
@@ -898,6 +904,10 @@ impl<'a> Printer<'a> {
 
         self.write("with (");
         self.emit(with_stmt.expression);
+        // Map closing `)` — scan backward from body start
+        if let Some(body_node) = self.arena.get(with_stmt.then_statement) {
+            self.map_closing_paren_backward(node.pos, body_node.pos);
+        }
         self.write(") ");
         self.emit(with_stmt.then_statement);
     }

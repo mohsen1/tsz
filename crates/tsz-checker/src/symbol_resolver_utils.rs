@@ -699,11 +699,10 @@ impl<'a> CheckerState<'a> {
         if let Some(value) = Self::parse_test_option_bool(text, pragma) {
             return value;
         }
-        if strict_fallback {
-            if let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
+        if strict_fallback
+            && let Some(strict) = Self::parse_test_option_bool(text, "@strict") {
                 return strict;
             }
-        }
         default
     }
 

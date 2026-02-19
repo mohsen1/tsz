@@ -858,7 +858,7 @@ impl PropertyInfo {
     }
 
     /// Find a property by name in a slice of properties.
-    pub fn find_in_slice<'a>(props: &'a [Self], name: Atom) -> Option<&'a Self> {
+    pub fn find_in_slice(props: &[Self], name: Atom) -> Option<&Self> {
         props.iter().find(|p| p.name == name)
     }
 }
