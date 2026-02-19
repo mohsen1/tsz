@@ -138,6 +138,12 @@ impl<'a> Printer<'a> {
                             i += 1;
                         }
                     }
+                    // Track end of string as a non-trivia position so that
+                    // standalone string expression statements (ASI, no `;`)
+                    // get the correct token_end for trailing comment detection.
+                    if depth == 0 {
+                        last_non_trivia_at_depth0 = Some(i);
+                    }
                 }
                 b'/' if i + 1 < end_pos && bytes[i + 1] == b'/' => {
                     // Skip single-line comments
