@@ -1629,10 +1629,10 @@ impl<'a> CheckerState<'a> {
             if let Some(def_id) =
                 tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
                 && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
-                    && target_sym_id == sym_id
-                {
-                    return true;
-                }
+                && target_sym_id == sym_id
+            {
+                return true;
+            }
         }
 
         false
