@@ -621,9 +621,8 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_type_alias_declaration(&mut self, type_alias_idx: NodeIndex) {
         if let Some(node) = self.ctx.arena.get(type_alias_idx) {
-            // Delegate to DeclarationChecker first
-            let mut checker = crate::declarations::DeclarationChecker::new(&mut self.ctx);
-            checker.check_type_alias_declaration(type_alias_idx);
+            // Call CheckerState implementation directly
+            self.check_type_alias_declaration(type_alias_idx);
 
             // Continue with comprehensive type alias checking
             if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {

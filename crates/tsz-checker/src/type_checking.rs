@@ -13,6 +13,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::TypeDatabase;
 
 // =============================================================================
 // Type Checking Methods
@@ -1280,5 +1281,111 @@ impl<'a> CheckerState<'a> {
         }
 
         has_dispose
+    }
+}
+
+
+impl<'a> CheckerState<'a> {
+    /// Check a type alias declaration.
+    pub(crate) fn check_type_alias_declaration(&mut self, node_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(node_idx) else { return; };
+        let Some(alias) = self.ctx.arena.get_type_alias(node) else { return; };
+
+        // Check type parameters
+        if let Some(params) = &alias.type_parameters {
+            // self.check_type_parameters(params);
+        }
+
+        // Check the type node
+        self.check_type_node(alias.type_node);
+    }
+
+    /// Check a type node for validity (recursive).
+    pub(crate) fn check_type_node(&mut self, node_idx: NodeIndex) {
+        if node_idx == NodeIndex::NONE { return; }
+        let Some(node) = self.ctx.arena.get(node_idx) else { return; };
+
+        match node.kind {
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                self.check_indexed_access_type(node_idx);
+            }
+            k if k == syntax_kind_ext::UNION_TYPE
+              || k == syntax_kind_ext::INTERSECTION_TYPE => {
+                if let Some(composite) = self.ctx.arena.get_composite_type(node) {
+                    for &child in &composite.types.nodes {
+                        self.check_type_node(child);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_TYPE => {
+                if let Some(arr) = self.ctx.arena.get_array_type(node) {
+                    self.check_type_node(arr.element_type);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                if let Some(lit) = self.ctx.arena.get_type_literal(node) {
+                    for &member in &lit.members.nodes {
+                        // self.check_type_element(member);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Check an indexed access type (T[K]).
+    pub(crate) fn check_indexed_access_type(&mut self, node_idx: NodeIndex) {
+        let Some(node) = self.ctx.arena.get(node_idx) else { return; };
+        let Some(data) = self.ctx.arena.get_indexed_access_type(node) else { return; };
+        
+        let object_type = self.get_type_from_type_node(data.object_type);
+        let index_type = self.get_type_from_type_node(data.index_type);
+        let indexed_access_type = self.get_type_from_type_node(node_idx);
+        
+        use tsz_solver::types::{TypeData, LiteralValue};
+        use crate::diagnostics::{format_message, diagnostic_messages, diagnostic_codes};
+        
+        // Resolve index text first to avoid borrow conflicts
+        let prop_name = match self.ctx.types.lookup(index_type) {
+            Some(TypeData::Literal(LiteralValue::String(atom))) => {
+                Some(self.ctx.types.resolve_atom(atom))
+            }
+            Some(TypeData::Literal(LiteralValue::Number(val))) => {
+                Some(val.0.to_string())
+            }
+            _ => None
+        };
+
+        if let Some(name) = prop_name {
+            let result = self.resolve_property_access(indexed_access_type);
+            
+            if result.is_none() || result == Some(TypeId::ERROR) {
+                if object_type == TypeId::ERROR || index_type == TypeId::ERROR {
+                    return;
+                }
+                
+                let obj_type_str = self.format_type(object_type);
+                
+                // TS2339: Property does not exist
+                let message = format_message(
+                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                    &[&name, &obj_type_str]
+                );
+                let error_node = data.index_type;
+                self.error_at_node(error_node, &message, diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE);
+
+                // TS2536: Type cannot be used to index type
+                // Note: TypeScript emits this when the index type is not compatible with the index signature.
+                // Since property access failed, it implies index signature also failed (or did not exist).
+                // We construct the index type string (e.g. "0.0") for the message.
+                // For literal types, this is the literal text.
+                let index_type_str = format!("\"{}\"", name); // Quote literal string
+                let message_2536 = format_message(
+                    diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                    &[&index_type_str, &obj_type_str]
+                );
+                self.error_at_node(error_node, &message_2536, diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE);
+            }
+        }
     }
 }
