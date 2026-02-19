@@ -513,7 +513,13 @@ impl<'a> Printer<'a> {
         } else {
             self.write(" ");
         }
+        let before_then = self.writer.len();
         self.emit(if_stmt.then_statement);
+        // If the then-statement was completely erased (e.g. const enum),
+        // emit `;` to produce a valid empty statement.
+        if self.writer.len() == before_then {
+            self.write(";");
+        }
         if then_is_multiline_in_source && !then_is_block {
             self.decrease_indent();
         }
@@ -526,8 +532,32 @@ impl<'a> Printer<'a> {
             {
                 self.map_token_after_skipping_whitespace(then_node.end, else_node.pos);
             }
-            self.write("else ");
-            self.emit(if_stmt.else_statement);
+            // Check if the else body is erased (e.g. const enum).
+            // We need to detect this before emitting to format the empty
+            // statement correctly on a new indented line.
+            let else_is_erased = self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|n| self.is_erased_statement(n));
+            let else_is_if = self
+                .arena
+                .get(if_stmt.else_statement)
+                .is_some_and(|n| n.kind == syntax_kind_ext::IF_STATEMENT);
+            if else_is_erased && !else_is_if {
+                self.write("else");
+                self.write_line();
+                self.increase_indent();
+                self.emit(if_stmt.else_statement);
+                self.write(";");
+                self.decrease_indent();
+            } else {
+                self.write("else ");
+                let before_else = self.writer.len();
+                self.emit(if_stmt.else_statement);
+                if self.writer.len() == before_else {
+                    self.write(";");
+                }
+            }
         }
     }
 
