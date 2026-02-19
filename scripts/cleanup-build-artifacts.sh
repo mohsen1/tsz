@@ -262,13 +262,8 @@ install_daemon() {
         <string>--stale</string>
         <string>1</string>
     </array>
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>4</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+    <key>StartInterval</key>
+    <integer>21600</integer>
     <key>StandardOutPath</key>
     <string>${HOME}/.tsz-cleanup.log</string>
     <key>StandardErrorPath</key>
@@ -284,7 +279,7 @@ PLIST
   launchctl load "$LAUNCHD_PLIST"
 
   log "Installed launchd agent: $LAUNCHD_LABEL"
-  log "  Schedule: Daily at 4:00 AM"
+  log "  Schedule: Every 6 hours"
   log "  Cleans: All tsz-*/.target dirs older than 1 day"
   log "  Plist: $LAUNCHD_PLIST"
   log "  Log: ~/.tsz-cleanup.log"
