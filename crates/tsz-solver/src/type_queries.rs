@@ -3511,3 +3511,80 @@ pub fn has_type_query_for_symbol(
     }
     false
 }
+
+/// Extract contextual type parameters from a type.
+///
+/// Inspects function shapes, callable shapes (single call signature),
+/// type applications (recurse into base), and unions (all members must agree).
+/// Returns `None` if the type has no extractable type parameters or if
+/// union members disagree.
+///
+/// This encapsulates the common checker pattern of extracting type parameters
+/// from an expected contextual type for generic function inference.
+pub fn extract_contextual_type_params(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<Vec<crate::types::TypeParamInfo>> {
+    extract_contextual_type_params_inner(db, type_id, 0)
+}
+
+fn extract_contextual_type_params_inner(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    depth: u32,
+) -> Option<Vec<crate::types::TypeParamInfo>> {
+    if depth > 20 {
+        return None;
+    }
+
+    match db.lookup(type_id) {
+        Some(TypeData::Function(shape_id)) => {
+            let shape = db.function_shape(shape_id);
+            if shape.type_params.is_empty() {
+                None
+            } else {
+                Some(shape.type_params.clone())
+            }
+        }
+        Some(TypeData::Callable(shape_id)) => {
+            let shape = db.callable_shape(shape_id);
+            if shape.call_signatures.len() != 1 {
+                return None;
+            }
+            let sig = &shape.call_signatures[0];
+            if sig.type_params.is_empty() {
+                None
+            } else {
+                Some(sig.type_params.clone())
+            }
+        }
+        Some(TypeData::Application(app_id)) => {
+            let app = db.type_application(app_id);
+            extract_contextual_type_params_inner(db, app.base, depth + 1)
+        }
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            if members.is_empty() {
+                return None;
+            }
+            let mut candidate: Option<Vec<crate::types::TypeParamInfo>> = None;
+            for &member in members.iter() {
+                let params = extract_contextual_type_params_inner(db, member, depth + 1)?;
+                if let Some(existing) = &candidate {
+                    if existing.len() != params.len()
+                        || existing
+                            .iter()
+                            .zip(params.iter())
+                            .any(|(left, right)| left != right)
+                    {
+                        return None;
+                    }
+                } else {
+                    candidate = Some(params);
+                }
+            }
+            candidate
+        }
+        _ => None,
+    }
+}
