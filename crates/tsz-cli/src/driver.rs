@@ -898,11 +898,12 @@ fn compile_inner(
     // compiling files directly), so keep detection for harness plumbing only.
     let _no_types_and_symbols =
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
-    let lib_paths: Vec<PathBuf> = if resolved.checker.no_lib || disable_default_libs {
-        Vec::new()
-    } else {
-        resolved.lib_files.clone()
-    };
+    let lib_paths: Vec<PathBuf> =
+        if (resolved.checker.no_lib && resolved.lib_is_default) || disable_default_libs {
+            Vec::new()
+        } else {
+            resolved.lib_files.clone()
+        };
     let lib_path_refs: Vec<&Path> = lib_paths.iter().map(PathBuf::as_path).collect();
     // Load and bind each lib exactly once, then reuse for:
     // 1) user-file binding (global symbol availability during bind)
