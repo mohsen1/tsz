@@ -2469,10 +2469,11 @@ impl TypeInterner {
         // For discriminated unions (common in CFA), members are disjoint based on a property value.
         // Partitioning avoids O(N²) comparisons across disjoint groups.
         if len > 16
-            && let Some(partitioned) = self.try_partition_union_reduction(flat) {
-                *flat = partitioned;
-                return;
-            }
+            && let Some(partitioned) = self.try_partition_union_reduction(flat)
+        {
+            *flat = partitioned;
+            return;
+        }
 
         // Mark redundant elements, then compact in one pass.
         let mut keep = vec![true; len];

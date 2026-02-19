@@ -1802,9 +1802,10 @@ impl QueryDatabase for QueryCache<'_> {
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
         // 1. Check cache first (lock-free read)
         if let Ok(cache) = self.variance_cache.read()
-            && let Some(cached) = cache.get(&def_id) {
-                return Some(Arc::clone(cached));
-            }
+            && let Some(cached) = cache.get(&def_id)
+        {
+            return Some(Arc::clone(cached));
+        }
 
         // 2. Compute variance using the type's body
         // This requires the database to also be a TypeResolver (which QueryDatabase is)
