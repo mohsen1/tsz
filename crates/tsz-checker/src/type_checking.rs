@@ -1349,8 +1349,6 @@ impl<'a> CheckerState<'a> {
 
         let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
-        let indexed_access_type = self.get_type_from_type_node(node_idx);
-
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         use tsz_solver::type_queries::{LiteralValueKind, classify_for_literal_value};
 
@@ -1362,7 +1360,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(name) = prop_name {
-            let result = self.resolve_property_access(indexed_access_type);
+            let result = self.get_object_property_type(object_type, &name);
 
             if result.is_none() || result == Some(TypeId::ERROR) {
                 if object_type == TypeId::ERROR || index_type == TypeId::ERROR {

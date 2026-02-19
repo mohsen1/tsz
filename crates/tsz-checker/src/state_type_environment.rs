@@ -878,14 +878,6 @@ impl<'a> CheckerState<'a> {
         tsz_solver::utils::union_or_single(self.ctx.types, types)
     }
 
-    /// Create an intersection type from multiple types.
-    ///
-    /// Handles empty (→ NEVER), single (→ that type), and multi-member cases.
-    /// Automatically normalizes: flattens nested intersections, deduplicates, sorts.
-    pub fn get_intersection_type(&self, types: Vec<TypeId>) -> TypeId {
-        tsz_solver::utils::intersection_or_single(self.ctx.types, types)
-    }
-
     // =========================================================================
     // Type Node Resolution
     // =========================================================================

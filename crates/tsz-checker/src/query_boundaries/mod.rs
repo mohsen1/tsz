@@ -1,4 +1,3 @@
-pub(crate) mod array_type;
 pub(crate) mod assignability;
 pub(crate) mod call_checker;
 pub(crate) mod callable_type;
@@ -11,7 +10,6 @@ pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
 pub(crate) mod flow_analysis;
 pub(crate) mod generic_checker;
-pub(crate) mod indexed_access_type;
 pub(crate) mod intersection_type;
 pub(crate) mod iterable_checker;
 pub(crate) mod namespace_checker;
