@@ -4353,7 +4353,7 @@ fn test_infer_generic_number_index_ignores_noncanonical_numeric_property() {
     )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    assert_eq!(result, TypeId::UNKNOWN);
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
@@ -4402,7 +4402,7 @@ fn test_infer_generic_number_index_ignores_negative_zero_property() {
     )]);
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[object_literal]);
-    assert_eq!(result, TypeId::UNKNOWN);
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
