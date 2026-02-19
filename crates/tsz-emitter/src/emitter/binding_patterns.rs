@@ -35,8 +35,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let has_trailing_comma = self.has_trailing_comma_in_source(node, &pattern.elements.nodes);
         self.write("[");
         self.emit_comma_separated(&pattern.elements.nodes);
+        if has_trailing_comma {
+            self.write(",");
+        }
         self.write("]");
     }
 
