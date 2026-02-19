@@ -16874,7 +16874,6 @@ fn test_sourcemap_semicolon_mapping() {
     printer.enable_source_map("test.js", "test.ts");
     printer.emit(root);
 
-    let output = printer.get_output().to_string();
     let map_json = printer
         .generate_source_map_json()
         .expect("source map should be generated");
@@ -17597,6 +17596,183 @@ fn test_sourcemap_parity_computed_property_names_es6() {
             ));
         }
         msg.push_str(&format!("\nOutput:\n{output}"));
+        panic!("{msg}");
+    }
+    if num_missing < EXPECTED_MISSING {
+        panic!(
+            "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
+             Update EXPECTED_MISSING to {num_missing}."
+        );
+    }
+}
+
+/// Compare tsz source map output against tsc's baseline for for-in statements.
+#[test]
+fn test_sourcemap_parity_for_in() {
+    // Source from sourceMapValidationForIn.ts (without directives)
+    let source = "for (var x in String) {\n\
+                   \x20\x20\x20\x20WScript.Echo(x);\n\
+                   }\n\
+                   for (x in String) {\n\
+                   \x20\x20\x20\x20WScript.Echo(x);\n\
+                   }\n\
+                   for (var x2 in String)\n\
+                   {\n\
+                   \x20\x20\x20\x20WScript.Echo(x2);\n\
+                   }\n\
+                   for (x in String)\n\
+                   {\n\
+                   \x20\x20\x20\x20WScript.Echo(x);\n\
+                   }";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let tsz_decoded = decode_mappings(mappings_str);
+
+    // tsc baseline mappings (from sourceMapValidationForIn.js.map)
+    let tsc_mappings = ";AAAA,KAAK,IAAI,CAAC,IAAI,MAAM,EAAE,CAAC;IACnB,OAAO,CAAC,IAAI,CAAC,CAAC,CAAC,CAAC;AACpB,CAAC;AACD,KAAK,CAAC,IAAI,MAAM,EAAE,CAAC;IACf,OAAO,CAAC,IAAI,CAAC,CAAC,CAAC,CAAC;AACpB,CAAC;AACD,KAAK,IAAI,EAAE,IAAI,MAAM,EACrB,CAAC;IACG,OAAO,CAAC,IAAI,CAAC,EAAE,CAAC,CAAC;AACrB,CAAC;AACD,KAAK,CAAC,IAAI,MAAM,EAChB,CAAC;IACG,OAAO,CAAC,IAAI,CAAC,CAAC,CAAC,CAAC;AACpB,CAAC";
+    let tsc_decoded = decode_mappings(tsc_mappings);
+
+    let mut missing = Vec::new();
+    for tsc_m in &tsc_decoded {
+        let adjusted_gen_line = tsc_m.generated_line.saturating_sub(1);
+        let found = tsz_decoded.iter().any(|tsz_m| {
+            tsz_m.generated_line == adjusted_gen_line
+                && tsz_m.generated_column == tsc_m.generated_column
+                && tsz_m.original_line == tsc_m.original_line
+                && tsz_m.original_column == tsc_m.original_column
+        });
+        if !found {
+            missing.push((tsc_m, adjusted_gen_line));
+        }
+    }
+
+    const EXPECTED_MISSING: usize = 24;
+    let num_missing = missing.len();
+    if num_missing > EXPECTED_MISSING {
+        let mut msg = format!(
+            "REGRESSION: {num_missing} tsc mappings missing (expected at most {EXPECTED_MISSING}):\n",
+        );
+        for (m, adj_line) in &missing {
+            msg.push_str(&format!(
+                "  tsc gen({}:{}) [adj gen({}:{})] -> src({}:{}) [tsz missing]\n",
+                m.generated_line,
+                m.generated_column,
+                adj_line,
+                m.generated_column,
+                m.original_line,
+                m.original_column
+            ));
+        }
+        msg.push_str(&format!("\ntsz mappings ({}):\n", tsz_decoded.len()));
+        for m in &tsz_decoded {
+            msg.push_str(&format!(
+                "  gen({}:{}) -> src({}:{})\n",
+                m.generated_line, m.generated_column, m.original_line, m.original_column
+            ));
+        }
+        panic!("{msg}");
+    }
+    if num_missing < EXPECTED_MISSING {
+        panic!(
+            "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
+             Update EXPECTED_MISSING to {num_missing}."
+        );
+    }
+}
+
+/// Compare tsz source map output against tsc's baseline for function declarations.
+#[test]
+fn test_sourcemap_parity_functions() {
+    // Source from sourceMapValidationFunctions.ts (without directives)
+    let source = "var greetings = 0;\n\
+                   function greet(greeting: string): number {\n\
+                   \x20\x20\x20\x20greetings++;\n\
+                   \x20\x20\x20\x20return greetings;\n\
+                   }\n\
+                   function greet2(greeting: string, n = 10, x?: string, ...restParams: string[]): number {\n\
+                   \x20\x20\x20\x20greetings++;\n\
+                   \x20\x20\x20\x20return greetings;\n\
+                   }\n\
+                   function foo(greeting: string, n = 10, x?: string, ...restParams: string[])\n\
+                   {\n\
+                   \x20\x20\x20\x20return;\n\
+                   }";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let tsz_decoded = decode_mappings(mappings_str);
+
+    // tsc baseline mappings (from sourceMapValidationFunctions.js.map)
+    let tsc_mappings = ";AAAA,IAAI,SAAS,GAAG,CAAC,CAAC;AAClB,SAAS,KAAK,CAAC,QAAgB;IAC3B,SAAS,EAAE,CAAC;IACZ,OAAO,SAAS,CAAC;AACrB,CAAC;AACD,SAAS,MAAM,CAAC,QAAgB,EAAE,CAAC,GAAG,EAAE,EAAE,CAAU,EAAE,GAAG,UAAoB;IACzE,SAAS,EAAE,CAAC;IACZ,OAAO,SAAS,CAAC;AACrB,CAAC;AACD,SAAS,GAAG,CAAC,QAAgB,EAAE,CAAC,GAAG,EAAE,EAAE,CAAU,EAAE,GAAG,UAAoB;IAEtE,OAAO;AACX,CAAC";
+    let tsc_decoded = decode_mappings(tsc_mappings);
+
+    let mut missing = Vec::new();
+    for tsc_m in &tsc_decoded {
+        let adjusted_gen_line = tsc_m.generated_line.saturating_sub(1);
+        let found = tsz_decoded.iter().any(|tsz_m| {
+            tsz_m.generated_line == adjusted_gen_line
+                && tsz_m.generated_column == tsc_m.generated_column
+                && tsz_m.original_line == tsc_m.original_line
+                && tsz_m.original_column == tsc_m.original_column
+        });
+        if !found {
+            missing.push((tsc_m, adjusted_gen_line));
+        }
+    }
+
+    const EXPECTED_MISSING: usize = 26;
+    let num_missing = missing.len();
+    if num_missing > EXPECTED_MISSING {
+        let mut msg = format!(
+            "REGRESSION: {num_missing} tsc mappings missing (expected at most {EXPECTED_MISSING}):\n",
+        );
+        for (m, adj_line) in &missing {
+            msg.push_str(&format!(
+                "  tsc gen({}:{}) [adj gen({}:{})] -> src({}:{}) [tsz missing]\n",
+                m.generated_line,
+                m.generated_column,
+                adj_line,
+                m.generated_column,
+                m.original_line,
+                m.original_column
+            ));
+        }
+        msg.push_str(&format!("\ntsz mappings ({}):\n", tsz_decoded.len()));
+        for m in &tsz_decoded {
+            msg.push_str(&format!(
+                "  gen({}:{}) -> src({}:{})\n",
+                m.generated_line, m.generated_column, m.original_line, m.original_column
+            ));
+        }
         panic!("{msg}");
     }
     if num_missing < EXPECTED_MISSING {

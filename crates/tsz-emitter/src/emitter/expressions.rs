@@ -756,6 +756,10 @@ impl<'a> Printer<'a> {
         }
 
         self.emit(call.expression);
+        // Map the opening `(` to its source position
+        if let Some(expr_node) = self.arena.get(call.expression) {
+            self.map_token_after(expr_node.end, node.end, b'(');
+        }
         self.write("(");
         if let Some(ref args) = call.arguments {
             // For the first argument, emit any comments between '(' and the argument
@@ -770,6 +774,8 @@ impl<'a> Printer<'a> {
             }
             self.emit_comma_separated(&args.nodes);
         }
+        // Map the closing `)` to its source position
+        self.map_closing_paren(node);
         self.write(")");
     }
 
@@ -1133,6 +1139,10 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Map the `.` token to its source position
+        if let Some(expr_node) = self.arena.get(access.expression) {
+            self.map_token_after(expr_node.end, node.end, b'.');
+        }
         self.write(".");
         self.emit(access.name_or_argument);
     }
