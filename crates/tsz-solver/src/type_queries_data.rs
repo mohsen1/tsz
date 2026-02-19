@@ -740,6 +740,71 @@ pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> 
     }
 }
 
+/// Find the private brand name for a type.
+///
+/// Private members in TypeScript classes use a "brand" property for nominal typing.
+/// The brand is a property named like `__private_brand_#className`.
+///
+/// Returns the full brand property name (e.g., `"__private_brand_#Foo"`) if found,
+/// or None if the type has no private brand.
+pub fn get_private_brand_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    match db.lookup(type_id)? {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            for prop in &shape.properties {
+                let name = db.resolve_atom(prop.name);
+                if name.starts_with("__private_brand_") {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            for prop in &shape.properties {
+                let name = db.resolve_atom(prop.name);
+                if name.starts_with("__private_brand_") {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Find the private field name from a type's properties.
+///
+/// Given a type with private members, returns the name of the first private field
+/// (a property starting with `#` that is not a brand marker).
+///
+/// Returns `Some(field_name)` (e.g., `"#foo"`) if found, None otherwise.
+pub fn get_private_field_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<String> {
+    match db.lookup(type_id)? {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            for prop in &shape.properties {
+                let name = db.resolve_atom(prop.name);
+                if name.starts_with('#') && !name.starts_with("__private_brand_") {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            for prop in &shape.properties {
+                let name = db.resolve_atom(prop.name);
+                if name.starts_with('#') && !name.starts_with("__private_brand_") {
+                    return Some(name);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 /// Get the `DefId` from a Lazy type.
 ///
 /// Returns None if the type is not a Lazy type.
