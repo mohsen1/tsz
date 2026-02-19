@@ -467,14 +467,14 @@ impl<'a> FlowAnalyzer<'a> {
         let mut visited_borrow = self.flow_visited.and_then(|b| b.try_borrow_mut().ok());
         let mut results_borrow = self.flow_results.and_then(|b| b.try_borrow_mut().ok());
 
-        let worklist = worklist_borrow.as_deref_mut()
+        let worklist = worklist_borrow
+            .as_deref_mut()
             .unwrap_or(&mut local_worklist);
-        let in_worklist = in_worklist_borrow.as_deref_mut()
+        let in_worklist = in_worklist_borrow
+            .as_deref_mut()
             .unwrap_or(&mut local_in_worklist);
-        let visited = visited_borrow.as_deref_mut()
-            .unwrap_or(&mut local_visited);
-        let results = results_borrow.as_deref_mut()
-            .unwrap_or(&mut local_results);
+        let visited = visited_borrow.as_deref_mut().unwrap_or(&mut local_visited);
+        let results = results_borrow.as_deref_mut().unwrap_or(&mut local_results);
 
         // Clear buffers for reuse
         worklist.clear();
