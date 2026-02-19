@@ -1,7 +1,7 @@
-use crate::parser::ParserState;
 use crate::binder::BinderState;
-use crate::checker::state::CheckerState;
 use crate::checker::context::CheckerOptions;
+use crate::checker::state::CheckerState;
+use crate::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 #[test]
@@ -12,7 +12,7 @@ with (x) {}
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    
+
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 
@@ -44,7 +44,7 @@ module {
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    
+
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
 

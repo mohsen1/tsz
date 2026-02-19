@@ -6180,10 +6180,15 @@ fn compile_binary_file_reports_errors() {
         result.diagnostics
     );
 
-    let has_other_errors = result.diagnostics.iter().any(|d| d.code != 1490);
+    // Binary file detection should suppress parser diagnostics - only TS1490 is emitted
+    let non_binary_errors: Vec<_> = result
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 1490)
+        .collect();
     assert!(
-        has_other_errors,
-        "Expected other errors (e.g. TS1127) indicating the file was parsed. Diagnostics: {:?}",
-        result.diagnostics
+        non_binary_errors.is_empty(),
+        "Expected only TS1490 for binary files, but got additional errors: {:?}",
+        non_binary_errors
     );
 }

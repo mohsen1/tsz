@@ -2179,15 +2179,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 | syntax_kind_ext::VARIABLE_STATEMENT
         );
 
-        if is_declaration_or_variable {
-            if let Some((pos, end)) = self.ctx.get_node_span(label_idx) {
-                self.ctx.error(
-                    pos,
-                    end - pos,
-                    "'A label is not allowed here.".to_string(),
-                    1344, // TS1344
-                );
-            }
+        if is_declaration_or_variable && let Some((pos, end)) = self.ctx.get_node_span(label_idx) {
+            self.ctx.error(
+                pos,
+                end - pos,
+                "'A label is not allowed here.".to_string(),
+                1344, // TS1344
+            );
         }
     }
 

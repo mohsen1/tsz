@@ -2283,11 +2283,31 @@ impl<'a> Printer<'a> {
                     }
 
                     if is_erased {
-                        // For the first statement, use node.pos to preserve file-level
-                        // comments before any declarations. For subsequent statements,
-                        // use prev_end to also strip leading trivia (comments between
-                        // the previous statement and this erased declaration).
-                        let range_start = prev_end.unwrap_or(stmt_node.pos);
+                        // For subsequent statements, use prev_end to strip leading trivia
+                        // (comments between the previous statement and this erased declaration).
+                        // For the first statement (prev_end=None), scan backwards to find
+                        // leading comments that belong to this erased declaration, so they
+                        // get stripped along with it (e.g. `// Interface\ninterface Foo {}`).
+                        let range_start = if let Some(pe) = prev_end {
+                            pe
+                        } else {
+                            // Find the earliest leading comment that belongs to this declaration
+                            let mut earliest = stmt_node.pos;
+                            for c in self.all_comments.iter().rev() {
+                                if c.end <= stmt_node.pos {
+                                    // Check if only whitespace separates this comment from the node
+                                    if let Some(text) = self.source_text {
+                                        let between = &text[c.end as usize..stmt_node.pos as usize];
+                                        if between.chars().all(|ch| ch.is_whitespace()) {
+                                            earliest = c.pos;
+                                            continue;
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                            earliest
+                        };
                         erased_ranges.push((range_start, stmt_token_end));
                     }
                     prev_end = Some(stmt_token_end);

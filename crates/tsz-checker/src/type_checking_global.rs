@@ -630,7 +630,8 @@ impl<'a> CheckerState<'a> {
                 .collect();
             self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
 
-            let mut conflicts = FxHashSet::default();
+            let mut conflicts: FxHashMap<NodeIndex, u32> = FxHashMap::default();
+            let mut exported_conflicts = FxHashSet::default();
             let mut namespace_order_errors = FxHashSet::default();
 
             for i in 0..declarations.len() {
@@ -667,10 +668,10 @@ impl<'a> CheckerState<'a> {
                         }
 
                         if decl_is_local {
-                            conflicts.insert(decl_idx);
+                            conflicts.insert(decl_idx, decl_flags);
                         }
                         if other_is_local {
-                            conflicts.insert(other_idx);
+                            conflicts.insert(other_idx, other_flags);
                         }
                         continue;
                     }
@@ -766,6 +767,83 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // TS2813/TS2814: Class and Function merging
+                    let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
+                    let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
+                    let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
+                    let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
+
+                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
+                    {
+                        let (class_idx, func_idx, func_is_local) = if decl_is_class {
+                            (decl_idx, other_idx, other_is_local)
+                        } else {
+                            (other_idx, decl_idx, decl_is_local)
+                        };
+
+                        let class_is_ambient = self.is_ambient_class_declaration(class_idx);
+                        let func_has_body = func_is_local && self.function_has_body(func_idx);
+
+                        if func_has_body && !class_is_ambient {
+                            if decl_is_local {
+                                let code = if decl_is_class {
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR
+                                } else {
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
+                                };
+                                self.error_at_node_msg(
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                    code,
+                                    &[&symbol.escaped_name],
+                                );
+                            }
+                            if other_is_local {
+                                let code = if other_is_class {
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR
+                                } else {
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
+                                };
+                                self.error_at_node_msg(
+                                    self.get_declaration_name_node(other_idx)
+                                        .unwrap_or(other_idx),
+                                    code,
+                                    &[&symbol.escaped_name],
+                                );
+                            }
+                            continue;
+                        }
+
+                        // If it's a valid merge (ambient class + function with body),
+                        // or if the function has NO body (overload), it's not an error.
+                        if func_has_body && class_is_ambient {
+                            continue;
+                        }
+                    }
+
+                    // TS2567: Enum declarations can only merge with namespace or other enum declarations.
+                    let is_enum_merge_error =
+                        (decl_is_enum && !other_is_enum && !other_is_namespace)
+                            || (other_is_enum && !decl_is_enum && !decl_is_namespace);
+
+                    if is_enum_merge_error {
+                        if decl_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                            );
+                        }
+                        if other_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
+                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                            );
+                        }
+                        // TS2567 replaces TS2300 for enums in TSC.
+                        continue;
+                    }
+
                     // Namespace + Variable merging
                     let decl_is_variable = (decl_flags & symbol_flags::VARIABLE) != 0;
                     let other_is_variable = (other_flags & symbol_flags::VARIABLE) != 0;
@@ -782,36 +860,85 @@ impl<'a> CheckerState<'a> {
                         };
                         if self.is_namespace_declaration_instantiated(namespace_idx) {
                             if decl_is_local {
-                                conflicts.insert(decl_idx);
+                                conflicts.insert(decl_idx, decl_flags);
                             }
                             if other_is_local {
-                                conflicts.insert(other_idx);
+                                conflicts.insert(other_idx, other_flags);
                             }
                         }
                         continue;
                     }
 
-                    // General conflict check for other combinations
+                    // General conflict check for other combinations.
                     if Self::declarations_conflict(decl_flags, other_flags) {
-                        if decl_is_local {
-                            conflicts.insert(decl_idx);
-                        }
-                        if other_is_local {
-                            conflicts.insert(other_idx);
+                        // TS2323: When both conflicting declarations are exported
+                        // *variables*, emit "Cannot redeclare exported variable"
+                        // instead of the generic TS2300 "Duplicate identifier".
+                        // Non-variable exports (classes, etc.) still get TS2300.
+                        let both_variables = (decl_flags & symbol_flags::VARIABLE) != 0
+                            && (other_flags & symbol_flags::VARIABLE) != 0;
+                        let both_exported = both_variables
+                            && decl_is_local
+                            && other_is_local
+                            && self.is_declaration_exported(decl_idx)
+                            && self.is_declaration_exported(other_idx);
+                        if both_exported {
+                            exported_conflicts.insert(decl_idx);
+                            exported_conflicts.insert(other_idx);
+                        } else {
+                            if decl_is_local {
+                                conflicts.insert(decl_idx, decl_flags);
+                            }
+                            if other_is_local {
+                                conflicts.insert(other_idx, other_flags);
+                            }
                         }
                     }
                 }
             }
 
-            for conflict_idx in conflicts {
+            for (conflict_idx, conflict_flags) in conflicts {
+                let error_node = self
+                    .get_declaration_name_node(conflict_idx)
+                    .unwrap_or(conflict_idx);
+                // TS2451 for block-scoped variables (let/const), TS2300 for others
+                let is_block_scoped = (conflict_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                if is_block_scoped {
+                    let message = format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[&symbol.escaped_name],
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::DUPLICATE_IDENTIFIER,
+                        &[&symbol.escaped_name],
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+            }
+
+            for conflict_idx in exported_conflicts {
                 let error_node = self
                     .get_declaration_name_node(conflict_idx)
                     .unwrap_or(conflict_idx);
                 let message = format_message(
-                    diagnostic_messages::DUPLICATE_IDENTIFIER,
+                    diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                     &[&symbol.escaped_name],
                 );
-                self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                );
             }
 
             for idx in namespace_order_errors {

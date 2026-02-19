@@ -1523,15 +1523,27 @@ let foo = 2;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    let duplicate_count = checker
+    // var foo gets TS2300 (Duplicate identifier), let foo gets TS2451 (block-scoped)
+    let ts2300_count = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER)
         .count();
+    let ts2451_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE)
+        .count();
     assert_eq!(
-        duplicate_count, 2,
-        "Expected TS2300 for var/let duplicates, got: {:?}",
+        ts2300_count, 1,
+        "Expected 1 TS2300 for var declaration, got: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        ts2451_count, 1,
+        "Expected 1 TS2451 for let declaration, got: {:?}",
         checker.ctx.diagnostics
     );
 }
@@ -1897,7 +1909,6 @@ opt("x", 1);
 }
 
 #[test]
-#[ignore = "Overload call with rest params not yet fully implemented"]
 fn test_overload_call_handles_rest_params() {
     use crate::parser::ParserState;
 
@@ -2011,7 +2022,6 @@ ft4(["hello", 42]);
 }
 
 #[test]
-#[ignore = "Overload call with generic signatures not yet fully implemented"]
 fn test_overload_call_handles_generic_signatures() {
     use crate::parser::ParserState;
 
@@ -2673,7 +2683,6 @@ new Foo(true);
 }
 
 #[test]
-#[ignore = "Constructor overload resolution not yet implemented"]
 fn test_new_expression_resolves_constructor_overloads() {
     use crate::parser::ParserState;
 
@@ -2713,7 +2722,6 @@ new Foo(42);
 }
 
 #[test]
-#[ignore = "Constructor overload resolution with rest params not yet implemented"]
 fn test_new_expression_resolves_constructor_overloads_with_rest() {
     use crate::parser::ParserState;
 
@@ -18133,7 +18141,6 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
 /// currently checked with strictFunctionTypes semantics. Once method bivariance
 /// is implemented, change to expect 0 errors.
 #[test]
-#[ignore = "Method bivariance not yet implemented"]
 fn test_method_bivariance_wider_argument() {
     use crate::parser::ParserState;
 
@@ -33211,7 +33218,6 @@ class MyInterface {
 
 /// Test that duplicate variable declarations DO emit TS2451 (block-scoped variable redeclaration)
 #[test]
-#[ignore = "Regression: TS2451 not being emitted for duplicate let declarations"]
 fn test_duplicate_variables_emits_ts2451() {
     use crate::parser::ParserState;
 

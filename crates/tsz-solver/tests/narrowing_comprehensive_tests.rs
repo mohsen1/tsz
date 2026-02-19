@@ -380,7 +380,7 @@ fn test_exhaustive_union_check() {
 
 #[test]
 fn test_never_from_exhaustion() {
-    let interner = TypeInterner::new();
+    let _interner = TypeInterner::new();
 
     // After handling all cases, type becomes never
     // NEVER is a built-in type with id 2

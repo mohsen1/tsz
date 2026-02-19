@@ -241,7 +241,7 @@ fn test_promise_then_chain() {
     // Promise<T>.then<U>(onfulfilled: (value: T) => U): Promise<U>
     // Simplified: Promise<number>.then(x => string): Promise<string>
 
-    let number_promise = interner.object(vec![PropertyInfo::new(
+    let _number_promise = interner.object(vec![PropertyInfo::new(
         interner.intern_string("__value"),
         TypeId::NUMBER,
     )]);
