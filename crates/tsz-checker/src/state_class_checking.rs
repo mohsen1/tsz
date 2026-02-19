@@ -842,11 +842,28 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_class_declaration(&mut self, stmt_idx: NodeIndex) {
         use crate::class_inheritance::ClassInheritanceChecker;
         use crate::diagnostics::diagnostic_codes;
+
+        // Optimization: Skip if already fully checked
+        if self.ctx.checked_classes.contains(&stmt_idx) {
+            return;
+        }
+
+        // Recursion guard: if we're already checking this class, return early.
+        // This handles complex cycles where class checking triggers type resolution
+        // (e.g. for method return types) that references the class itself or its base.
+        if !self.ctx.checking_classes.insert(stmt_idx) {
+            return;
+        }
+
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
+            self.ctx.checking_classes.remove(&stmt_idx);
+            self.ctx.checked_classes.insert(stmt_idx);
             return;
         };
 
         let Some(class) = self.ctx.arena.get_class(node) else {
+            self.ctx.checking_classes.remove(&stmt_idx);
+            self.ctx.checked_classes.insert(stmt_idx);
             return;
         };
 
@@ -858,6 +875,8 @@ impl<'a> CheckerState<'a> {
         // Must be done BEFORE any type checking to catch cycles early
         let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
         if checker.check_class_inheritance_cycle(stmt_idx, class) {
+            self.ctx.checking_classes.remove(&stmt_idx);
+            self.ctx.checked_classes.insert(stmt_idx);
             return; // Cycle detected - error already emitted, skip all type checking
         }
 
@@ -1139,6 +1158,9 @@ impl<'a> CheckerState<'a> {
         self.ctx.enclosing_class = prev_enclosing_class;
 
         self.pop_type_parameters(type_param_updates);
+
+        self.ctx.checked_classes.insert(stmt_idx);
+        self.ctx.checking_classes.remove(&stmt_idx);
     }
 
     pub(crate) fn check_class_expression(
