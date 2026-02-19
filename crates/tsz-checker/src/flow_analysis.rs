@@ -1341,6 +1341,32 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Hot-path optimization: for property/element access expressions with an already
+        // concrete primitive/literal result type, flow re-analysis at the access node is
+        // typically redundant. The object expression has already been flow-narrowed before
+        // property lookup; re-walking flow for the access itself is high-cost in long
+        // discriminant-if chains (e.g. repeated `if (e.kind === "...") return e.dataN`).
+        //
+        // Keep full flow narrowing for unions/objects/type-parameters, where access-level
+        // narrowing may still materially change the type.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && (matches!(
+                declared_type,
+                TypeId::STRING
+                    | TypeId::NUMBER
+                    | TypeId::BOOLEAN
+                    | TypeId::BIGINT
+                    | TypeId::SYMBOL
+                    | TypeId::UNDEFINED
+                    | TypeId::NULL
+                    | TypeId::VOID
+            ) || tsz_solver::visitor::is_literal_type_db(self.ctx.types, declared_type))
+        {
+            return declared_type;
+        }
+
         // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
