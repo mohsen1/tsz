@@ -1940,6 +1940,7 @@ impl ParserState {
                 | SyntaxKind::AsyncKeyword
                 | SyntaxKind::AwaitKeyword
                 | SyntaxKind::YieldKeyword
+                | SyntaxKind::LetKeyword
                 | SyntaxKind::NewKeyword
                 | SyntaxKind::ClassKeyword
                 | SyntaxKind::FunctionKeyword
