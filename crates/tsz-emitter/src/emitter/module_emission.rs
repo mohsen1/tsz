@@ -78,6 +78,18 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit anonymous default export as a named declaration + export assignment.
+    /// TSC pattern: `export default class {}` → `class default_1 {}\nexports.default = default_1;`
+    pub(super) fn emit_commonjs_anonymous_default_as_named(&mut self, node: &Node, idx: NodeIndex) {
+        // Set temporary override name for anonymous default declarations
+        let prev = self.anonymous_default_export_name.take();
+        self.anonymous_default_export_name = Some("default_1".to_string());
+        self.emit_node_default(node, idx);
+        self.anonymous_default_export_name = prev;
+        self.write_line();
+        self.write("exports.default = default_1;");
+    }
+
     pub(super) fn emit_commonjs_default_export_assignment<F>(&mut self, mut emit_inner: F)
     where
         F: FnMut(&mut Self),
@@ -754,7 +766,7 @@ impl<'a> Printer<'a> {
             }
 
             if is_anonymous_default {
-                self.emit_commonjs_default_export_expr(clause_node, export.export_clause);
+                self.emit_commonjs_anonymous_default_as_named(clause_node, export.export_clause);
                 return;
             }
 

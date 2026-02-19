@@ -292,7 +292,13 @@ impl<'a> Printer<'a> {
 
         self.write("class");
 
-        if !class.name.is_none() {
+        let override_name = self.anonymous_default_export_name.clone();
+        if class.name.is_none() {
+            if let Some(name) = override_name {
+                self.write_space();
+                self.write(&name);
+            }
+        } else {
             self.write_space();
             self.emit_decl_name(class.name);
         }
