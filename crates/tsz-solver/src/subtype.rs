@@ -1705,20 +1705,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-<<<<<<< HEAD
-        // If not allowing any, ANY/STRICT_ANY only match itself or unknown.
-        if !allow_any
-            && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
-            && (target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN)
-        {
-            return SubtypeResult::True;
-        }
-        // Fall through to structural check (which will fail for STRICT_ANY)
-        if !allow_any
-            && (target == TypeId::ANY || target == TypeId::STRICT_ANY)
-            && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
-        {
-=======
         // If not allowing any (nested strict any), any still matches Top types as source,
         // but any as target ALWAYS matches (it's a top type).
         if !allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
@@ -1728,7 +1714,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // Fall through to structural check (which will fail for STRICT_ANY)
         }
         if !allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
->>>>>>> f3fc0e500 (fix(solver): refine `any` propagation in strict mode)
             return SubtypeResult::True;
         }
         // Fall through to structural check (which will fail for STRICT_ANY)
