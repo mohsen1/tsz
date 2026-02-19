@@ -515,10 +515,6 @@ pub fn resolve_compiler_options(
         resolved.checker.no_types_and_symbols = no_types_and_symbols;
     }
 
-    if resolved.checker.no_lib && options.lib.is_some() {
-        bail!("Option 'lib' cannot be specified with option 'noLib'.");
-    }
-
     if let Some(lib_list) = options.lib.as_ref() {
         resolved.lib_files = resolve_lib_files(lib_list)?;
         resolved.lib_is_default = false;
