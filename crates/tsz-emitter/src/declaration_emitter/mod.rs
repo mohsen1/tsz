@@ -1599,11 +1599,12 @@ impl<'a> DeclarationEmitter<'a> {
                     "var"
                 };
 
+                // Separate destructuring from regular declarations
+                let mut regular_decls = Vec::new();
                 for &decl_idx in &decl_list.declarations.nodes {
                     if let Some(decl_node) = self.arena.get(decl_idx)
                         && let Some(decl) = self.arena.get_variable_declaration(decl_node)
                     {
-                        // Check if this is a destructuring pattern
                         let name_node = self.arena.get(decl.name);
                         let is_destructuring = name_node.is_some()
                             && (name_node.unwrap().kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
@@ -1611,26 +1612,35 @@ impl<'a> DeclarationEmitter<'a> {
                                     == syntax_kind_ext::ARRAY_BINDING_PATTERN);
 
                         if is_destructuring {
-                            // Flatten destructuring into individual declarations
+                            // Emit destructuring as individual declarations
                             self.emit_flattened_variable_declaration(
                                 decl.name,
                                 keyword,
                                 is_exported,
                             );
-                            continue;
+                        } else {
+                            regular_decls.push((decl_idx, decl_node, decl));
                         }
+                    }
+                }
 
-                        // Regular variable declaration (not destructuring)
-                        self.write_indent();
-                        // Don't emit 'export' or 'declare' keywords inside a declare namespace
-                        if !self.inside_declare_namespace {
-                            if is_exported {
-                                self.write("export ");
-                            }
-                            self.write("declare ");
+                // Emit all regular declarations together on one line
+                if !regular_decls.is_empty() {
+                    self.write_indent();
+                    // Don't emit 'export' or 'declare' keywords inside a declare namespace
+                    if !self.inside_declare_namespace {
+                        if is_exported {
+                            self.write("export ");
                         }
-                        self.write(keyword);
-                        self.write(" ");
+                        self.write("declare ");
+                    }
+                    self.write(keyword);
+                    self.write(" ");
+
+                    for (i, (decl_idx, _decl_node, decl)) in regular_decls.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
 
                         self.emit_node(decl.name);
 
@@ -1639,14 +1649,15 @@ impl<'a> DeclarationEmitter<'a> {
                             && decl.type_annotation.is_none()
                             && !decl.initializer.is_none()
                         {
-                            // Check if initializer is a primitive literal
+                            // Check if initializer is a primitive literal (excluding null for .d.ts)
                             if let Some(init_node) = self.arena.get(decl.initializer) {
                                 let k = init_node.kind;
+                                // In .d.ts, we emit literal values for string/number/boolean
+                                // but NOT for null (use `any` type instead)
                                 k == SyntaxKind::StringLiteral as u16
                                     || k == SyntaxKind::NumericLiteral as u16
                                     || k == SyntaxKind::TrueKeyword as u16
                                     || k == SyntaxKind::FalseKeyword as u16
-                                    || k == SyntaxKind::NullKeyword as u16
                             } else {
                                 false
                             }
@@ -1664,17 +1675,31 @@ impl<'a> DeclarationEmitter<'a> {
                                 && !decl.initializer.is_none()
                                 && self.is_symbol_call(decl.initializer);
 
+                            // Check if initializer is null/undefined (should emit `: any`)
+                            let is_null_or_undefined = if !decl.initializer.is_none() {
+                                if let Some(init_node) = self.arena.get(decl.initializer) {
+                                    let k = init_node.kind;
+                                    k == SyntaxKind::NullKeyword as u16
+                                        || k == SyntaxKind::UndefinedKeyword as u16
+                                } else {
+                                    false
+                                }
+                            } else {
+                                false
+                            };
+
                             // Emit explicit type annotation if present
                             if !decl.type_annotation.is_none() {
                                 self.write(": ");
                                 self.emit_type(decl.type_annotation);
                             } else if is_unique_symbol {
-                                // const x = Symbol() gets : unique symbol
                                 self.write(": unique symbol");
+                            } else if is_null_or_undefined {
+                                // null/undefined initializers get `any` type in .d.ts
+                                self.write(": any");
                             } else if let Some(type_id) =
-                                self.get_node_type_or_names(&[decl_idx, decl.name])
+                                self.get_node_type_or_names(&[*decl_idx, decl.name])
                             {
-                                // No explicit type, but we have inferred type from cache
                                 self.write(": ");
                                 self.write(&self.print_type_id(type_id));
                             }
