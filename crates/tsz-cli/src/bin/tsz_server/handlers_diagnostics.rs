@@ -206,7 +206,47 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        self.stub_response(seq, request, Some(serde_json::json!([])))
+        let file = request.arguments.get("file").and_then(|v| v.as_str());
+        let include_line_position = request
+            .arguments
+            .get("includeLinePosition")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
+            if let Some(content) = self.open_files.get(file_path).cloned() {
+                let line_map = LineMap::build(&content);
+                let diags = self.get_suggestion_diagnostics(file_path, &content);
+                diags
+                    .iter()
+                    .map(|d| {
+                        Self::format_diagnostic(DiagnosticFormatInput {
+                            start_offset: d.start,
+                            length: d.length,
+                            message: &d.message_text,
+                            code: d.code,
+                            category: d.category,
+                            line_map: &line_map,
+                            content: &content,
+                            include_line_position,
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        TsServerResponse {
+            seq,
+            msg_type: "response".to_string(),
+            command: "suggestionDiagnosticsSync".to_string(),
+            request_seq: request.seq,
+            success: true,
+            message: None,
+            body: Some(serde_json::json!(diagnostics)),
+        }
     }
 
     pub(crate) fn handle_geterr(
