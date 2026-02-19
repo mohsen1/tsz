@@ -784,10 +784,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 // TSC uses isTypeComparableTo which is more relaxed than assignability:
                                 // types are comparable if they share at least one common property.
                                 let source_to_target =
-                                    self.checker.is_assignable_to(expr_type, asserted_type);
-                                let target_to_source =
-                                    self.checker.is_assignable_to(asserted_type, expr_type);
-
+                                                                        self.checker.is_assignable_to(expr_type, asserted_type);                                let target_to_source =
+                                                                        self.checker.is_assignable_to(asserted_type, expr_type);
                                 if !source_to_target && !target_to_source {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it
@@ -799,8 +797,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                         query::union_members(self.checker.ctx.types, asserted_type)
                                     {
                                         for member in members {
-                                            if self.checker.is_assignable_to(member, expr_type)
-                                                || self.checker.is_assignable_to(expr_type, member)
+                                                                                         if self.checker.is_assignable_to(member, expr_type)                                                || self.checker.is_assignable_to(expr_type, member)
                                             {
                                                 have_overlap = true;
                                                 break;

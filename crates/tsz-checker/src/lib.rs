@@ -49,6 +49,7 @@ pub mod flow_analyzer;
 pub mod flow_graph_builder;
 pub mod function_type;
 pub mod generic_checker;
+mod check_circular_type_arguments;
 pub mod import_checker;
 mod import_declaration_checker;
 pub mod interface_type;

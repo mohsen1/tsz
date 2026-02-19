@@ -457,8 +457,6 @@ impl<'a> CheckerState<'a> {
         );
         result
     }
-
-    /// Check assignability with strict function-parameter variance.
     ///
     /// This keeps the same checker gateway (resolver + overrides + caches) as
     /// `is_assignable_to`, but forces the strict-function-types relation flag.

@@ -26,9 +26,7 @@ struct CheckerCallAssignabilityAdapter<'s, 'ctx> {
 
 impl AssignabilityChecker for CheckerCallAssignabilityAdapter<'_, '_> {
     fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool {
-        self.state.is_assignable_to(source, target)
-    }
-
+                                   self.state.is_assignable_to(source, target)    }
     fn is_assignable_to_strict(&mut self, source: TypeId, target: TypeId) -> bool {
         self.state.is_assignable_to_strict(source, target)
     }

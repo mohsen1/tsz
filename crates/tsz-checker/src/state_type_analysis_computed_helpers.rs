@@ -121,7 +121,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns true for bare type references like `type A = B`, false for wrapped
     /// references like `type A = { x: B }` or `type A = B | null`.
-    fn is_simple_type_reference(&self, type_node: NodeIndex) -> bool {
+    pub(crate) fn is_simple_type_reference(&self, type_node: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(type_node) else {
             return false;
         };
@@ -182,7 +182,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn report_private_identifier_outside_class(
+    pub(crate) fn report_private_identifier_outside_class(
         &mut self,
         name_idx: NodeIndex,
         property_name: &str,
@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
         );
     }
 
-    fn report_private_identifier_shadowed(
+    pub(crate) fn report_private_identifier_shadowed(
         &mut self,
         name_idx: NodeIndex,
         property_name: &str,

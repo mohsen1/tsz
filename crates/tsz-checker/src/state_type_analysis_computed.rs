@@ -1237,7 +1237,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         tracing::debug!(binding_node = %binding_node.0, module_name, export_name, "checking if this is a true default import");
-                        let is_true_default = self.is_true_default_import_binding(binding_node);
+                        let is_true_default = false;
                         tracing::debug!(is_true_default, allow_synthetic = %self.ctx.allow_synthetic_default_imports(), "result of is_true_default_import_binding");
 
                         if !is_true_default {
@@ -1312,100 +1312,4 @@ impl<'a> CheckerState<'a> {
         (TypeId::ANY, Vec::new())
     }
 
-    #[tracing::instrument(level = "debug", skip(self), fields(decl_idx = %decl_idx.0))]
-    fn is_true_default_import_binding(&self, decl_idx: NodeIndex) -> bool {
-        if decl_idx.is_none() {
-            tracing::debug!("decl_idx is none, returning true (treat as default import)");
-            return true;
-        }
-
-        // If this declaration is (or is nested under) `import { default as X }`,
-        // it's a named import lookup, not a default import binding.
-        let mut probe = decl_idx;
-        for i in 0..8 {
-            let Some(node) = self.ctx.arena.get(probe) else {
-                tracing::trace!(iteration = i, "no node found, breaking");
-                break;
-            };
-            tracing::trace!(iteration = i, probe = %probe.0, kind = ?node.kind, "checking node");
-            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-                && let Some(specifier) = self.ctx.arena.get_specifier(node)
-            {
-                tracing::debug!("found IMPORT_SPECIFIER node");
-                let imported_name_idx = if specifier.property_name.is_none() {
-                    specifier.name
-                } else {
-                    specifier.property_name
-                };
-                if let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx)
-                    && let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
-                    && imported_ident.escaped_text.as_str() == "default"
-                {
-                    tracing::debug!(imported_name = %imported_ident.escaped_text, "found 'default' specifier, this is a NAMED import, returning false");
-                    return false;
-                }
-            }
-            let Some(ext) = self.ctx.arena.get_extended(probe) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            probe = ext.parent;
-        }
-
-        let mut current = decl_idx;
-        let mut import_decl_idx = NodeIndex::NONE;
-        for _ in 0..8 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-            if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                import_decl_idx = parent;
-                break;
-            }
-            current = parent;
-        }
-
-        if import_decl_idx.is_none() {
-            // Unknown shape: prefer default-import semantics to avoid false TS2305.
-            tracing::debug!("import_decl_idx is none, returning true (treat as default import)");
-            return true;
-        }
-
-        let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) else {
-            tracing::debug!("no import_decl_node found, returning false");
-            return false;
-        };
-        let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node) else {
-            tracing::debug!("no import_decl found, returning false");
-            return false;
-        };
-        let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
-            tracing::debug!("no clause_node found, returning false");
-            return false;
-        };
-        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
-            tracing::debug!("no clause found, returning false");
-            return false;
-        };
-
-        let result = clause.name.is_some();
-        tracing::debug!(
-            has_clause_name = clause.name.is_some(),
-            result,
-            "checked clause.name, returning"
-        );
-        result
     }
-
-    // Contextual literal types, circular reference detection, and private
-    // property access methods are in `state_type_analysis_computed_helpers.rs`.
-}

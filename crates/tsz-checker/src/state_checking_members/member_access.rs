@@ -890,8 +890,7 @@ impl<'a> CheckerState<'a> {
             // Check against number index signature first (for numeric properties)
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
-                && !self.is_assignable_to(prop_type, number_idx.value_type)
-            {
+                                 && !self.is_assignable_to(prop_type, number_idx.value_type)            {
                 let prop_type_str = self.format_type(prop_type);
                 let index_type_str = self.format_type(number_idx.value_type);
 
@@ -987,8 +986,7 @@ impl<'a> CheckerState<'a> {
             // Check against number index signature
             if let Some(ref number_idx) = index_info.number_index
                 && is_numeric_property
-                && !self.is_assignable_to(prop_type, number_idx.value_type)
-            {
+                                 && !self.is_assignable_to(prop_type, number_idx.value_type)            {
                 let prop_type_str = self.format_type(prop_type);
                 let index_type_str = self.format_type(number_idx.value_type);
 
@@ -1400,8 +1398,7 @@ impl<'a> CheckerState<'a> {
                         if self.type_contains_error(current_type) {
                             continue;
                         }
-                        let compatible_both_ways = self.is_assignable_to(*first_type, current_type)
-                            && self.is_assignable_to(current_type, *first_type);
+                                                 let compatible_both_ways = self.is_assignable_to(*first_type, current_type)                            && self.is_assignable_to(current_type, *first_type);
                         if !compatible_both_ways {
                             let current_type_str = self.format_type(current_type);
                             self.error_at_node_msg(
@@ -1543,9 +1540,7 @@ impl<'a> CheckerState<'a> {
             let is_incompatible = if first_type == TypeId::ANY || current_type == TypeId::ANY {
                 first_type != current_type
             } else {
-                !(self.is_assignable_to(first_type, current_type)
-                    && self.is_assignable_to(current_type, first_type))
-            };
+                                                                   !(self.is_assignable_to(first_type, current_type)                    && self.is_assignable_to(current_type, first_type))            };
             if is_incompatible {
                 let first_type_str = self.format_type(first_type);
                 let current_type_str = self.format_type(current_type);

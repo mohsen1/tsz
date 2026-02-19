@@ -40,9 +40,7 @@ impl<'a> CheckerState<'a> {
 
             if let (Some(first_constraint), Some(second_constraint)) =
                 (first_constraint, second_constraint)
-                && (!self.is_assignable_to(*first_constraint, *second_constraint)
-                    || !self.is_assignable_to(*second_constraint, *first_constraint))
-            {
+                                                                   && (!self.is_assignable_to(*first_constraint, *second_constraint)                    || !self.is_assignable_to(*second_constraint, *first_constraint))            {
                 return false;
             }
         }
