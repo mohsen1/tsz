@@ -269,17 +269,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// This unwraps parenthesized expressions to get the underlying expression.
     /// Example: `({ a: 1 })` -> `{ a: 1 }` (`OBJECT_LITERAL_EXPRESSION`)
-    fn skip_parentheses(&self, mut node_idx: NodeIndex) -> NodeIndex {
-        while let Some(node) = self.ctx.arena.get(node_idx) {
-            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-            {
-                node_idx = paren.expression;
-                continue;
-            }
-            break;
-        }
-        node_idx
+    fn skip_parentheses(&self, node_idx: NodeIndex) -> NodeIndex {
+        self.skip_parenthesized_expression(node_idx)
     }
 
     /// TS2353 guard for object destructuring from object literals with computed keys.
