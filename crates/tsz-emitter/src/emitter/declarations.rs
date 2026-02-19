@@ -488,7 +488,29 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
+        // When useDefineForClassFields is true, emit parameter property field
+        // declarations (e.g. `foo;`) at the beginning of the class body.
+        // TSC emits these before any other class members.
         let mut emitted_any_member = false;
+        if self.ctx.options.use_define_for_class_fields {
+            // Find the constructor and collect its parameter properties
+            for &member_idx in &class.members.nodes {
+                if let Some(member_node) = self.arena.get(member_idx)
+                    && member_node.kind == syntax_kind_ext::CONSTRUCTOR
+                    && let Some(ctor) = self.arena.get_constructor(member_node)
+                    && !ctor.body.is_none()
+                {
+                    let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
+                    for name in &param_props {
+                        self.write(name);
+                        self.write(";");
+                        self.write_line();
+                        emitted_any_member = true;
+                    }
+                    break;
+                }
+            }
+        }
         for (member_i, &member_idx) in class.members.nodes.iter().enumerate() {
             // Skip property declarations that were lowered
             if needs_class_field_lowering
