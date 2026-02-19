@@ -694,7 +694,11 @@ impl<'a> CheckerState<'a> {
                 );
                 return_type
             }
-            CallResult::NoOverloadMatch { func_type, failures, .. } => {
+            CallResult::NoOverloadMatch {
+                func_type,
+                failures,
+                ..
+            } => {
                 // Compatibility fallback: built-in toLocaleString supports
                 // (locales?, options?) in modern lib typings. Some merged
                 // declaration paths can miss those overloads and incorrectly

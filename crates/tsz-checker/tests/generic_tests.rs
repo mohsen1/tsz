@@ -6,7 +6,6 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
 fn test_generic_type_argument_satisfies_constraint() {
     let source = r#"
 function identity<T extends number>(x: T): T {
