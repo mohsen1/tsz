@@ -14483,6 +14483,7 @@ pub mod diagnostic_messages {
 /// TypeScript diagnostic error codes.
 /// Matches codes from TypeScript's diagnosticMessages.json
 pub mod diagnostic_codes {
+    pub const IMPORT_EXPECTS_FROM_CLAUSE: u32 = 2000;
     pub const UNTERMINATED_STRING_LITERAL: u32 = 1002;
     pub const IDENTIFIER_EXPECTED: u32 = 1003;
     pub const EXPECTED: u32 = 1005;
