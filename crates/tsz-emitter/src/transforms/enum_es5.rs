@@ -61,7 +61,7 @@ impl<'a> EnumES5Transformer<'a> {
     }
 
     /// Set source text for raw expression extraction
-    pub fn set_source_text(&mut self, text: &'a str) {
+    pub const fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
     }
 
@@ -530,7 +530,7 @@ impl<'a> EnumES5Emitter<'a> {
     }
 
     /// Set source text for raw expression extraction
-    pub fn set_source_text(&mut self, text: &'a str) {
+    pub const fn set_source_text(&mut self, text: &'a str) {
         self.transformer.set_source_text(text);
     }
 
