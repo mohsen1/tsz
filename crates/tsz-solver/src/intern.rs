@@ -110,17 +110,31 @@ impl PrimitiveKind {
 }
 
 #[derive(Clone, Debug)]
-struct LiteralSet {
-    domain: LiteralDomain,
-    values: FxHashSet<LiteralValue>,
+enum LiteralKind {
+    Single(LiteralValue),
+    Union(LiteralDomain, FxHashSet<LiteralValue>),
 }
 
-impl LiteralSet {
-    fn from_literal(literal: LiteralValue) -> Self {
-        let domain = literal_domain(&literal);
-        let mut values = FxHashSet::default();
-        values.insert(literal);
-        Self { domain, values }
+impl LiteralKind {
+    const fn domain(&self) -> LiteralDomain {
+        match self {
+            Self::Single(lit) => literal_domain(lit),
+            Self::Union(domain, _) => *domain,
+        }
+    }
+
+    fn is_disjoint(&self, other: &Self) -> bool {
+        if self.domain() != other.domain() {
+            return true;
+        }
+        match (self, other) {
+            (Self::Single(s), Self::Single(o)) => s != o,
+            (Self::Single(s), Self::Union(_, set)) => !set.contains(s),
+            (Self::Union(_, set), Self::Single(o)) => !set.contains(o),
+            (Self::Union(_, s_set), Self::Union(_, o_set)) => {
+                !s_set.iter().any(|v| o_set.contains(v))
+            }
+        }
     }
 }
 
@@ -923,6 +937,20 @@ impl TypeInterner {
     /// Intern a union type, normalizing and deduplicating members
     pub fn union(&self, members: Vec<TypeId>) -> TypeId {
         self.union_from_iter(members)
+    }
+
+    /// Intern a union type from a vector that is already sorted and deduped.
+    /// This is an O(N) operation that avoids redundant sorting.
+    pub fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId {
+        if flat.is_empty() {
+            return TypeId::NEVER;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        let list_id = self.intern_type_list(flat);
+        self.intern(TypeData::Union(list_id))
     }
 
     /// Intern a union type while preserving member structure.
@@ -2063,16 +2091,10 @@ impl TypeInterner {
                 continue;
             }
 
-            // Note: We don't check for disjoint primitive property types here.
-            // { a: string } & { a: number } should result in { a: never }, not never.
-            // The property type intersection is handled in try_merge_objects_in_intersection.
-
-            // Check literal sets for discriminant-based reduction
-            // { kind: "a" } & { kind: "b" } should be never
-            // Also handles { kind: "a" } & { kind?: "b" } => never
-            if let Some(left_set) = self.literal_set_from_type(prop.type_id)
-                && let Some(right_set) = self.literal_set_from_type(other.type_id)
-                && self.literal_sets_disjoint(&left_set, &right_set)
+            // Check literal kinds for disjointness
+            if let Some(left_kind) = self.literal_kind_from_type(prop.type_id)
+                && let Some(right_kind) = self.literal_kind_from_type(other.type_id)
+                && left_kind.is_disjoint(&right_kind)
             {
                 return true;
             }
@@ -2081,17 +2103,10 @@ impl TypeInterner {
         false
     }
 
-    fn literal_sets_disjoint(&self, left: &LiteralSet, right: &LiteralSet) -> bool {
-        if left.domain != right.domain {
-            return true;
-        }
-        !left.values.iter().any(|value| right.values.contains(value))
-    }
-
-    fn literal_set_from_type(&self, type_id: TypeId) -> Option<LiteralSet> {
+    fn literal_kind_from_type(&self, type_id: TypeId) -> Option<LiteralKind> {
         let key = self.lookup(type_id)?;
         match key {
-            TypeData::Literal(literal) => Some(LiteralSet::from_literal(literal)),
+            TypeData::Literal(literal) => Some(LiteralKind::Single(literal)),
             TypeData::Union(members) => {
                 let members = self.type_list(members);
                 let mut domain: Option<LiteralDomain> = None;
@@ -2110,10 +2125,14 @@ impl TypeInterner {
                     }
                     values.insert(literal);
                 }
-                domain.map(|domain| LiteralSet { domain, values })
+                domain.map(|domain| LiteralKind::Union(domain, values))
             }
             _ => None,
         }
+    }
+
+    fn literal_domain_from_type(&self, type_id: TypeId) -> Option<LiteralDomain> {
+        self.literal_kind_from_type(type_id).map(|k| k.domain())
     }
 
     fn find_property(props: &[PropertyInfo], name: Atom) -> Option<&PropertyInfo> {
@@ -2216,9 +2235,9 @@ impl TypeInterner {
             }
 
             // Otherwise, check literal-to-primitive compatibility
-            if let Some(lit_set) = self.literal_set_from_type(source)
+            if let Some(domain) = self.literal_domain_from_type(source)
                 && let Some(target_class) = self.primitive_class_for(target)
-                && self.literal_domain_matches_primitive(lit_set.domain, target_class)
+                && self.literal_domain_matches_primitive(domain, target_class)
             {
                 return true;
             }
@@ -2258,6 +2277,10 @@ impl TypeInterner {
     ///
     /// Uses O(N+M) two-pointer scan since properties are sorted by Atom.
     fn is_object_shape_subtype_shallow(&self, s_id: ObjectShapeId, t_id: ObjectShapeId) -> bool {
+        if s_id == t_id {
+            return true;
+        }
+
         let s = self.object_shape(s_id);
         let t = self.object_shape(t_id);
 
@@ -2271,38 +2294,16 @@ impl TypeInterner {
             return false;
         }
 
-        // 2.5. Disjoint properties check: if source and target have completely different
-        // properties, they are not in a subtype relationship. This prevents incorrect
-        // reductions like `{b?: number} | {a?: number}` from being reduced to `{a?: number}`.
-        // Properties are sorted by Atom, so use merge-scan for O(N+M) instead of O(N*M).
-        let has_any_property_overlap = {
-            let mut si = 0;
-            let mut ti = 0;
-            let sp = &s.properties;
-            let tp = &t.properties;
-            let mut found = false;
-            while si < sp.len() && ti < tp.len() {
-                match sp[si].name.cmp(&tp[ti].name) {
-                    std::cmp::Ordering::Equal => {
-                        found = true;
-                        break;
-                    }
-                    std::cmp::Ordering::Less => si += 1,
-                    std::cmp::Ordering::Greater => ti += 1,
-                }
-            }
-            found
-        };
-        if !has_any_property_overlap {
-            return false;
-        }
-
-        // 3. Structural scan: Source must satisfy all Target properties
-        // Properties are sorted by Atom, so we can use two-pointer scan for O(N+M)
+        // 3. Structural scan: Source must satisfy all Target properties.
+        // Also tracks if we found ANY property overlap. If source and target have
+        // completely disjoint properties, they are not in a subtype relationship.
+        // Properties are sorted by Atom, so use two-pointer scan for O(N+M).
         let mut s_idx = 0;
         let s_props = &s.properties;
+        let t_props = &t.properties;
+        let mut has_any_overlap = false;
 
-        for t_prop in &t.properties {
+        for t_prop in t_props {
             // Advance source pointer to match target property name
             while s_idx < s_props.len() && s_props[s_idx].name < t_prop.name {
                 s_idx += 1;
@@ -2310,6 +2311,7 @@ impl TypeInterner {
 
             if s_idx < s_props.len() && s_props[s_idx].name == t_prop.name {
                 let sp = &s_props[s_idx];
+                has_any_overlap = true;
 
                 // Rule: Type Identity (no recursion)
                 if sp.type_id != t_prop.type_id {
@@ -2335,7 +2337,9 @@ impl TypeInterner {
             }
         }
 
-        true
+        // Disjoint properties check: must have at least one overlapping property
+        // (matching tsc's reduction logic for unrelated object types).
+        has_any_overlap
     }
 
     /// Check if a literal domain matches a primitive class.
@@ -2432,22 +2436,19 @@ impl TypeInterner {
     /// Remove redundant types from a union using shallow subtype checks.
     /// If A <: B, then A | B = B (A is redundant).
     fn reduce_union_subtypes(&self, flat: &mut TypeListBuffer) {
-        // OPTIMIZATION: Skip reduction if all types are unit types.
-        // Unit types (literals, enum members, tuples of unit types) are disjoint -
-        // none can be a subtype of another. This avoids O(N²) comparisons for cases
-        // like enumLiteralsSubtypeReduction.ts which has 512 distinct enum-tuple types.
-        //
-        // EXTENDED OPTIMIZATION: Also skip for types that is_subtype_shallow can't compare.
-        // is_subtype_shallow only handles: identical types (dedup already handled),
-        // literal-to-primitive, and top/bottom types. For arrays, tuples, and objects
-        // it always returns false, making the O(N²) loop pointless.
-        if flat.len() > 2 {
+        let len = flat.len();
+        if len <= 1 {
+            return;
+        }
+
+        // OPTIMIZATION: Skip reduction if all types are unit types or non-reducible structures.
+        // Unit types are disjoint. Arrays, tuples, and objects always return false in is_subtype_shallow
+        // unless they are identical (handled by dedup) or one is a structural subtype.
+        if len > 2 {
             let all_non_reducible = flat.iter().all(|&ty| {
-                // Unit types (literals, enum members, tuples of unit types) are disjoint
                 if self.is_unit_type(ty) {
                     return true;
                 }
-                // Arrays, tuples, and objects always return false in is_subtype_shallow
                 matches!(
                     self.lookup(ty),
                     Some(
@@ -2464,9 +2465,16 @@ impl TypeInterner {
             }
         }
 
+        // OPTIMIZATION: Property-based partitioning for large object unions.
+        // For discriminated unions (common in CFA), members are disjoint based on a property value.
+        // Partitioning avoids O(N²) comparisons across disjoint groups.
+        if len > 16
+            && let Some(partitioned) = self.try_partition_union_reduction(flat) {
+                *flat = partitioned;
+                return;
+            }
+
         // Mark redundant elements, then compact in one pass.
-        // This avoids O(n) Vec::remove() per element (which shifts all subsequent items).
-        let len = flat.len();
         let mut keep = vec![true; len];
         for i in 0..len {
             if !keep[i] {
@@ -2484,6 +2492,116 @@ impl TypeInterner {
             }
         }
         // Compact: retain only non-redundant elements
+        let mut write = 0;
+        for read in 0..len {
+            if keep[read] {
+                flat[write] = flat[read];
+                write += 1;
+            }
+        }
+        flat.truncate(write);
+    }
+
+    /// Try to reduce a large union by partitioning members by a discriminant property.
+    /// Returns `Some(reduced_vec)` if partitioning was successful, None otherwise.
+    fn try_partition_union_reduction(&self, members: &[TypeId]) -> Option<TypeListBuffer> {
+        // 1. Identify a candidate discriminant property common to many members.
+        // We look for a property that appears in at least 50% of object members.
+        let mut prop_counts: FxHashMap<Atom, usize> = FxHashMap::default();
+        let mut object_count = 0;
+
+        for &member in members {
+            if let Some(shape_id) = crate::visitor::object_shape_id(self, member)
+                .or_else(|| crate::visitor::object_with_index_shape_id(self, member))
+            {
+                object_count += 1;
+                let shape = self.object_shape(shape_id);
+                for prop in &shape.properties {
+                    *prop_counts.entry(prop.name).or_insert(0) += 1;
+                }
+            }
+        }
+
+        if object_count < 8 {
+            return None;
+        }
+
+        let discriminant_prop = prop_counts
+            .into_iter()
+            .filter(|&(_, count)| count >= object_count / 2)
+            .max_by_key(|&(_, count)| count)
+            .map(|(name, _)| name)?;
+
+        // 2. Partition members by their value for this property.
+        // Non-objects and objects missing the property go into a "fallback" group.
+        let mut partitions: FxHashMap<TypeId, Vec<TypeId>> = FxHashMap::default();
+        let mut fallback: Vec<TypeId> = Vec::new();
+
+        for &member in members {
+            let val = crate::visitor::object_shape_id(self, member)
+                .or_else(|| crate::visitor::object_with_index_shape_id(self, member))
+                .and_then(|sid| {
+                    let shape = self.object_shape(sid);
+                    shape
+                        .properties
+                        .binary_search_by_key(&discriminant_prop, |p| p.name)
+                        .ok()
+                        .map(|idx| shape.properties[idx].type_id)
+                });
+
+            if let Some(v) = val {
+                partitions.entry(v).or_default().push(member);
+            } else {
+                fallback.push(member);
+            }
+        }
+
+        // 3. Reduce each partition independently.
+        let mut result: TypeListBuffer = SmallVec::new();
+        for (_, group) in partitions {
+            let mut group_buf = TypeListBuffer::from_vec(group);
+            self.reduce_union_subtypes_quadratic(&mut group_buf);
+            result.extend(group_buf);
+        }
+
+        // 4. Reduce fallback group and then check fallback against all winners.
+        if !fallback.is_empty() {
+            let mut fallback_buf = TypeListBuffer::from_vec(fallback);
+            self.reduce_union_subtypes_quadratic(&mut fallback_buf);
+            result.extend(fallback_buf);
+        }
+
+        // Final quadratic pass if the result is still large, but usually partitioning
+        // significantly reduces the remaining work.
+        if result.len() < members.len() {
+            self.reduce_union_subtypes_quadratic(&mut result);
+            Some(result)
+        } else {
+            None
+        }
+    }
+
+    /// quadratic implementation of union reduction, used within partitions.
+    fn reduce_union_subtypes_quadratic(&self, flat: &mut TypeListBuffer) {
+        let len = flat.len();
+        if len <= 1 {
+            return;
+        }
+        let mut keep = vec![true; len];
+        for i in 0..len {
+            if !keep[i] {
+                continue;
+            }
+            for j in 0..len {
+                if i == j || !keep[j] {
+                    continue;
+                }
+                if self.is_subtype_shallow(flat[i], flat[j]) {
+                    keep[i] = false;
+                    break;
+                }
+            }
+        }
         let mut write = 0;
         for read in 0..len {
             if keep[read] {

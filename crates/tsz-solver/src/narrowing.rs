@@ -223,7 +223,7 @@ fn union_or_single_preserve(db: &dyn TypeDatabase, types: Vec<TypeId>) -> TypeId
     match types.len() {
         0 => TypeId::NEVER,
         1 => types[0],
-        _ => db.union_preserve_members(types),
+        _ => db.union_from_sorted_vec(types),
     }
 }
 
