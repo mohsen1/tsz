@@ -206,6 +206,9 @@ mod conditional_comprehensive_tests;
 #[path = "../tests/function_comprehensive_tests.rs"]
 mod function_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/index_access_comprehensive_tests.rs"]
+mod index_access_comprehensive_tests;
+#[cfg(test)]
 #[path = "../tests/interface_comprehensive_tests.rs"]
 mod interface_comprehensive_tests;
 #[cfg(test)]
