@@ -1097,7 +1097,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // For object types that come from lib declarations (ErrorConstructor, RegExp, etc.),
         // check if the type's symbol name matches any global augmentation.
-        let def_id = tsz_solver::type_queries_extended::get_def_id(self.ctx.types, object_type)?;
+        let def_id = tsz_solver::type_queries_classifiers::get_def_id(self.ctx.types, object_type)?;
 
         // Look up the symbol for this DefId
         let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied()?;
