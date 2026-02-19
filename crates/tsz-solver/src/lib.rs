@@ -30,6 +30,7 @@ mod format;
 pub mod freshness;
 mod index_signatures;
 mod infer;
+mod infer_bct;
 pub mod inheritance;
 mod instantiate;
 mod intern;
