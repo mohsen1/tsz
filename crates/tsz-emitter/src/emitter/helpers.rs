@@ -92,6 +92,13 @@ impl<'a> Printer<'a> {
     // Source Map Helpers
     // =========================================================================
 
+    /// Set `pending_source_pos` to an exact byte offset in the source text.
+    pub(super) fn map_source_offset(&mut self, offset: u32) {
+        if let Some(text) = self.source_text_for_map() {
+            self.pending_source_pos = Some(source_position_from_offset(text, offset));
+        }
+    }
+
     /// Set `pending_source_pos` to the opening `{` position of a block/node.
     /// Scans forward from node.pos to find the `{` in the source text.
     pub(super) fn map_opening_brace(&mut self, node: &Node) {
@@ -207,6 +214,25 @@ impl<'a> Printer<'a> {
             let end = (node.end as usize).min(bytes.len());
             let start = node.pos as usize;
             // Scan backward to find the last `)`
+            let mut i = end;
+            while i > start {
+                i -= 1;
+                if bytes[i] == b')' {
+                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Set `pending_source_pos` to the `)` found by scanning backward from
+    /// `search_end` to `search_start`. Use this for control-flow closing parens
+    /// where the parser may include `)` in the expression node's range.
+    pub(super) fn map_closing_paren_backward(&mut self, search_start: u32, search_end: u32) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let end = (search_end as usize).min(bytes.len());
+            let start = search_start as usize;
             let mut i = end;
             while i > start {
                 i -= 1;
