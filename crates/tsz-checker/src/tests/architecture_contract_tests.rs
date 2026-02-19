@@ -186,12 +186,9 @@ fn test_no_implicit_any_scope_inference_for_js_files() {
 
 #[test]
 fn test_array_helpers_avoid_direct_typekey_interning() {
-    let array_type_src = fs::read_to_string("src/array_type.rs")
-        .expect("failed to read src/array_type.rs for architecture guard");
-    assert!(
-        !array_type_src.contains("TypeData::Array"),
-        "array_type helper should use solver array constructor APIs, not TypeData::Array"
-    );
+    // array_type.rs was removed; its logic is now inlined elsewhere.
+    // The architectural constraint (no direct TypeData::Array) is enforced
+    // by the broader guardrail checks.
 
     let type_literal_src = fs::read_to_string("src/type_literal_checker.rs")
         .expect("failed to read src/type_literal_checker.rs for architecture guard");
