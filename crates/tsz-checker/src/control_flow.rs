@@ -119,6 +119,8 @@ pub struct FlowAnalyzer<'a> {
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
+    /// Optional shared numeric atom cache.
+    pub(crate) shared_numeric_atom_cache: Option<&'a RefCell<FxHashMap<u64, Atom>>>,
     /// Optional shared narrowing cache.
     pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
     /// Reusable buffers for flow analysis.
@@ -161,6 +163,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_match_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
+            shared_numeric_atom_cache: None,
             narrowing_cache: None,
             flow_worklist: None,
             flow_in_worklist: None,
@@ -189,6 +192,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_match_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
+            shared_numeric_atom_cache: None,
             narrowing_cache: None,
             flow_worklist: None,
             flow_in_worklist: None,
@@ -221,6 +225,15 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set a shared narrowing cache.
     pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
         self.narrowing_cache = Some(cache);
+        self
+    }
+
+    /// Set a shared numeric atom cache.
+    pub const fn with_numeric_atom_cache(
+        mut self,
+        cache: &'a RefCell<FxHashMap<u64, Atom>>,
+    ) -> Self {
+        self.shared_numeric_atom_cache = Some(cache);
         self
     }
 

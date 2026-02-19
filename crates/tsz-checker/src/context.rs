@@ -10,6 +10,7 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 use tracing::trace;
+use tsz_common::interner::Atom;
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::Diagnostic;
@@ -267,6 +268,10 @@ pub struct CheckerContext<'a> {
     /// Cache for switch-reference relevance checks.
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+
+    /// Cache numeric atom conversions during flow analysis.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
 
     /// Shared reference-equivalence cache used by flow narrowing.
     /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
