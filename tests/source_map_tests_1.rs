@@ -17749,7 +17749,7 @@ fn test_sourcemap_parity_functions() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 22;
+    const EXPECTED_MISSING: usize = 19;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17903,7 +17903,7 @@ fn test_sourcemap_parity_lambda_multiline() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 6;
+    const EXPECTED_MISSING: usize = 4;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
