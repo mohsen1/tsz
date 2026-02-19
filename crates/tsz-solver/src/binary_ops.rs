@@ -16,7 +16,7 @@
 
 use crate::types::TypeListId;
 use crate::visitor::TypeVisitor;
-use crate::{IntrinsicKind, LiteralValue, TypeData, TypeDatabase, TypeId};
+use crate::{IntrinsicKind, LiteralValue, QueryDatabase, TypeData, TypeDatabase, TypeId};
 
 /// Result of a binary operation.
 #[derive(Clone, Debug, PartialEq)]
@@ -371,12 +371,12 @@ impl<'a> TypeVisitor for OverlapChecker<'a> {
 
 /// Evaluates binary operations on types.
 pub struct BinaryOpEvaluator<'a> {
-    interner: &'a dyn TypeDatabase,
+    interner: &'a dyn QueryDatabase,
 }
 
 impl<'a> BinaryOpEvaluator<'a> {
     /// Create a new binary operation evaluator.
-    pub fn new(interner: &'a dyn TypeDatabase) -> Self {
+    pub fn new(interner: &'a dyn QueryDatabase) -> Self {
         Self { interner }
     }
 
@@ -414,7 +414,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                 }
             }
             "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right),
-            "&&" | "||" => self.evaluate_logical(left, right),
+            "&&" | "||" => self.evaluate_logical(left, right, op),
             _ => BinaryOpResult::TypeError { left, right, op },
         }
     }
@@ -599,9 +599,40 @@ impl<'a> BinaryOpEvaluator<'a> {
     }
 
     /// Evaluate logical operators (&&, ||).
-    fn evaluate_logical(&self, left: TypeId, right: TypeId) -> BinaryOpResult {
-        // For && and ||, TypeScript returns a union of the two types
-        BinaryOpResult::Success(self.interner.union2(left, right))
+    fn evaluate_logical(&self, left: TypeId, right: TypeId, op: &'static str) -> BinaryOpResult {
+        let ctx = crate::narrowing::NarrowingContext::new(self.interner);
+
+        let result = if op == "&&" {
+            // left && right
+            let falsy_left = ctx.narrow_to_falsy(left);
+            let truthy_left = ctx.narrow_by_truthiness(left);
+            
+            eprintln!("&& Left: {:?} ({:?})", left, self.interner.lookup(left));
+            eprintln!("FalsyLeft: {:?}", falsy_left);
+            eprintln!("TruthyLeft: {:?}", truthy_left);
+
+            if truthy_left == TypeId::NEVER {
+                left
+            } else if falsy_left == TypeId::NEVER {
+                right
+            } else {
+                self.interner.union2(falsy_left, right)
+            }
+        } else {
+            // left || right
+            let truthy_left = ctx.narrow_by_truthiness(left);
+            let falsy_left = ctx.narrow_to_falsy(left);
+
+            if falsy_left == TypeId::NEVER {
+                left
+            } else if truthy_left == TypeId::NEVER {
+                right
+            } else {
+                self.interner.union2(truthy_left, right)
+            }
+        };
+
+        BinaryOpResult::Success(result)
     }
 
     /// Check if a type is number-like (number, number literal, numeric enum, or any).
