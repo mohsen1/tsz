@@ -177,6 +177,9 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        // Resolve lazy/application types before checking (e.g. Record<string, any>)
+        let expr_type = self.resolve_type_for_property_access(expr_type);
+
         // Valid types: any, unknown, object types, type parameters
         // Invalid types: primitive types like void, null, undefined, number, string, boolean, bigint, symbol
         let is_valid = expr_type == TypeId::ANY

@@ -521,7 +521,10 @@ fn is_object_like_type_impl(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             | TypeData::ObjectWithIndex(_)
             | TypeData::Array(_)
             | TypeData::Tuple(_)
-            | TypeData::Mapped(_),
+            | TypeData::Mapped(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_)
+            | TypeData::Intrinsic(IntrinsicKind::Object | IntrinsicKind::Function),
         ) => true,
         Some(TypeData::ReadonlyType(inner)) => is_object_like_type_impl(db, inner),
         Some(TypeData::Intersection(members)) => {
