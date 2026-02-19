@@ -341,13 +341,7 @@ impl<'a> CheckerState<'a> {
 
         let mut symbol_candidates: Vec<tsz_binder::SymbolId> = Vec::new();
         if let Some(sym) = candidates.into_iter().find_map(|candidate| {
-            if let Some(shape) =
-                tsz_solver::type_queries::get_object_shape(self.ctx.types, candidate)
-            {
-                return shape.symbol;
-            }
-            tsz_solver::type_queries::get_callable_shape(self.ctx.types, candidate)
-                .and_then(|shape| shape.symbol)
+            tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, candidate)
         }) {
             symbol_candidates.push(sym);
         }

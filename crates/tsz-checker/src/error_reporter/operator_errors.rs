@@ -147,7 +147,21 @@ impl<'a> CheckerState<'a> {
         let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
             && matches!(
                 op,
-                "+" | "-" | "*" | "/" | "%" | "**" | "&" | "|" | "^" | "<<" | ">>" | ">>>" | "<" | ">" | "<=" | ">="
+                "+" | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "**"
+                    | "&"
+                    | "|"
+                    | "^"
+                    | "<<"
+                    | ">>"
+                    | ">>>"
+                    | "<"
+                    | ">"
+                    | "<="
+                    | ">="
             );
 
         // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
@@ -347,9 +361,7 @@ impl<'a> CheckerState<'a> {
             // For arithmetic and bitwise operators, emit specific left/right errors (TS2362, TS2363)
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
             let mut emitted_specific_error = emitted_nullish_error;
-            if !left_is_valid_arithmetic
-                && let Some(loc) = self.get_source_location(left_idx)
-            {
+            if !left_is_valid_arithmetic && let Some(loc) = self.get_source_location(left_idx) {
                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                 self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
@@ -362,9 +374,7 @@ impl<'a> CheckerState<'a> {
                     });
                 emitted_specific_error = true;
             }
-            if !right_is_valid_arithmetic
-                && let Some(loc) = self.get_source_location(right_idx)
-            {
+            if !right_is_valid_arithmetic && let Some(loc) = self.get_source_location(right_idx) {
                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                 self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
@@ -400,8 +410,8 @@ impl<'a> CheckerState<'a> {
         // These require both operands to be comparable. When types have no relationship,
         // emit TS2365: "Operator '<' cannot be applied to types 'X' and 'Y'."
         let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
-        if is_relational {
-            if !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
+        if is_relational
+            && !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
                 let message = format!(
                     "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                 );
@@ -415,9 +425,5 @@ impl<'a> CheckerState<'a> {
                     related_information: Vec::new(),
                 });
             }
-            return;
-        }
-
-
     }
 }

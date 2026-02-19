@@ -805,6 +805,23 @@ pub fn get_private_field_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
+/// Get the symbol associated with a type's shape.
+///
+/// Checks object, object-with-index, and callable shapes for their `symbol` field.
+/// Returns the first `SymbolId` found, or None if the type has no shape with a symbol.
+pub fn get_type_shape_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_binder::SymbolId> {
+    match db.lookup(type_id)? {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            db.object_shape(shape_id).symbol
+        }
+        TypeData::Callable(shape_id) => db.callable_shape(shape_id).symbol,
+        _ => None,
+    }
+}
+
 /// Get the `DefId` from a Lazy type.
 ///
 /// Returns None if the type is not a Lazy type.
