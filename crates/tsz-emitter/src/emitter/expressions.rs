@@ -1279,9 +1279,8 @@ impl<'a> Printer<'a> {
         // when the inner already handles object literal protection.
         if let Some(inner) = self.arena.get(paren.expression)
             && inner.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-        {
-            if let Some(inner_paren) = self.arena.get_parenthesized(inner) {
-                if let Some(inner_inner) = self.arena.get(inner_paren.expression)
+            && let Some(inner_paren) = self.arena.get_parenthesized(inner)
+                && let Some(inner_inner) = self.arena.get(inner_paren.expression)
                     && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
                         || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
                         || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
@@ -1292,8 +1291,6 @@ impl<'a> Printer<'a> {
                     self.emit(paren.expression);
                     return;
                 }
-            }
-        }
 
         self.write("(");
         self.emit(paren.expression);
