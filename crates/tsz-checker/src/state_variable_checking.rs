@@ -1078,11 +1078,11 @@ impl<'a> CheckerState<'a> {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
                             // even if SymbolIds are not perfectly aligned across contexts.
-                            if let Some(lib_sym_id) = binder.file_locals.get(&name) {
-                                if let Some(lib_sym) = binder.get_symbol(lib_sym_id) {
+                            if let Some(lib_sym_id) = binder.file_locals.get(&name)
+                                && let Some(lib_sym) = binder.get_symbol(lib_sym_id) {
                                     for &lib_decl in &lib_sym.declarations {
-                                        if !lib_decl.is_none() {
-                                            if CheckerState::enter_cross_arena_delegation() {
+                                        if !lib_decl.is_none()
+                                            && CheckerState::enter_cross_arena_delegation() {
                                                 let mut lib_checker =
                                                     CheckerState::new_with_shared_def_store(
                                                         &arena,
@@ -1116,13 +1116,12 @@ impl<'a> CheckerState<'a> {
                                                 // Check compatibility
                                                 if !self.are_var_decl_types_compatible(
                                                     lib_type, final_type,
-                                                ) {
-                                                    if let Some(ref name) = var_name {
+                                                )
+                                                    && let Some(ref name) = var_name {
                                                         self.error_subsequent_variable_declaration(
                                                             name, lib_type, final_type, decl_idx,
                                                         );
                                                     }
-                                                }
 
                                                 prior_type_found =
                                                     Some(if let Some(prev) = prior_type_found {
@@ -1131,10 +1130,8 @@ impl<'a> CheckerState<'a> {
                                                         lib_type
                                                     });
                                             }
-                                        }
                                     }
                                 }
-                            }
                         }
 
                         // 2. Check local declarations (in case of intra-file redeclaration)
@@ -1167,13 +1164,11 @@ impl<'a> CheckerState<'a> {
                                     if !is_other_mergeable
                                         && !self
                                             .are_var_decl_types_compatible(other_type, final_type)
-                                    {
-                                        if let Some(ref name) = var_name {
+                                        && let Some(ref name) = var_name {
                                             self.error_subsequent_variable_declaration(
                                                 name, other_type, final_type, decl_idx,
                                             );
                                         }
-                                    }
 
                                     prior_type_found = Some(if let Some(prev) = prior_type_found {
                                         self.refine_var_decl_type(prev, other_type)
