@@ -2677,6 +2677,9 @@ impl<'a> DeclarationEmitter<'a> {
             self.decrease_indent();
             self.write_indent();
             self.write("}");
+        } else {
+            // Shorthand ambient module: declare module "foo";
+            self.write(";");
         }
 
         self.write_line();
