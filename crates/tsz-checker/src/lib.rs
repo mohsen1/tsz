@@ -91,6 +91,7 @@ pub mod state_type_environment;
 pub mod state_type_resolution;
 mod state_type_resolution_module;
 mod state_variable_checking;
+mod state_variable_checking_destructuring;
 pub mod statements;
 pub mod super_checker;
 pub mod symbol_resolver;

@@ -652,7 +652,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     // Module/namespace declaration checking is in `declarations_module.rs`.
     // Module resolution helpers are in `declarations_module_helpers.rs`.
 
-
     /// Check a statement inside an ambient context (declare namespace/module).
     /// Emits TS1036 for non-declaration statements, plus specific errors for
     /// continue (TS1104), return (TS1108), and with (TS2410).
