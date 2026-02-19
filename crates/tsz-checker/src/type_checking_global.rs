@@ -875,7 +875,15 @@ impl<'a> CheckerState<'a> {
                     && *is_exported
             });
 
-            let (message, code) = if has_exported_variable_conflict
+            let (message, code) = if !has_non_block_scoped {
+                (
+                    format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[&name],
+                    ),
+                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                )
+            } else if has_exported_variable_conflict
                 && has_variable_conflict
                 && !has_non_variable_conflict
                 && !has_accessor_conflict
@@ -892,14 +900,6 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS
                         .to_string(),
                     diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
-                )
-            } else if !has_non_block_scoped {
-                (
-                    format_message(
-                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                        &[&name],
-                    ),
-                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                 )
             } else {
                 if has_ts2395 {
