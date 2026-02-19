@@ -117,6 +117,8 @@ pub struct FlowAnalyzer<'a> {
     /// Cache numeric atom conversions during a single flow walk.
     /// Key: normalized f64 bits (with +0 normalized separately from -0).
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
+    /// Optional shared narrowing cache.
+    pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -151,6 +153,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_match_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
+            narrowing_cache: None,
         }
     }
 
@@ -173,6 +176,7 @@ impl<'a> FlowAnalyzer<'a> {
             reference_match_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
+            narrowing_cache: None,
         }
     }
 
@@ -188,6 +192,12 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set a shared reference-match cache used by `is_matching_reference`.
     pub const fn with_reference_match_cache(mut self, cache: &'a ReferenceMatchCache) -> Self {
         self.shared_reference_match_cache = Some(cache);
+        self
+    }
+
+    /// Set a shared narrowing cache.
+    pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
+        self.narrowing_cache = Some(cache);
         self
     }
 
@@ -1020,12 +1030,16 @@ impl<'a> FlowAnalyzer<'a> {
 
         // Create narrowing context and wire up TypeEnvironment if available
         let env_borrow;
-        let narrowing = if let Some(env) = &self.type_environment {
-            env_borrow = env.borrow();
-            NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+        let mut narrowing = if let Some(cache) = self.narrowing_cache {
+            NarrowingContext::with_cache(self.interner, cache)
         } else {
             NarrowingContext::new(self.interner)
         };
+
+        if let Some(env) = &self.type_environment {
+            env_borrow = env.borrow();
+            narrowing = narrowing.with_resolver(&*env_borrow);
+        }
 
         // For implicit default, apply default clause narrowing (exclude all case types)
         if is_implicit_default {
@@ -1142,12 +1156,16 @@ impl<'a> FlowAnalyzer<'a> {
             && self.is_matching_reference(base, reference)
         {
             let env_borrow;
-            let narrowing = if let Some(env) = &self.type_environment {
-                env_borrow = env.borrow();
-                NarrowingContext::new(self.interner).with_resolver(&*env_borrow)
+            let mut narrowing = if let Some(cache) = self.narrowing_cache {
+                NarrowingContext::with_cache(self.interner, cache)
             } else {
                 NarrowingContext::new(self.interner)
             };
+
+            if let Some(env) = &self.type_environment {
+                env_borrow = env.borrow();
+                narrowing = narrowing.with_resolver(&*env_borrow);
+            }
             return narrowing.narrow_by_discriminant(pre_type, &property_path, predicate_type);
         }
 

@@ -3190,20 +3190,20 @@ impl BinderState {
     }
 
     /// Get property name from a node index.
-    /// Handles Identifiers, StringLiterals, and NumericLiterals (normalized).
+    /// Handles Identifiers, `StringLiterals`, and `NumericLiterals` (normalized).
     pub(crate) fn get_property_name(arena: &NodeArena, idx: NodeIndex) -> Option<Cow<'_, str>> {
         if let Some(node) = arena.get(idx) {
-             if let Some(id) = arena.get_identifier(node) {
-                 return Some(Cow::Borrowed(&id.escaped_text));
-             }
-             if let Some(lit) = arena.get_literal(node) {
-                 if node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16 {
-                     if let Some(val) = lit.value {
-                         return Some(Cow::Owned(val.to_string()));
-                     }
-                 }
-                 return Some(Cow::Borrowed(&lit.text));
-             }
+            if let Some(id) = arena.get_identifier(node) {
+                return Some(Cow::Borrowed(&id.escaped_text));
+            }
+            if let Some(lit) = arena.get_literal(node) {
+                if node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                    && let Some(val) = lit.value
+                {
+                    return Some(Cow::Owned(val.to_string()));
+                }
+                return Some(Cow::Borrowed(&lit.text));
+            }
         }
         None
     }

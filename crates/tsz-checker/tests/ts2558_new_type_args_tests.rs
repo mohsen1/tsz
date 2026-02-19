@@ -36,8 +36,7 @@ let a = new Foo<string, number>();
     );
     assert!(
         codes.contains(&2558),
-        "Should emit TS2558 for too many type args in new expression, got: {:?}",
-        codes
+        "Should emit TS2558 for too many type args in new expression, got: {codes:?}"
     );
 }
 
@@ -51,8 +50,7 @@ let a = new Foo<string>();
     );
     assert!(
         codes.contains(&2558),
-        "Should emit TS2558 for too few type args in new expression, got: {:?}",
-        codes
+        "Should emit TS2558 for too few type args in new expression, got: {codes:?}"
     );
 }
 
@@ -66,7 +64,6 @@ let a = new Foo<string>();
     );
     assert!(
         !codes.contains(&2558),
-        "Should not emit TS2558 for correct type arg count, got: {:?}",
-        codes
+        "Should not emit TS2558 for correct type arg count, got: {codes:?}"
     );
 }

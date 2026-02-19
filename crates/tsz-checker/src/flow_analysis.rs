@@ -1350,7 +1350,8 @@ impl<'a> CheckerState<'a> {
         )
         .with_flow_cache(&self.ctx.flow_analysis_cache)
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-        .with_type_environment(Rc::clone(&self.ctx.type_environment));
+        .with_type_environment(Rc::clone(&self.ctx.type_environment))
+        .with_narrowing_cache(&self.ctx.narrowing_cache);
 
         let narrowed = analyzer.get_flow_type(idx, declared_type, flow_node);
 
