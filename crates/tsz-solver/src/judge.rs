@@ -190,6 +190,8 @@ pub struct JudgeConfig {
     pub exact_optional_property_types: bool,
     /// noUncheckedIndexedAccess - index signatures include undefined
     pub no_unchecked_indexed_access: bool,
+    /// sound_mode - prioritizes soundness (e.g. any doesn't silence structural errors)
+    pub sound_mode: bool,
 }
 
 impl Default for JudgeConfig {
@@ -199,6 +201,7 @@ impl Default for JudgeConfig {
             strict_function_types: true,
             exact_optional_property_types: false,
             no_unchecked_indexed_access: false,
+            sound_mode: false,
         }
     }
 }

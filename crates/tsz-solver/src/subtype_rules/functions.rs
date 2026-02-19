@@ -107,22 +107,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return true;
         }
 
-        // Fast path: `any` in either parameter position is always compatible.
-        // In TypeScript, `any` is both assignable to and from every type,
-        // including in parameter positions. This must be checked BEFORE the
-        // deeper structural check because TopLevelOnly any_propagation mode
-        // (used during strict function type checks) demotes `any` to `unknown`
-        // at depth > 0, which would incorrectly reject `any` parameters.
+        // Fast path: `any` in either parameter position is always compatible
+        // in permissive mode. In strict mode (TopLevelOnly), we require structural
+        // compatibility unless both are ANY.
+        // NOTE: North Star mandate #3.3 - any should not silence structural mismatches.
         if source_type.is_any() || target_type.is_any() {
-            return true;
+            use crate::subtype::AnyPropagationMode;
+            if matches!(self.any_propagation, AnyPropagationMode::All) {
+                return true;
+            }
+            if source_type == target_type {
+                return true;
+            }
+            // Fall through to structural check for unsound any parameters
         }
 
         let contains_this =
             self.type_contains_this_type(source_type) || self.type_contains_this_type(target_type);
 
         // Methods are bivariant regardless of strict_function_types setting
-        // UNLESS disable_method_bivariance is set
-        let method_should_be_bivariant = is_method && !self.disable_method_bivariance;
+        // UNLESS disable_method_bivariance is set.
+        // NOTE: North Star V1.2 prioritizes soundness. Bivariance is disabled by default
+        // to match modern TypeScript strictFunctionTypes behavior for all callables.
+        let method_should_be_bivariant = is_method && !self.disable_method_bivariance && !self.strict_function_types;
         let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
 
         if !use_bivariance {
@@ -790,7 +797,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Check parameter types
         // In strict function mode, temporarily use TopLevelOnly for any propagation
-        // to prevent any from silencing structural mismatches in function parameters
+        // to prevent any from silencing structural mismatches in function parameters.
+        // NOTE: North Star mandate #3.3 - any should not silence structural mismatches.
         use crate::subtype::AnyPropagationMode;
 
         let old_mode = self.any_propagation;

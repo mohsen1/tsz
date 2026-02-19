@@ -107,26 +107,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        allow_bivariant: bool,
+        _allow_bivariant: bool,
     ) -> SubtypeResult {
-        if !allow_bivariant {
-            return self.check_subtype(source, target);
-        }
-
-        // If we're already in bivariant mode, don't nest - just check normally
-        // This prevents infinite recursion when methods contain other methods
-        if !self.strict_function_types && self.allow_bivariant_param_count {
-            return self.check_subtype(source, target);
-        }
-
-        let prev = self.strict_function_types;
-        let prev_param_count = self.allow_bivariant_param_count;
-        self.strict_function_types = false;
-        self.allow_bivariant_param_count = true;
-        let result = self.check_subtype(source, target);
-        self.allow_bivariant_param_count = prev_param_count;
-        self.strict_function_types = prev;
-        result
+        // Phase 5 Soundness Fix: North Star V1.2 prioritizes soundness.
+        // Methods in TypeScript are historically bivariant, but modern strict mode
+        // (strictFunctionTypes) should apply contravariance to all callables
+        // unless explicitly opted out. We no longer force bivariance here.
+        self.check_subtype(source, target)
     }
 
     /// Explain failure with method bivariance rules.
@@ -134,26 +121,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        allow_bivariant: bool,
+        _allow_bivariant: bool,
     ) -> Option<SubtypeFailureReason> {
-        if !allow_bivariant {
-            return self.explain_failure(source, target);
-        }
-
-        // If we're already in bivariant mode, don't nest - just check normally
-        // This prevents infinite recursion when methods contain other methods
-        if !self.strict_function_types && self.allow_bivariant_param_count {
-            return self.explain_failure(source, target);
-        }
-
-        let prev = self.strict_function_types;
-        let prev_param_count = self.allow_bivariant_param_count;
-        self.strict_function_types = false;
-        self.allow_bivariant_param_count = true;
-        let result = self.explain_failure(source, target);
-        self.allow_bivariant_param_count = prev_param_count;
-        self.strict_function_types = prev;
-        result
+        // Match check_subtype_with_method_variance behavior for diagnostics.
+        self.explain_failure(source, target)
     }
 
     /// Check if source is related to a discriminated union type.
