@@ -677,7 +677,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             let mut target_canonical = TypeSubstitution::new();
             for tp in &target_instantiated.type_params {
-                target_canonical.insert(tp.name, target_tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                target_canonical.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
             }
             target_instantiated =
                 self.instantiate_function_shape(&target_instantiated, &target_canonical);
