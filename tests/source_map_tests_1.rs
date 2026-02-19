@@ -17129,7 +17129,7 @@ fn test_sourcemap_parity_switch() {
     }
 
     // Track parity progress (switch)
-    const EXPECTED_MISSING: usize = 10;
+    const EXPECTED_MISSING: usize = 2;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17166,6 +17166,7 @@ fn test_sourcemap_parity_switch() {
 
 /// Compare tsz source map output against tsc's baseline for while loops.
 #[test]
+#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_while() {
     let source = "var a = 10;\n\
                    while (a == 10) {\n\
@@ -17209,7 +17210,7 @@ fn test_sourcemap_parity_while() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 4;
+    const EXPECTED_MISSING: usize = 0;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17246,6 +17247,7 @@ fn test_sourcemap_parity_while() {
 
 /// Compare tsz source map output against tsc's baseline for do-while loops.
 #[test]
+#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_do_while() {
     let source = "var i = 0;\n\
                    do\n\
@@ -17293,7 +17295,7 @@ fn test_sourcemap_parity_do_while() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 9;
+    const EXPECTED_MISSING: usize = 0;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17330,6 +17332,7 @@ fn test_sourcemap_parity_do_while() {
 
 /// Compare tsz source map output against tsc's baseline for if/else.
 #[test]
+#[allow(clippy::absurd_extreme_comparisons)]
 fn test_sourcemap_parity_if_else() {
     // Source from sourceMapValidationIfElse.ts
     let source = "var i = 10;\n\
@@ -17386,7 +17389,7 @@ fn test_sourcemap_parity_if_else() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 18;
+    const EXPECTED_MISSING: usize = 0;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17482,7 +17485,7 @@ fn test_sourcemap_parity_try_catch_finally() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 23;
+    const EXPECTED_MISSING: usize = 3;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17571,7 +17574,7 @@ fn test_sourcemap_parity_computed_property_names_es6() {
 
     // Track parity progress: fail if we regress (more missing than expected).
     // Update EXPECTED_MISSING as we fix more mappings.
-    const EXPECTED_MISSING: usize = 8;
+    const EXPECTED_MISSING: usize = 4;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17661,7 +17664,7 @@ fn test_sourcemap_parity_for_in() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 20;
+    const EXPECTED_MISSING: usize = 8;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17749,7 +17752,7 @@ fn test_sourcemap_parity_functions() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 19;
+    const EXPECTED_MISSING: usize = 10;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17825,7 +17828,7 @@ fn test_sourcemap_parity_statements() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 336;
+    const EXPECTED_MISSING: usize = 321;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17953,8 +17956,11 @@ fn test_sourcemap_parity_class_extends() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES2015;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..PrinterOptions::default()
+    };
+
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
@@ -18045,8 +18051,11 @@ fn test_sourcemap_parity_enums() {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
-    let mut options = PrinterOptions::default();
-    options.target = ScriptTarget::ES2015;
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..PrinterOptions::default()
+    };
+
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
@@ -18082,6 +18091,116 @@ fn test_sourcemap_parity_enums() {
     }
 
     const EXPECTED_MISSING: usize = 57;
+    let num_missing = missing.len();
+    if num_missing > EXPECTED_MISSING {
+        let mut msg = format!(
+            "REGRESSION: {num_missing} tsc mappings missing (expected at most {EXPECTED_MISSING}):\n",
+        );
+        for (m, adj_line) in &missing {
+            msg.push_str(&format!(
+                "  tsc gen({}:{}) [adj gen({}:{})] -> src({}:{}) [tsz missing]\n",
+                m.generated_line,
+                m.generated_column,
+                adj_line,
+                m.generated_column,
+                m.original_line,
+                m.original_column
+            ));
+        }
+        msg.push_str(&format!("\ntsz mappings ({}):\n", tsz_decoded.len()));
+        for m in &tsz_decoded {
+            msg.push_str(&format!(
+                "  gen({}:{}) -> src({}:{})\n",
+                m.generated_line, m.generated_column, m.original_line, m.original_column
+            ));
+        }
+        msg.push_str(&format!("\nOutput:\n{output}"));
+        panic!("{msg}");
+    }
+    if num_missing < EXPECTED_MISSING {
+        panic!(
+            "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
+             Update EXPECTED_MISSING to {num_missing}."
+        );
+    }
+}
+
+#[test]
+fn test_sourcemap_parity_for() {
+    // Source from sourceMapValidationFor.ts (@target: es2015)
+    let source = "for (var i = 0; i < 10; i++) {\n\
+                   \x20\x20\x20\x20WScript.Echo(\"i: \" + i);\n\
+                   }\n\
+                   for (i = 0; i < 10; i++)\n\
+                   {\n\
+                   \x20\x20\x20\x20WScript.Echo(\"i: \" + i);\n\
+                   }\n\
+                   for (var j = 0; j < 10; ) {\n\
+                   \x20\x20\x20\x20j++;\n\
+                   \x20\x20\x20\x20if (j == 1) {\n\
+                   \x20\x20\x20\x20\x20\x20\x20\x20continue;\n\
+                   \x20\x20\x20\x20}\n\
+                   }\n\
+                   for (j = 0; j < 10;)\n\
+                   {\n\
+                   \x20\x20\x20\x20j++;\n\
+                   }\n\
+                   for (var k = 0;; k++) {\n\
+                   }\n\
+                   for (k = 0;; k++)\n\
+                   {\n\
+                   }\n\
+                   for (; k < 10; k++) {\n\
+                   }\n\
+                   for (;;) {\n\
+                   \x20\x20\x20\x20i++;\n\
+                   }\n\
+                   for (;;)\n\
+                   {\n\
+                   \x20\x20\x20\x20i++;\n\
+                   }\n\
+                   for (i = 0, j = 20; j < 20, i < 20; j++) {\n\
+                   }";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let tsz_decoded = decode_mappings(mappings_str);
+
+    // tsc baseline mappings (from sourceMapValidationFor.js.map)
+    let tsc_mappings = ";AAAA,KAAK,IAAI,CAAC,GAAG,CAAC,EAAE,CAAC,GAAG,EAAE,EAAE,CAAC,EAAE,EAAE,CAAC;IAC1B,OAAO,CAAC,IAAI,CAAC,KAAK,GAAG,CAAC,CAAC,CAAC;AAC5B,CAAC;AACD,KAAK,CAAC,GAAG,CAAC,EAAE,CAAC,GAAG,EAAE,EAAE,CAAC,EAAE,EACvB,CAAC;IACG,OAAO,CAAC,IAAI,CAAC,KAAK,GAAG,CAAC,CAAC,CAAC;AAC5B,CAAC;AACD,KAAK,IAAI,CAAC,GAAG,CAAC,EAAE,CAAC,GAAG,EAAE,GAAI,CAAC;IACvB,CAAC,EAAE,CAAC;IACJ,IAAI,CAAC,IAAI,CAAC,EAAE,CAAC;QACT,SAAS;IACb,CAAC;AACL,CAAC;AACD,KAAK,CAAC,GAAG,CAAC,EAAE,CAAC,GAAG,EAAE,GAClB,CAAC;IACG,CAAC,EAAE,CAAC;AACR,CAAC;AACD,KAAK,IAAI,CAAC,GAAG,CAAC,GAAG,CAAC,EAAE,EAAE,CAAC;AACvB,CAAC;AACD,KAAK,CAAC,GAAG,CAAC,GAAG,CAAC,EAAE,EAChB,CAAC;AACD,CAAC;AACD,OAAO,CAAC,GAAG,EAAE,EAAE,CAAC,EAAE,EAAE,CAAC;AACrB,CAAC;AACD,SAAS,CAAC;IACN,CAAC,EAAE,CAAC;AACR,CAAC;AACD,SACA,CAAC;IACG,CAAC,EAAE,CAAC;AACR,CAAC;AACD,KAAK,CAAC,GAAG,CAAC,EAAE,CAAC,GAAG,EAAE,EAAE,CAAC,GAAG,EAAE,EAAE,CAAC,GAAG,EAAE,EAAE,CAAC,EAAE,EAAE,CAAC;AAC1C,CAAC";
+    let tsc_decoded = decode_mappings(tsc_mappings);
+
+    // tsc emits "use strict"; on line 0, shifting generated lines by 1.
+    let mut missing = Vec::new();
+    for tsc_m in &tsc_decoded {
+        let adjusted_gen_line = tsc_m.generated_line.saturating_sub(1);
+        let found = tsz_decoded.iter().any(|tsz_m| {
+            tsz_m.generated_line == adjusted_gen_line
+                && tsz_m.generated_column == tsc_m.generated_column
+                && tsz_m.original_line == tsc_m.original_line
+                && tsz_m.original_column == tsc_m.original_column
+        });
+        if !found {
+            missing.push((tsc_m, adjusted_gen_line));
+        }
+    }
+
+    const EXPECTED_MISSING: usize = 4;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
