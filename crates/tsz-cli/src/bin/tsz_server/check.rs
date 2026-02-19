@@ -1,6 +1,6 @@
 //! Core type checking logic for tsz-server.
 //!
-//! Contains the check pipeline: semantic diagnostics, run_check, lib loading,
+//! Contains the check pipeline: semantic diagnostics, `run_check`, lib loading,
 //! and checker option construction.
 
 use super::{CheckOptions, Server, TsServerRequest, TsServerResponse};
