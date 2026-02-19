@@ -1873,39 +1873,31 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN;
         }
 
-        if let Some(prop_name_str) = property_name {
+        if let Some(ref prop_name_str) = property_name {
             // Look up the property type in the parent type.
             // For union types, resolve the property in each member and union the results.
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut prop_types = Vec::new();
-                let factory = self.ctx.types.factory();
                 for member in members {
-                    if let Some(shape) = query::object_shape(self.ctx.types, member) {
-                        for prop in shape.properties.as_slice() {
-                            if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str
-                            {
-                                prop_types
-                                    .push(property_optional_type(prop.type_id, prop.optional));
-                                break;
-                            }
-                        }
+                    if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
+                        self.ctx.types,
+                        member,
+                        prop_name_str,
+                    ) {
+                        prop_types.push(property_optional_type(prop.type_id, prop.optional));
                     }
                 }
                 if prop_types.is_empty() {
                     TypeId::ANY
-                } else if prop_types.len() == 1 {
-                    prop_types[0]
                 } else {
-                    factory.union(prop_types)
+                    tsz_solver::utils::union_or_single(self.ctx.types, prop_types)
                 }
-            } else if let Some(shape) = query::object_shape(self.ctx.types, parent_type) {
-                // Find the property by comparing names
-                for prop in shape.properties.as_slice() {
-                    if self.ctx.types.resolve_atom_ref(prop.name).as_ref() == prop_name_str {
-                        return property_optional_type(prop.type_id, prop.optional);
-                    }
-                }
-                TypeId::ANY
+            } else if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
+                self.ctx.types,
+                parent_type,
+                prop_name_str,
+            ) {
+                property_optional_type(prop.type_id, prop.optional)
             } else {
                 TypeId::ANY
             }
