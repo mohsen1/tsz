@@ -988,10 +988,24 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            for (decl_idx, _, is_local, _) in declarations {
+            for (decl_idx, decl_flags, is_local, _) in declarations {
                 if is_local && conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    self.error_at_node(error_node, &message, code);
+                    // Per-declaration: block-scoped variables get TS2451 instead of TS2300
+                    let is_block_scoped = (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                    if is_block_scoped && code == diagnostic_codes::DUPLICATE_IDENTIFIER {
+                        let per_decl_msg = format_message(
+                            diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                            &[&name],
+                        );
+                        self.error_at_node(
+                            error_node,
+                            &per_decl_msg,
+                            diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        );
+                    } else {
+                        self.error_at_node(error_node, &message, code);
+                    }
                 }
             }
         }

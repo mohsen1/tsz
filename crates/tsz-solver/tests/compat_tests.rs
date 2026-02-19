@@ -456,7 +456,6 @@ fn test_rest_parameter_assignability_rejects_incompatible_fixed() {
 }
 
 #[test]
-#[ignore = "pre-existing bivariance regression"]
 fn test_method_bivariance_even_strict() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);
@@ -3434,7 +3433,6 @@ fn test_method_bivariance_allows_derived_methods() {
 }
 
 #[test]
-#[ignore = "pre-existing bivariance regression"]
 fn test_method_bivariance_persists_with_strict_function_types() {
     // Methods remain bivariant even with strictFunctionTypes=true
     let interner = TypeInterner::new();
@@ -3502,7 +3500,6 @@ fn test_method_bivariance_persists_with_strict_function_types() {
 }
 
 #[test]
-#[ignore = "pre-existing bivariance regression"]
 fn test_function_variance_strict_function_types_affects_functions_not_methods() {
     // strictFunctionTypes affects standalone functions but not methods
     let interner = TypeInterner::new();
@@ -4035,7 +4032,6 @@ fn test_all_compiler_options_combinations() {
 }
 
 #[test]
-#[ignore = "pre-existing bivariance regression"]
 fn test_strict_function_types_affects_methods_independently() {
     let interner = TypeInterner::new();
     let mut checker = CompatChecker::new(&interner);

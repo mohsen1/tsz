@@ -940,7 +940,6 @@ mod lawyer_strict_mode_tests {
     }
 
     #[test]
-    #[ignore = "Pre-existing: strict any propagation mode breaks these tests"]
     fn test_any_direct_assignment_in_strict_mode() {
         let interner = TypeInterner::new();
         let mut checker = CompatChecker::new(&interner);
