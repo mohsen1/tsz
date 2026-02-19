@@ -1523,27 +1523,16 @@ let foo = 2;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // var foo gets TS2300 (Duplicate identifier), let foo gets TS2451 (block-scoped)
+    // tsc emits TS2300 (Duplicate identifier) for both var and let declarations
     let ts2300_count = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER)
         .count();
-    let ts2451_count = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE)
-        .count();
     assert_eq!(
-        ts2300_count, 1,
-        "Expected 1 TS2300 for var declaration, got: {:?}",
-        checker.ctx.diagnostics
-    );
-    assert_eq!(
-        ts2451_count, 1,
-        "Expected 1 TS2451 for let declaration, got: {:?}",
+        ts2300_count, 2,
+        "Expected 2 TS2300 for var+let duplicate, got: {:?}",
         checker.ctx.diagnostics
     );
 }

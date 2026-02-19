@@ -425,7 +425,6 @@ impl<'a> CheckerState<'a> {
 
             let mut declarations = Vec::<(NodeIndex, u32, bool, bool)>::new();
             for &decl_idx in &symbol.declarations {
-                // Resolve the arena for this declaration
                 let arena_opt = self
                     .ctx
                     .binder
@@ -437,7 +436,6 @@ impl<'a> CheckerState<'a> {
                 let is_local = arena_opt.is_none();
 
                 if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
-                    // When libs are loaded, verify the declaration name matches the symbol.
                     if has_libs
                         && is_local
                         && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
@@ -651,6 +649,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    // Check for function overloads
+
                     // TS2323: Check exported variable conflict using symbol.is_exported
                     let decl_is_var = (decl_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
                     let other_is_var = (other_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
@@ -666,8 +666,6 @@ impl<'a> CheckerState<'a> {
                         // If symbol is not exported, they merge (no conflict)
                         continue;
                     }
-
-                    // Check for function overloads
                     let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
                         && (other_flags & symbol_flags::FUNCTION) != 0;
                     if both_functions {
