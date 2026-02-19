@@ -537,14 +537,29 @@ impl<'a> CheckerState<'a> {
 
             if let Some((start, end)) = self.get_node_span(expr_idx) {
                 let type_str = self.format_type(resolved);
-                let message =
-                    format_message(diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE, &[&type_str]);
-                self.error(
-                    start,
-                    end.saturating_sub(start),
-                    message,
-                    diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
-                );
+                if self.is_iterable_type(resolved) {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_CAN_ONLY_BE_ITERATED_THROUGH_WHEN_USING_THE_DOWNLEVELITERATION_FLAG_OR_WITH,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                        &[&type_str],
+                    );
+                    self.error(
+                        start,
+                        end.saturating_sub(start),
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_AN_ARRAY_TYPE,
+                    );
+                }
             }
             return false;
         }
