@@ -61,14 +61,6 @@ pub(crate) fn classify_for_property_access_resolution(
     tsz_solver::type_queries::classify_for_property_access_resolution(db, type_id)
 }
 
-pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
-    tsz_solver::type_queries::get_union_members(db, type_id)
-}
-
-pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
-    tsz_solver::type_queries::get_intersection_members(db, type_id)
-}
-
 pub(crate) fn get_conditional_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,

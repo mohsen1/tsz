@@ -818,7 +818,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
         // Prevent infinite loops in circular type aliases
         if !visited.insert(type_id) {
             return type_id;
@@ -862,26 +861,12 @@ impl<'a> CheckerState<'a> {
 
         // Handle unions and intersections - resolve each member
         // Only create a new union/intersection if members actually changed
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            let resolved_members: Vec<TypeId> = members
-                .iter()
-                .map(|&member| self.resolve_lazy_type_inner(member, visited))
-                .collect();
-            // Only create new union if members changed
-            if resolved_members.iter().ne(members.iter()) {
-                return factory.union(resolved_members);
-            }
-        }
-
-        if let Some(members) = query::intersection_members(self.ctx.types, type_id) {
-            let resolved_members: Vec<TypeId> = members
-                .iter()
-                .map(|&member| self.resolve_lazy_type_inner(member, visited))
-                .collect();
-            // Only create new intersection if members changed
-            if resolved_members.iter().ne(members.iter()) {
-                return factory.intersection(resolved_members);
-            }
+        if let Some(resolved) = tsz_solver::type_queries::map_compound_members_if_changed(
+            self.ctx.types,
+            type_id,
+            |member| self.resolve_lazy_type_inner(member, visited),
+        ) {
+            return resolved;
         }
 
         type_id
