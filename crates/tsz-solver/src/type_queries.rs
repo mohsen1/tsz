@@ -854,6 +854,43 @@ pub fn get_intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
     }
 }
 
+/// Apply a mapping function to each member of a union or intersection type,
+/// reconstructing the compound type from the mapped results.
+///
+/// If the type is a union, maps each member and rebuilds a union.
+/// If the type is an intersection, maps each member and rebuilds an intersection.
+/// If the type is neither, returns `None` (the caller should handle the non-compound case).
+///
+/// This eliminates the common checker anti-pattern of:
+/// ```ignore
+/// if let Some(members) = get_union_members(db, ty) {
+///     let mapped: Vec<_> = members.into_iter().map(|m| transform(m)).collect();
+///     factory.union(mapped)
+/// } else if let Some(members) = get_intersection_members(db, ty) {
+///     let mapped: Vec<_> = members.into_iter().map(|m| transform(m)).collect();
+///     factory.intersection(mapped)
+/// }
+/// ```
+pub fn map_compound_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut f: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members.iter().map(|&m| f(m)).collect();
+            Some(db.union(mapped))
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members.iter().map(|&m| f(m)).collect();
+            Some(db.intersection(mapped))
+        }
+        _ => None,
+    }
+}
+
 /// Get the element type of an array.
 ///
 /// Returns None if the type is not an array.
