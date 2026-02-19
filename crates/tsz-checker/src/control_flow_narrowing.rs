@@ -1692,8 +1692,17 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn reference_symbol(&self, idx: NodeIndex) -> Option<SymbolId> {
+        let idx = self.skip_parenthesized(idx);
+        if let Some(&cached) = self.reference_symbol_cache.borrow().get(&idx.0) {
+            return cached;
+        }
+
         let mut visited = Vec::new();
-        self.reference_symbol_inner(idx, &mut visited)
+        let result = self.reference_symbol_inner(idx, &mut visited);
+        self.reference_symbol_cache
+            .borrow_mut()
+            .insert(idx.0, result);
+        result
     }
 
     pub(crate) fn reference_symbol_inner(

@@ -1071,6 +1071,27 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         };
 
+        // Fast path: most binary operators never contribute to flow narrowing.
+        // Skip context setup and guard extraction for those operators.
+        if cond_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(bin) = self.arena.get_binary_expr(cond_node)
+            && !matches!(
+                bin.operator_token,
+                k if k == SyntaxKind::AmpersandAmpersandToken as u16
+                    || k == SyntaxKind::BarBarToken as u16
+                    || k == SyntaxKind::QuestionQuestionToken as u16
+                    || k == SyntaxKind::EqualsToken as u16
+                    || k == SyntaxKind::InstanceOfKeyword as u16
+                    || k == SyntaxKind::InKeyword as u16
+                    || k == SyntaxKind::EqualsEqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsEqualsToken as u16
+                    || k == SyntaxKind::EqualsEqualsToken as u16
+                    || k == SyntaxKind::ExclamationEqualsToken as u16
+            )
+        {
+            return type_id;
+        }
+
         // Create narrowing context and wire up TypeEnvironment if available
         // This enables proper resolution of Lazy types (type aliases) during narrowing
         let env_borrow;
@@ -1131,10 +1152,25 @@ impl<'a> FlowAnalyzer<'a> {
                         return narrowed;
                     }
 
-                    // CRITICAL: Use Solver-First architecture for other binary expressions
-                    // Extract TypeGuard from AST (Checker responsibility: WHERE + WHAT)
-                    if let Some((guard, guard_target, _is_optional)) =
-                        self.extract_type_guard(condition_idx)
+                    // Fast-path: avoid expensive generic guard extraction when the
+                    // comparison does not directly target this reference.
+                    //
+                    // Example hot path:
+                    //   if (e.kind === "type42") { ... } while narrowing `e`
+                    //
+                    // `extract_type_guard` first targets `e.kind`, which won't match `e`,
+                    // then we still do full binary narrowing below. Skip the extraction in
+                    // that common mismatch case and go straight to `narrow_by_binary_expr`.
+                    let maybe_direct_guard_target = self.is_matching_reference(bin.left, target)
+                        || self.is_matching_reference(bin.right, target)
+                        || self.is_typeof_target(bin.left, target)
+                        || self.is_typeof_target(bin.right, target);
+
+                    // CRITICAL: Use Solver-First architecture for direct binary guards
+                    // when the guard target can actually match our reference.
+                    if maybe_direct_guard_target
+                        && let Some((guard, guard_target, _is_optional)) =
+                            self.extract_type_guard(condition_idx)
                     {
                         // Check if the guard applies to our target reference
                         if self.is_matching_reference(guard_target, target) {
