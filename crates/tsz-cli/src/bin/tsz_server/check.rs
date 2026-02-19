@@ -34,6 +34,24 @@ impl Server {
         file_path: &str,
         content: &str,
     ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+        self.get_diagnostics_by_category(file_path, content, DiagnosticCategory::Error)
+    }
+
+    /// Get suggestion diagnostics for a single file.
+    pub(crate) fn get_suggestion_diagnostics(
+        &mut self,
+        file_path: &str,
+        content: &str,
+    ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
+        self.get_diagnostics_by_category(file_path, content, DiagnosticCategory::Suggestion)
+    }
+
+    fn get_diagnostics_by_category(
+        &mut self,
+        file_path: &str,
+        content: &str,
+        category: DiagnosticCategory,
+    ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
         let options = CheckOptions::default();
 
         // Use unified lib loading for proper cross-lib symbol resolution.
@@ -106,20 +124,22 @@ impl Server {
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
 
-        // Add parse diagnostics
-        for d in &parse_diagnostics {
-            diagnostics.push(tsz::checker::diagnostics::Diagnostic::error(
-                file_path.to_string(),
-                d.start,
-                d.length,
-                d.message.clone(),
-                d.code,
-            ));
+        // Add parse diagnostics (only for Errors)
+        if category == DiagnosticCategory::Error {
+            for d in &parse_diagnostics {
+                diagnostics.push(tsz::checker::diagnostics::Diagnostic::error(
+                    file_path.to_string(),
+                    d.start,
+                    d.length,
+                    d.message.clone(),
+                    d.code,
+                ));
+            }
         }
 
         // Add checker diagnostics
         for diag in checker.ctx.diagnostics {
-            if diag.category == DiagnosticCategory::Error {
+            if diag.category == category {
                 diagnostics.push(diag);
             }
         }
