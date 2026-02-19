@@ -308,17 +308,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
 
             if bare_yield_requires_error {
-                if self.checker.check_assignable_or_report(
+                self.checker.check_assignable_or_report(
                     yielded_type,
                     expected_yield_type,
                     error_node,
-                ) {
-                    self.checker.error_type_not_assignable_with_reason_at(
-                        yielded_type,
-                        expected_yield_type,
-                        error_node,
-                    );
-                }
+                );
             } else if !self.checker.type_contains_error(expected_yield_type)
                 && !self.checker.check_assignable_or_report(
                     yielded_type,
