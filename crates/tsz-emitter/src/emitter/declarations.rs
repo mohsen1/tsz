@@ -476,7 +476,37 @@ impl<'a> Printer<'a> {
                     }
                 }
                 if let Some(member_node) = self.arena.get(member_idx) {
-                    self.skip_comments_for_erased_node(member_node);
+                    // Use a tighter bound for property declarations to avoid
+                    // consuming comments that belong to the next class member.
+                    // Property node.end can extend past newlines into the next
+                    // member's territory, so we bound by the next member's pos.
+                    let skip_end = class
+                        .members
+                        .nodes
+                        .get(member_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map_or(member_node.end, |next| next.pos);
+                    // Find the actual end of the property's content
+                    let actual_end = self.find_token_end_before_trivia(member_node.pos, skip_end);
+                    // Find line end from actual_end
+                    let line_end = if let Some(text) = self.source_text {
+                        let bytes = text.as_bytes();
+                        let mut pos = actual_end as usize;
+                        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+                            pos += 1;
+                        }
+                        pos as u32
+                    } else {
+                        actual_end
+                    };
+                    while self.comment_emit_idx < self.all_comments.len() {
+                        let c = &self.all_comments[self.comment_emit_idx];
+                        if c.end <= line_end {
+                            self.comment_emit_idx += 1;
+                        } else {
+                            break;
+                        }
+                    }
                 }
                 continue;
             }

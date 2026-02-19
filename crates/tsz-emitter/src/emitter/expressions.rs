@@ -1984,10 +1984,28 @@ impl<'a> Printer<'a> {
                 // Check if next property is on the same line in source
                 if !is_last {
                     let next_prop = obj.elements.nodes[i + 1];
-                    let wrote_newline = self.emit_unemitted_comments_between(
-                        prop_node.end,
-                        self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos),
-                    );
+                    let next_pos = self.arena.get(next_prop).map_or(prop_node.end, |n| n.pos);
+                    // Check if there's a trailing comment on the same line after the comma
+                    // If so, add a space between the comma and the comment
+                    let has_same_line_comment = self.source_text.is_some_and(|text| {
+                        let from = prop_node.end as usize;
+                        let to = std::cmp::min(next_pos as usize, text.len());
+                        if from >= to {
+                            return false;
+                        }
+                        let gap = &text[from..to];
+                        // Check for comment on same line (no newline before comment start)
+                        if let Some(slash_pos) = gap.find("//") {
+                            !gap[..slash_pos].contains('\n')
+                        } else {
+                            false
+                        }
+                    });
+                    if has_same_line_comment {
+                        self.write(" ");
+                    }
+                    let wrote_newline =
+                        self.emit_unemitted_comments_between(prop_node.end, next_pos);
                     if wrote_newline {
                         // Line comment wrote the newline already — don't add another
                     } else if self.are_on_same_line_in_source(prop, next_prop) {
