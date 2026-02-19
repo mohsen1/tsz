@@ -255,6 +255,7 @@ impl<'a> Printer<'a> {
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
 
         // Emit trailing comments (e.g., var x = 1; // comment)
@@ -416,6 +417,7 @@ impl<'a> Printer<'a> {
         if needs_parens {
             self.write(")");
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
     }
@@ -630,6 +632,7 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_return_statement(&mut self, node: &Node) {
         let Some(ret) = self.arena.get_return_statement(node) else {
             self.write("return");
+            self.map_trailing_semicolon(node);
             self.write_semicolon();
             return;
         };
@@ -639,6 +642,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit_expression(ret.expression);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -650,12 +654,14 @@ impl<'a> Printer<'a> {
         // ThrowStatement uses ReturnData (same structure)
         let Some(throw_data) = self.arena.get_return_statement(node) else {
             self.write("throw");
+            self.map_trailing_semicolon(node);
             self.write_semicolon();
             return;
         };
 
         self.write("throw ");
         self.emit(throw_data.expression);
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -806,6 +812,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit(jump.label);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -817,6 +824,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit(jump.label);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -854,11 +862,13 @@ impl<'a> Printer<'a> {
         self.write("while (");
         self.emit(loop_stmt.condition);
         self.write(")");
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
-    pub(super) fn emit_debugger_statement(&mut self) {
+    pub(super) fn emit_debugger_statement(&mut self, node: &Node) {
         self.write("debugger");
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 

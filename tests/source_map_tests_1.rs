@@ -16854,6 +16854,63 @@ fn test_computed_property_object_literal_bracket_mapping() {
     );
 }
 
+/// Verify semicolon mappings for debugger and return statements.
+#[test]
+fn test_sourcemap_semicolon_mapping() {
+    let source = "function f() {\n    debugger;\n    return 42;\n}";
+    // Line 0: function f() {
+    // Line 1:     debugger;       (`;` at col 12)
+    // Line 2:     return 42;      (`;` at col 13)
+    // Line 3: }
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let decoded = decode_mappings(mappings_str);
+
+    eprintln!("Output:\n{output}");
+    for m in &decoded {
+        eprintln!(
+            "  gen({}:{}) -> src({}:{})",
+            m.generated_line, m.generated_column, m.original_line, m.original_column
+        );
+    }
+
+    // Check that `;` after `debugger` is mapped
+    // debugger is on source line 1, `;` at col 12
+    let has_debugger_semi = decoded
+        .iter()
+        .any(|m| m.original_line == 1 && m.original_column == 12);
+    assert!(
+        has_debugger_semi,
+        "Expected mapping for `;` after `debugger` at src(1:12)"
+    );
+
+    // Check that `;` after `return 42` is mapped
+    // return 42 is on source line 2, `;` at col 13
+    let has_return_semi = decoded
+        .iter()
+        .any(|m| m.original_line == 2 && m.original_column == 13);
+    assert!(
+        has_return_semi,
+        "Expected mapping for `;` after `return 42` at src(2:13)"
+    );
+}
+
 /// Compare tsz source map output against tsc's baseline for the
 /// `computedPropertyNamesSourceMap1_ES6` conformance test.
 #[test]
@@ -16909,7 +16966,7 @@ fn test_sourcemap_parity_computed_property_names_es6() {
 
     // Track parity progress: fail if we regress (more missing than expected).
     // Update EXPECTED_MISSING as we fix more mappings.
-    const EXPECTED_MISSING: usize = 10;
+    const EXPECTED_MISSING: usize = 8;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
