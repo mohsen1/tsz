@@ -720,24 +720,16 @@ impl<'a> Printer<'a> {
                 // which is after the lookahead token). Use the AST initializer/name end
                 // to get the true end of the property's last token.
                 if let Some(member_node) = self.arena.get(member_idx) {
-                    let token_end = if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                        // For property declarations, compute token end from the last AST node
-                        // to avoid scanning into the next member's line.
-                        if let Some(prop) = self.arena.get_property_decl(member_node) {
-                            let last_node_end = if !prop.initializer.is_none() {
-                                self.arena.get(prop.initializer).map(|n| n.end)
-                            } else {
-                                self.arena.get(prop.name).map(|n| n.end)
-                            };
-                            last_node_end.unwrap_or_else(|| {
-                                self.find_token_end_before_trivia(member_node.pos, member_node.end)
-                            })
-                        } else {
-                            self.find_token_end_before_trivia(member_node.pos, member_node.end)
-                        }
-                    } else {
-                        self.find_token_end_before_trivia(member_node.pos, member_node.end)
-                    };
+                    // Use the next member's pos as upper bound to avoid scanning
+                    // past the current member into the next member's trivia.
+                    let next_member_pos = class
+                        .members
+                        .nodes
+                        .get(member_i + 1)
+                        .and_then(|&next_idx| self.arena.get(next_idx))
+                        .map(|n| n.pos);
+                    let upper = next_member_pos.unwrap_or(member_node.end);
+                    let token_end = self.find_token_end_before_trivia(member_node.pos, upper);
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
@@ -1301,7 +1293,7 @@ impl<'a> Printer<'a> {
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
             self.namespace_exported_names = self.collect_namespace_exported_names(module);
-            for &stmt_idx in &stmts.nodes {
+            for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
                 };
@@ -1321,6 +1313,15 @@ impl<'a> Printer<'a> {
                     self.skip_comments_for_erased_node(stmt_node);
                     continue;
                 }
+
+                // Compute upper bound for trailing comment scan: use the next statement's
+                // position to avoid scanning past the current statement into the next line.
+                let next_pos = stmts
+                    .nodes
+                    .get(stmt_i + 1)
+                    .and_then(|&next_idx| self.arena.get(next_idx))
+                    .map(|n| n.pos);
+                let upper_bound = next_pos.unwrap_or(stmt_node.end);
 
                 // Emit leading comments before this statement
                 self.emit_comments_before_pos(stmt_node.pos);
@@ -1360,8 +1361,9 @@ impl<'a> Printer<'a> {
                             let emitted = self.writer.len() > before_len;
                             // Emit trailing comments on the same line
                             if emitted && let Some(inner_node) = self.arena.get(inner_idx) {
-                                let token_end = self
-                                    .find_token_end_before_trivia(inner_node.pos, inner_node.end);
+                                let inner_upper = next_pos.unwrap_or(inner_node.end);
+                                let token_end =
+                                    self.find_token_end_before_trivia(inner_node.pos, inner_upper);
                                 self.emit_trailing_comments(token_end);
                             }
 
@@ -1397,7 +1399,7 @@ impl<'a> Printer<'a> {
                     self.in_namespace_iife = true;
                     self.emit(stmt_idx);
                     self.in_namespace_iife = prev;
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments(token_end);
                     self.write_line();
                 } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
@@ -1406,7 +1408,7 @@ impl<'a> Printer<'a> {
                 } else {
                     // Regular statement - emit trailing comments on same line
                     self.emit(stmt_idx);
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments(token_end);
                     self.write_line();
                 }
