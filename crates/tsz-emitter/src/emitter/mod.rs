@@ -2680,6 +2680,7 @@ impl<'a> Printer<'a> {
         // We find each statement's "actual token start" by scanning forward past
         // trivia, then emit all comments before that position.
         let mut last_erased_stmt_end: Option<u32> = None;
+        let mut last_erased_was_shorthand_module = false;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
         let mut has_runtime_module_syntax = false;
         let mut has_deferred_empty_export = false;
@@ -2694,6 +2695,7 @@ impl<'a> Printer<'a> {
                 {
                     deferred_commonjs_export_equals.push(stmt_idx);
                     last_erased_stmt_end = None;
+                    last_erased_was_shorthand_module = false;
                     continue;
                 }
 
@@ -2712,6 +2714,7 @@ impl<'a> Printer<'a> {
                     has_runtime_module_syntax = true;
                     self.skip_comments_for_erased_node(stmt_node);
                     last_erased_stmt_end = None;
+                    last_erased_was_shorthand_module = false;
                     continue;
                 }
 
@@ -2719,6 +2722,18 @@ impl<'a> Printer<'a> {
                 // skip their leading comments entirely - they should not appear in output.
                 let is_erased =
                     !self.ctx.flags.in_declaration_emit && self.is_erased_statement(stmt_node);
+
+                // Skip empty statements (`;`) that follow an erased shorthand module
+                // declaration (`declare module "foo";`). The shorthand module syntax
+                // parses as MODULE_DECLARATION + EMPTY_STATEMENT, and the trailing
+                // `;` should be erased along with the declaration.
+                if !is_erased
+                    && stmt_node.kind == syntax_kind_ext::EMPTY_STATEMENT
+                    && last_erased_was_shorthand_module
+                {
+                    last_erased_was_shorthand_module = false;
+                    continue;
+                }
 
                 // Track whether any non-erased module-indicating statement exists
                 // (needed for `export {};` insertion at end of file)
@@ -2768,6 +2783,14 @@ impl<'a> Printer<'a> {
                         }
                     }
                     last_erased_stmt_end = Some(line_end);
+                    // Track if this is a shorthand module declaration (no body),
+                    // so we can skip the trailing EMPTY_STATEMENT (`;`).
+                    last_erased_was_shorthand_module = stmt_node.kind
+                        == syntax_kind_ext::MODULE_DECLARATION
+                        && self
+                            .arena
+                            .get_module(stmt_node)
+                            .is_some_and(|m| m.body.is_none());
                     continue;
                 }
 
@@ -2809,6 +2832,7 @@ impl<'a> Printer<'a> {
                     }
                 }
                 last_erased_stmt_end = None;
+                last_erased_was_shorthand_module = false;
             }
 
             let before_len = self.writer.len();
