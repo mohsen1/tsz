@@ -441,6 +441,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.strict_null_checks = config.strict_null_checks;
         self.exact_optional_property_types = config.exact_optional_property_types;
         self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+
+        // North Star: any should NOT silence structural mismatches in strict mode
+        self.lawyer.allow_any_suppression = !config.strict_function_types && !config.sound_mode;
+
         // Clear cache as configuration changed
         self.cache.clear();
     }
@@ -791,12 +795,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Any at the top-level is assignable to/from everything
         // UNLESS strict any propagation is enabled (disables suppression)
         if source == TypeId::ANY || target == TypeId::ANY {
-            // If strict any propagation is on (allow_any_suppression is false),
-            // we must fall through to structural checking unless both are ANY
-            if !self.lawyer.allow_any_suppression && source != target {
-                return None;
+            // North Star Fix: any should not silence structural mismatches.
+            // We only allow any to match any here, and fall through to structural
+            // checking for mixed pairs.
+            if source == target {
+                return Some(true);
             }
-            return Some(true);
+            // If legacy suppression is allowed, we still return true here.
+            if self.lawyer.allow_any_suppression {
+                return Some(true);
+            }
+            // Fall through to structural checking for unsound pairs
+            return None;
         }
 
         // Null/undefined in non-strict null check mode

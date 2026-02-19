@@ -63,6 +63,7 @@ impl<'a> CheckerState<'a> {
             strict_function_types: self.ctx.strict_function_types(),
             exact_optional_property_types: self.ctx.exact_optional_property_types(),
             no_unchecked_indexed_access: self.ctx.no_unchecked_indexed_access(),
+            sound_mode: self.ctx.sound_mode(),
         };
         let judge = DefaultJudge::new(self.ctx.types, &env, config);
         f(&judge)
