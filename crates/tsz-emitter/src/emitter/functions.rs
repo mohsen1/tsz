@@ -149,9 +149,14 @@ impl<'a> Printer<'a> {
             self.write(")");
         }
 
-        // Arrow functions don't have their own `this`, so TSC passes `void 0`
-        // as the this-arg to __awaiter. The arrow captures `this` lexically from
-        // the enclosing scope, but __awaiter doesn't need it.
+        // For arrow functions on ES2015+, TSC passes `this` to __awaiter if the
+        // body references `this`, since the arrow lexically captures `this` from
+        // the enclosing scope. If the body doesn't reference `this`, use `void 0`.
+        let this_arg = if contains_this_reference(self.arena, func.body) {
+            "this"
+        } else {
+            "void 0"
+        };
 
         let body_node = self.arena.get(func.body);
         let is_block = body_node.is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
@@ -171,34 +176,74 @@ impl<'a> Printer<'a> {
                 })
                 .unwrap_or(false);
 
+        // Check if the entire body is single-line in source
+        let body_is_single_line = is_block
+            && self
+                .arena
+                .get(func.body)
+                .map(|n| self.is_single_line(n))
+                .unwrap_or(false);
+
         if body_is_empty_single_line {
-            self.write(" => __awaiter(void 0, void 0, void 0, function* () { })");
+            self.write(" => __awaiter(");
+            self.write(this_arg);
+            self.write(", void 0, void 0, function* () { })");
             return;
         }
 
-        self.write(" => __awaiter(void 0, void 0, void 0, function* () {");
+        if body_is_single_line {
+            // Single-line body: emit inline like TSC
+            // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield this; })
+            self.write(" => __awaiter(");
+            self.write(this_arg);
+            self.write(", void 0, void 0, function* () {");
+
+            self.ctx.emit_await_as_yield = true;
+            if let Some(body_node) = self.arena.get(func.body)
+                && let Some(block) = self.arena.get_block(body_node)
+            {
+                for &stmt in &block.statements.nodes {
+                    self.write(" ");
+                    self.emit(stmt);
+                }
+            }
+            self.ctx.emit_await_as_yield = false;
+            self.write(" })");
+            return;
+        }
+
+        if !is_block {
+            // Concise expression body: emit single-line
+            // e.g., () => __awaiter(this, void 0, void 0, function* () { return yield expr; })
+            self.write(" => __awaiter(");
+            self.write(this_arg);
+            self.write(", void 0, void 0, function* () { ");
+            self.ctx.emit_await_as_yield = true;
+            self.write("return ");
+            self.emit_expression(func.body);
+            self.write(";");
+            self.ctx.emit_await_as_yield = false;
+            self.write(" })");
+            return;
+        }
+
+        self.write(" => __awaiter(");
+        self.write(this_arg);
+        self.write(", void 0, void 0, function* () {");
         self.write_line();
         self.increase_indent();
 
         // Emit body with await→yield substitution
         self.ctx.emit_await_as_yield = true;
 
-        if is_block {
-            // Block body: emit statements directly
-            if let Some(body_node) = self.arena.get(func.body)
-                && let Some(block) = self.arena.get_block(body_node)
-            {
-                for &stmt in &block.statements.nodes {
-                    self.emit(stmt);
-                    self.write_line();
-                }
+        // Block body: emit statements directly
+        if let Some(body_node) = self.arena.get(func.body)
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            for &stmt in &block.statements.nodes {
+                self.emit(stmt);
+                self.write_line();
             }
-        } else {
-            // Concise expression body: wrap in return
-            self.write("return ");
-            self.emit_expression(func.body);
-            self.write(";");
-            self.write_line();
         }
 
         self.ctx.emit_await_as_yield = false;

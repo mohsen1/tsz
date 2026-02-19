@@ -909,14 +909,16 @@ impl<'a> IRPrinter<'a> {
             IRNode::GeneratorBody { has_await, cases } => {
                 self.write("return __generator(this, function (_a) {");
                 if !*has_await || cases.is_empty() {
-                    // Simple body
+                    // Simple body - always multi-line to match tsc
                     if cases.is_empty() {
-                        self.write(" return [2 /*return*/]; });");
-                    } else if cases.len() == 1 && cases[0].statements.len() == 1 {
-                        // Single statement, inline
-                        self.write(" ");
-                        self.emit_node(&cases[0].statements[0]);
-                        self.write(" });");
+                        self.write_line();
+                        self.increase_indent();
+                        self.write_indent();
+                        self.write("return [2 /*return*/];");
+                        self.write_line();
+                        self.decrease_indent();
+                        self.write_indent();
+                        self.write("});");
                     } else {
                         self.write_line();
                         self.increase_indent();

@@ -1015,13 +1015,14 @@ impl<'a> Printer<'a> {
             && self.block_is_empty(body)
             && self.first_await_default_param_name(params).is_some();
 
-        // function name(params) {
-        self.write("function");
-        if !func_name.is_empty() {
-            self.write_space();
+        // function name(params) { ... } or function (params) { ... }
+        if func_name.is_empty() {
+            self.write("function (");
+        } else {
+            self.write("function ");
             self.write(func_name);
+            self.write("(");
         }
-        self.write("(");
         if use_native_generators {
             // ES2015: when a parameter initializer starts with `await`, match tsc
             // by moving parameters to the inner generator and forwarding `arguments`.
