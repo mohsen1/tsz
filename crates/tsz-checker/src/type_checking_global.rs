@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
                 .collect();
             self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
 
-            let mut conflicts = FxHashSet::default();
+            let mut conflicts: FxHashMap<NodeIndex, u32> = FxHashMap::default();
             let mut exported_conflicts = FxHashSet::default();
             let mut namespace_order_errors = FxHashSet::default();
 
@@ -668,10 +668,10 @@ impl<'a> CheckerState<'a> {
                         }
 
                         if decl_is_local {
-                            conflicts.insert(decl_idx);
+                            conflicts.insert(decl_idx, decl_flags);
                         }
                         if other_is_local {
-                            conflicts.insert(other_idx);
+                            conflicts.insert(other_idx, other_flags);
                         }
                         continue;
                     }
@@ -860,10 +860,10 @@ impl<'a> CheckerState<'a> {
                         };
                         if self.is_namespace_declaration_instantiated(namespace_idx) {
                             if decl_is_local {
-                                conflicts.insert(decl_idx);
+                                conflicts.insert(decl_idx, decl_flags);
                             }
                             if other_is_local {
-                                conflicts.insert(other_idx);
+                                conflicts.insert(other_idx, other_flags);
                             }
                         }
                         continue;
@@ -887,25 +887,43 @@ impl<'a> CheckerState<'a> {
                             exported_conflicts.insert(other_idx);
                         } else {
                             if decl_is_local {
-                                conflicts.insert(decl_idx);
+                                conflicts.insert(decl_idx, decl_flags);
                             }
                             if other_is_local {
-                                conflicts.insert(other_idx);
+                                conflicts.insert(other_idx, other_flags);
                             }
                         }
                     }
                 }
             }
 
-            for conflict_idx in conflicts {
+            for (conflict_idx, conflict_flags) in conflicts {
                 let error_node = self
                     .get_declaration_name_node(conflict_idx)
                     .unwrap_or(conflict_idx);
-                let message = format_message(
-                    diagnostic_messages::DUPLICATE_IDENTIFIER,
-                    &[&symbol.escaped_name],
-                );
-                self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+                // TS2451 for block-scoped variables (let/const), TS2300 for others
+                let is_block_scoped = (conflict_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
+                if is_block_scoped {
+                    let message = format_message(
+                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                        &[&symbol.escaped_name],
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                    );
+                } else {
+                    let message = format_message(
+                        diagnostic_messages::DUPLICATE_IDENTIFIER,
+                        &[&symbol.escaped_name],
+                    );
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
             }
 
             for conflict_idx in exported_conflicts {
