@@ -2175,7 +2175,10 @@ impl BinderState {
                     && let Some(ident) = arena.get_identifier(name_node)
                 {
                     let name = ident.escaped_text.as_str();
-                    let flags = symbol_flags::VALUE_MODULE | symbol_flags::ALIAS;
+                    // Use FUNCTION_SCOPED_VARIABLE (var) instead of VALUE_MODULE
+                    // This ensures it conflicts with block-scoped variables (TS2451)
+                    // and behaves like a global UMD variable.
+                    let flags = symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS;
                     let decl_node = decl.export_clause;
 
                     if self.scope_stack.is_empty() {

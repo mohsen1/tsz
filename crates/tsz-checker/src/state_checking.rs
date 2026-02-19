@@ -941,7 +941,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 // 'export as namespace' creates a global alias to the module.
                 // It behaves like a global value module alias.
-                Some(symbol_flags::VALUE_MODULE | symbol_flags::ALIAS)
+                Some(symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::ALIAS)
             }
             _ => None,
         }

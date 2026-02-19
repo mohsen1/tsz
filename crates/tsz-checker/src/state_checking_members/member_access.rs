@@ -383,6 +383,15 @@ impl<'a> CheckerState<'a> {
         // TS1212: Check interface name for strict mode reserved words
         self.check_strict_mode_reserved_name_at(iface.name, stmt_idx);
 
+        // Check for circular inheritance (TS2310)
+        // Must be done before resolving types to avoid infinite recursion
+        use crate::class_inheritance::ClassInheritanceChecker;
+        let mut checker = ClassInheritanceChecker::new(&mut self.ctx);
+        if checker.check_interface_inheritance_cycle(stmt_idx, iface) {
+            // If cycle detected, we can still proceed with checking members but
+            // heritage graph is now aware of the cycle (or it was reported)
+        }
+
         // Push type parameters BEFORE checking heritage clauses
         // This allows heritage clauses to reference the interface's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);

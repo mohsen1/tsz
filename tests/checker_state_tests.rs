@@ -34115,6 +34115,102 @@ fn test_ts2451_global_redeclaration() {
 }
 
 #[test]
+fn test_ts2313_simple_circular_type_alias() {
+    let source = "type T = T;";
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2313 || d.code == 2456),
+        "Expected TS2313/TS2456 for simple circular type alias, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_ts2313_indirect_circular_type_alias() {
+    let source = "
+            type A = B;
+            type B = A;
+            ";
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2313 || d.code == 2456),
+        "Expected TS2313/TS2456 for indirect circular type alias, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_ts2310_circular_interface_inheritance() {
+    let source = "
+                interface A extends B {}
+                interface B extends A {}
+                ";
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2310),
+        "Expected TS2310 for circular interface inheritance, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_namespace_export_binds_global() {
     let source = "
     export as namespace foo;
@@ -34133,8 +34229,9 @@ fn test_namespace_export_binds_global() {
     // We need to find the global scope.
     // Assuming the first scope created is global.
 
-            let global_scope = &binder.scopes[0]; // Is this safe assumption?
-            assert!(global_scope.table.has("foo"), "Global scope should contain 'foo'");
-        }
-        
-    
+    let global_scope = &binder.scopes[0]; // Is this safe assumption?
+    assert!(
+        global_scope.table.has("foo"),
+        "Global scope should contain 'foo'"
+    );
+}

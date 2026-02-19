@@ -64,10 +64,65 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             }
         }
 
+        self.detect_and_report_cycle(current_sym, &parent_symbols)
+    }
+
+    /// Check for circular inheritance in an interface declaration.
+    ///
+    /// Returns `true` if a cycle is found and diagnostics were emitted.
+    pub fn check_interface_inheritance_cycle(
+        &mut self,
+        iface_idx: NodeIndex,
+        iface: &tsz_parser::parser::node::InterfaceData,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let current_sym = match self.ctx.binder.get_node_symbol(iface_idx) {
+            Some(sym) => sym,
+            None => return false,
+        };
+
+        let mut parent_symbols = Vec::new();
+        if let Some(heritage_clauses) = &iface.heritage_clauses {
+            for &clause_idx in &heritage_clauses.nodes {
+                let Some(heritage) = self.ctx.arena.get_heritage_clause_at(clause_idx) else {
+                    continue;
+                };
+                // Interfaces only use ExtendsKeyword
+                if heritage.token != SyntaxKind::ExtendsKeyword as u16 {
+                    continue;
+                }
+
+                // Interfaces can extend multiple types
+                for &type_idx in &heritage.types.nodes {
+                    let expr_idx = self
+                        .ctx
+                        .arena
+                        .get_expr_type_args_at(type_idx)
+                        .map_or(type_idx, |e| e.expression);
+
+                    if let Some(parent_sym) = self.resolve_heritage_symbol(expr_idx) {
+                        if parent_sym == current_sym {
+                            self.error_circular_class_inheritance_for_symbol(current_sym);
+                            return true;
+                        }
+                        parent_symbols.push(parent_sym);
+                    }
+                }
+            }
+        }
+
+        self.detect_and_report_cycle(current_sym, &parent_symbols)
+    }
+
+    fn detect_and_report_cycle(
+        &mut self,
+        current_sym: SymbolId,
+        parent_symbols: &[SymbolId],
+    ) -> bool {
         // Check for cycles using simple DFS traversal on the InheritanceGraph
-        // This is more reliable than using transitive closure, which can be incomplete
-        if self.detects_cycle_dfs(current_sym, &parent_symbols) {
-            let cycle_symbols = self.collect_cycle_symbols(current_sym, &parent_symbols);
+        if self.detects_cycle_dfs(current_sym, parent_symbols) {
+            let cycle_symbols = self.collect_cycle_symbols(current_sym, parent_symbols);
             for sym in cycle_symbols {
                 self.error_circular_class_inheritance_for_symbol(sym);
             }
@@ -75,16 +130,12 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         }
 
         // DEBUG: Log when we successfully register inheritance
-        tracing::debug!(
-            "Registered inheritance: {:?} extends {:?}",
-            current_sym,
-            parent_symbols
-        );
+        // tracing::debug!("Registered inheritance: {:?} extends {:?}", current_sym, parent_symbols);
 
         // No cycles - register with InheritanceGraph
         self.ctx
             .inheritance_graph
-            .add_inheritance(current_sym, &parent_symbols);
+            .add_inheritance(current_sym, parent_symbols);
         false
     }
 
@@ -195,7 +246,9 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let node = self.ctx.arena.get(expr_idx)?;
-        let sym = if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+
+        // println!("resolve_heritage_symbol: expr_idx={:?}, sym={:?}", expr_idx, sym);
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
             // FIX: Use resolve_identifier instead of get_node_symbol
             // get_node_symbol only works for declaration nodes, not references
             self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)
@@ -205,13 +258,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             self.resolve_heritage_symbol_access(expr_idx)
         } else {
             None
-        };
-        tracing::debug!(
-            "resolve_heritage_symbol: expr_idx={:?}, sym={:?}",
-            expr_idx,
-            sym
-        );
-        sym
+        }
     }
 
     /// Resolve qualified name like 'Namespace.Class'
@@ -244,77 +291,85 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         exports.get(&name)
     }
 
-    /// Emit TS2449: Circular inheritance error
-    fn error_circular_class_inheritance(
-        &mut self,
-        error_node_idx: NodeIndex,
-        class_idx: NodeIndex,
-    ) {
-        let class_name = self
-            .ctx
-            .arena
-            .get(class_idx)
-            .and_then(|node| self.ctx.arena.get_class(node))
-            .and_then(|class| self.ctx.arena.get(class.name))
-            .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-            .map_or_else(
-                || String::from("<class>"),
-                |ident| ident.escaped_text.clone(),
-            );
-
-        if let Some((start, end)) = self.ctx.get_node_span(error_node_idx) {
-            let length = end.saturating_sub(start);
-            let message =
-                format_message(diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION, &[&class_name]);
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start,
-                length,
-                related_information: Vec::new(),
-            });
-        }
-    }
-
-    /// Emit TS2506 for a class symbol, using the class name node as error span when available.
+    /// Emit TS2506/TS2310 for a symbol
     fn error_circular_class_inheritance_for_symbol(&mut self, sym_id: SymbolId) {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;
         };
 
-        let Some(&class_idx) = symbol.declarations.iter().find(|&&decl_idx| {
-            self.ctx.arena.get(decl_idx).is_some_and(|node| {
-                node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
-            })
-        }) else {
+        let decl_info = symbol.declarations.iter().find_map(|&decl_idx| {
+            let node = self.ctx.arena.get(decl_idx)?;
+            match node.kind {
+                tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION => {
+                    Some((decl_idx, true)) // is_class = true
+                }
+                tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION => {
+                    Some((decl_idx, false)) // is_class = false
+                }
+                _ => None,
+            }
+        });
+
+        let Some((decl_idx, is_class)) = decl_info else {
             return;
         };
 
-        let error_node_idx = self
-            .ctx
-            .arena
-            .get(class_idx)
-            .and_then(|node| self.ctx.arena.get_class(node))
-            .map(|class| class.name)
-            .filter(|name| !name.is_none())
-            .unwrap_or(class_idx);
+        let error_node_idx = if is_class {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_class(node))
+                .map(|class| class.name)
+                .filter(|name| !name.is_none())
+                .unwrap_or(decl_idx)
+        } else {
+            self.ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_interface(node))
+                .map(|iface| iface.name)
+                .filter(|name| !name.is_none())
+                .unwrap_or(decl_idx)
+        };
 
         let Some((start, end)) = self.ctx.get_node_span(error_node_idx) else {
             return;
         };
 
-        // Avoid duplicate TS2506 at the same location.
-        if self.ctx.diagnostics.iter().any(|diag| {
-            diag.code
-                == diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION
-                && diag.start == start
-        }) {
+        let (code, message_template) = if is_class {
+            (
+                diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+                diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+            )
+        } else {
+            (
+                diagnostic_codes::TYPE_RECURSIVELY_REFERENCES_ITSELF_AS_A_BASE_TYPE,
+                diagnostic_messages::TYPE_RECURSIVELY_REFERENCES_ITSELF_AS_A_BASE_TYPE,
+            )
+        };
+
+        // Avoid duplicate
+        if self
+            .ctx
+            .diagnostics
+            .iter()
+            .any(|diag| diag.code == code && diag.start == start)
+        {
             return;
         }
 
-        self.error_circular_class_inheritance(error_node_idx, class_idx);
-        let _ = end;
+        let name = symbol.escaped_name.clone();
+        let message = format_message(message_template, &[&name]);
+
+        let length = end.saturating_sub(start);
+        self.ctx.diagnostics.push(Diagnostic {
+            code,
+            category: DiagnosticCategory::Error,
+            message_text: message,
+            file: self.ctx.file_name.clone(),
+            start,
+            length,
+            related_information: Vec::new(),
+        });
     }
 }
