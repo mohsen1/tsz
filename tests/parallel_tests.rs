@@ -863,7 +863,7 @@ fn test_parallel_binding_produces_consistent_symbols() {
 
     // Bind multiple times
     let results1 = parse_and_bind_parallel(files.clone());
-    let results2 = parse_and_bind_parallel(files.clone());
+    let results2 = parse_and_bind_parallel(files);
 
     // Results should be structurally identical
     assert_eq!(results1.len(), results2.len());

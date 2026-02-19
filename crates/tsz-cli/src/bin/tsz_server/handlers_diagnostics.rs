@@ -11,7 +11,6 @@ use tsz::lsp::code_actions::{
 };
 use tsz::lsp::position::LineMap;
 use tsz::parser::ParserState;
-use tsz_parser::syntax_kind_ext;
 
 pub(crate) struct DiagnosticFormatInput<'a> {
     pub(crate) start_offset: u32,
@@ -284,120 +283,120 @@ impl Server {
             })
             .unwrap_or_default();
 
-        if let Some(file_path) = file {
-            if let Some((arena, binder, root, content)) = self.parse_and_bind_file(file_path) {
-                let line_map = LineMap::build(&content);
-                let provider = CodeActionProvider::new(
-                    &arena,
-                    &binder,
-                    &line_map,
-                    file_path.to_string(),
-                    &content,
-                );
+        if let Some(file_path) = file
+            && let Some((arena, binder, root, content)) = self.parse_and_bind_file(file_path)
+        {
+            let line_map = LineMap::build(&content);
+            let provider = CodeActionProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                file_path.to_string(),
+                &content,
+            );
 
-                let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
+            let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
 
-                let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
-                    .into_iter()
-                    .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
-                    .map(|d| tsz::lsp::diagnostics::LspDiagnostic {
-                        range: tsz::lsp::position::Range::new(
-                            line_map.offset_to_position(d.start, &content),
-                            line_map.offset_to_position(d.start + d.length, &content),
-                        ),
-                        message: d.message_text,
-                        code: Some(d.code),
-                        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
-                        source: Some("tsz".to_string()),
-                        related_information: None,
-                        reports_unnecessary: tsz::lsp::diagnostics::is_unnecessary_code(d.code)
-                            .then_some(true),
-                        reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
-                            .then_some(true),
-                    })
-                    .collect();
+            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+                .into_iter()
+                .filter(|d| error_codes.is_empty() || error_codes.contains(&d.code))
+                .map(|d| tsz::lsp::diagnostics::LspDiagnostic {
+                    range: tsz::lsp::position::Range::new(
+                        line_map.offset_to_position(d.start, &content),
+                        line_map.offset_to_position(d.start + d.length, &content),
+                    ),
+                    message: d.message_text,
+                    code: Some(d.code),
+                    severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+                    source: Some("tsz".to_string()),
+                    related_information: None,
+                    reports_unnecessary: tsz::lsp::diagnostics::is_unnecessary_code(d.code)
+                        .then_some(true),
+                    reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
+                        .then_some(true),
+                })
+                .collect();
 
-                let import_candidates = self.collect_import_candidates(file_path);
+            let import_candidates = self.collect_import_candidates(file_path);
 
-                let context = CodeActionContext {
-                    diagnostics: filtered_diagnostics,
-                    only: Some(vec![CodeActionKind::QuickFix]),
-                    import_candidates,
-                };
+            let context = CodeActionContext {
+                diagnostics: filtered_diagnostics,
+                only: Some(vec![CodeActionKind::QuickFix]),
+                import_candidates,
+            };
 
-                let range = tsz::lsp::position::Range::new(
-                    tsz::lsp::position::Position::new(0, 0),
-                    line_map.offset_to_position(content.len() as u32, &content),
-                );
+            let range = tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                line_map.offset_to_position(content.len() as u32, &content),
+            );
 
-                let actions = provider.provide_code_actions(root, range, context);
+            let actions = provider.provide_code_actions(root, range, context);
 
-                let response_actions: Vec<serde_json::Value> = actions
-                    .into_iter()
-                    .map(|action| {
-                        let mut changes = Vec::new();
-                        if let Some(edit) = action.edit {
-                            for (fname, edits) in edit.changes {
-                                let mut text_changes = Vec::new();
-                                for edit in edits {
-                                    text_changes.push(serde_json::json!({
-                                        "start": {
-                                            "line": edit.range.start.line + 1,
-                                            "offset": edit.range.start.character + 1
-                                        },
-                                        "end": {
-                                            "line": edit.range.end.line + 1,
-                                            "offset": edit.range.end.character + 1
-                                        },
-                                        "newText": edit.new_text
-                                    }));
-                                }
-                                changes.push(serde_json::json!({
-                                    "fileName": fname,
-                                    "textChanges": text_changes
+            let response_actions: Vec<serde_json::Value> = actions
+                .into_iter()
+                .map(|action| {
+                    let mut changes = Vec::new();
+                    if let Some(edit) = action.edit {
+                        for (fname, edits) in edit.changes {
+                            let mut text_changes = Vec::new();
+                            for edit in edits {
+                                text_changes.push(serde_json::json!({
+                                    "start": {
+                                        "line": edit.range.start.line + 1,
+                                        "offset": edit.range.start.character + 1
+                                    },
+                                    "end": {
+                                        "line": edit.range.end.line + 1,
+                                        "offset": edit.range.end.character + 1
+                                    },
+                                    "newText": edit.new_text
                                 }));
                             }
+                            changes.push(serde_json::json!({
+                                "fileName": fname,
+                                "textChanges": text_changes
+                            }));
                         }
+                    }
 
-                        let (fix_name, fix_id, fix_all_desc) = if let Some(data) = &action.data {
-                            (
-                                data.get("fixName")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("quickfix"),
-                                data.get("fixId").and_then(|v| v.as_str()),
-                                data.get("fixAllDescription").and_then(|v| v.as_str()),
-                            )
-                        } else {
-                            ("quickfix", None, None)
-                        };
+                    let (fix_name, fix_id, fix_all_desc) = if let Some(data) = &action.data {
+                        (
+                            data.get("fixName")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("quickfix"),
+                            data.get("fixId").and_then(|v| v.as_str()),
+                            data.get("fixAllDescription").and_then(|v| v.as_str()),
+                        )
+                    } else {
+                        ("quickfix", None, None)
+                    };
 
-                        let mut json_obj = serde_json::json!({
-                            "fixName": fix_name,
-                            "description": action.title,
-                            "changes": changes,
-                        });
+                    let mut json_obj = serde_json::json!({
+                        "fixName": fix_name,
+                        "description": action.title,
+                        "changes": changes,
+                    });
 
-                        if let Some(id) = fix_id {
-                            json_obj["fixId"] = serde_json::json!(id);
-                        }
-                        if let Some(desc) = fix_all_desc {
-                            json_obj["fixAllDescription"] = serde_json::json!(desc);
-                        }
+                    if let Some(id) = fix_id {
+                        json_obj["fixId"] = serde_json::json!(id);
+                    }
+                    if let Some(desc) = fix_all_desc {
+                        json_obj["fixAllDescription"] = serde_json::json!(desc);
+                    }
 
-                        json_obj
-                    })
-                    .collect();
+                    json_obj
+                })
+                .collect();
 
-                return TsServerResponse {
-                    seq,
-                    msg_type: "response".to_string(),
-                    command: "getCodeFixes".to_string(),
-                    request_seq: request.seq,
-                    success: true,
-                    message: None,
-                    body: Some(serde_json::json!(response_actions)),
-                };
-            }
+            return TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: "getCodeFixes".to_string(),
+                request_seq: request.seq,
+                success: true,
+                message: None,
+                body: Some(serde_json::json!(response_actions)),
+            };
         }
 
         self.stub_response(seq, request, Some(serde_json::json!([])))
@@ -485,110 +484,110 @@ impl Server {
 
         let fix_id = request.arguments.get("fixId").and_then(|v| v.as_str());
 
-        if let (Some(file_path), Some(fix_id)) = (file, fix_id) {
-            if let Some((arena, binder, root, content)) = self.parse_and_bind_file(file_path) {
-                let line_map = LineMap::build(&content);
-                let provider = CodeActionProvider::new(
-                    &arena,
-                    &binder,
-                    &line_map,
-                    file_path.to_string(),
-                    &content,
-                );
+        if let (Some(file_path), Some(fix_id)) = (file, fix_id)
+            && let Some((arena, binder, root, content)) = self.parse_and_bind_file(file_path)
+        {
+            let line_map = LineMap::build(&content);
+            let provider = CodeActionProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                file_path.to_string(),
+                &content,
+            );
 
-                let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
+            let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
 
-                let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
-                    .into_iter()
-                    .filter(|d| {
-                        CodeFixRegistry::fixes_for_error_code(d.code)
-                            .iter()
-                            .any(|(_, id, _, _)| *id == fix_id)
-                    })
-                    .map(|d| tsz::lsp::diagnostics::LspDiagnostic {
-                        range: tsz::lsp::position::Range::new(
-                            line_map.offset_to_position(d.start, &content),
-                            line_map.offset_to_position(d.start + d.length, &content),
-                        ),
-                        message: d.message_text,
-                        code: Some(d.code),
-                        severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
-                        source: Some("tsz".to_string()),
-                        related_information: None,
-                        reports_unnecessary: tsz::lsp::diagnostics::is_unnecessary_code(d.code)
-                            .then_some(true),
-                        reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
-                            .then_some(true),
-                    })
-                    .collect();
+            let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
+                .into_iter()
+                .filter(|d| {
+                    CodeFixRegistry::fixes_for_error_code(d.code)
+                        .iter()
+                        .any(|(_, id, _, _)| *id == fix_id)
+                })
+                .map(|d| tsz::lsp::diagnostics::LspDiagnostic {
+                    range: tsz::lsp::position::Range::new(
+                        line_map.offset_to_position(d.start, &content),
+                        line_map.offset_to_position(d.start + d.length, &content),
+                    ),
+                    message: d.message_text,
+                    code: Some(d.code),
+                    severity: Some(tsz::lsp::diagnostics::DiagnosticSeverity::Error),
+                    source: Some("tsz".to_string()),
+                    related_information: None,
+                    reports_unnecessary: tsz::lsp::diagnostics::is_unnecessary_code(d.code)
+                        .then_some(true),
+                    reports_deprecated: tsz::lsp::diagnostics::is_deprecated_code(d.code)
+                        .then_some(true),
+                })
+                .collect();
 
-                let import_candidates = if fix_id == "fixMissingImport" {
-                    self.collect_import_candidates(file_path)
-                } else {
-                    Vec::new()
-                };
+            let import_candidates = if fix_id == "fixMissingImport" {
+                self.collect_import_candidates(file_path)
+            } else {
+                Vec::new()
+            };
 
-                let context = CodeActionContext {
-                    diagnostics: filtered_diagnostics,
-                    only: Some(vec![CodeActionKind::QuickFix]),
-                    import_candidates,
-                };
+            let context = CodeActionContext {
+                diagnostics: filtered_diagnostics,
+                only: Some(vec![CodeActionKind::QuickFix]),
+                import_candidates,
+            };
 
-                let range = tsz::lsp::position::Range::new(
-                    tsz::lsp::position::Position::new(0, 0),
-                    line_map.offset_to_position(content.len() as u32, &content),
-                );
+            let range = tsz::lsp::position::Range::new(
+                tsz::lsp::position::Position::new(0, 0),
+                line_map.offset_to_position(content.len() as u32, &content),
+            );
 
-                let actions = provider.provide_code_actions(root, range, context);
+            let actions = provider.provide_code_actions(root, range, context);
 
-                let mut file_changes_map: rustc_hash::FxHashMap<
-                    String,
-                    Vec<tsz::lsp::rename::TextEdit>,
-                > = rustc_hash::FxHashMap::default();
+            let mut file_changes_map: rustc_hash::FxHashMap<
+                String,
+                Vec<tsz::lsp::rename::TextEdit>,
+            > = rustc_hash::FxHashMap::default();
 
-                for action in actions {
-                    if let Some(edit) = action.edit {
-                        for (fname, edits) in edit.changes {
-                            file_changes_map.entry(fname).or_default().extend(edits);
-                        }
+            for action in actions {
+                if let Some(edit) = action.edit {
+                    for (fname, edits) in edit.changes {
+                        file_changes_map.entry(fname).or_default().extend(edits);
                     }
                 }
+            }
 
-                let mut all_changes: Vec<serde_json::Value> = Vec::new();
-                for (fname, edits) in file_changes_map {
-                    let mut text_changes = Vec::new();
-                    for edit in edits {
-                        text_changes.push(serde_json::json!({
-                            "start": {
-                                "line": edit.range.start.line + 1,
-                                "offset": edit.range.start.character + 1
-                            },
-                            "end": {
-                                "line": edit.range.end.line + 1,
-                                "offset": edit.range.end.character + 1
-                            },
-                            "newText": edit.new_text
-                        }));
-                    }
-
-                    all_changes.push(serde_json::json!({
-                        "fileName": fname,
-                        "textChanges": text_changes
+            let mut all_changes: Vec<serde_json::Value> = Vec::new();
+            for (fname, edits) in file_changes_map {
+                let mut text_changes = Vec::new();
+                for edit in edits {
+                    text_changes.push(serde_json::json!({
+                        "start": {
+                            "line": edit.range.start.line + 1,
+                            "offset": edit.range.start.character + 1
+                        },
+                        "end": {
+                            "line": edit.range.end.line + 1,
+                            "offset": edit.range.end.character + 1
+                        },
+                        "newText": edit.new_text
                     }));
                 }
 
-                return TsServerResponse {
-                    seq,
-                    msg_type: "response".to_string(),
-                    command: "getCombinedCodeFix".to_string(),
-                    request_seq: request.seq,
-                    success: true,
-                    message: None,
-                    body: Some(serde_json::json!({
-                        "changes": all_changes
-                    })),
-                };
+                all_changes.push(serde_json::json!({
+                    "fileName": fname,
+                    "textChanges": text_changes
+                }));
             }
+
+            return TsServerResponse {
+                seq,
+                msg_type: "response".to_string(),
+                command: "getCombinedCodeFix".to_string(),
+                request_seq: request.seq,
+                success: true,
+                message: None,
+                body: Some(serde_json::json!({
+                    "changes": all_changes
+                })),
+            };
         }
 
         self.stub_response(seq, request, Some(serde_json::json!({"changes": []})))

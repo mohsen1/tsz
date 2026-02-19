@@ -16882,14 +16882,6 @@ fn test_sourcemap_semicolon_mapping() {
     let mappings_str = map["mappings"].as_str().expect("mappings string");
     let decoded = decode_mappings(mappings_str);
 
-    eprintln!("Output:\n{output}");
-    for m in &decoded {
-        eprintln!(
-            "  gen({}:{}) -> src({}:{})",
-            m.generated_line, m.generated_column, m.original_line, m.original_column
-        );
-    }
-
     // Check that `;` after `debugger` is mapped
     // debugger is on source line 1, `;` at col 12
     let has_debugger_semi = decoded
