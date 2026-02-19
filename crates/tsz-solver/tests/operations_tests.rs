@@ -4,7 +4,7 @@ use super::*;
 use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
-use crate::operations_property::PropertyAccessResult;
+use crate::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::types::{TypeData, Visibility};
 
 #[test]
