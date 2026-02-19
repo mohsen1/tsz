@@ -2051,7 +2051,7 @@ impl<'a> Printer<'a> {
                 self.emit_do_statement(node);
             }
             k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
-                self.emit_debugger_statement();
+                self.emit_debugger_statement(node);
             }
             k if k == syntax_kind_ext::WITH_STATEMENT => {
                 self.emit_with_statement(node);

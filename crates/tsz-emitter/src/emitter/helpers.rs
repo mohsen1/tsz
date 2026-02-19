@@ -150,6 +150,62 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Set `pending_source_pos` to the trailing `;` of a statement node.
+    /// Uses `find_token_end_before_trivia` to locate the last significant token,
+    /// then checks if that token was `;`.
+    pub(super) fn map_trailing_semicolon(&mut self, node: &Node) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = node.pos as usize;
+            let end = (node.end as usize).min(bytes.len());
+            let mut depth: i32 = 0;
+            let mut last_semi = None;
+            let mut i = start;
+            while i < end {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth < 0 {
+                            break;
+                        }
+                    }
+                    b';' if depth == 0 => last_semi = Some(i),
+                    b'\'' | b'"' | b'`' => {
+                        let quote = bytes[i];
+                        i += 1;
+                        while i < end && bytes[i] != quote {
+                            if bytes[i] == b'\\' {
+                                i += 1;
+                            }
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                        i += 2;
+                        while i < end && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                        i += 2;
+                        while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                            i += 1;
+                        }
+                        if i + 1 < end {
+                            i += 1;
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if let Some(pos) = last_semi {
+                self.pending_source_pos = Some(source_position_from_offset(text, pos as u32));
+            }
+        }
+    }
+
     // =========================================================================
     // Identifier Helpers
     // =========================================================================
