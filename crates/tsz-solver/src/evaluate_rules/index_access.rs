@@ -3,10 +3,11 @@
 //! Handles TypeScript's index access types: `T[K]`
 //! Including property access, array indexing, and tuple indexing.
 
+use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::subtype::TypeResolver;
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TupleElement,
-    TupleListId, TypeData, TypeId, TypeListId, TypeParamInfo,
+    IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId, ObjectShape, ObjectShapeId,
+    PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData, TypeId, TypeListId, TypeParamInfo,
 };
 use crate::utils;
 use crate::visitor::{
@@ -292,6 +293,41 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             self.evaluator
                 .recurse_index_access(inner_type, self.index_type),
         )
+    }
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        let mapped = self
+            .evaluator
+            .interner()
+            .mapped_type(MappedTypeId(mapped_id));
+
+        // Optimization: Mapped[K] -> Template[P/K] where K matches constraint
+        // This handles cases like `Ev<K>["callback"]` where Ev<K> is a mapped type
+        // over K, without needing to expand the mapped type (which fails for TypeParameter K).
+
+        // Only apply if no name remapping (as clause)
+        if mapped.name_type.is_none() && mapped.constraint == self.index_type {
+            let mut subst = TypeSubstitution::new();
+            subst.insert(mapped.type_param.name, self.index_type);
+
+            let mut value_type = self.evaluator.evaluate(instantiate_type(
+                self.evaluator.interner(),
+                mapped.template,
+                &subst,
+            ));
+
+            // Handle optional modifier
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                value_type = self
+                    .evaluator
+                    .interner()
+                    .union2(value_type, TypeId::UNDEFINED);
+            }
+
+            return Some(value_type);
+        }
+
+        None
     }
 
     fn visit_template_literal(&mut self, _template_id: u32) -> Self::Output {
