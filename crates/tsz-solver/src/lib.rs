@@ -224,6 +224,9 @@ mod keyof_comprehensive_tests;
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/narrowing_comprehensive_tests.rs"]
+mod narrowing_comprehensive_tests;
+#[cfg(test)]
 #[path = "../tests/template_literal_comprehensive_tests.rs"]
 mod template_literal_comprehensive_tests;
 #[cfg(test)]

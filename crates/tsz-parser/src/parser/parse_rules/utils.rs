@@ -65,10 +65,10 @@ pub fn look_ahead_is_module_declaration(
     current_token: SyntaxKind,
 ) -> bool {
     look_ahead_is(scanner, current_token, |token| {
-        matches!(
-            token,
-            SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
-        ) || is_identifier_or_keyword(token)
+        matches!(token, SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken)
+            || (token == SyntaxKind::Identifier
+                || (tsz_scanner::token_is_keyword(token)
+                    && !tsz_scanner::token_is_reserved_word(token)))
     })
 }
 
