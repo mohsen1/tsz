@@ -778,7 +778,7 @@ impl<'a> Printer<'a> {
         };
 
         self.map_opening_brace(node);
-        self.write("{");
+        self.write_with_end_marker("{");
         self.write_line();
         self.increase_indent();
 
@@ -788,7 +788,7 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.map_closing_brace(node);
-        self.write("}");
+        self.write_with_end_marker("}");
     }
 
     pub(super) fn emit_case_clause(&mut self, node: &Node) {

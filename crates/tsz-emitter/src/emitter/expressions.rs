@@ -1024,8 +1024,14 @@ impl<'a> Printer<'a> {
         self.write("new ");
         self.emit(call.expression);
         if let Some(ref args) = call.arguments {
+            // Map opening `(` — scan forward from callee end
+            if let Some(expr_node) = self.arena.get(call.expression) {
+                self.map_token_after(expr_node.end, node.end, b'(');
+            }
             self.write("(");
             self.emit_comma_separated(&args.nodes);
+            // Map closing `)` — scan backward from node end
+            self.map_closing_paren(node);
             self.write(")");
             return;
         }
