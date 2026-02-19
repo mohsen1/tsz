@@ -150,6 +150,8 @@ fn query_relation_redeclaration_identity_uses_compat_identity_rules() {
     let interner = TypeInterner::new();
     let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
 
+    // any is NOT identical to non-any types for redeclaration (TS2403).
+    // var x: any; var x: string; should error because types differ.
     let any_to_string = query_relation(
         &interner,
         TypeId::ANY,
@@ -166,9 +168,28 @@ fn query_relation_redeclaration_identity_uses_compat_identity_rules() {
         policy,
         RelationContext::default(),
     );
+    // Same type should be identical
+    let string_to_string = query_relation(
+        &interner,
+        TypeId::STRING,
+        TypeId::STRING,
+        RelationKind::RedeclarationIdentical,
+        policy,
+        RelationContext::default(),
+    );
 
-    assert!(any_to_string.is_related());
-    assert!(!number_to_string.is_related());
+    assert!(
+        !any_to_string.is_related(),
+        "any !== string for redeclaration"
+    );
+    assert!(
+        !number_to_string.is_related(),
+        "number !== string for redeclaration"
+    );
+    assert!(
+        string_to_string.is_related(),
+        "string === string for redeclaration"
+    );
 }
 
 #[test]

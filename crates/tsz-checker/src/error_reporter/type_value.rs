@@ -23,10 +23,17 @@ impl<'a> CheckerState<'a> {
         current_type: TypeId,
         idx: NodeIndex,
     ) {
-        // Suppress only for ERROR types to avoid cascading diagnostics.
-        // NOTE: `any` must NOT be suppressed here — tsc emits TS2403 for
-        // `var x: any; var x = 2;` because `any` is not identical to `number`.
-        if prev_type == TypeId::ERROR || current_type == TypeId::ERROR {
+        // Suppress for ERROR and UNKNOWN types.
+        // ERROR: avoids cascading diagnostics from unresolved types.
+        // UNKNOWN: when a lib global (console, Math, etc.) can't be properly
+        // typed, it resolves to `unknown`. Comparing against `unknown` always
+        // fails and produces false positives. TSC's libs properly type all
+        // globals, so this situation only arises from incomplete lib coverage.
+        if prev_type == TypeId::ERROR
+            || current_type == TypeId::ERROR
+            || prev_type == TypeId::UNKNOWN
+            || current_type == TypeId::UNKNOWN
+        {
             return;
         }
         if let Some(loc) = self.get_source_location(idx) {

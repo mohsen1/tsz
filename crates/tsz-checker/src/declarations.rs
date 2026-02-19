@@ -788,11 +788,14 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // TS2433/TS2434: Check namespace merging with class/function
             // A namespace declaration cannot be in a different file from a class/function
             // with which it is merged (TS2433), or located prior to the class/function (TS2434).
-            // Only check for non-ambient, non-string-named, instantiated modules (namespaces)
+            // Only check for non-ambient, non-string-named, INSTANTIATED modules.
+            // Uninstantiated namespaces (containing only interfaces/type aliases) are allowed
+            // to precede a class/function they merge with.
             if !has_declare
                 && !is_string_named
                 && !module.body.is_none()
                 && !self.is_in_ambient_context(module_idx)
+                && self.is_namespace_declaration_instantiated(module_idx)
             {
                 self.check_namespace_merges_with_class_or_function(module_idx, module);
             }
@@ -1786,6 +1789,65 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // Only report error once (for the first matching class/function)
             break;
         }
+    }
+
+    /// Check if a namespace declaration is instantiated (contains runtime code).
+    /// Uninstantiated namespaces only contain interfaces, type aliases, etc.
+    fn is_namespace_declaration_instantiated(&self, namespace_idx: NodeIndex) -> bool {
+        let Some(namespace_node) = self.ctx.arena.get(namespace_idx) else {
+            return false;
+        };
+        if namespace_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+            return false;
+        }
+        let Some(module_decl) = self.ctx.arena.get_module(namespace_node) else {
+            return false;
+        };
+        self.module_body_has_runtime_members(module_decl.body)
+    }
+
+    fn module_body_has_runtime_members(&self, body_idx: NodeIndex) -> bool {
+        if body_idx.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return false;
+        };
+        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+            return self.is_namespace_declaration_instantiated(body_idx);
+        }
+        if body_node.kind != syntax_kind_ext::MODULE_BLOCK {
+            return false;
+        }
+        let Some(module_block) = self.ctx.arena.get_module_block(body_node) else {
+            return false;
+        };
+        let Some(statements) = &module_block.statements else {
+            return false;
+        };
+        for &statement_idx in &statements.nodes {
+            let Some(statement_node) = self.ctx.arena.get(statement_idx) else {
+                continue;
+            };
+            match statement_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::ENUM_DECLARATION
+                    || k == syntax_kind_ext::EXPRESSION_STATEMENT
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
+                    return true;
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if self.is_namespace_declaration_instantiated(statement_idx) {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
     }
 
     /// Get the source file path of a node's declaration.

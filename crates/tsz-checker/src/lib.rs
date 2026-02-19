@@ -134,6 +134,9 @@ mod definite_assignment_tests;
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]
+#[path = "../tests/enum_merge_tests.rs"]
+mod enum_merge_tests;
+#[cfg(test)]
 #[path = "../tests/no_filename_based_behavior_tests.rs"]
 mod no_filename_based_behavior_tests;
 #[cfg(test)]
@@ -163,6 +166,9 @@ mod ts2411_tests;
 #[cfg(test)]
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
+#[cfg(test)]
+#[path = "../tests/ts2558_new_type_args_tests.rs"]
+mod ts2558_new_type_args_tests;
 #[cfg(test)]
 #[path = "../tests/ts6133_unused_type_params_tests.rs"]
 mod ts6133_unused_type_params_tests;

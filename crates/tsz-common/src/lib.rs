@@ -40,3 +40,4 @@ pub mod diagnostics;
 // Compiler options for type checking (shared by solver and checker)
 pub mod checker_options;
 pub use checker_options::CheckerOptions;
+pub mod numeric;

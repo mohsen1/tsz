@@ -661,8 +661,10 @@ impl<'a> CheckerState<'a> {
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
 
-        // ALSO scan members array directly for own index signatures
-        // The type might not include the interface's own index signatures yet
+        // Scan members for own index signatures and detect duplicates (TS2374)
+        let mut string_index_nodes: Vec<NodeIndex> = Vec::new();
+        let mut number_index_nodes: Vec<NodeIndex> = Vec::new();
+
         for &member_idx in members {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
@@ -710,17 +712,39 @@ impl<'a> CheckerState<'a> {
             // Store the index signature based on parameter type
             // Own index signatures take priority over inherited ones
             if param_type == TypeId::NUMBER {
+                number_index_nodes.push(member_idx);
                 index_info.number_index = Some(tsz_solver::IndexSignature {
                     key_type: TypeId::NUMBER,
                     value_type,
                     readonly: false,
                 });
             } else if param_type == TypeId::STRING {
+                string_index_nodes.push(member_idx);
                 index_info.string_index = Some(tsz_solver::IndexSignature {
                     key_type: TypeId::STRING,
                     value_type,
                     readonly: false,
                 });
+            }
+        }
+
+        // TS2374: Duplicate index signature for type 'string'/'number'
+        if string_index_nodes.len() > 1 {
+            for &node_idx in &string_index_nodes {
+                self.error_at_node_msg(
+                    node_idx,
+                    crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                    &["string"],
+                );
+            }
+        }
+        if number_index_nodes.len() > 1 {
+            for &node_idx in &number_index_nodes {
+                self.error_at_node_msg(
+                    node_idx,
+                    crate::diagnostics::diagnostic_codes::DUPLICATE_INDEX_SIGNATURE_FOR_TYPE,
+                    &["number"],
+                );
             }
         }
 
