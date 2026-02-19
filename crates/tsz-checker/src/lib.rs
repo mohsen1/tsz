@@ -86,6 +86,7 @@ mod state_class_checking;
 mod state_property_checking;
 pub mod state_type_analysis;
 mod state_type_analysis_computed;
+mod state_type_analysis_computed_helpers;
 mod state_type_analysis_cross_file;
 pub mod state_type_environment;
 pub mod state_type_resolution;
