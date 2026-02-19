@@ -16853,3 +16853,93 @@ fn test_computed_property_object_literal_bracket_mapping() {
         bracket_line, bracket_col, decoded, output
     );
 }
+
+/// Compare tsz source map output against tsc's baseline for the
+/// `computedPropertyNamesSourceMap1_ES6` conformance test.
+#[test]
+fn test_sourcemap_parity_computed_property_names_es6() {
+    // Source from the conformance test (note: uses tabs for indentation)
+    let source = "class C {\n\
+                       \x20\x20\x20\x20[\"hello\"]() {\n\
+                       \x20\x20\x20\x20\x20\x20\x20\x20debugger;\n\
+                   \t}\n\
+                   \tget [\"goodbye\"]() {\n\
+                   \t\treturn 0;\n\
+                   \t}\n\
+                   }";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let tsz_decoded = decode_mappings(mappings_str);
+
+    // tsc baseline mappings (from computedPropertyNamesSourceMap1_ES6.js.map)
+    let tsc_mappings = ";AAAA,MAAM,CAAC;IACH,CAAC,OAAO,CAAC;QACL,QAAQ,CAAC;IAChB,CAAC;IACD,IAAI,CAAC,SAAS,CAAC;QACd,OAAO,CAAC,CAAC;IACV,CAAC;CACD";
+    let tsc_decoded = decode_mappings(tsc_mappings);
+
+    // tsc emits "use strict"; on line 0, shifting generated lines by 1.
+    // Adjust tsc mappings by subtracting 1 from generated_line for comparison.
+    let mut missing = Vec::new();
+    for tsc_m in &tsc_decoded {
+        let adjusted_gen_line = tsc_m.generated_line.saturating_sub(1);
+        let found = tsz_decoded.iter().any(|tsz_m| {
+            tsz_m.generated_line == adjusted_gen_line
+                && tsz_m.generated_column == tsc_m.generated_column
+                && tsz_m.original_line == tsc_m.original_line
+                && tsz_m.original_column == tsc_m.original_column
+        });
+        if !found {
+            missing.push((tsc_m, adjusted_gen_line));
+        }
+    }
+
+    // Track parity progress: fail if we regress (more missing than expected).
+    // Update EXPECTED_MISSING as we fix more mappings.
+    const EXPECTED_MISSING: usize = 10;
+    let num_missing = missing.len();
+    if num_missing > EXPECTED_MISSING {
+        let mut msg = format!(
+            "REGRESSION: {num_missing} tsc mappings missing (expected at most {EXPECTED_MISSING}):\n",
+        );
+        for (m, adj_line) in &missing {
+            msg.push_str(&format!(
+                "  tsc gen({}:{}) [adj gen({}:{})] -> src({}:{}) [tsz missing]\n",
+                m.generated_line,
+                m.generated_column,
+                adj_line,
+                m.generated_column,
+                m.original_line,
+                m.original_column
+            ));
+        }
+        msg.push_str(&format!("\ntsz mappings ({}):\n", tsz_decoded.len()));
+        for m in &tsz_decoded {
+            msg.push_str(&format!(
+                "  gen({}:{}) -> src({}:{})\n",
+                m.generated_line, m.generated_column, m.original_line, m.original_column
+            ));
+        }
+        msg.push_str(&format!("\nOutput:\n{output}"));
+        panic!("{msg}");
+    }
+    if num_missing < EXPECTED_MISSING {
+        panic!(
+            "IMPROVEMENT: only {num_missing} tsc mappings missing (was {EXPECTED_MISSING}). \
+             Update EXPECTED_MISSING to {num_missing}."
+        );
+    }
+}

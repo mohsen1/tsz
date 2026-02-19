@@ -1,6 +1,6 @@
 use super::Printer;
 use crate::printer::safe_slice;
-use crate::source_writer::SourcePosition;
+use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -86,6 +86,68 @@ impl<'a> Printer<'a> {
     /// Decrease indentation.
     pub(super) const fn decrease_indent(&mut self) {
         self.writer.decrease_indent();
+    }
+
+    // =========================================================================
+    // Source Map Helpers
+    // =========================================================================
+
+    /// Set `pending_source_pos` to the closing `}` position of a block/node.
+    /// Scans backwards from node.end to find the `}` in the source text.
+    pub(super) fn map_closing_brace(&mut self, node: &Node) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = self.skip_trivia_forward(node.pos, node.end) as usize;
+            let end = (node.end as usize).min(bytes.len());
+            // Find the matching `}` by tracking brace depth from the opening `{`
+            let mut depth: i32 = 0;
+            let mut closing_pos = None;
+            let mut i = start;
+            while i < end {
+                match bytes[i] {
+                    b'{' => depth += 1,
+                    b'}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            closing_pos = Some(i);
+                            break;
+                        }
+                    }
+                    b'"' | b'\'' | b'`' => {
+                        // Skip string literals to avoid counting braces inside strings
+                        let quote = bytes[i];
+                        i += 1;
+                        while i < end && bytes[i] != quote {
+                            if bytes[i] == b'\\' {
+                                i += 1; // skip escaped char
+                            }
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'/' => {
+                        // Skip line comments
+                        while i < end && bytes[i] != b'\n' {
+                            i += 1;
+                        }
+                    }
+                    b'/' if i + 1 < end && bytes[i + 1] == b'*' => {
+                        // Skip block comments
+                        i += 2;
+                        while i + 1 < end && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                            i += 1;
+                        }
+                        if i + 1 < end {
+                            i += 1; // skip past */
+                        }
+                    }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if let Some(pos) = closing_pos {
+                self.pending_source_pos = Some(source_position_from_offset(text, pos as u32));
+            }
+        }
     }
 
     // =========================================================================
