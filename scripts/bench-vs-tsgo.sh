@@ -51,6 +51,14 @@ UTILITY_TYPES_REPO="${UTILITY_TYPES_REPO:-https://github.com/piotrwitek/utility-
 # pinned to v3.11.0 commit for reproducible benchmarks
 UTILITY_TYPES_REF="${UTILITY_TYPES_REF:-2ee1f6ecb241651ab22390fee7ee5349942efda2}"
 UTILITY_TYPES_DIR="$EXTERNAL_BENCH_DIR/utility-types"
+TS_TOOLBELT_REPO="${TS_TOOLBELT_REPO:-https://github.com/millsp/ts-toolbelt.git}"
+# pinned commit for reproducible benchmarks
+TS_TOOLBELT_REF="${TS_TOOLBELT_REF:-b8a49285e3ed3a7d8bb8e0b433389eac46a5f140}"
+TS_TOOLBELT_DIR="$EXTERNAL_BENCH_DIR/ts-toolbelt"
+TS_ESSENTIALS_REPO="${TS_ESSENTIALS_REPO:-https://github.com/ts-essentials/ts-essentials.git}"
+# pinned commit for reproducible benchmarks
+TS_ESSENTIALS_REF="${TS_ESSENTIALS_REF:-5abe8700b42068048bd3c368e0531b6defe56558}"
+TS_ESSENTIALS_DIR="$EXTERNAL_BENCH_DIR/ts-essentials"
 NEXTJS_REPO="${NEXTJS_REPO:-https://github.com/vercel/next.js.git}"
 # pinned canary commit for reproducible benchmarks
 NEXTJS_REF="${NEXTJS_REF:-09851e208cc62c8b6fe7a953b42c88e843129178}"
@@ -91,6 +99,8 @@ while [[ $# -gt 0 ]]; do
             echo "  TSC_NPM_SPEC=<spec>    Override pinned typescript npm version"
             echo "  TSZ_LIB_DIR=<path>     Override tsz lib assets (default: $TSZ_LIB_DIR_DEFAULT)"
             echo "  UTILITY_TYPES_REF=<sha> Override pinned utility-types commit"
+            echo "  TS_TOOLBELT_REF=<sha>  Override pinned ts-toolbelt commit"
+            echo "  TS_ESSENTIALS_REF=<sha> Override pinned ts-essentials commit"
             echo "  NEXTJS_REF=<sha>       Override pinned next.js commit"
             exit 0
             ;;
@@ -686,6 +696,52 @@ ensure_utility_types_fixture() {
     fi
 }
 
+ensure_ts_toolbelt_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$TS_TOOLBELT_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning ts-toolbelt fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_DIR"
+    fi
+
+    if [ -n "$(git -C "$TS_TOOLBELT_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}ts-toolbelt fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$TS_TOOLBELT_DIR"
+        git clone --quiet --no-tags --depth 1 "$TS_TOOLBELT_REPO" "$TS_TOOLBELT_DIR"
+    fi
+
+    local current_ref
+    current_ref="$(git -C "$TS_TOOLBELT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+    if [ "$current_ref" != "$TS_TOOLBELT_REF" ]; then
+        echo -e "${CYAN}Pinning ts-toolbelt to ${TS_TOOLBELT_REF:0:12}...${NC}"
+        git -C "$TS_TOOLBELT_DIR" fetch --quiet --depth 1 origin "$TS_TOOLBELT_REF"
+        git -C "$TS_TOOLBELT_DIR" checkout --quiet --detach FETCH_HEAD
+    fi
+}
+
+ensure_ts_essentials_fixture() {
+    mkdir -p "$EXTERNAL_BENCH_DIR"
+
+    if [ ! -d "$TS_ESSENTIALS_DIR/.git" ]; then
+        echo -e "${CYAN}Cloning ts-essentials fixture...${NC}"
+        git clone --quiet --no-tags --depth 1 "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_DIR"
+    fi
+
+    if [ -n "$(git -C "$TS_ESSENTIALS_DIR" status --porcelain 2>/dev/null)" ]; then
+        echo -e "${YELLOW}ts-essentials fixture is dirty; recloning for reproducibility...${NC}"
+        rm -rf "$TS_ESSENTIALS_DIR"
+        git clone --quiet --no-tags --depth 1 "$TS_ESSENTIALS_REPO" "$TS_ESSENTIALS_DIR"
+    fi
+
+    local current_ref
+    current_ref="$(git -C "$TS_ESSENTIALS_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+    if [ "$current_ref" != "$TS_ESSENTIALS_REF" ]; then
+        echo -e "${CYAN}Pinning ts-essentials to ${TS_ESSENTIALS_REF:0:12}...${NC}"
+        git -C "$TS_ESSENTIALS_DIR" fetch --quiet --depth 1 origin "$TS_ESSENTIALS_REF"
+        git -C "$TS_ESSENTIALS_DIR" checkout --quiet --detach FETCH_HEAD
+    fi
+}
+
 run_utility_types_benchmarks() {
     local benchmark_names=(
         "utility-types/index.ts"
@@ -732,6 +788,108 @@ run_utility_types_benchmarks() {
         local full_path="$UTILITY_TYPES_DIR/$rel"
         if [ -f "$full_path" ]; then
             run_benchmark "utility-types/${rel#src/}" "$full_path" "$lib_args"
+            echo
+        fi
+    done
+}
+
+run_ts_toolbelt_benchmarks() {
+    local benchmark_names=(
+        "ts-toolbelt/Iteration/Iteration.ts"
+        "ts-toolbelt/Misc/BuiltIn.ts"
+        "ts-toolbelt/Object/Invert.ts"
+        "ts-toolbelt/Any/Compute.ts"
+    )
+
+    local should_run=false
+    local name
+    for name in "${benchmark_names[@]}"; do
+        if is_benchmark_selected "$name"; then
+            should_run=true
+            break
+        fi
+    done
+
+    if [ "$should_run" != true ]; then
+        return
+    fi
+
+    print_header "Real-world External Library - ts-toolbelt"
+    ensure_ts_toolbelt_fixture
+    echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
+
+    # Run as isolated file probes with stable baseline compiler options.
+    local lib_args="--lib es2020 --moduleResolution node16 --module node16"
+
+    local files
+    if [ "$QUICK_MODE" = true ]; then
+        files=("sources/Iteration/Iteration.ts")
+    else
+        files=(
+            "sources/Iteration/Iteration.ts"
+            "sources/Misc/BuiltIn.ts"
+            "sources/Object/Invert.ts"
+            "sources/Any/Compute.ts"
+        )
+    fi
+
+    local rel
+    for rel in "${files[@]}"; do
+        local full_path="$TS_TOOLBELT_DIR/$rel"
+        if [ -f "$full_path" ]; then
+            run_benchmark "ts-toolbelt/${rel#sources/}" "$full_path" "$lib_args"
+            echo
+        fi
+    done
+}
+
+run_ts_essentials_benchmarks() {
+    local benchmark_names=(
+        "ts-essentials/xor.ts"
+        "ts-essentials/paths.ts"
+        "ts-essentials/deep-pick.ts"
+        "ts-essentials/deep-readonly.ts"
+    )
+
+    local should_run=false
+    local name
+    for name in "${benchmark_names[@]}"; do
+        if is_benchmark_selected "$name"; then
+            should_run=true
+            break
+        fi
+    done
+
+    if [ "$should_run" != true ]; then
+        return
+    fi
+
+    print_header "Real-world External Library - ts-essentials"
+    ensure_ts_essentials_fixture
+    echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
+
+    # Run as isolated file probes with stable baseline compiler options.
+    local lib_args="--lib es2020 --moduleResolution node16 --module node16"
+
+    local files
+    if [ "$QUICK_MODE" = true ]; then
+        files=("lib/paths/index.ts")
+    else
+        files=(
+            "lib/xor/index.ts"
+            "lib/paths/index.ts"
+            "lib/deep-pick/index.ts"
+            "lib/deep-readonly/index.ts"
+        )
+    fi
+
+    local rel
+    for rel in "${files[@]}"; do
+        local full_path="$TS_ESSENTIALS_DIR/$rel"
+        if [ -f "$full_path" ]; then
+            local label
+            label="$(echo "${rel#lib/}" | sed 's#/index.ts$#.ts#')"
+            run_benchmark "ts-essentials/$label" "$full_path" "$lib_args"
             echo
         fi
     done
@@ -1971,6 +2129,8 @@ main() {
     fi  # End of medium/small files skip
 
     run_utility_types_benchmarks
+    run_ts_toolbelt_benchmarks
+    run_ts_essentials_benchmarks
     run_nextjs_benchmarks
     
     print_header "Synthetic Benchmarks - Scaling Test"
