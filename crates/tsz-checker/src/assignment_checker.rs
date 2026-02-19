@@ -802,6 +802,17 @@ impl<'a> CheckerState<'a> {
 
         self.check_strict_assignment_target(left_idx);
 
+        // Compound assignments read the LHS before writing, so the LHS identifier
+        // must go through definite assignment analysis (TS2454). Without this,
+        // `var x: number; x += 1;` would not trigger "used before assigned".
+        if let Some(left_node) = self.ctx.arena.get(left_idx)
+            && left_node.kind == SyntaxKind::Identifier as u16
+            && let Some(sym_id) = self.resolve_identifier_symbol(left_idx)
+        {
+            let declared_type = self.get_type_of_symbol(sym_id);
+            self.check_flow_usage(left_idx, declared_type, sym_id);
+        }
+
         let left_target = self.get_type_of_assignment_target(left_idx);
         let left_type = self.resolve_type_query_type(left_target);
 
