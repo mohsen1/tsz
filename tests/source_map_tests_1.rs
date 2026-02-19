@@ -16911,6 +16911,176 @@ fn test_sourcemap_semicolon_mapping() {
     );
 }
 
+/// Verify source map mappings for try/catch/finally blocks.
+#[test]
+fn test_sourcemap_try_catch_finally() {
+    let source = "try {\n    throw new Error();\n} catch (e) {\n    console.log(e);\n} finally {\n    cleanup();\n}";
+    // Line 0: try {
+    // Line 1:     throw new Error();
+    // Line 2: } catch (e) {
+    // Line 3:     console.log(e);
+    // Line 4: } finally {
+    // Line 5:     cleanup();
+    // Line 6: }
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let decoded = decode_mappings(mappings_str);
+
+    // Verify key mappings exist
+    // `try` keyword at src(0:0)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 0 && m.original_column == 0),
+        "Expected mapping for `try` keyword at src(0:0)"
+    );
+    // `throw` keyword at src(1:4)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 1 && m.original_column == 4),
+        "Expected mapping for `throw` keyword at src(1:4)"
+    );
+    // `catch` somewhere on line 2
+    assert!(
+        decoded.iter().any(|m| m.original_line == 2),
+        "Expected mapping on catch line (src line 2)"
+    );
+    // `console` at src(3:4)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 3 && m.original_column == 4),
+        "Expected mapping for `console.log(e)` at src(3:4)"
+    );
+    // `finally` somewhere on line 4
+    assert!(
+        decoded.iter().any(|m| m.original_line == 4),
+        "Expected mapping on finally line (src line 4)"
+    );
+    // `cleanup` at src(5:4)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 5 && m.original_column == 4),
+        "Expected mapping for `cleanup()` at src(5:4)"
+    );
+    // closing `}` on line 6
+    assert!(
+        decoded.iter().any(|m| m.original_line == 6),
+        "Expected mapping on closing brace line (src line 6)"
+    );
+    // Semicolons: `;` after `throw new Error()` at src(1:21)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 1 && m.original_column == 21),
+        "Expected mapping for `;` after `throw new Error()` at src(1:21)"
+    );
+
+    assert!(output.contains("try {"), "Output should contain 'try {{'");
+    assert!(
+        output.contains("catch (e)"),
+        "Output should contain 'catch (e)'"
+    );
+}
+
+/// Verify source map mappings for for-loop and if/else statements.
+#[test]
+fn test_sourcemap_for_loop_and_if_else() {
+    let source = "for (let i = 0; i < 10; i++) {\n    if (i > 5) {\n        break;\n    } else {\n        continue;\n    }\n}";
+    // Line 0: for (let i = 0; i < 10; i++) {
+    // Line 1:     if (i > 5) {
+    // Line 2:         break;
+    // Line 3:     } else {
+    // Line 4:         continue;
+    // Line 5:     }
+    // Line 6: }
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+    let decoded = decode_mappings(mappings_str);
+
+    // `for` keyword at src(0:0)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 0 && m.original_column == 0),
+        "Expected mapping for `for` keyword at src(0:0)"
+    );
+    // `if` keyword at src(1:4)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 1 && m.original_column == 4),
+        "Expected mapping for `if` keyword at src(1:4)"
+    );
+    // `break` at src(2:8)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 2 && m.original_column == 8),
+        "Expected mapping for `break` at src(2:8)"
+    );
+    // `break;` semicolon at src(2:13)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 2 && m.original_column == 13),
+        "Expected mapping for `;` after `break` at src(2:13)"
+    );
+    // `continue` at src(4:8)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 4 && m.original_column == 8),
+        "Expected mapping for `continue` at src(4:8)"
+    );
+    // `continue;` semicolon at src(4:16)
+    assert!(
+        decoded
+            .iter()
+            .any(|m| m.original_line == 4 && m.original_column == 16),
+        "Expected mapping for `;` after `continue` at src(4:16)"
+    );
+
+    assert!(
+        output.contains("for (let i = 0;"),
+        "Output should contain for loop"
+    );
+}
+
 /// Compare tsz source map output against tsc's baseline for the
 /// `computedPropertyNamesSourceMap1_ES6` conformance test.
 #[test]
