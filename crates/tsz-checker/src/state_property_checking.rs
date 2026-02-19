@@ -372,9 +372,10 @@ impl<'a> CheckerState<'a> {
             // Check if the property exists in the target type
             let target_prop = target_props.iter().find(|p| p.name == prop_atom);
             if target_prop.is_none()
-                && let Some(ext) = self.ctx.arena.get_extended(elem_idx) {
-                    self.error_excess_property_at(&prop_name, target_type, ext.parent);
-                }
+                && let Some(ext) = self.ctx.arena.get_extended(elem_idx)
+            {
+                self.error_excess_property_at(&prop_name, target_type, ext.parent);
+            }
         }
     }
 

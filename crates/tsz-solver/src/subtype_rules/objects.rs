@@ -10,9 +10,7 @@
 //!   - Readonly target properties only check read type (no write access)
 //! - Private brand checking for nominal class typing
 
-use crate::types::{
-    ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, PropertyLookup, TypeId, Visibility,
-};
+use crate::types::{ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility};
 use crate::utils;
 use tsz_common::interner::Atom;
 
@@ -26,19 +24,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         shape_id: Option<ObjectShapeId>,
         name: Atom,
     ) -> Option<&'props PropertyInfo> {
-        if let Some(shape_id) = shape_id {
-            match self.interner.object_property_index(shape_id, name) {
-                PropertyLookup::Found(idx) => return props.get(idx),
-                PropertyLookup::NotFound => return None,
-                PropertyLookup::Uncached => {}
-            }
-        }
-        // Properties are sorted by Atom (u32), so use binary search for O(log N)
-        // instead of linear scan O(N).
-        props
-            .binary_search_by_key(&name, |p| p.name)
-            .ok()
-            .map(|idx| &props[idx])
+        crate::utils::lookup_property(self.interner, props, shape_id, name)
     }
 
     /// Check private brand compatibility for object subtyping.

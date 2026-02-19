@@ -12,7 +12,7 @@
 
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, LiteralValue, ObjectShape, ObjectShapeId,
-    ParamInfo, PropertyInfo, PropertyLookup, TupleElement, TypeData, TypeId,
+    ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId,
 };
 use crate::utils;
 use crate::visitor;
@@ -663,14 +663,7 @@ impl<'a> InferenceContext<'a> {
         shape_id: Option<ObjectShapeId>,
         name: Atom,
     ) -> Option<&'props PropertyInfo> {
-        if let Some(shape_id) = shape_id {
-            match self.interner.object_property_index(shape_id, name) {
-                PropertyLookup::Found(idx) => return props.get(idx),
-                PropertyLookup::NotFound => return None,
-                PropertyLookup::Uncached => {}
-            }
-        }
-        props.iter().find(|p| p.name == name)
+        crate::utils::lookup_property(self.interner, props, shape_id, name)
     }
 
     fn object_subtype_of(
