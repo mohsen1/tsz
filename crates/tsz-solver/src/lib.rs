@@ -197,6 +197,9 @@ mod isomorphism_tests;
 mod isomorphism_validation;
 // solver_refactoring_tests: kept in root crate (depends on checker types)
 #[cfg(test)]
+#[path = "../tests/conditional_comprehensive_tests.rs"]
+mod conditional_comprehensive_tests;
+#[cfg(test)]
 #[path = "../tests/keyof_comprehensive_tests.rs"]
 mod keyof_comprehensive_tests;
 #[cfg(test)]
