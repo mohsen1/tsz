@@ -2058,6 +2058,13 @@ impl<'a> Printer<'a> {
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 self.emit_export_declaration(node);
             }
+            k if k == syntax_kind_ext::NAMESPACE_EXPORT => {
+                // `* as name` in `export * as name from "..."`
+                if let Some(data) = self.arena.get_named_imports(node) {
+                    self.write("* as ");
+                    self.emit(data.name);
+                }
+            }
             k if k == syntax_kind_ext::NAMED_EXPORTS => {
                 self.emit_named_exports(node);
             }
