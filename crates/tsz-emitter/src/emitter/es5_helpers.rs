@@ -789,8 +789,13 @@ impl<'a> Printer<'a> {
         // marks `this` references with SubstituteThis to emit `_this` instead.
 
         if func.is_async {
-            let this_expr = if _captures_this { "_this" } else { "this" };
-            self.emit_async_function_es5(func, "", this_expr);
+            // Arrow functions don't have their own `this`. In ES5 lowering:
+            // - If body uses `this`: capture with `_this` and pass to __awaiter
+            // - If body doesn't use `this`: pass `void 0` to __awaiter
+            let this_expr = if _captures_this { "_this" } else { "void 0" };
+            // TSC wraps async arrow→function conversions inline:
+            // function () { return __awaiter(void 0, ..., function () { ... }); };
+            self.emit_async_arrow_es5_inline(func, this_expr);
         } else {
             self.write("function (");
             let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
@@ -985,6 +990,82 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
+    /// Emit an ES5 async arrow function with inline body wrapping.
+    /// TSC format: `function () { return __awaiter(void 0, ..., function () { ... }); };`
+    fn emit_async_arrow_es5_inline(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        this_expr: &str,
+    ) {
+        self.push_temp_scope();
+        self.write("function (");
+        // ES5: apply destructuring/default transforms
+        let param_transforms = self.emit_function_parameters_es5(&func.parameters.nodes);
+        let has_param_transforms = param_transforms.has_transforms();
+
+        if has_param_transforms {
+            // If parameters need transforms (destructuring, defaults), fall back to
+            // multi-line format since we need prologue statements
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.emit_param_prologue(&param_transforms);
+        }
+
+        // Build the __generator body
+        let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
+        async_emitter.set_indent_level(self.writer.indent_level() + 1);
+        if let Some(text) = self.source_text_for_map() {
+            async_emitter.set_source_map_context(text, self.writer.current_source_index());
+        }
+        async_emitter.set_lexical_this(this_expr != "this");
+
+        let body_has_await = async_emitter.body_contains_await(func.body);
+        let generator_body = if body_has_await {
+            async_emitter.emit_generator_body_with_await(func.body)
+        } else {
+            async_emitter.emit_simple_generator_body(func.body)
+        };
+        let generator_mappings = async_emitter.take_mappings();
+
+        if has_param_transforms {
+            // Multi-line path (with param prologue)
+            self.write("return __awaiter(");
+            self.write(this_expr);
+            self.write(", void 0, void 0, function () {");
+            self.write_line();
+            self.increase_indent();
+            self.write(&generator_body);
+            self.decrease_indent();
+            self.write_line();
+            self.write("});");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+        } else {
+            // Inline path: function () { return __awaiter(...); };
+            self.write(") { return __awaiter(");
+            self.write(this_expr);
+            self.write(", void 0, void 0, function () {");
+            self.write_line();
+            self.increase_indent();
+            if !generator_mappings.is_empty() && self.writer.has_source_map() {
+                self.writer.write("");
+                let base_line = self.writer.current_line();
+                let base_column = self.writer.current_column();
+                self.writer
+                    .add_offset_mappings(base_line, base_column, &generator_mappings);
+                self.writer.write(&generator_body);
+            } else {
+                self.write(&generator_body);
+            }
+            self.decrease_indent();
+            self.write_line();
+            self.write("}); }");
+        }
+        self.pop_temp_scope();
+    }
+
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(super) fn emit_async_function_es5(
         &mut self,
@@ -1015,13 +1096,14 @@ impl<'a> Printer<'a> {
             && self.block_is_empty(body)
             && self.first_await_default_param_name(params).is_some();
 
-        // function name(params) {
-        self.write("function");
-        if !func_name.is_empty() {
-            self.write_space();
+        // function name(params) { ... } or function (params) { ... }
+        if func_name.is_empty() {
+            self.write("function (");
+        } else {
+            self.write("function ");
             self.write(func_name);
+            self.write("(");
         }
-        self.write("(");
         if use_native_generators {
             // ES2015: when a parameter initializer starts with `await`, match tsc
             // by moving parameters to the inner generator and forwarding `arguments`.

@@ -322,7 +322,7 @@ main() {
     echo ""
 
     cd "$TS_DIR"
-    node "$FOURSLASH_DIR/runner.js" \
+    node "$FOURSLASH_DIR/runner.cjs" \
         --tsz-server="$tsz_server_binary" \
         "${runner_args[@]+"${runner_args[@]}"}"
 }

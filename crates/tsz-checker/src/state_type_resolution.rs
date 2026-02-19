@@ -110,8 +110,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .with_type_param_bindings(type_param_bindings);
                 let type_id = lowering.lower_type(idx);
-                // Phase 2: Still post-process to create DefIds for types that don't have them yet
-                return self.ctx.maybe_create_lazy_from_resolved(type_id);
+                return type_id;
             }
             // No type arguments provided - check if this generic type requires them
             // Also, use type_reference_symbol_type to preserve nominal identity for enum members
@@ -415,9 +414,7 @@ impl<'a> CheckerState<'a> {
                     &value_resolver,
                 )
                 .with_type_param_bindings(type_param_bindings);
-                let type_id = lowering.lower_type(idx);
-                // Phase 2: Still post-process to create DefIds for types that don't have them yet
-                let result = self.ctx.maybe_create_lazy_from_resolved(type_id);
+                let result = lowering.lower_type(idx);
 
                 // Ensure Application types from lib type aliases have their base
                 // registered in type_env. Due to DefId instability (get_or_create_def_id

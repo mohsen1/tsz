@@ -16,6 +16,8 @@ pub mod apparent;
 pub mod conditional;
 pub mod index_access;
 pub mod infer_pattern;
+mod infer_pattern_helpers;
+pub mod infer_substitutor;
 pub mod keyof;
 pub mod mapped;
 pub mod string_intrinsic;

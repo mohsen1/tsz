@@ -31,31 +31,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(brand_name)` if the type has a private brand.
     pub(crate) fn get_private_brand(&self, type_id: TypeId) -> Option<String> {
-        use tsz_solver::type_queries_extended::{PrivateBrandKind, classify_for_private_brand};
-
-        match classify_for_private_brand(self.ctx.types, type_id) {
-            PrivateBrandKind::Object(shape_id) => {
-                let shape = self.ctx.types.object_shape(shape_id);
-                for prop in &shape.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if name.starts_with("__private_brand_") {
-                        return Some(name);
-                    }
-                }
-                None
-            }
-            PrivateBrandKind::Callable(callable_id) => {
-                let callable = self.ctx.types.callable_shape(callable_id);
-                for prop in &callable.properties {
-                    let name = self.ctx.types.resolve_atom(prop.name);
-                    if name.starts_with("__private_brand_") {
-                        return Some(name);
-                    }
-                }
-                None
-            }
-            PrivateBrandKind::None => None,
-        }
+        tsz_solver::type_queries::get_private_brand_name(self.ctx.types, type_id)
     }
 
     // =========================================================================
@@ -86,29 +62,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns `Some(private_field_name)` if found, None otherwise.
     pub(crate) fn get_private_field_name_from_brand(&self, type_id: TypeId) -> Option<String> {
-        use tsz_solver::type_queries_extended::{PrivateBrandKind, classify_for_private_brand};
-
-        let properties = match classify_for_private_brand(self.ctx.types, type_id) {
-            PrivateBrandKind::Object(shape_id) => {
-                self.ctx.types.object_shape(shape_id).properties.clone()
-            }
-            PrivateBrandKind::Callable(callable_id) => self
-                .ctx
-                .types
-                .callable_shape(callable_id)
-                .properties
-                .clone(),
-            PrivateBrandKind::None => return None,
-        };
-
-        // Find the first non-brand private property (starts with #)
-        for prop in &properties {
-            let name = self.ctx.types.resolve_atom(prop.name);
-            if name.starts_with('#') && !name.starts_with("__private_brand_") {
-                return Some(name);
-            }
-        }
-        None
+        tsz_solver::type_queries::get_private_field_name(self.ctx.types, type_id)
     }
 
     // =========================================================================

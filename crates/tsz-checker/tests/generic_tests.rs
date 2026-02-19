@@ -96,17 +96,17 @@ function test<P extends Props>(props: Readonly<P>) {
 }
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
+#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_generic_with_default_type_parameter() {
     let source = r#"
 function foo<T = string>(x: T): T {
     return x;
 }
 
-const result1 = foo("hello"); // OK - uses default string
-const result2 = foo(42); // OK - 42 satisfies string constraint
-const result3 = foo<number>(true); // OK - true satisfies number constraint
-const result4 = foo<number>([]); // TS2322: [] doesn't satisfy number
+const result1 = foo("hello"); // OK - T inferred as string
+const result2 = foo(42); // OK - T inferred as number
+const result3 = foo<number>(true); // TS2345: boolean not assignable to number
+const result4 = foo<number>([]); // TS2345: never[] not assignable to number
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -125,21 +125,21 @@ const result4 = foo<number>([]); // TS2322: [] doesn't satisfy number
 
     checker.check_source_file(root);
 
-    // Should emit TS2322 for array argument
-    let ts2322_count = checker
+    // tsc emits TS2345 for argument type mismatches against explicit type params
+    let ts2345_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2322)
+        .filter(|d| d.code == 2345)
         .count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {ts2322_count}"
+        ts2345_count >= 2,
+        "Expected at least 2 TS2345 errors for explicit type arg mismatches, got {ts2345_count}"
     );
 }
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
+#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_generic_class_type_parameter_constraint() {
     let source = r#"
 class Container<T extends number> {
@@ -150,9 +150,9 @@ class Container<T extends number> {
 }
 
 const c1 = new Container(42); // OK
-const c2 = new Container("hello"); // TS2322
-const c3 = new Container<number>(true); // OK - true extends number
-const c4 = new Container<number>({}); // TS2322: {} doesn't extend number
+const c2 = new Container("hello"); // TS2345: string not assignable to number
+const c3 = new Container<number>(true); // TS2345: boolean not assignable to number
+const c4 = new Container<number>({}); // TS2345: {} not assignable to number
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -171,16 +171,16 @@ const c4 = new Container<number>({}); // TS2322: {} doesn't extend number
 
     checker.check_source_file(root);
 
-    // Should emit at least 2 TS2322 errors
-    let ts2322_count = checker
+    // tsc emits TS2345 for all 3 bad arguments (c2, c3, c4)
+    let ts2345_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2322)
+        .filter(|d| d.code == 2345)
         .count();
     assert!(
-        ts2322_count >= 2,
-        "Expected at least 2 TS2322 errors, got {ts2322_count}"
+        ts2345_count >= 3,
+        "Expected at least 3 TS2345 errors for type mismatches, got {ts2345_count}"
     );
 }
 
@@ -240,7 +240,7 @@ useConsumer(consDerived); // TS2322 if invariance (should error)
 }
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
+#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_generic_function_type_inference() {
     let source = r#"
 function pair<T, U>(first: T, second: U): [T, U] {
@@ -249,7 +249,7 @@ function pair<T, U>(first: T, second: U): [T, U] {
 
 const result1 = pair(1, "hello"); // OK - T inferred as number, U as string
 const result2 = pair<number, string>(1, "hello"); // OK - explicit type args
-const result3 = pair<number, number>(1, "hello"); // TS2322: "string" not assignable to number
+const result3 = pair<number, number>(1, "hello"); // TS2345: string not assignable to number
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -268,31 +268,31 @@ const result3 = pair<number, number>(1, "hello"); // TS2322: "string" not assign
 
     checker.check_source_file(root);
 
-    // Should emit TS2322 for wrong type argument
-    let ts2322_count = checker
+    // tsc emits TS2345 for argument type mismatch
+    let ts2345_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2322)
+        .filter(|d| d.code == 2345)
         .count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {ts2322_count}"
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error for type mismatch, got {ts2345_count}"
     );
 }
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
+#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_no_type_arguments_needed_for_inferred_generics() {
     let source = r#"
 function identity<T>(x: T): T {
     return x;
 }
 
-const result1 = identity(42); // Should work - T inferred as number
-const result2 = identity("hello"); // Should work - T inferred as string
-const result3 = identity<number>(42); // Should work - explicit number
-const result4 = identity<string>(42); // TS2322: 42 not assignable to string
+const result1 = identity(42); // OK - T inferred as number
+const result2 = identity("hello"); // OK - T inferred as string
+const result3 = identity<number>(42); // OK - explicit number
+const result4 = identity<string>(42); // TS2345: number not assignable to string
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -311,31 +311,31 @@ const result4 = identity<string>(42); // TS2322: 42 not assignable to string
 
     checker.check_source_file(root);
 
-    // Should emit TS2322 for wrong type argument
-    let ts2322_count = checker
+    // tsc emits TS2345 for argument type mismatch against explicit type param
+    let ts2345_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2322)
+        .filter(|d| d.code == 2345)
         .count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {ts2322_count}"
+        ts2345_count >= 1,
+        "Expected at least 1 TS2345 error for type mismatch, got {ts2345_count}"
     );
 }
 
 #[test]
-#[ignore = "TODO: Generic constraint checking not yet implemented"]
+#[ignore = "Explicit type arg instantiation does not check arg types against instantiated params"]
 fn test_multiple_type_parameters_with_defaults() {
     let source = r#"
 function foo<T = number, U = string>(x: T, y: U): [T, U] {
     return [x, y];
 }
 
-const r1 = foo(1, "hello"); // OK - uses defaults
-const r2 = foo<string, boolean>(true, false); // OK - overrides defaults
+const r1 = foo(1, "hello"); // OK - T inferred number, U inferred string
+const r2 = foo<string, boolean>(true, false); // TS2345: boolean not assignable to string
 const r3 = foo<number, number>(1, 2); // OK
-const r4 = foo<number, boolean>(1, "hello"); // TS2322: string not assignable to boolean
+const r4 = foo<number, boolean>(1, "hello"); // TS2345: string not assignable to boolean
 "#;
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -354,16 +354,16 @@ const r4 = foo<number, boolean>(1, "hello"); // TS2322: string not assignable to
 
     checker.check_source_file(root);
 
-    // Should emit TS2322 for wrong type argument
-    let ts2322_count = checker
+    // tsc emits TS2345 for argument type mismatches (r2 and r4)
+    let ts2345_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2322)
+        .filter(|d| d.code == 2345)
         .count();
     assert!(
-        ts2322_count >= 1,
-        "Expected at least 1 TS2322 error, got {ts2322_count}"
+        ts2345_count >= 2,
+        "Expected at least 2 TS2345 errors for type mismatches, got {ts2345_count}"
     );
 }
 

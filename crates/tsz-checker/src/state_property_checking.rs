@@ -101,12 +101,10 @@ impl<'a> CheckerState<'a> {
                     // Example: type T = { x: { a: number } } | { x: { b: number } }
                     // Assigning { x: { b: 1 } } should NOT error on 'b'.
                     // =============================================================
-                    let nested_target = if target_prop_types.len() == 1 {
-                        target_prop_types[0]
-                    } else {
-                        let factory = self.ctx.types.factory();
-                        factory.union(target_prop_types.clone())
-                    };
+                    let nested_target = tsz_solver::utils::union_or_single(
+                        self.ctx.types,
+                        target_prop_types.clone(),
+                    );
 
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,
@@ -366,8 +364,21 @@ impl<'a> CheckerState<'a> {
         // can't be resolved there. Resolve them here using the checker's environment.
         let object_type = self.resolve_type_query_type(object_type);
 
-        // Ensure preconditions are ready in the environment
-        self.ensure_relation_input_ready(object_type);
+        // Ensure preconditions are ready in the environment for non-trivial
+        // property-access inputs. Already-resolved/function-like inputs don't
+        // need relation preconditioning here.
+        let resolution_kind =
+            crate::query_boundaries::state_type_environment::classify_for_property_access_resolution(
+                self.ctx.types,
+                object_type,
+            );
+        if !matches!(
+            resolution_kind,
+            crate::query_boundaries::state_type_environment::PropertyAccessResolutionKind::Resolved
+                | crate::query_boundaries::state_type_environment::PropertyAccessResolutionKind::FunctionLike
+        ) {
+            self.ensure_relation_input_ready(object_type);
+        }
 
         // Route through QueryDatabase so repeated property lookups hit QueryCache.
         // This is especially important for hot paths like repeated `string[].push`
@@ -377,6 +388,23 @@ impl<'a> CheckerState<'a> {
             prop_name,
             self.ctx.compiler_options.no_unchecked_indexed_access,
         );
+
+        self.resolve_property_access_with_env_post_query(object_type, prop_name, result)
+    }
+
+    /// Continue environment-aware property access resolution from an already
+    /// computed initial solver result.
+    ///
+    /// This avoids duplicate first-pass lookups in hot paths that already
+    /// queried `resolve_property_access_with_options` and only need mapped/
+    /// application fallback behavior.
+    pub(crate) fn resolve_property_access_with_env_post_query(
+        &mut self,
+        object_type: TypeId,
+        prop_name: &str,
+        result: tsz_solver::operations_property::PropertyAccessResult,
+    ) -> tsz_solver::operations_property::PropertyAccessResult {
+        let mut result = result;
 
         // If property not found and the type is an Application (e.g. Promise<number>),
         // the QueryCache's noop TypeResolver can't expand it. Evaluate the Application
@@ -388,7 +416,7 @@ impl<'a> CheckerState<'a> {
         {
             let expanded = self.evaluate_application_type(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
-                return self.ctx.types.resolve_property_access_with_options(
+                result = self.ctx.types.resolve_property_access_with_options(
                     expanded,
                     prop_name,
                     self.ctx.compiler_options.no_unchecked_indexed_access,
@@ -404,6 +432,12 @@ impl<'a> CheckerState<'a> {
             tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound { .. }
         ) && tsz_solver::type_queries::is_mapped_type(self.ctx.types, object_type)
         {
+            if let Some(mapped_property) =
+                self.resolve_mapped_property_with_env(object_type, prop_name)
+            {
+                return mapped_property;
+            }
+
             let expanded = self.evaluate_mapped_type_with_resolution(object_type);
             if expanded != object_type && expanded != TypeId::ANY && expanded != TypeId::ERROR {
                 return self.ctx.types.resolve_property_access_with_options(
@@ -415,6 +449,109 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    /// Resolve a single mapped-type property with environment-aware key/template
+    /// evaluation, without expanding the whole mapped object.
+    ///
+    /// Returns `None` when we cannot safely decide (e.g. complex key space),
+    /// allowing the caller to fall back to full mapped expansion.
+    fn resolve_mapped_property_with_env(
+        &mut self,
+        mapped_type: TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::operations_property::PropertyAccessResult> {
+        let mapped_id = tsz_solver::mapped_type_id(self.ctx.types, mapped_type)?;
+        let mapped = self.ctx.types.mapped_type(mapped_id);
+
+        // Keep `as`-remapped keys on the conservative path for now.
+        if mapped.name_type.is_some() {
+            return None;
+        }
+
+        let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let can_cache =
+            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, mapped_type);
+        let cache_key = (mapped_type, prop_atom);
+
+        if can_cache
+            && let Some(cached) = self
+                .ctx
+                .narrowing_cache
+                .property_cache
+                .borrow()
+                .get(&cache_key)
+                .copied()
+        {
+            return Some(match cached {
+                Some(type_id) => tsz_solver::operations_property::PropertyAccessResult::Success {
+                    type_id,
+                    write_type: None,
+                    from_index_signature: false,
+                },
+                None => tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound {
+                    type_id: mapped_type,
+                    property_name: prop_atom,
+                },
+            });
+        }
+
+        // If the constraint is an explicit literal key set, reject unknown keys early.
+        // For non-literal/complex constraints, fall back to full expansion.
+        if !tsz_solver::type_queries::is_string_type(self.ctx.types, constraint) {
+            let keys =
+                tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, constraint);
+            if !keys.is_empty() && !keys.contains(&prop_atom) {
+                if can_cache {
+                    self.ctx
+                        .narrowing_cache
+                        .property_cache
+                        .borrow_mut()
+                        .insert(cache_key, None);
+                }
+                return Some(
+                    tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound {
+                        type_id: mapped_type,
+                        property_name: prop_atom,
+                    },
+                );
+            }
+            if keys.is_empty() {
+                return None;
+            }
+        }
+
+        let key_literal = self.ctx.types.literal_string_atom(prop_atom);
+        let mut subst = tsz_solver::TypeSubstitution::new();
+        subst.insert(mapped.type_param.name, key_literal);
+
+        let property_type = tsz_solver::instantiate_type(self.ctx.types, mapped.template, &subst);
+        let property_type = self.evaluate_type_with_env(property_type);
+        let property_type = match mapped.optional_modifier {
+            Some(tsz_solver::MappedModifier::Add) => self
+                .ctx
+                .types
+                .factory()
+                .union(vec![property_type, TypeId::UNDEFINED]),
+            Some(tsz_solver::MappedModifier::Remove) | None => property_type,
+        };
+
+        if can_cache {
+            self.ctx
+                .narrowing_cache
+                .property_cache
+                .borrow_mut()
+                .insert(cache_key, Some(property_type));
+        }
+
+        Some(
+            tsz_solver::operations_property::PropertyAccessResult::Success {
+                type_id: property_type,
+                write_type: None,
+                from_index_signature: false,
+            },
+        )
     }
 
     /// Check if an assignment target is a readonly property.

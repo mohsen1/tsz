@@ -934,6 +934,10 @@ impl<'a> CheckerState<'a> {
                 Some(flags)
             }
             syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
+            syntax_kind_ext::IMPORT_CLAUSE
+            | syntax_kind_ext::NAMESPACE_IMPORT
+            | syntax_kind_ext::IMPORT_SPECIFIER
+            | syntax_kind_ext::IMPORT_EQUALS_DECLARATION => Some(symbol_flags::ALIAS),
             _ => None,
         }
     }

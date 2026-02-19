@@ -219,7 +219,10 @@ impl<'a> NarrowingContext<'a> {
             return cached;
         }
 
-        let result = self.get_top_level_property_type_fast_uncached(type_id, property);
+        // Cache the resolved property type so hot paths avoid an extra resolve pass.
+        let result = self
+            .get_top_level_property_type_fast_uncached(type_id, property)
+            .map(|prop_type| self.resolve_type(prop_type));
         self.cache.property_cache.borrow_mut().insert(key, result);
         result
     }
@@ -304,17 +307,17 @@ impl<'a> NarrowingContext<'a> {
             }
 
             let prop_type = self.get_top_level_property_type_fast(member, property)?;
-            let resolved_prop_type = self.resolve_type(prop_type);
-
-            let should_keep = if keep_matching {
+            let should_keep = if prop_type == literal_value {
+                keep_matching
+            } else if keep_matching {
                 // true branch: keep members where literal <: property_type
-                self.literal_subtype_fast(literal_value, resolved_prop_type)
-                    .unwrap_or_else(|| is_subtype_of(self.db, literal_value, resolved_prop_type))
+                self.literal_subtype_fast(literal_value, prop_type)
+                    .unwrap_or_else(|| is_subtype_of(self.db, literal_value, prop_type))
             } else {
                 // false branch: exclude members where property_type <: excluded_literal
                 !self
-                    .literal_subtype_fast(resolved_prop_type, literal_value)
-                    .unwrap_or_else(|| is_subtype_of(self.db, resolved_prop_type, literal_value))
+                    .literal_subtype_fast(prop_type, literal_value)
+                    .unwrap_or_else(|| is_subtype_of(self.db, prop_type, literal_value))
             };
 
             if should_keep {

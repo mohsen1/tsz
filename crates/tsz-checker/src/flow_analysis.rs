@@ -27,8 +27,7 @@
 
 use crate::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype_with_env, object_shape_for_type, tuple_elements_for_type,
-    union_members_for_type,
+    are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use rustc_hash::FxHashSet;
@@ -1341,6 +1340,32 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Hot-path optimization: for property/element access expressions with an already
+        // concrete primitive/literal result type, flow re-analysis at the access node is
+        // typically redundant. The object expression has already been flow-narrowed before
+        // property lookup; re-walking flow for the access itself is high-cost in long
+        // discriminant-if chains (e.g. repeated `if (e.kind === "...") return e.dataN`).
+        //
+        // Keep full flow narrowing for unions/objects/type-parameters, where access-level
+        // narrowing may still materially change the type.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && (matches!(
+                declared_type,
+                TypeId::STRING
+                    | TypeId::NUMBER
+                    | TypeId::BOOLEAN
+                    | TypeId::BIGINT
+                    | TypeId::SYMBOL
+                    | TypeId::UNDEFINED
+                    | TypeId::NULL
+                    | TypeId::VOID
+            ) || tsz_solver::visitor::is_literal_type_db(self.ctx.types, declared_type))
+        {
+            return declared_type;
+        }
+
         // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
@@ -1414,10 +1439,11 @@ impl<'a> CheckerState<'a> {
                 if !binding.property_name.is_empty() {
                     let mut current = member;
                     for segment in binding.property_name.split('.') {
-                        let shape = object_shape_for_type(self.ctx.types, current)?;
-                        let prop = shape.properties.iter().find(|p| {
-                            self.ctx.types.resolve_atom_ref(p.name).as_ref() == segment
-                        })?;
+                        let prop = tsz_solver::type_queries::find_property_in_object_by_str(
+                            self.ctx.types,
+                            current,
+                            segment,
+                        )?;
                         current = prop.type_id;
                     }
                     Some(current)
@@ -1671,13 +1697,12 @@ impl<'a> CheckerState<'a> {
                 let mut current = *member;
                 let mut resolved = Some(current);
                 for segment in info.property_name.split('.') {
-                    resolved = object_shape_for_type(self.ctx.types, current).and_then(|shape| {
-                        shape
-                            .properties
-                            .iter()
-                            .find(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == segment)
-                            .map(|p| p.type_id)
-                    });
+                    resolved = tsz_solver::type_queries::find_property_in_object_by_str(
+                        self.ctx.types,
+                        current,
+                        segment,
+                    )
+                    .map(|p| p.type_id);
                     if let Some(next) = resolved {
                         current = next;
                     } else {

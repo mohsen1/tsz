@@ -192,6 +192,8 @@ impl<'a> Printer<'a> {
         }
 
         self.decrease_indent();
+        // Map closing `}` to its source position for accurate debugger stepping
+        self.map_closing_brace(node);
         self.write("}");
         self.ctx.block_scope_state.exit_scope();
         // Trailing comments after the block's closing brace are handled by
@@ -253,6 +255,7 @@ impl<'a> Printer<'a> {
         for &decl_list_idx in &var_stmt.declarations.nodes {
             self.emit(decl_list_idx);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
 
         // Emit trailing comments (e.g., var x = 1; // comment)
@@ -414,6 +417,7 @@ impl<'a> Printer<'a> {
         if needs_parens {
             self.write(")");
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
         self.emit_trailing_comment_after_semicolon(node);
     }
@@ -480,47 +484,10 @@ impl<'a> Printer<'a> {
             .get(if_stmt.then_statement)
             .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
 
-        // tsc always puts `{` on the same line as `if (cond)`, even if the source
-        // had the brace on a new line. Multiline formatting only applies to
-        // non-block then-statements (e.g., `if (cond)\n  foo();`).
-        let then_is_multiline_in_source = (!then_is_block
-            && self.source_text.is_some_and(|text| {
-                let cond_end = self
-                    .arena
-                    .get(if_stmt.expression)
-                    .map_or(node.pos as usize, |n| n.end as usize);
-                let then_start = self
-                    .arena
-                    .get(if_stmt.then_statement)
-                    .map_or(node.end as usize, |n| n.pos as usize);
-                if cond_end >= then_start || then_start > text.len() {
-                    return false;
-                }
-                text[cond_end..then_start].contains('\n')
-            }))
-            || self.source_text.is_some_and(|text| {
-                let Some(then_node) = self.arena.get(if_stmt.then_statement) else {
-                    return false;
-                };
-                if then_node.kind == syntax_kind_ext::BLOCK {
-                    return false;
-                }
-                let start = then_node.pos as usize;
-                let end = then_node.end as usize;
-                if start >= end || end > text.len() {
-                    return false;
-                }
-                text[start..end].contains("...")
-            })
-            || (!self.is_single_line(node)
-                && self
-                    .arena
-                    .get(if_stmt.then_statement)
-                    .is_some_and(|n| n.kind != syntax_kind_ext::BLOCK))
-            || self
-                .arena
-                .get(if_stmt.then_statement)
-                .is_some_and(|n| n.pos >= n.end && n.kind != syntax_kind_ext::BLOCK);
+        // TSC always puts non-block then-statements on their own indented line,
+        // e.g., `if (cond)\n    return;`. Block then-statements stay on the same
+        // line: `if (cond) { ... }`.
+        let then_is_multiline_in_source = !then_is_block;
 
         self.write("if (");
         self.emit(if_stmt.expression);
@@ -628,6 +595,7 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_return_statement(&mut self, node: &Node) {
         let Some(ret) = self.arena.get_return_statement(node) else {
             self.write("return");
+            self.map_trailing_semicolon(node);
             self.write_semicolon();
             return;
         };
@@ -637,6 +605,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit_expression(ret.expression);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -648,12 +617,14 @@ impl<'a> Printer<'a> {
         // ThrowStatement uses ReturnData (same structure)
         let Some(throw_data) = self.arena.get_return_statement(node) else {
             self.write("throw");
+            self.map_trailing_semicolon(node);
             self.write_semicolon();
             return;
         };
 
         self.write("throw ");
         self.emit(throw_data.expression);
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -672,6 +643,20 @@ impl<'a> Printer<'a> {
 
         if !try_stmt.finally_block.is_none() {
             self.write_line();
+            // Map the `finally` keyword to its source position
+            // The keyword is between the catch block end and finally block start
+            if let Some(finally_node) = self.arena.get(try_stmt.finally_block) {
+                let search_start = if !try_stmt.catch_clause.is_none() {
+                    self.arena
+                        .get(try_stmt.catch_clause)
+                        .map_or(node.pos, |n| n.end)
+                } else {
+                    self.arena
+                        .get(try_stmt.try_block)
+                        .map_or(node.pos, |n| n.end)
+                };
+                self.map_token_after_skipping_whitespace(search_start, finally_node.pos);
+            }
             self.write("finally ");
             self.emit(try_stmt.finally_block);
         }
@@ -685,7 +670,10 @@ impl<'a> Printer<'a> {
         self.write("catch");
 
         if !catch.variable_declaration.is_none() {
-            self.write(" (");
+            self.write(" ");
+            // Map the `(` to its source position
+            self.map_token_after(node.pos, node.end, b'(');
+            self.write("(");
             self.emit(catch.variable_declaration);
             self.write(")");
         } else if self.ctx.needs_es2019_lowering {
@@ -716,6 +704,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        self.map_opening_brace(node);
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -725,6 +714,7 @@ impl<'a> Printer<'a> {
         }
 
         self.decrease_indent();
+        self.map_closing_brace(node);
         self.write("}");
     }
 
@@ -735,10 +725,12 @@ impl<'a> Printer<'a> {
 
         self.write("case ");
         self.emit(clause.expression);
+        // Map the `:` after the case expression
+        let label_end = self.arena.get(clause.expression).map_or(0, |n| n.end);
+        self.map_token_after(label_end, node.end, b':');
         self.write(":");
 
         // Use expression end position for same-line detection
-        let label_end = self.arena.get(clause.expression).map_or(0, |n| n.end);
         self.emit_case_clause_body(&clause.statements, label_end);
     }
 
@@ -804,6 +796,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit(jump.label);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -815,6 +808,7 @@ impl<'a> Printer<'a> {
             self.write(" ");
             self.emit(jump.label);
         }
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
@@ -852,11 +846,13 @@ impl<'a> Printer<'a> {
         self.write("while (");
         self.emit(loop_stmt.condition);
         self.write(")");
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 
-    pub(super) fn emit_debugger_statement(&mut self) {
+    pub(super) fn emit_debugger_statement(&mut self, node: &Node) {
         self.write("debugger");
+        self.map_trailing_semicolon(node);
         self.write_semicolon();
     }
 

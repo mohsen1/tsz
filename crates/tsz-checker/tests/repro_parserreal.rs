@@ -176,7 +176,6 @@ fn repro_parser_real_14_type_ids() {
 
 #[cfg(test)]
 #[test]
-#[ignore = "Strict null checks default change causes TS2322 in parserharness.ts"]
 fn repro_parser_harness_type_ids() {
     let Some(source) = load_test_source(
         "TypeScript/tests/cases/conformance/parser/ecmascript5/RealWorld/parserharness.ts",
@@ -222,12 +221,18 @@ fn run_and_print_source_line(
     binder.bind_source_file(parser.get_arena(), root);
 
     let types = TypeInterner::new();
+    // Use non-strict null checks since these are parser recovery tests, not type checking tests.
+    // parserharness.ts has null assignments that emit TS2322 under strict null checks.
+    let opts = CheckerOptions {
+        strict_null_checks: false,
+        ..CheckerOptions::default()
+    };
     let mut checker = CheckerState::new(
         parser.get_arena(),
         &binder,
         &types,
         file_name.to_string(),
-        CheckerOptions::default(),
+        opts,
     );
     checker.ctx.report_unresolved_imports = true;
 

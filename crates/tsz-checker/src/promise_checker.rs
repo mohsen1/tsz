@@ -149,12 +149,26 @@ impl<'a> CheckerState<'a> {
         if let query::PromiseTypeKind::Application { base, args, .. } =
             query::classify_promise_type(self.ctx.types, return_type)
         {
+            let first_arg = args.first().copied();
+
             // Check for synthetic PROMISE_BASE type (created when Promise symbol wasn't resolved)
             // This allows us to extract T from Promise<T> even without full lib files
             if base == TypeId::PROMISE_BASE
-                && let Some(&first_arg) = args.first()
+                && let Some(first_arg) = first_arg
             {
                 return Some(first_arg);
+            }
+
+            // Fast path: direct Promise/PromiseLike application from lib symbols.
+            // This is a hot path for `await Promise.resolve(...)` and avoids
+            // heavier alias/class resolution when the base already names Promise.
+            if let query::PromiseTypeKind::Lazy(def_id) =
+                query::classify_promise_type(self.ctx.types, base)
+                && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && self.is_promise_like_name(symbol.escaped_name.as_str())
+            {
+                return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
             }
 
             // Try to get the type argument from the base symbol
@@ -175,9 +189,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     && self.is_promise_like_name(symbol.escaped_name.as_str())
-                    && let Some(&first_arg) = args.first()
                 {
-                    return Some(first_arg);
+                    return Some(first_arg.unwrap_or(TypeId::UNKNOWN));
                 }
             }
         }

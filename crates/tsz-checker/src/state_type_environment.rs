@@ -194,6 +194,47 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
+        // Memoize monomorphic application evaluation. This is a hot path for
+        // repeated accesses on aliases like DeepPartial<{...}>.
+        let can_cache =
+            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        if can_cache
+            && let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow()
+                .get(&type_id)
+        {
+            return cached;
+        }
+
+        // Canonicalize application keys by evaluating type arguments first. This
+        // allows structurally equivalent applications from different declaration
+        // sites (e.g., repeated inline object-literal args) to share a cache hit.
+        let mut canonical_key: Option<TypeId> = None;
+        if can_cache
+            && let Some((base, args)) = query::application_info(self.ctx.types, type_id)
+            && !args.is_empty()
+        {
+            let canonical_args: Vec<TypeId> = args
+                .into_iter()
+                .map(|arg| self.resolve_lazy_type(arg))
+                .collect();
+            let key = self.ctx.types.application(base, canonical_args);
+            if key != type_id {
+                canonical_key = Some(key);
+                if let Some(&cached) = self.ctx.narrowing_cache.resolve_cache.borrow().get(&key) {
+                    self.ctx
+                        .narrowing_cache
+                        .resolve_cache
+                        .borrow_mut()
+                        .insert(type_id, cached);
+                    return cached;
+                }
+            }
+        }
+
         if !self.ctx.application_eval_set.insert(type_id) {
             // Recursion guard for self-referential mapped types.
             return type_id;
@@ -209,6 +250,13 @@ impl<'a> CheckerState<'a> {
 
         *self.ctx.instantiation_depth.borrow_mut() -= 1;
         self.ctx.application_eval_set.remove(&type_id);
+        if can_cache {
+            let mut cache = self.ctx.narrowing_cache.resolve_cache.borrow_mut();
+            cache.insert(type_id, result);
+            if let Some(key) = canonical_key {
+                cache.insert(key, result);
+            }
+        }
 
         result
     }
@@ -283,6 +331,22 @@ impl<'a> CheckerState<'a> {
     /// This handles cases like `{ [K in keyof Ref(sym)]: Template }` where the Ref
     /// needs to be resolved to get concrete keys.
     pub(crate) fn evaluate_mapped_type_with_resolution(&mut self, type_id: TypeId) -> TypeId {
+        // Memoize mapped-type expansion for monomorphic inputs.
+        // This is a hot path for repeated property access on mapped aliases
+        // (e.g., DeepPartial<...>).
+        let can_cache =
+            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        if can_cache
+            && let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow()
+                .get(&type_id)
+        {
+            return cached;
+        }
+
         // NOTE: Manual lookup preferred here - we need the mapped_id directly
         // to call mapped_type(mapped_id) below. Using get_mapped_type would
         // return the full Arc<MappedType>, which is more than needed.
@@ -304,6 +368,13 @@ impl<'a> CheckerState<'a> {
 
         *self.ctx.instantiation_depth.borrow_mut() -= 1;
         self.ctx.mapped_eval_set.remove(&type_id);
+        if can_cache {
+            self.ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow_mut()
+                .insert(type_id, result);
+        }
         result
     }
 
@@ -366,16 +437,14 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Now get the property type from the object
-                if let Some(shape) = query::object_shape(self.ctx.types, obj_type) {
-                    // Look for the property by name (key_name is already an Atom)
-                    if let Some(prop) = shape.properties.iter().find(|p| p.name == key_name) {
-                        prop.type_id
-                    } else {
-                        // Property not found, fall back to evaluate_type_with_env
-                        self.evaluate_type_with_env(property_type)
-                    }
+                if let Some(prop) = tsz_solver::type_queries::find_property_in_object(
+                    self.ctx.types,
+                    obj_type,
+                    key_name,
+                ) {
+                    prop.type_id
                 } else {
-                    // Not an object type, fall back to evaluate_type_with_env
+                    // Property not found or not an object type, fall back
                     self.evaluate_type_with_env(property_type)
                 }
             } else {
@@ -521,10 +590,48 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
 
+        let can_cache =
+            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, type_id);
+        if can_cache
+            && let Some(&cached) = self
+                .ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow()
+                .get(&type_id)
+        {
+            return cached;
+        }
+
+        // Fast path: already property-access-ready types do not need relation-input
+        // preparation or recursive resolution.
+        if matches!(
+            query::classify_for_property_access_resolution(self.ctx.types, type_id),
+            query::PropertyAccessResolutionKind::Resolved
+                | query::PropertyAccessResolutionKind::FunctionLike
+        ) {
+            if can_cache {
+                self.ctx
+                    .narrowing_cache
+                    .resolve_cache
+                    .borrow_mut()
+                    .insert(type_id, type_id);
+            }
+            return type_id;
+        }
+
         self.ensure_relation_input_ready(type_id);
 
         let mut visited = FxHashSet::default();
-        self.resolve_type_for_property_access_inner(type_id, &mut visited)
+        let result = self.resolve_type_for_property_access_inner(type_id, &mut visited);
+        if can_cache {
+            self.ctx
+                .narrowing_cache
+                .resolve_cache
+                .borrow_mut()
+                .insert(type_id, result);
+        }
+        result
     }
 
     pub(crate) fn resolve_type_for_property_access_inner(
@@ -711,7 +818,6 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         visited: &mut rustc_hash::FxHashSet<TypeId>,
     ) -> TypeId {
-        let factory = self.ctx.types.factory();
         // Prevent infinite loops in circular type aliases
         if !visited.insert(type_id) {
             return type_id;
@@ -755,26 +861,12 @@ impl<'a> CheckerState<'a> {
 
         // Handle unions and intersections - resolve each member
         // Only create a new union/intersection if members actually changed
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            let resolved_members: Vec<TypeId> = members
-                .iter()
-                .map(|&member| self.resolve_lazy_type_inner(member, visited))
-                .collect();
-            // Only create new union if members changed
-            if resolved_members.iter().ne(members.iter()) {
-                return factory.union(resolved_members);
-            }
-        }
-
-        if let Some(members) = query::intersection_members(self.ctx.types, type_id) {
-            let resolved_members: Vec<TypeId> = members
-                .iter()
-                .map(|&member| self.resolve_lazy_type_inner(member, visited))
-                .collect();
-            // Only create new intersection if members changed
-            if resolved_members.iter().ne(members.iter()) {
-                return factory.intersection(resolved_members);
-            }
+        if let Some(resolved) = tsz_solver::type_queries::map_compound_members_if_changed(
+            self.ctx.types,
+            type_id,
+            |member| self.resolve_lazy_type_inner(member, visited),
+        ) {
+            return resolved;
         }
 
         type_id

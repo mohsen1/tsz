@@ -212,13 +212,19 @@ impl<'a> CheckerState<'a> {
         };
 
         if array.elements.nodes.is_empty() {
-            // Empty array literal: infer from context or use never[]
+            // Empty array literal: infer from context or use never[]/any[]
             // TypeScript uses "evolving array types" where [] starts as never[] and widens
             // via control flow.
             if let Some(contextual) = self.ctx.contextual_type {
                 // Resolve lazy types (type aliases) before using the contextual type
                 let resolved = self.resolve_type_for_property_access(contextual);
                 return self.resolve_lazy_type(resolved);
+            }
+            // When noImplicitAny is off, empty array literals without contextual type
+            // are typed as any[] (matching tsc behavior). With noImplicitAny on, use never[]
+            // which is the "evolving array type" starting point.
+            if !self.ctx.no_implicit_any() {
+                return factory.array(TypeId::ANY);
             }
             return factory.array(TypeId::NEVER);
         }
@@ -1505,29 +1511,20 @@ impl<'a> CheckerState<'a> {
             }
 
             // Logical AND: `a && b`
-            // In TypeScript, the result type is the falsy parts of `a` unioned with `b`.
-            // When `a` is `boolean` (common case: comparisons, type guards), the falsy
-            // part is `false` which TypeScript drops, yielding just `typeof b`.
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                // When the left type is boolean (comparisons, type guards), the result
-                // is just the right type.  Otherwise fall back to union.
-                let result = if left_type == TypeId::BOOLEAN {
-                    right_type
-                } else {
-                    factory.union(vec![left_type, right_type])
+                let result = match evaluator.evaluate(left_type, right_type, "&&") {
+                    BinaryOpResult::Success(ty) => ty,
+                    BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
                 };
                 type_stack.push(result);
                 continue;
             }
 
             // Logical OR: `a || b`
-            // In TypeScript, the result type depends on whether `a` can be falsy:
-            // - If `a` has no falsy parts: result is just `a`
-            // - Otherwise: result is `removeDefinitelyFalsyTypes(a) | b`
             if op_kind == SyntaxKind::BarBarToken as u16 {
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
@@ -1536,16 +1533,9 @@ impl<'a> CheckerState<'a> {
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
                 self.check_truthy_or_falsy(left_idx);
 
-                // Remove definitely-falsy types (null, undefined, void, false, 0, "")
-                // from the left side.
-                let truthy_left =
-                    tsz_solver::remove_definitely_falsy_types(self.ctx.types, left_type);
-                let result = if truthy_left == left_type {
-                    left_type
-                } else if truthy_left == TypeId::NEVER {
-                    right_type
-                } else {
-                    factory.union(vec![truthy_left, right_type])
+                let result = match evaluator.evaluate(left_type, right_type, "||") {
+                    BinaryOpResult::Success(ty) => ty,
+                    BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
                 };
                 type_stack.push(result);
                 continue;

@@ -6151,7 +6151,6 @@ const value = 1;
 }
 
 #[test]
-#[ignore = "Binary file only reports TS1490, not additional parse errors"]
 fn compile_binary_file_reports_errors() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;

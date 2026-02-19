@@ -299,8 +299,19 @@ pub struct Printer<'a> {
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(super) current_namespace_name: Option<String>,
 
+    /// Override name for anonymous default exports (e.g., "`default_1`").
+    /// When set, class/function emitters use this instead of leaving the name blank.
+    pub(super) anonymous_default_export_name: Option<String>,
+
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(super) declared_namespace_names: FxHashSet<String>,
+
+    /// Exported variable/function/class names in the current namespace IIFE.
+    /// Used to qualify identifier references: `foo` → `ns.foo`.
+    pub(super) namespace_exported_names: FxHashSet<String>,
+
+    /// When true, suppress namespace identifier qualification (emitting a declaration name).
+    pub(super) suppress_ns_qualification: bool,
 
     /// Pending class field initializers to inject into constructor body.
     /// Each entry is (`field_name`, `initializer_node_index`).
@@ -391,7 +402,10 @@ impl<'a> Printer<'a> {
             namespace_export_inner: false,
             emitting_function_body_block: false,
             current_namespace_name: None,
+            anonymous_default_export_name: None,
             declared_namespace_names: FxHashSet::default(),
+            namespace_exported_names: FxHashSet::default(),
+            suppress_ns_qualification: false,
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_value_temps: Vec::new(),
             preallocated_logical_assignment_value_temps: VecDeque::new(),
@@ -901,7 +915,26 @@ impl<'a> Printer<'a> {
             }
 
             EmitDirective::CommonJSExportDefaultExpr => {
-                self.emit_commonjs_default_export_expr(node, idx);
+                // Check if this is an anonymous class/function that needs a synthetic name
+                let is_anonymous = match node.kind {
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.arena.get_class(node).is_some_and(|c| c.name.is_none())
+                    }
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.arena.get_function(node).is_some_and(|f| {
+                            let name = self.get_identifier_text_idx(f.name);
+                            name.is_empty()
+                                || name == "function"
+                                || !is_valid_identifier_name(&name)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_anonymous {
+                    self.emit_commonjs_anonymous_default_as_named(node, idx);
+                } else {
+                    self.emit_commonjs_default_export_expr(node, idx);
+                }
             }
 
             EmitDirective::CommonJSExportDefaultClassES5 { class_node } => {
@@ -1333,13 +1366,32 @@ impl<'a> Printer<'a> {
                 });
             }
             EmitDirective::CommonJSExportDefaultExpr => {
-                self.emit_commonjs_default_export_assignment(|this| {
-                    if index == 0 {
-                        this.emit_commonjs_default_export_expr_inner(node, idx);
-                    } else {
-                        this.emit_chained_directive(node, idx, directives, index - 1);
+                // Check if this is an anonymous class/function
+                let is_anonymous = match node.kind {
+                    k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                        self.arena.get_class(node).is_some_and(|c| c.name.is_none())
                     }
-                });
+                    k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                        self.arena.get_function(node).is_some_and(|f| {
+                            let name = self.get_identifier_text_idx(f.name);
+                            name.is_empty()
+                                || name == "function"
+                                || !is_valid_identifier_name(&name)
+                        })
+                    }
+                    _ => false,
+                };
+                if is_anonymous {
+                    self.emit_commonjs_anonymous_default_as_named(node, idx);
+                } else {
+                    self.emit_commonjs_default_export_assignment(|this| {
+                        if index == 0 {
+                            this.emit_commonjs_default_export_expr_inner(node, idx);
+                        } else {
+                            this.emit_chained_directive(node, idx, directives, index - 1);
+                        }
+                    });
+                }
             }
             EmitDirective::CommonJSExportDefaultClassES5 { class_node } => {
                 self.emit_commonjs_default_export_class_es5(*class_node);
@@ -2042,7 +2094,7 @@ impl<'a> Printer<'a> {
                 self.emit_do_statement(node);
             }
             k if k == syntax_kind_ext::DEBUGGER_STATEMENT => {
-                self.emit_debugger_statement();
+                self.emit_debugger_statement(node);
             }
             k if k == syntax_kind_ext::WITH_STATEMENT => {
                 self.emit_with_statement(node);
@@ -2082,6 +2134,17 @@ impl<'a> Printer<'a> {
                 if let Some(computed) = self.arena.get_computed_property(node) {
                     self.write("[");
                     self.emit(computed.expression);
+                    // Map closing `]` to its source position.
+                    // The expression's end points past the expression, so `]`
+                    // is at the expression's end position (where the expression
+                    // text ends and `]` begins).
+                    if let Some(text) = self.source_text_for_map() {
+                        let expr_end = self
+                            .arena
+                            .get(computed.expression)
+                            .map_or(node.pos + 1, |e| e.end);
+                        self.pending_source_pos = Some(source_position_from_offset(text, expr_end));
+                    }
                     self.write("]");
                 }
             }
@@ -2445,12 +2508,18 @@ impl<'a> Printer<'a> {
 
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    // In CommonJS mode, defer single-line (//) comments to after the
-                    // preamble (ODP + exports.X = void 0). Block comments (/* */) stay
-                    // before the preamble since they're often copyright/license headers
-                    // that TSC preserves at the top.
-                    let is_line_comment = comment_text.starts_with("//");
-                    if is_commonjs && is_line_comment {
+                    // In CommonJS mode, "detached" comments (followed by a blank
+                    // line before the next content) are file-level and go BEFORE
+                    // the __esModule marker. "Attached" comments (no blank line
+                    // after them) are deferred to AFTER the preamble.
+                    let next_content_pos = self
+                        .all_comments
+                        .get(self.comment_emit_idx + 1)
+                        .map_or(first_stmt_pos, |next_c| next_c.pos);
+                    let between_after = &text[c_end as usize..next_content_pos as usize];
+                    let is_detached =
+                        between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
+                    if is_commonjs && !is_detached {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
                         self.write_comment(comment_text);
@@ -2700,9 +2769,20 @@ impl<'a> Printer<'a> {
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
-                // Emit trailing comments on the same line as the statement
+                // Emit trailing comments on the same line as the statement.
+                // Use the next statement's pos as upper bound to avoid scanning
+                // into the next statement's trivia (same pattern as emit_block_body).
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    let stmts = &source.statements.nodes;
+                    let stmt_i = stmts.iter().position(|&s| s == stmt_idx);
+                    let next_pos = stmt_i.and_then(|i| {
+                        stmts
+                            .get(i + 1)
+                            .and_then(|&next_idx| self.arena.get(next_idx))
+                            .map(|n| n.pos)
+                    });
+                    let upper_bound = next_pos.unwrap_or(stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
