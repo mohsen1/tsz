@@ -789,7 +789,10 @@ impl<'a> Printer<'a> {
         // marks `this` references with SubstituteThis to emit `_this` instead.
 
         if func.is_async {
-            let this_expr = if _captures_this { "_this" } else { "this" };
+            // Arrow functions don't have their own `this`. In ES5 lowering:
+            // - If body uses `this`: capture with `_this` and pass to __awaiter
+            // - If body doesn't use `this`: pass `void 0` to __awaiter
+            let this_expr = if _captures_this { "_this" } else { "void 0" };
             self.emit_async_function_es5(func, "", this_expr);
         } else {
             self.write("function (");
