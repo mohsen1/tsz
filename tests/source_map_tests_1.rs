@@ -16373,3 +16373,120 @@ fn test_source_map_generator_with_return() {
         "expected mappings to reference source file"
     );
 }
+
+#[test]
+fn test_if_statement_brace_on_next_line_normalized() {
+    // tsc normalizes `if (cond)\n{` to `if (cond) {` — the opening brace of a block
+    // always goes on the same line as the if, regardless of source formatting.
+    let source = r#"var i = 10;
+if (i == 10)
+{
+    i++;
+}
+else if (i == 20) {
+    i--;
+} else {
+    i--;
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // The brace should be on the same line as `if (i == 10)`
+    assert!(
+        output.contains("if (i == 10) {"),
+        "Expected 'if (i == 10) {{' but got:\n{}",
+        output
+    );
+    // Should NOT have the brace on its own line
+    assert!(
+        !output.contains("if (i == 10)\n{"),
+        "Brace should not be on its own line:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_interface_comment_erased_with_declaration() {
+    // tsc erases leading comments of erased declarations (interface, type alias).
+    // The `// Interface` comment should not appear in the output.
+    let source = r#"// Interface
+interface IPoint {
+    getDist(): number;
+}
+
+// Module
+namespace Shapes {
+    var a = 10;
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // The interface comment should be erased
+    assert!(
+        !output.contains("// Interface"),
+        "Interface comment should be erased with the interface declaration:\n{}",
+        output
+    );
+    // The module comment should be preserved
+    assert!(
+        output.contains("// Module"),
+        "Module comment should be preserved:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_static_member_comment_preserved_after_class() {
+    // When a static property initializer is moved outside the class body,
+    // its leading comment should move with it.
+    let source = r#"class Point {
+    constructor(public x: number, public y: number) { }
+    // Static member
+    static origin = new Point(0, 0);
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // The static member comment should appear before the static init
+    assert!(
+        output.contains("// Static member\nPoint.origin"),
+        "Static member comment should be preserved before the initialization.\nOutput:\n{}",
+        output
+    );
+}

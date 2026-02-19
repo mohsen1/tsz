@@ -983,55 +983,58 @@ impl<'a> CheckerState<'a> {
                 self.ctx.binder.symbols.get(sym_id).is_some_and(|s| {
                     s.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
                 });
+            if !is_block_scoped
+                && let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied()
+            {
+                // Check if this is a mergeable declaration by looking at the node kind.
+                // Mergeable declarations: namespace/module, enum, class, interface, function.
+                // When these are declared with the same name, they merge instead of conflicting.
+                let is_mergeable_declaration = if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                {
+                    matches!(
+                        decl_node.kind,
+                        syntax_kind_ext::MODULE_DECLARATION  // namespace/module
+                            | syntax_kind_ext::ENUM_DECLARATION // enum
+                            | syntax_kind_ext::CLASS_DECLARATION // class
+                            | syntax_kind_ext::INTERFACE_DECLARATION // interface
+                            | syntax_kind_ext::TYPE_ALIAS_DECLARATION // type alias
+                            | syntax_kind_ext::FUNCTION_DECLARATION // function
+                            | syntax_kind_ext::IMPORT_DECLARATION // import
+                            | syntax_kind_ext::EXPORT_DECLARATION // export
+                    )
+                } else {
+                    false
+                };
 
-            // TS2403 only applies to non-block-scoped variables (var)
-            if !is_block_scoped {
-                if let Some(prev_type) = self.ctx.var_decl_types.get(&sym_id).copied() {
-                    // Check if this is a mergeable declaration by looking at the node kind.
-                    // Mergeable declarations: namespace/module, enum, class, interface, function.
-                    // When these are declared with the same name, they merge instead of conflicting.
-                    let is_mergeable_declaration =
-                        if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                            matches!(
-                                decl_node.kind,
-                                syntax_kind_ext::MODULE_DECLARATION  // namespace/module
-                                | syntax_kind_ext::ENUM_DECLARATION // enum
-                                | syntax_kind_ext::CLASS_DECLARATION // class
-                                | syntax_kind_ext::INTERFACE_DECLARATION // interface
-                                | syntax_kind_ext::FUNCTION_DECLARATION // function
-                            )
-                        } else {
-                            false
-                        };
-
-                    // Use raw_declared_type (before contextual override) for TS2403.
-                    // A bare `var y;` has declared type `any`.
-                    // We skip the check if the current declaration is an implicit `any` (no annotation),
-                    // because `var x: string; var x;` is valid in TypeScript.
-                    let is_implicit_any = var_decl.type_annotation.is_none();
-
-                    if !is_mergeable_declaration
-                        && !is_implicit_any
-                        && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
-                    {
-                        if let Some(ref name) = var_name {
-                            self.error_subsequent_variable_declaration(
-                                name,
-                                prev_type,
-                                raw_declared_type,
-                                decl_idx,
-                            );
-                        }
-                    } else {
-                        let refined = self.refine_var_decl_type(prev_type, final_type);
-                        if refined != prev_type {
-                            self.ctx.var_decl_types.insert(sym_id, refined);
-                        }
+                // Use raw_declared_type (before contextual override) for TS2403.
+                // A bare `var y;` has declared type `any`, even if the symbol type
+                // was previously cached as `string` from `var y = ""`.
+                if !is_mergeable_declaration
+                    && !self.are_var_decl_types_compatible(prev_type, raw_declared_type)
+                {
+                    if let Some(ref name) = var_name {
+                        self.error_subsequent_variable_declaration(
+                            name,
+                            prev_type,
+                            raw_declared_type,
+                            decl_idx,
+                        );
                     }
                 } else {
-                    // If this is the first time we see this variable in the current check run,
-                    // check if it has prior declarations (e.g. in lib.d.ts or earlier in the file)
-                    // that establish its type.
+                    let refined = self.refine_var_decl_type(prev_type, final_type);
+                    if refined != prev_type {
+                        self.ctx.var_decl_types.insert(sym_id, refined);
+                    }
+                }
+            } else {
+                // If this is the first time we see this variable in the current check run,
+                // check if it has prior declarations (e.g. in lib.d.ts or earlier in the file)
+                // that establish its type.
+                let mut type_to_store = final_type;
+
+                // Only check for prior declarations if this is a 'var' (not block-scoped) declaration.
+                // 'let' and 'const' shadowing is allowed and handled by binder (TS2451).
+                if !is_block_scoped {
                     let mut prior_type_found = None;
                     let symbol_name = self
                         .ctx
@@ -1040,7 +1043,25 @@ impl<'a> CheckerState<'a> {
                         .map(|s| s.escaped_name.clone());
 
                     // 1. Check lib contexts for prior declarations (e.g. 'var symbol' in lib.d.ts)
-                    // Extract data to avoid holding borrow on self during loop
+                    // Only compare against lib globals for TOP-LEVEL declarations.
+                    // Function-local vars shadow globals — they are NOT redeclarations.
+                    let is_top_level = self
+                        .ctx
+                        .arena
+                        .get_extended(decl_idx)
+                        .and_then(|ext| {
+                            // VarDecl → VarDeclList → VarStatement → parent
+                            self.ctx.arena.get_extended(ext.parent).and_then(|ext2| {
+                                self.ctx.arena.get_extended(ext2.parent).and_then(|ext3| {
+                                    self.ctx.arena.get(ext3.parent).map(|p| {
+                                        p.kind == syntax_kind_ext::SOURCE_FILE
+                                            || p.kind == syntax_kind_ext::MODULE_BLOCK
+                                    })
+                                })
+                            })
+                        })
+                        .unwrap_or(false);
+
                     let types = self.ctx.types;
                     let compiler_options = self.ctx.compiler_options.clone();
                     let definition_store = self.ctx.definition_store.clone();
@@ -1050,7 +1071,10 @@ impl<'a> CheckerState<'a> {
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
 
-                    if let Some(name) = symbol_name {
+                    if is_top_level
+                        && !is_ambient
+                        && let Some(name) = symbol_name
+                    {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
                             // even if SymbolIds are not perfectly aligned across contexts.
@@ -1105,60 +1129,60 @@ impl<'a> CheckerState<'a> {
                                 }
                             }
                         }
-                    }
 
-                    // 2. Check local declarations (in case of intra-file redeclaration)
-                    if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                        for &other_decl in &symbol.declarations {
-                            if other_decl == decl_idx {
-                                break;
-                            }
-                            if !other_decl.is_none() {
-                                let other_type = self.get_type_of_node(other_decl);
-
-                                // Check if other declaration is mergeable (namespace, etc.)
-                                let is_other_mergeable =
-                                    if let Some(other_node) = self.ctx.arena.get(other_decl) {
-                                        matches!(
-                                            other_node.kind,
-                                            syntax_kind_ext::MODULE_DECLARATION
-                                                | syntax_kind_ext::ENUM_DECLARATION
-                                                | syntax_kind_ext::CLASS_DECLARATION
-                                                | syntax_kind_ext::INTERFACE_DECLARATION
-                                                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                                                | syntax_kind_ext::FUNCTION_DECLARATION
-                                                | syntax_kind_ext::IMPORT_DECLARATION
-                                                | syntax_kind_ext::EXPORT_DECLARATION
-                                        )
-                                    } else {
-                                        false
-                                    };
-
-                                if !is_other_mergeable
-                                    && !self.are_var_decl_types_compatible(other_type, final_type)
-                                    && let Some(ref name) = var_name
-                                {
-                                    self.error_subsequent_variable_declaration(
-                                        name, other_type, final_type, decl_idx,
-                                    );
+                        // 2. Check local declarations (in case of intra-file redeclaration)
+                        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                            for &other_decl in &symbol.declarations {
+                                if other_decl == decl_idx {
+                                    break;
                                 }
+                                if !other_decl.is_none() {
+                                    let other_type = self.get_type_of_node(other_decl);
 
-                                prior_type_found = Some(if let Some(prev) = prior_type_found {
-                                    self.refine_var_decl_type(prev, other_type)
-                                } else {
-                                    other_type
-                                });
+                                    // Check if other declaration is mergeable (namespace, etc.)
+                                    let is_other_mergeable =
+                                        if let Some(other_node) = self.ctx.arena.get(other_decl) {
+                                            matches!(
+                                                other_node.kind,
+                                                syntax_kind_ext::MODULE_DECLARATION
+                                                    | syntax_kind_ext::ENUM_DECLARATION
+                                                    | syntax_kind_ext::CLASS_DECLARATION
+                                                    | syntax_kind_ext::INTERFACE_DECLARATION
+                                                    | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                                    | syntax_kind_ext::FUNCTION_DECLARATION
+                                                    | syntax_kind_ext::IMPORT_DECLARATION
+                                                    | syntax_kind_ext::EXPORT_DECLARATION
+                                            )
+                                        } else {
+                                            false
+                                        };
+
+                                    if !is_other_mergeable
+                                        && !self
+                                            .are_var_decl_types_compatible(other_type, final_type)
+                                        && let Some(ref name) = var_name
+                                    {
+                                        self.error_subsequent_variable_declaration(
+                                            name, other_type, final_type, decl_idx,
+                                        );
+                                    }
+
+                                    prior_type_found = Some(if let Some(prev) = prior_type_found {
+                                        self.refine_var_decl_type(prev, other_type)
+                                    } else {
+                                        other_type
+                                    });
+                                }
                             }
                         }
-                    }
 
-                    let type_to_store = if let Some(prior) = prior_type_found {
-                        self.refine_var_decl_type(prior, final_type)
-                    } else {
-                        final_type
-                    };
-                    self.ctx.var_decl_types.insert(sym_id, type_to_store);
+                        if let Some(prior) = prior_type_found {
+                            type_to_store = self.refine_var_decl_type(prior, final_type);
+                        }
+                    }
                 }
+
+                self.ctx.var_decl_types.insert(sym_id, type_to_store);
             }
         } else {
             compute_final_type(self);
