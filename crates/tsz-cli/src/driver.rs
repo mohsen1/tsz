@@ -864,12 +864,18 @@ fn compile_inner(
 
     // Separate binary files from regular sources - binary files get TS1490
     let mut binary_file_diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut binary_file_names: FxHashSet<String> = FxHashSet::default();
     let mut sources: Vec<SourceEntry> = Vec::with_capacity(all_sources.len());
     for source in all_sources {
         if source.is_binary {
-            // Emit TS1490 "File appears to be binary." for binary files
+            // Emit TS1490 "File appears to be binary." for binary files.
+            // Track the file name so we can suppress parser diagnostics
+            // (e.g. TS1127 "Invalid character") that cascade from parsing
+            // UTF-16/corrupted content as UTF-8.
+            let file_name = source.path.to_string_lossy().into_owned();
+            binary_file_names.insert(file_name.clone());
             binary_file_diagnostics.push(Diagnostic::error(
-                source.path.to_string_lossy().into_owned(),
+                file_name,
                 0,
                 0,
                 "File appears to be binary.".to_string(),
@@ -958,7 +964,12 @@ fn compile_inner(
         .map(|c| &c.type_caches)
         .or_else(|| cache.as_ref().map(|c| &c.type_caches))
         .unwrap_or(&empty_type_caches);
-    // Add TS1490 diagnostics for binary files
+    // For binary files, suppress all diagnostics except TS1490.
+    // Parsing UTF-16/corrupted content as UTF-8 produces cascading
+    // TS1127 "Invalid character" false positives; TSC only emits TS1490.
+    if !binary_file_names.is_empty() {
+        diagnostics.retain(|d| !binary_file_names.contains(&d.file));
+    }
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.sort_by(|left, right| {
         left.file
