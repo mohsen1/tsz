@@ -1611,41 +1611,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if a variable declaration is exported (has `export` on its statement).
-    pub(crate) fn is_exported_variable_declaration(&self, decl_idx: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(decl_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return false;
-        }
-        // Walk up: VariableDeclaration -> VariableDeclarationList -> VariableStatement
-        if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-            && let Some(list_ext) = self.ctx.arena.get_extended(ext.parent)
-            && let Some(stmt_node) = self.ctx.arena.get(list_ext.parent)
-            && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-            && let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node)
-        {
-            // Check modifiers on the VariableStatement itself
-            if self
-                .ctx
-                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword as u16)
-            {
-                return true;
-            }
-            // The parser wraps `export var` in ExportDeclaration -> VariableStatement,
-            // so also check if the VariableStatement's parent is an ExportDeclaration.
-            let stmt_idx = list_ext.parent;
-            if let Some(stmt_ext) = self.ctx.arena.get_extended(stmt_idx)
-                && let Some(parent_node) = self.ctx.arena.get(stmt_ext.parent)
-                && parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Check if a declaration is inside a `declare namespace` or `declare module` context.
     /// This is different from `is_ambient_declaration` which also treats interfaces and type
     /// aliases as implicitly ambient.
@@ -1680,7 +1645,11 @@ impl<'a> CheckerState<'a> {
     /// module/namespace, and variable declarations.
     /// The parser wraps `export <decl>` as `ExportDeclaration → <inner decl>`, so
     /// we check both the node's own modifiers and whether its parent is `ExportDeclaration`.
-    pub(crate) fn is_declaration_exported(&self, arena: &tsz_parser::parser::NodeArena, decl_idx: NodeIndex) -> bool {
+    pub(crate) fn is_declaration_exported(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = arena.get(decl_idx) else {
@@ -1698,7 +1667,9 @@ impl<'a> CheckerState<'a> {
         let has_export = |modifiers: &Option<tsz_parser::parser::NodeList>| {
             if let Some(list) = modifiers {
                 list.nodes.iter().any(|&idx| {
-                    arena.get(idx).is_some_and(|n| n.kind == SyntaxKind::ExportKeyword as u16)
+                    arena
+                        .get(idx)
+                        .is_some_and(|n| n.kind == SyntaxKind::ExportKeyword as u16)
                 })
             } else {
                 false
@@ -1707,51 +1678,56 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
-                arena.get_function(node).is_some_and(|func| {
-                    has_export(&func.modifiers)
-                }) || parent_is_export_decl()
+                arena
+                    .get_function(node)
+                    .is_some_and(|func| has_export(&func.modifiers))
+                    || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
-                arena.get_class(node).is_some_and(|class| {
-                    has_export(&class.modifiers)
-                }) || parent_is_export_decl()
+                arena
+                    .get_class(node)
+                    .is_some_and(|class| has_export(&class.modifiers))
+                    || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
-                arena.get_interface(node).is_some_and(|iface| {
-                    has_export(&iface.modifiers)
-                }) || parent_is_export_decl()
+                arena
+                    .get_interface(node)
+                    .is_some_and(|iface| has_export(&iface.modifiers))
+                    || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                arena.get_enum(node).is_some_and(|enm| {
-                    has_export(&enm.modifiers)
-                }) || parent_is_export_decl()
+                arena
+                    .get_enum(node)
+                    .is_some_and(|enm| has_export(&enm.modifiers))
+                    || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                arena.get_type_alias(node).is_some_and(|alias| {
-                    has_export(&alias.modifiers)
-                }) || parent_is_export_decl()
+                arena
+                    .get_type_alias(node)
+                    .is_some_and(|alias| has_export(&alias.modifiers))
+                    || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                arena.get_module(node).is_some_and(|module| {
-                    has_export(&module.modifiers)
-                }) || parent_is_export_decl()
+                arena
+                    .get_module(node)
+                    .is_some_and(|module| has_export(&module.modifiers))
+                    || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 // Variable declaration exports are on the statement
                 if let Some(ext) = arena.get_extended(decl_idx)
                     && let Some(list_node) = arena.get(ext.parent)
                     && list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+                    && let Some(list_ext) = arena.get_extended(ext.parent)
+                    && let Some(stmt_node) = arena.get(list_ext.parent)
+                    && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
+                    && let Some(stmt) = arena.get_variable(stmt_node)
                 {
-                    if let Some(list_ext) = arena.get_extended(ext.parent)
-                        && let Some(stmt_node) = arena.get(list_ext.parent)
-                        && stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                        && let Some(stmt) = arena.get_variable(stmt_node)
-                    {
-                        return has_export(&stmt.modifiers) || 
-                            arena.get_extended(list_ext.parent)
-                                .and_then(|e| arena.get(e.parent))
-                                .is_some_and(|p| p.kind == syntax_kind_ext::EXPORT_DECLARATION);
-                    }
+                    return has_export(&stmt.modifiers)
+                        || arena
+                            .get_extended(list_ext.parent)
+                            .and_then(|e| arena.get(e.parent))
+                            .is_some_and(|p| p.kind == syntax_kind_ext::EXPORT_DECLARATION);
                 }
                 false
             }
