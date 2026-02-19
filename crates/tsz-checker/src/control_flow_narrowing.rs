@@ -1588,7 +1588,18 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             value.to_bits()
         };
-        if let Some(&cached) = self.numeric_atom_cache.borrow().get(&normalized_bits) {
+
+        // Check shared cache first
+        if let Some(shared) = self.shared_numeric_atom_cache
+            && let Ok(cache) = shared.try_borrow()
+            && let Some(&cached) = cache.get(&normalized_bits)
+        {
+            return cached;
+        }
+
+        if let Ok(cache) = self.numeric_atom_cache.try_borrow()
+            && let Some(&cached) = cache.get(&normalized_bits)
+        {
             return cached;
         }
 
@@ -1613,9 +1624,15 @@ impl<'a> FlowAnalyzer<'a> {
             self.interner.intern_string(&value.to_string())
         };
 
-        self.numeric_atom_cache
-            .borrow_mut()
-            .insert(normalized_bits, atom);
+        if let Some(shared) = self.shared_numeric_atom_cache
+            && let Ok(mut cache) = shared.try_borrow_mut()
+        {
+            cache.insert(normalized_bits, atom);
+        }
+
+        if let Ok(mut cache) = self.numeric_atom_cache.try_borrow_mut() {
+            cache.insert(normalized_bits, atom);
+        }
         atom
     }
 
