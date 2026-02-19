@@ -386,8 +386,8 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
         let (msg_template, code) = if symbol.flags & symbol_flags::MODULE != 0 {
             (
-                diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE,
-                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_NAMESPACE,
+                diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_VALUE,
+                diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
             )
         } else if symbol.flags & symbol_flags::CLASS != 0 {
             (
