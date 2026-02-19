@@ -199,6 +199,25 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Set `pending_source_pos` to the closing `)` of a node (e.g., call expression).
+    /// Scans backward from node.end to find the last `)`.
+    pub(super) fn map_closing_paren(&mut self, node: &Node) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let end = (node.end as usize).min(bytes.len());
+            let start = node.pos as usize;
+            // Scan backward to find the last `)`
+            let mut i = end;
+            while i > start {
+                i -= 1;
+                if bytes[i] == b')' {
+                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    return;
+                }
+            }
+        }
+    }
+
     /// Set `pending_source_pos` to the trailing `;` of a statement node.
     /// Uses `find_token_end_before_trivia` to locate the last significant token,
     /// then checks if that token was `;`.
