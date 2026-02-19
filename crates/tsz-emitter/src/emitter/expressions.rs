@@ -1280,17 +1280,17 @@ impl<'a> Printer<'a> {
         if let Some(inner) = self.arena.get(paren.expression)
             && inner.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
             && let Some(inner_paren) = self.arena.get_parenthesized(inner)
-                && let Some(inner_inner) = self.arena.get(inner_paren.expression)
-                    && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
-                        || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
-                        || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
-                    && self.type_assertion_wraps_object_literal(inner_paren.expression)
-                {
-                    // The inner ParenExpr already preserves parens for the object literal.
-                    // Our outer parens are redundant.
-                    self.emit(paren.expression);
-                    return;
-                }
+            && let Some(inner_inner) = self.arena.get(inner_paren.expression)
+            && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
+                || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+            && self.type_assertion_wraps_object_literal(inner_paren.expression)
+        {
+            // The inner ParenExpr already preserves parens for the object literal.
+            // Our outer parens are redundant.
+            self.emit(paren.expression);
+            return;
+        }
 
         self.write("(");
         self.emit(paren.expression);
