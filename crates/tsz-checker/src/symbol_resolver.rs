@@ -1438,6 +1438,28 @@ impl<'a> CheckerState<'a> {
 
     /// Get the text representation of an entity name node.
     ///
+    /// Get the text representation of an expression (simple chains only).
+    /// Handles Identifiers and PropertyAccessExpressions (e.g., `a.b.c`).
+    pub(crate) fn expression_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.ctx.arena.get(idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => self
+                .ctx
+                .arena
+                .get_identifier(node)
+                .map(|ident| ident.escaped_text.clone()),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.ctx.arena.get_access_expr(node)?;
+                let left = self.expression_text(access.expression)?;
+                let right = self.expression_text(access.name_or_argument)?;
+                Some(format!("{left}.{right}"))
+            }
+            k if k == SyntaxKind::ThisKeyword as u16 => Some("this".to_string()),
+            k if k == SyntaxKind::SuperKeyword as u16 => Some("super".to_string()),
+            _ => None,
+        }
+    }
+
     /// Entity names can be simple identifiers or qualified names (e.g., `A.B.C`).
     /// This function recursively builds the full text representation.
     pub(crate) fn entity_name_text(&self, idx: NodeIndex) -> Option<String> {

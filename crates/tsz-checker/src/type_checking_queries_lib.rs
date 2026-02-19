@@ -1708,6 +1708,9 @@ impl<'a> CheckerState<'a> {
         if (flags & symbol_flags::METHOD) != 0 {
             return symbol_flags::METHOD_EXCLUDES;
         }
+        if (flags & symbol_flags::ALIAS) != 0 {
+            return symbol_flags::ALIAS_EXCLUDES;
+        }
         symbol_flags::NONE
     }
 

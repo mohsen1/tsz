@@ -830,6 +830,13 @@ impl<'a> CheckerState<'a> {
                 | syntax_kind_ext::MODULE_DECLARATION
                 | syntax_kind_ext::GET_ACCESSOR
                 | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_CLAUSE
+                | syntax_kind_ext::NAMESPACE_IMPORT
+                | syntax_kind_ext::IMPORT_SPECIFIER
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_SPECIFIER
                 | syntax_kind_ext::CONSTRUCTOR => {
                     return Some(current);
                 }
