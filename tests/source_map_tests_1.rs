@@ -16638,3 +16638,84 @@ var x = 1;"#;
         output
     );
 }
+
+#[test]
+fn test_commonjs_detached_comment_before_esmodule_marker() {
+    // tsc preserves "detached" comments (followed by blank line) BEFORE
+    // the __esModule marker. "Attached" comments (no blank line) are
+    // deferred to AFTER the marker.
+    let source = r#"/*
+ * Public API sample
+ */
+
+import ts = require("typescript");
+
+const x = ts.version;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // Detached block comment should come BEFORE __esModule
+    let comment_pos = output
+        .find("Public API sample")
+        .expect("comment should be present");
+    let esmod_pos = output
+        .find("__esModule")
+        .expect("__esModule should be present");
+    assert!(
+        comment_pos < esmod_pos,
+        "Detached comment should appear before __esModule marker:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_commonjs_attached_comment_after_esmodule_marker() {
+    // When a comment has no blank line after it (attached to the next
+    // statement), tsc emits __esModule BEFORE the comment.
+    let source = r#"/*****************************
+* (c) Copyright - Important
+****************************/
+import model = require("./greeter");
+var x = 1;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        module: crate::emitter::ModuleKind::CommonJS,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // Attached block comment should come AFTER __esModule
+    let comment_pos = output.find("Copyright").expect("comment should be present");
+    let esmod_pos = output
+        .find("__esModule")
+        .expect("__esModule should be present");
+    assert!(
+        esmod_pos < comment_pos,
+        "__esModule marker should appear before attached comment:\n{}",
+        output
+    );
+}
