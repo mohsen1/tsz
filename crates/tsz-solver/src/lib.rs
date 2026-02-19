@@ -77,6 +77,7 @@ pub mod unsoundness_audit;
 pub mod utils;
 pub mod variance;
 pub mod visitor;
+mod visitor_extract;
 pub mod widening;
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
