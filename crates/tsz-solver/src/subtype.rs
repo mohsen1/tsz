@@ -2372,18 +2372,20 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // If not allowing any, ANY/STRICT_ANY only match itself or unknown.
-        if !allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
-            if target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN {
-                return SubtypeResult::True;
-            }
-            // Fall through to structural check (which will fail for STRICT_ANY)
+        if !allow_any
+            && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
+            && (target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN)
+        {
+            return SubtypeResult::True;
         }
-        if !allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
-            if source == TypeId::ANY || source == TypeId::STRICT_ANY {
-                return SubtypeResult::True;
-            }
-            // Fall through to structural check (which will fail for STRICT_ANY)
+        // Fall through to structural check (which will fail for STRICT_ANY)
+        if !allow_any
+            && (target == TypeId::ANY || target == TypeId::STRICT_ANY)
+            && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
+        {
+            return SubtypeResult::True;
         }
+        // Fall through to structural check (which will fail for STRICT_ANY)
 
         // Everything is assignable to unknown
         if target == TypeId::UNKNOWN {

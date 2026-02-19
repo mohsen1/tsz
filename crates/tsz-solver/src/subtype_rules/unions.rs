@@ -107,12 +107,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        _allow_bivariant: bool,
+        allow_bivariant: bool,
     ) -> SubtypeResult {
-        // Phase 5 Soundness Fix: North Star V1.2 prioritizes soundness.
-        // Methods in TypeScript are historically bivariant, but modern strict mode
-        // (strictFunctionTypes) should apply contravariance to all callables
-        // unless explicitly opted out. We no longer force bivariance here.
+        if allow_bivariant {
+            // Method bivariance: temporarily disable strict_function_types
+            // so check_parameter_compatibility uses bivariant parameter checks.
+            // This only affects parameter variance, NOT return type variance.
+            let prev = self.strict_function_types;
+            self.strict_function_types = false;
+            let result = self.check_subtype(source, target);
+            self.strict_function_types = prev;
+            return result;
+        }
         self.check_subtype(source, target)
     }
 
@@ -121,9 +127,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: TypeId,
         target: TypeId,
-        _allow_bivariant: bool,
+        allow_bivariant: bool,
     ) -> Option<SubtypeFailureReason> {
-        // Match check_subtype_with_method_variance behavior for diagnostics.
+        if allow_bivariant {
+            let prev = self.strict_function_types;
+            self.strict_function_types = false;
+            let result = self.explain_failure(source, target);
+            self.strict_function_types = prev;
+            return result;
+        }
         self.explain_failure(source, target)
     }
 
