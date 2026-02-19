@@ -114,6 +114,25 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         if let Some(rhs) = self.assignment_rhs_for_reference(assignment_node, target) {
+            // Unannotated declaration initializers `let/var/const x = []` should flow as
+            // evolving-any arrays so immediate writes like `x.push(...)` are permitted.
+            // Keep this scoped to declaration assignments to avoid changing expression-level
+            // `[]` behavior (e.g. generic inference with `id([])`).
+            let is_unannotated_decl_init = (self
+                .is_mutable_var_decl_without_annotation(assignment_node)
+                || (self.is_const_variable_declaration(assignment_node)
+                    && !self.is_var_decl_with_type_annotation(assignment_node)))
+                && self.arena.get(rhs).is_some_and(|rhs_node| {
+                    rhs_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                        && self
+                            .arena
+                            .get_literal_expr(rhs_node)
+                            .is_some_and(|lit| lit.elements.nodes.is_empty())
+                });
+            if is_unannotated_decl_init {
+                return Some(self.interner.array(TypeId::ANY));
+            }
+
             // For flow narrowing, prefer literal types from AST nodes over the type checker's widened types
             // This ensures that `x = 42` narrows to literal 42.0, not just NUMBER
             // This matches TypeScript's behavior where control flow analysis preserves literal types
