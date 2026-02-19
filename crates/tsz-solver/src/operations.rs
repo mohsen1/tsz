@@ -1233,6 +1233,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             final_subst.insert(tp.name, ty);
         }
 
+        // Recursively resolve placeholders in final_subst.
+        // If an inferred type contains transient placeholders from source functions (e.g. __infer_src_U),
+        // we must resolve them using the full inference context substitution.
+        // Example: B -> Array(__infer_src_U) where __infer_src_U -> T. We want B -> Array(T).
+        {
+            let full_subst = infer_ctx.get_current_substitution();
+            let mut resolved_subst = TypeSubstitution::new();
+            for (name, ty) in final_subst.map().iter() {
+                // Iteratively apply substitution to resolve transitive placeholders.
+                let mut current = *ty;
+                for _ in 0..8 {
+                    let next = instantiate_type(self.interner, current, &full_subst);
+                    if next == current {
+                        break;
+                    }
+                    current = next;
+                }
+                resolved_subst.insert(*name, current);
+            }
+            // Update final_subst with fully resolved types
+            for (name, ty) in resolved_subst.map().iter() {
+                final_subst.insert(*name, *ty);
+            }
+        }
+
         // Constraint checking is deferred until ALL type parameters are resolved.
         // This handles cases like `<T extends U, U>` where T's constraint references
         // U, which may not be in final_subst until later iterations.
