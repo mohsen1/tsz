@@ -34133,9 +34133,8 @@ fn test_namespace_export_binds_global() {
     // We need to find the global scope.
     // Assuming the first scope created is global.
 
-    let global_scope = &binder.scopes[0]; // Is this safe assumption?
-    assert!(
-        global_scope.table.has("foo"),
-        "Global scope should contain 'foo'"
-    );
-}
+            let global_scope = &binder.scopes[0]; // Is this safe assumption?
+            assert!(global_scope.table.has("foo"), "Global scope should contain 'foo'");
+        }
+        
+    
