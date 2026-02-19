@@ -32,9 +32,10 @@ use tsz_common::Atom;
 
 // Re-export extended type queries so callers can use `type_queries::*`
 pub use crate::type_queries_classifiers::{
-    AssignabilityEvalKind, BindingElementTypeKind, ConstructorAccessKind, ExcessPropertiesKind,
-    SymbolResolutionTraversalKind, classify_for_assignability_eval, classify_for_binding_element,
-    classify_for_constructor_access, classify_for_excess_properties,
+    AssignabilityEvalKind, AugmentationTargetKind, BindingElementTypeKind, ConstructorAccessKind,
+    ExcessPropertiesKind, InterfaceMergeKind, SymbolResolutionTraversalKind,
+    classify_for_assignability_eval, classify_for_augmentation, classify_for_binding_element,
+    classify_for_constructor_access, classify_for_excess_properties, classify_for_interface_merge,
     classify_for_symbol_resolution_traversal, get_conditional_type_id, get_def_id,
     get_enum_components, get_keyof_inner, get_lazy_def_id, get_mapped_type_id, get_type_identity,
 };
@@ -1875,132 +1876,4 @@ pub fn collect_property_name_atoms_for_diagnostics(
     atoms.sort_unstable();
     atoms.dedup();
     atoms
-}
-
-// =============================================================================
-// Interface Merge Type Classification
-// =============================================================================
-
-/// Classification for types when merging interfaces.
-///
-/// This enum provides a structured way to handle interface type merging,
-/// abstracting away the internal `TypeData` representation. Used for merging
-/// derived and base interface types.
-#[derive(Debug, Clone)]
-pub enum InterfaceMergeKind {
-    /// Callable type with call/construct signatures and properties
-    Callable(crate::types::CallableShapeId),
-    /// Object type with properties only
-    Object(crate::types::ObjectShapeId),
-    /// Object type with properties and index signatures
-    ObjectWithIndex(crate::types::ObjectShapeId),
-    /// Intersection type - create intersection with base
-    Intersection,
-    /// Other type kinds - return derived unchanged
-    Other,
-}
-
-/// Classify a type for interface merging operations.
-///
-/// This function examines a type and returns information about how to handle it
-/// when merging interface types. Used by `merge_interface_types`.
-///
-/// # Example
-///
-/// ```ignore
-/// use crate::type_queries::{classify_for_interface_merge, InterfaceMergeKind};
-///
-/// match classify_for_interface_merge(&db, type_id) {
-///     InterfaceMergeKind::Callable(shape_id) => {
-///         let shape = db.callable_shape(shape_id);
-///         // Merge signatures and properties
-///     }
-///     InterfaceMergeKind::Object(shape_id) => {
-///         let shape = db.object_shape(shape_id);
-///         // Merge properties only
-///     }
-///     InterfaceMergeKind::ObjectWithIndex(shape_id) => {
-///         let shape = db.object_shape(shape_id);
-///         // Merge properties and index signatures
-///     }
-///     InterfaceMergeKind::Intersection => {
-///         // Create intersection with base type
-///     }
-///     InterfaceMergeKind::Other => {
-///         // Return derived unchanged
-///     }
-/// }
-/// ```
-pub fn classify_for_interface_merge(db: &dyn TypeDatabase, type_id: TypeId) -> InterfaceMergeKind {
-    let Some(key) = db.lookup(type_id) else {
-        return InterfaceMergeKind::Other;
-    };
-
-    match key {
-        TypeData::Callable(shape_id) => InterfaceMergeKind::Callable(shape_id),
-        TypeData::Object(shape_id) => InterfaceMergeKind::Object(shape_id),
-        TypeData::ObjectWithIndex(shape_id) => InterfaceMergeKind::ObjectWithIndex(shape_id),
-        TypeData::Intersection(_) => InterfaceMergeKind::Intersection,
-        // All other types cannot be structurally merged for interfaces
-        TypeData::BoundParameter(_)
-        | TypeData::Intrinsic(_)
-        | TypeData::Literal(_)
-        | TypeData::Union(_)
-        | TypeData::Array(_)
-        | TypeData::Tuple(_)
-        | TypeData::Function(_)
-        | TypeData::TypeParameter(_)
-        | TypeData::Infer(_)
-        | TypeData::Lazy(_)
-        | TypeData::Recursive(_)
-        | TypeData::Application(_)
-        | TypeData::Conditional(_)
-        | TypeData::Mapped(_)
-        | TypeData::IndexAccess(_, _)
-        | TypeData::KeyOf(_)
-        | TypeData::TemplateLiteral(_)
-        | TypeData::UniqueSymbol(_)
-        | TypeData::ThisType
-        | TypeData::TypeQuery(_)
-        | TypeData::ReadonlyType(_)
-        | TypeData::NoInfer(_)
-        | TypeData::StringIntrinsic { .. }
-        | TypeData::ModuleNamespace(_)
-        | TypeData::Error
-        | TypeData::Enum(_, _) => InterfaceMergeKind::Other,
-    }
-}
-
-/// Classification for augmentation operations on types.
-///
-/// Similar to `InterfaceMergeKind` but specifically for module augmentation
-/// where we merge additional properties into an existing type.
-#[derive(Debug, Clone)]
-pub enum AugmentationTargetKind {
-    /// Object type - merge properties directly
-    Object(crate::types::ObjectShapeId),
-    /// Object with index signatures - preserve index signatures when merging
-    ObjectWithIndex(crate::types::ObjectShapeId),
-    /// Callable type - merge properties while preserving signatures
-    Callable(crate::types::CallableShapeId),
-    /// Other type - create new object with augmentation members
-    Other,
-}
-
-/// Classify a type for augmentation operations.
-///
-/// This function examines a type and returns information about how to handle it
-/// when applying module augmentations. Used by `apply_module_augmentations`.
-pub fn classify_for_augmentation(db: &dyn TypeDatabase, type_id: TypeId) -> AugmentationTargetKind {
-    let Some(key) = db.lookup(type_id) else {
-        return AugmentationTargetKind::Other;
-    };
-
-    match key {
-        TypeData::Object(shape_id) => AugmentationTargetKind::Object(shape_id),
-        TypeData::ObjectWithIndex(shape_id) => AugmentationTargetKind::ObjectWithIndex(shape_id),
-        TypeData::Callable(shape_id) => AugmentationTargetKind::Callable(shape_id),
-        // All other types are treated as Other for augmentation
-        _ => AugmentationTargetKind::Other,
-    }
 }
