@@ -818,8 +818,8 @@ run_ts_toolbelt_benchmarks() {
     ensure_ts_toolbelt_fixture
     echo -e "${GREEN}✓${NC} ts-toolbelt pinned at $(git -C "$TS_TOOLBELT_DIR" rev-parse --short HEAD)"
 
-    # Run as isolated file probes with stable baseline compiler options.
-    local lib_args="--lib es2020 --moduleResolution node16 --module node16"
+    # Run as isolated file probes using compiler defaults.
+    local lib_args=""
 
     local files
     if [ "$QUICK_MODE" = true ]; then
@@ -868,8 +868,8 @@ run_ts_essentials_benchmarks() {
     ensure_ts_essentials_fixture
     echo -e "${GREEN}✓${NC} ts-essentials pinned at $(git -C "$TS_ESSENTIALS_DIR" rev-parse --short HEAD)"
 
-    # Run as isolated file probes with stable baseline compiler options.
-    local lib_args="--lib es2020 --moduleResolution node16 --module node16"
+    # Run as isolated file probes using compiler defaults.
+    local lib_args=""
 
     local files
     if [ "$QUICK_MODE" = true ]; then

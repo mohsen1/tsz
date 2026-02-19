@@ -634,10 +634,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
     }
 
     fn check_type_alias_declaration(&mut self, type_alias_idx: NodeIndex) {
-        if let Some(node) = self.ctx.arena.get(type_alias_idx) {
-            // Call CheckerState implementation directly
-            self.check_type_alias_declaration(type_alias_idx);
+        // Keep type-node validation and indexed-access diagnostics wired via CheckerState.
+        CheckerState::check_type_alias_declaration(self, type_alias_idx);
 
+        if let Some(node) = self.ctx.arena.get(type_alias_idx) {
             // Continue with comprehensive type alias checking
             if let Some(type_alias) = self.ctx.arena.get_type_alias(node) {
                 // TS1212: Check type alias name for strict mode reserved words
