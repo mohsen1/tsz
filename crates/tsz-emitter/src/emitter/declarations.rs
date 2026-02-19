@@ -1381,7 +1381,10 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // Iterate declaration lists → declarations
+        // Collect all initialized (name, initializer) pairs across declaration lists.
+        // TSC emits multiple exports as a comma expression: `ns.a = 1, ns.c = 2;`
+        let mut assignments: Vec<(String, NodeIndex)> = Vec::new();
+
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
                 continue;
@@ -1398,27 +1401,34 @@ impl<'a> Printer<'a> {
                     continue;
                 };
 
+                if decl.initializer.is_none() {
+                    continue;
+                }
+
                 let mut names = Vec::new();
                 self.collect_binding_names(decl.name, &mut names);
-
-                for name in &names {
-                    // Skip uninitialized exports - they don't produce assignment
-                    if decl.initializer.is_none() {
-                        continue;
-                    }
-                    self.write(ns_name);
-                    self.write(".");
-                    self.write(name);
-                    self.write(" = ");
-                    self.emit_expression(decl.initializer);
-                    self.write(";");
-                    // Emit trailing comments from the outer export statement
-                    let token_end =
-                        self.find_token_end_before_trivia(outer_stmt.pos, outer_stmt.end);
-                    self.emit_trailing_comments(token_end);
-                    self.write_line();
+                for name in names {
+                    assignments.push((name, decl.initializer));
                 }
             }
+        }
+
+        // Emit as comma expression: ns.a = 1, ns.c = 2;
+        if !assignments.is_empty() {
+            for (i, (name, init)) in assignments.iter().enumerate() {
+                if i > 0 {
+                    self.write(", ");
+                }
+                self.write(ns_name);
+                self.write(".");
+                self.write(name);
+                self.write(" = ");
+                self.emit_expression(*init);
+            }
+            self.write(";");
+            let token_end = self.find_token_end_before_trivia(outer_stmt.pos, outer_stmt.end);
+            self.emit_trailing_comments(token_end);
+            self.write_line();
         }
     }
 
