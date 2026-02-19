@@ -127,8 +127,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Methods are bivariant regardless of strict_function_types setting
         // UNLESS disable_method_bivariance is set.
-        // In TypeScript, strictFunctionTypes only affects function-typed properties,
-        // NOT method declarations. Methods declared with method syntax are always bivariant.
+        // NOTE: North Star V1.2 prioritizes soundness. Bivariance is enabled for methods
+        // even in strict mode to match modern TypeScript behavior.
         let method_should_be_bivariant = is_method && !self.disable_method_bivariance;
         let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
 
@@ -677,7 +677,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             let mut target_canonical = TypeSubstitution::new();
             for tp in &target_instantiated.type_params {
-                target_canonical.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                target_canonical.insert(tp.name, target_tp.constraint.unwrap_or(TypeId::UNKNOWN));
             }
             target_instantiated =
                 self.instantiate_function_shape(&target_instantiated, &target_canonical);
@@ -1216,7 +1216,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// multiple subtype checks. This turns O(n²) evaluate calls into O(n).
     pub(crate) fn evaluate_type(&mut self, type_id: TypeId) -> TypeId {
         // Check local evaluation cache first.
-        // Key includes no_unchecked_indexed_access since it affects evaluation results.
+        // Key includes no_unchecked_indexed_access since with that flag evaluation results can vary.
         let cache_key = (type_id, self.no_unchecked_indexed_access);
         if let Some(&cached) = self.eval_cache.get(&cache_key) {
             return cached;
