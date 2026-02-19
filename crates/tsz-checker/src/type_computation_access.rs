@@ -830,24 +830,6 @@ impl<'a> CheckerState<'a> {
                             value_type
                         };
 
-                    // TS7008: Member implicitly has an 'any' type
-                    // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
-                    // and the property value type is 'any'
-                    if self.ctx.no_implicit_any()
-                        && prev_context.is_some()
-                        && value_type == TypeId::ANY
-                    {
-                        let message = format_message(
-                            diagnostic_messages::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                            &[&name, "any"],
-                        );
-                        self.error_at_node(
-                            prop.name,
-                            &message,
-                            diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                        );
-                    }
-
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
@@ -1030,24 +1012,6 @@ impl<'a> CheckerState<'a> {
                         } else {
                             value_type
                         };
-
-                    // TS7008: Member implicitly has an 'any' type
-                    // Report this error when noImplicitAny is enabled, the object literal has a contextual type,
-                    // and the shorthand property value type is 'any'
-                    if self.ctx.no_implicit_any()
-                        && prev_context.is_some()
-                        && value_type == TypeId::ANY
-                    {
-                        let message = format_message(
-                            diagnostic_messages::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                            &[&name, "any"],
-                        );
-                        self.error_at_node(
-                            elem_idx,
-                            &message,
-                            diagnostic_codes::MEMBER_IMPLICITLY_HAS_AN_TYPE,
-                        );
-                    }
 
                     let name_atom = self.ctx.types.intern_string(&name);
 
