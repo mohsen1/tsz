@@ -574,12 +574,20 @@ impl<'a> Printer<'a> {
                                 true
                             } else {
                                 // Type-only properties (no initializer, not private, not accessor): erased
-                                let is_private = self.arena.get(p.name).is_some_and(|n| {
-                                    n.kind == SyntaxKind::PrivateIdentifier as u16
-                                });
-                                let has_accessor = self
-                                    .has_modifier(&p.modifiers, SyntaxKind::AccessorKeyword as u16);
-                                p.initializer.is_none() && !is_private && !has_accessor
+                                // But when useDefineForClassFields is true (ES2022+),
+                                // uninitialised properties are real class field declarations.
+                                if self.ctx.options.use_define_for_class_fields {
+                                    false
+                                } else {
+                                    let is_private = self.arena.get(p.name).is_some_and(|n| {
+                                        n.kind == SyntaxKind::PrivateIdentifier as u16
+                                    });
+                                    let has_accessor = self.has_modifier(
+                                        &p.modifiers,
+                                        SyntaxKind::AccessorKeyword as u16,
+                                    );
+                                    p.initializer.is_none() && !is_private && !has_accessor
+                                }
                             }
                         } else {
                             false
@@ -1694,14 +1702,18 @@ impl<'a> Printer<'a> {
         // (they are TypeScript-only declarations: typed props, bare props)
         // Exception: Private fields (#name) are always emitted — they are runtime declarations.
         // Exception: `accessor` fields are always emitted — they are ES2024 auto-accessors.
-        let is_private = self
-            .arena
-            .get(prop.name)
-            .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-        let has_accessor = self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
-        if prop.initializer.is_none() && !is_private && !has_accessor {
-            self.skip_comments_for_erased_node(node);
-            return;
+        // Exception: useDefineForClassFields (ES2022+) keeps uninitialised props as class fields.
+        if prop.initializer.is_none() && !self.ctx.options.use_define_for_class_fields {
+            let is_private = self
+                .arena
+                .get(prop.name)
+                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+            let has_accessor =
+                self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
+            if !is_private && !has_accessor {
+                self.skip_comments_for_erased_node(node);
+                return;
+            }
         }
 
         // Emit modifiers (static and accessor for JavaScript)
