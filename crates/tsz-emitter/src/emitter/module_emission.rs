@@ -499,6 +499,11 @@ impl<'a> Printer<'a> {
         // Convert Vec<&NodeIndex> to Vec<NodeIndex> for emit_comma_separated
         let value_refs: Vec<NodeIndex> = value_imports.iter().map(|&&idx| idx).collect();
         self.emit_comma_separated(&value_refs);
+        // Preserve trailing comma from source
+        let has_trailing_comma = self.has_trailing_comma_in_source(node, &imports.elements.nodes);
+        if has_trailing_comma {
+            self.write(",");
+        }
         self.write(" }");
     }
 
@@ -589,6 +594,19 @@ impl<'a> Printer<'a> {
                 self.write(" from ");
                 self.emit(export.module_specifier);
             }
+            self.write_semicolon();
+            return;
+        }
+
+        // export * as <name> from "..." — clause is an Identifier or StringLiteral
+        if !export.module_specifier.is_none()
+            && (clause_node.kind == SyntaxKind::Identifier as u16
+                || clause_node.kind == SyntaxKind::StringLiteral as u16)
+        {
+            self.write("export * as ");
+            self.emit(export.export_clause);
+            self.write(" from ");
+            self.emit(export.module_specifier);
             self.write_semicolon();
             return;
         }
