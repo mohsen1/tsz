@@ -814,8 +814,17 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn has_static_modifier_in_arena(&self, arena: &tsz_parser::parser::NodeArena, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
-        self.get_modifier_index_in_arena(arena, modifiers, tsz_scanner::SyntaxKind::StaticKeyword as u16).is_some()
+    fn has_static_modifier_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        self.get_modifier_index_in_arena(
+            arena,
+            modifiers,
+            tsz_scanner::SyntaxKind::StaticKeyword as u16,
+        )
+        .is_some()
     }
 
     fn get_modifier_index_in_arena(
@@ -850,8 +859,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 let mut decl_flags = node.flags as u32;
                 if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
-                    && let Some(parent) =
-                        arena.get_extended(decl_idx).map(|ext| ext.parent)
+                    && let Some(parent) = arena.get_extended(decl_idx).map(|ext| ext.parent)
                     && let Some(parent_node) = arena.get(parent)
                     && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                 {

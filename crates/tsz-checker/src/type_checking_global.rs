@@ -791,16 +791,14 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // General conflict check for other combinations.
-                    // Only report when both declarations are in the current file;
-                    // external modules are isolated scopes and cross-file conflicts
-                    // should not be reported as TS2300.
-                    if !decl_is_local || !other_is_local {
-                        continue;
-                    }
+                    // General conflict check for other combinations
                     if Self::declarations_conflict(decl_flags, other_flags) {
-                        conflicts.insert(decl_idx);
-                        conflicts.insert(other_idx);
+                        if decl_is_local {
+                            conflicts.insert(decl_idx);
+                        }
+                        if other_is_local {
+                            conflicts.insert(other_idx);
+                        }
                     }
                 }
             }
