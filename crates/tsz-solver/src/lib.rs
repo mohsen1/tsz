@@ -52,6 +52,8 @@ mod operations_constructors;
 pub mod operations_generics;
 pub mod operations_iterators;
 pub mod operations_property;
+mod operations_property_readonly;
+mod operations_property_visitor;
 mod query_trace;
 pub mod recursion;
 pub mod relation_queries;
