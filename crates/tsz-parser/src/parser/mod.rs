@@ -26,6 +26,8 @@ pub mod state;
 mod state_declarations;
 mod state_expressions;
 mod state_statements;
+mod state_statements_class;
+mod state_statements_class_members;
 mod state_types;
 
 #[cfg(test)]
