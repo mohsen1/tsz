@@ -40,6 +40,8 @@ mod comment_helpers;
 mod comments;
 mod declarations;
 mod es5_bindings;
+mod es5_bindings_assignment;
+mod es5_bindings_patterns;
 mod es5_helpers;
 mod es5_templates;
 mod expressions;
