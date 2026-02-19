@@ -288,15 +288,16 @@ impl<'a> CheckerState<'a> {
     /// Check if a string is a valid JavaScript identifier.
     /// Used to avoid type-checking invalid JSX attribute names that should be parser errors.
     fn is_valid_js_identifier(s: &str) -> bool {
-        if s.is_empty() {
+        let mut chars = s.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        // JavaScript identifiers must start with a letter, $, or _
+        if !first.is_ascii_alphabetic() && first != '$' && first != '_' {
             return false;
         }
-        // JavaScript identifiers must start with letter, $, or _
-        let first = s.chars().next().unwrap();
-        if !('a'..={ 'z' }).contains(&first) || !['$'].contains(&first) {
-            return false;
-        }
-        true
+        // Subsequent characters can also include digits
+        chars.all(|c| c.is_ascii_alphanumeric() || c == '$' || c == '_')
     }
 
     /// Check JSX attributes against the expected props type.
