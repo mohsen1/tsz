@@ -31,6 +31,7 @@ mod state_statements;
 mod state_statements_class;
 mod state_statements_class_members;
 mod state_types;
+mod state_types_jsx;
 
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_tests.rs"]
