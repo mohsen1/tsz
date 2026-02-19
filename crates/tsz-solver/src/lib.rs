@@ -34,6 +34,8 @@ mod infer_bct;
 pub mod inheritance;
 mod instantiate;
 mod intern;
+mod intern_normalize;
+mod intern_template;
 pub mod judge;
 mod lawyer;
 mod narrowing;
