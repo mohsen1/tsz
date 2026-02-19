@@ -101,12 +101,10 @@ impl<'a> CheckerState<'a> {
                     // Example: type T = { x: { a: number } } | { x: { b: number } }
                     // Assigning { x: { b: 1 } } should NOT error on 'b'.
                     // =============================================================
-                    let nested_target = if target_prop_types.len() == 1 {
-                        target_prop_types[0]
-                    } else {
-                        let factory = self.ctx.types.factory();
-                        factory.union(target_prop_types.clone())
-                    };
+                    let nested_target = tsz_solver::utils::union_or_single(
+                        self.ctx.types,
+                        target_prop_types.clone(),
+                    );
 
                     self.check_nested_object_literal_excess_properties(
                         source_prop.name,

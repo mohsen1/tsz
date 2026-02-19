@@ -294,14 +294,8 @@ impl<'a> CheckerState<'a> {
         match classify_for_of_element_type(self.ctx.types, type_id) {
             ForOfElementKind::Array(elem) => elem,
             ForOfElementKind::Tuple(elements) => {
-                let mut member_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
-                if member_types.is_empty() {
-                    TypeId::NEVER
-                } else if member_types.len() == 1 {
-                    member_types.pop().unwrap_or(TypeId::ANY)
-                } else {
-                    factory.union(member_types)
-                }
+                let member_types: Vec<TypeId> = elements.iter().map(|e| e.type_id).collect();
+                tsz_solver::utils::union_or_single(self.ctx.types, member_types)
             }
             ForOfElementKind::Union(members) => {
                 let mut element_types = Vec::with_capacity(members.len());

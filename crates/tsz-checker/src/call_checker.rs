@@ -492,11 +492,8 @@ impl<'a> CheckerState<'a> {
             .collect();
 
         // Union of all signatures provides contextual typing
-        let union_contextual = if signature_types.len() == 1 {
-            signature_types[0]
-        } else {
-            factory.union(signature_types.clone())
-        };
+        let union_contextual =
+            tsz_solver::utils::union_or_single(self.ctx.types, signature_types.clone());
 
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
