@@ -765,9 +765,7 @@ impl<'a> CheckerState<'a> {
 
             // Prefer property type incompatibility details when both optionality and type differ.
             // tsc reports the type incompatibility first in this situation.
-            if !self.is_assignable_to(source_prop.type_id, target_prop.type_id) {
-                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);
-                let prop_message = format_message(
+                                                   if !self.is_assignable_to(source_prop.type_id, target_prop.type_id) {                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);                let prop_message = format_message(
                     diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     &[&prop_name],
                 );
@@ -793,9 +791,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Fallback assignability check for optional target properties.
-            if !self.is_assignable_to(source_prop.type_id, effective_target_type) {
-                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);
-                let prop_message = format_message(
+                                                   if !self.is_assignable_to(source_prop.type_id, effective_target_type) {                let prop_name = self.ctx.types.resolve_atom_ref(target_prop.name);                let prop_message = format_message(
                     diagnostic_messages::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE,
                     &[&prop_name],
                 );

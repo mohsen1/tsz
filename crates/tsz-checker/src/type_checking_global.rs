@@ -1326,8 +1326,7 @@ impl<'a> CheckerState<'a> {
 
                         let compatible_both_ways = self
                             .is_assignable_to(*existing_type, *property_type)
-                            && self.is_assignable_to(*property_type, *existing_type);
-                        if !compatible_both_ways {
+                                                         && self.is_assignable_to(*property_type, *existing_type);                        if !compatible_both_ways {
                             let existing_type_str = self.format_type(*existing_type);
                             let property_type_str = self.format_type(*property_type);
                             self.error_at_node_msg(
@@ -1343,9 +1342,7 @@ impl<'a> CheckerState<'a> {
 
                     if *is_numeric
                         && let Some(number_index) = local_number_index.or(merged_number_index)
-                        && !self.is_assignable_to(*property_type, number_index)
-                    {
-                        let index_type_str = self.format_type(number_index);
+                                                                                                   && !self.is_assignable_to(*property_type, number_index)                    {                        let index_type_str = self.format_type(number_index);
                         self.error_at_node_msg(
                             *name_idx,
                             diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
@@ -1359,9 +1356,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     if let Some(string_index) = local_string_index.or(merged_string_index)
-                        && !self.is_assignable_to(*property_type, string_index)
-                    {
-                        let index_type_str = self.format_type(string_index);
+                                                                                                   && !self.is_assignable_to(*property_type, string_index)                    {                        let index_type_str = self.format_type(string_index);
                         self.error_at_node_msg(
                             *name_idx,
                             diagnostic_codes::PROPERTY_OF_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
@@ -1384,9 +1379,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(existing_string) = merged_string_index {
                         let number_str = self.format_type(local_number);
                         let string_str = self.format_type(existing_string);
-                        if !self.is_assignable_to(local_number, existing_string) {
-                            self.error_at_node_msg(
-                                local_number_index_node,
+                                                                                                   if !self.is_assignable_to(local_number, existing_string) {                            self.error_at_node_msg(                                local_number_index_node,
                                 diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                                 &["number", &number_str, "string", &string_str],
                             );
@@ -1396,9 +1389,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(existing_number) = merged_number_index {
                         let local_str = self.format_type(local_number);
                         let existing_str = self.format_type(existing_number);
-                        if !self.is_assignable_to(local_number, existing_number)
-                            && !self.is_assignable_to(existing_number, local_number)
-                        {
+                                                                                                   if !self.is_assignable_to(local_number, existing_number)                            && !self.is_assignable_to(existing_number, local_number)                        {
                             self.error_at_node_msg(
                                 local_number_index_node,
                                 diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
@@ -1412,9 +1403,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(existing_string) = merged_string_index {
                         let local_str = self.format_type(local_string);
                         let existing_str = self.format_type(existing_string);
-                        if !self.is_assignable_to(local_string, existing_string)
-                            && !self.is_assignable_to(existing_string, local_string)
-                        {
+                                                                                                   if !self.is_assignable_to(local_string, existing_string)                            && !self.is_assignable_to(existing_string, local_string)                        {
                             self.error_at_node_msg(
                                 local_string_index_node,
                                 diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
@@ -1426,8 +1415,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(existing_number) = merged_number_index {
                         let string_str = self.format_type(local_string);
                         let existing_str = self.format_type(existing_number);
-                        if !self.is_assignable_to(existing_number, local_string) {
-                            self.error_at_node_msg(
+                                                 if !self.is_assignable_to(existing_number, local_string) {                            self.error_at_node_msg(
                                 local_string_index_node,
                                 diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
                                 &["number", &existing_str, "string", &string_str],
