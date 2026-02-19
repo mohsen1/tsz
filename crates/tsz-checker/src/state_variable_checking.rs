@@ -2,7 +2,9 @@
 
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -21,6 +23,65 @@ impl<'a> CheckerState<'a> {
     // These methods are now provided via a separate impl block in iterable_checker.rs
     // as part of Phase 2 architecture refactoring to break up the state.rs god object.
     // ============================================================================
+
+    fn find_circular_reference_in_type_node(
+        &self,
+        type_idx: NodeIndex,
+        target_sym: SymbolId,
+    ) -> Option<NodeIndex> {
+        let node = self.ctx.arena.get(type_idx)?;
+
+        if node.kind == syntax_kind_ext::TYPE_QUERY {
+            if let Some(query) = self.ctx.arena.get_type_query(node) {
+                // Check identifiers in the query expression
+                let mut worklist = vec![query.expr_name];
+                while let Some(expr_idx) = worklist.pop() {
+                    let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                        continue;
+                    };
+
+                    if expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        if let Some(sym) = self.ctx.binder.get_node_symbol(expr_idx).or_else(|| {
+                            self.ctx.binder.resolve_identifier(self.ctx.arena, expr_idx)
+                        }) && sym == target_sym
+                        {
+                            return Some(expr_idx);
+                        }
+                    } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                        if let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) {
+                            worklist.push(qn.left);
+                            // qn.right is property name, doesn't reference value
+                        }
+                    } else if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                        && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                    {
+                        worklist.push(access.expression);
+                    }
+                }
+
+                // Also check type arguments if any
+                if let Some(ref args) = query.type_arguments {
+                    for &arg_idx in &args.nodes {
+                        if let Some(found) =
+                            self.find_circular_reference_in_type_node(arg_idx, target_sym)
+                        {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            return None;
+        }
+
+        // Recursive descent
+        for child in self.ctx.arena.get_children(type_idx) {
+            if let Some(found) = self.find_circular_reference_in_type_node(child, target_sym) {
+                return Some(found);
+            }
+        }
+
+        None
+    }
 
     /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
     ///
@@ -810,20 +871,30 @@ impl<'a> CheckerState<'a> {
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
-            if !var_decl.type_annotation.is_none()
-                && tsz_solver::type_queries::has_type_query_for_symbol(
-                    self.ctx.types,
-                    final_type,
-                    sym_id.0,
-                    |ty| self.resolve_lazy_type(ty),
-                )
-                && let Some(ref name) = var_name
-            {
-                let message = format!(
-                    "'{name}' is referenced directly or indirectly in its own type annotation."
-                );
-                self.error_at_node(var_decl.name, &message, 2502);
-                final_type = TypeId::ANY;
+            if !var_decl.type_annotation.is_none() {
+                // Try AST-based check first (catches complex circularities that confuse the solver)
+                let ast_circular = self
+                    .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id)
+                    .is_some();
+
+                // Then try semantic check
+                let semantic_circular = !ast_circular
+                    && tsz_solver::type_queries::has_type_query_for_symbol(
+                        self.ctx.types,
+                        final_type,
+                        sym_id.0,
+                        |ty| self.resolve_lazy_type(ty),
+                    );
+
+                if (ast_circular || semantic_circular)
+                    && let Some(ref name) = var_name
+                {
+                    let message = format!(
+                        "'{name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(var_decl.name, &message, 2502);
+                    final_type = TypeId::ANY;
+                }
             }
 
             if !self.ctx.compiler_options.sound_mode {
@@ -1099,16 +1170,6 @@ impl<'a> CheckerState<'a> {
 
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
-
-                                        // Skip comparison when lib type is unknown/error —
-                                        // this means the lib didn't properly resolve the global.
-                                        // Comparing against unknown produces false positives.
-                                        if lib_type == TypeId::UNKNOWN || lib_type == TypeId::ERROR
-                                        {
-                                            prior_type_found =
-                                                Some(prior_type_found.unwrap_or(final_type));
-                                            continue;
-                                        }
 
                                         // Check compatibility
                                         if !self.are_var_decl_types_compatible(lib_type, final_type)
