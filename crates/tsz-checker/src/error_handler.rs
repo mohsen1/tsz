@@ -132,9 +132,6 @@ pub trait ErrorHandler {
     /// Emit a "class constructor without new" error (TS2350).
     fn emit_class_constructor_without_new(&mut self, type_id: TypeId, idx: NodeIndex);
 
-    /// Emit a "cannot instantiate abstract class" error (TS2511).
-    fn emit_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex);
-
     /// Emit an "abstract property in constructor" error (TS2715).
     fn emit_abstract_property_in_constructor(
         &mut self,
@@ -399,10 +396,6 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         self.error_class_constructor_without_new_at(type_id, idx);
     }
 
-    fn emit_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex) {
-        self.report_cannot_instantiate_abstract_class(class_name, idx);
-    }
-
     fn emit_abstract_property_in_constructor(
         &mut self,
         prop_name: &str,
@@ -604,10 +597,6 @@ impl<'a> ErrorHandler for &mut CheckerState<'a> {
 
     fn emit_class_constructor_without_new(&mut self, type_id: TypeId, idx: NodeIndex) {
         (*self).emit_class_constructor_without_new(type_id, idx);
-    }
-
-    fn emit_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex) {
-        (*self).emit_cannot_instantiate_abstract_class(class_name, idx);
     }
 
     fn emit_abstract_property_in_constructor(
