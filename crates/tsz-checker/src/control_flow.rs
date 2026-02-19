@@ -68,11 +68,6 @@ impl<'a> FlowGraph<'a> {
         self.arena.is_empty()
     }
 
-    /// Check if a flow node has a specific flag.
-    pub fn node_has_flag(&self, id: FlowNodeId, flag: u32) -> bool {
-        self.get(id).is_some_and(|node| node.has_any_flags(flag))
-    }
-
     /// Get the antecedents (predecessors) of a flow node.
     pub fn antecedents(&self, id: FlowNodeId) -> Vec<FlowNodeId> {
         self.get(id)

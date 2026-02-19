@@ -56,7 +56,6 @@ pub mod function_type;
 pub mod generic_checker;
 pub mod import_checker;
 mod import_declaration_checker;
-pub mod indexed_access_type;
 pub mod interface_type;
 pub mod intersection_type;
 pub mod iterable_checker;
@@ -122,7 +121,6 @@ mod type_computation_call_helpers;
 mod type_computation_complex;
 pub mod type_literal_checker;
 pub mod type_node;
-pub mod type_parameter;
 pub mod type_query;
 pub mod union_type;
 pub mod diagnostics {
