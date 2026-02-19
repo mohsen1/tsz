@@ -146,30 +146,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            self.ctx.compiler_options.no_implicit_any =
-                self.resolve_no_implicit_any_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_returns =
-                self.resolve_no_implicit_returns_from_source(&sf.text);
-            self.ctx.compiler_options.use_unknown_in_catch_variables =
-                self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_this =
-                self.resolve_no_implicit_this_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_override =
-                self.resolve_no_implicit_override_from_source(&sf.text);
-            self.ctx.compiler_options.strict_property_initialization =
-                self.resolve_strict_property_initialization_from_source(&sf.text);
-            self.ctx.compiler_options.strict_null_checks =
-                self.resolve_strict_null_checks_from_source(&sf.text);
-            self.ctx.compiler_options.strict_function_types =
-                self.resolve_strict_function_types_from_source(&sf.text);
-            self.ctx.compiler_options.allow_unreachable_code =
-                self.resolve_allow_unreachable_code_from_source(&sf.text);
-            self.ctx.compiler_options.no_unused_locals =
-                self.resolve_no_unused_locals_from_source(&sf.text);
-            self.ctx.compiler_options.no_unused_parameters =
-                self.resolve_no_unused_parameters_from_source(&sf.text);
-            self.ctx.compiler_options.always_strict =
-                self.resolve_always_strict_from_source(&sf.text);
+            self.resolve_compiler_options_from_source(&sf.text);
             if self.has_ts_nocheck_pragma(&sf.text) {
                 return;
             }
