@@ -1244,6 +1244,28 @@ impl<'a> DeclarationEmitter<'a> {
                     return;
                 }
             }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                if let Some(accessor) = self.arena.get_accessor(member_node) {
+                    self.write("get ");
+                    self.emit_node(accessor.name);
+                    self.write("(");
+                    self.emit_parameters(&accessor.parameters);
+                    self.write(")");
+                    if !accessor.type_annotation.is_none() {
+                        self.write(": ");
+                        self.emit_type(accessor.type_annotation);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.arena.get_accessor(member_node) {
+                    self.write("set ");
+                    self.emit_node(accessor.name);
+                    self.write("(");
+                    self.emit_parameters(&accessor.parameters);
+                    self.write(")");
+                }
+            }
             _ => {}
         }
 
@@ -1368,6 +1390,28 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     // Mapped types don't add semicolon in inline mode
+                }
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                if let Some(accessor) = self.arena.get_accessor(member_node) {
+                    self.write("get ");
+                    self.emit_node(accessor.name);
+                    self.write("(");
+                    self.emit_parameters(&accessor.parameters);
+                    self.write(")");
+                    if !accessor.type_annotation.is_none() {
+                        self.write(": ");
+                        self.emit_type(accessor.type_annotation);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::SET_ACCESSOR => {
+                if let Some(accessor) = self.arena.get_accessor(member_node) {
+                    self.write("set ");
+                    self.emit_node(accessor.name);
+                    self.write("(");
+                    self.emit_parameters(&accessor.parameters);
+                    self.write(")");
                 }
             }
             _ => {}
@@ -3041,6 +3085,13 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write("keyof ");
                     }
                     self.emit_type(type_op.type_node);
+                }
+            }
+
+            // Literal type wrapper (wraps string/number/boolean/bigint literals)
+            k if k == syntax_kind_ext::LITERAL_TYPE => {
+                if let Some(lit_type) = self.arena.get_literal_type(type_node) {
+                    self.emit_node(lit_type.literal);
                 }
             }
 

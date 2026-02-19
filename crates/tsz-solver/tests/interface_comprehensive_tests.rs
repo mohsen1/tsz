@@ -155,7 +155,7 @@ fn test_interface_with_optional_property() {
             .properties
             .iter()
             .find(|p| interner.resolve_atom(p.name) == "required");
-        assert!(required.unwrap().optional == false);
+        assert!(!required.unwrap().optional);
 
         let optional = shape
             .properties
@@ -210,7 +210,7 @@ fn test_interface_with_readonly_property() {
             .properties
             .iter()
             .find(|p| interner.resolve_atom(p.name) == "mutable");
-        assert!(mutable.unwrap().readonly == false);
+        assert!(!mutable.unwrap().readonly);
 
         let readonly = shape
             .properties
