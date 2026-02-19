@@ -192,6 +192,8 @@ impl<'a> Printer<'a> {
         }
 
         self.decrease_indent();
+        // Map closing `}` to its source position for accurate debugger stepping
+        self.map_closing_brace(node);
         self.write("}");
         self.ctx.block_scope_state.exit_scope();
         // Trailing comments after the block's closing brace are handled by
