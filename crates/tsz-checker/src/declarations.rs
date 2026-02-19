@@ -1829,7 +1829,20 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             let Some(statement_node) = self.ctx.arena.get(statement_idx) else {
                 continue;
             };
-            match statement_node.kind {
+            // Check the effective kind - for EXPORT_DECLARATION, look at the inner declaration
+            let effective_kind = if statement_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                if let Some(export_data) = self.ctx.arena.get_export_decl(statement_node) {
+                    self.ctx
+                        .arena
+                        .get(export_data.export_clause)
+                        .map_or(statement_node.kind, |inner| inner.kind)
+                } else {
+                    statement_node.kind
+                }
+            } else {
+                statement_node.kind
+            };
+            match effective_kind {
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT
                     || k == syntax_kind_ext::FUNCTION_DECLARATION
                     || k == syntax_kind_ext::CLASS_DECLARATION
@@ -1840,7 +1853,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     return true;
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                    if self.is_namespace_declaration_instantiated(statement_idx) {
+                    let ns_idx = if statement_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        self.ctx
+                            .arena
+                            .get_export_decl(statement_node)
+                            .map_or(statement_idx, |d| d.export_clause)
+                    } else {
+                        statement_idx
+                    };
+                    if self.is_namespace_declaration_instantiated(ns_idx) {
                         return true;
                     }
                 }
