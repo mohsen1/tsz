@@ -108,6 +108,7 @@ mod type_checking_utilities_jsdoc;
 pub mod type_computation;
 mod type_computation_access;
 mod type_computation_call;
+mod type_computation_call_helpers;
 mod type_computation_complex;
 pub mod type_literal_checker;
 pub mod type_node;
