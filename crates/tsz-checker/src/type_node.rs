@@ -392,7 +392,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
-        let factory = self.ctx.types.factory();
 
         // UnionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
@@ -405,11 +404,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if member_types.is_empty() {
                 return TypeId::NEVER;
             }
-            if member_types.len() == 1 {
-                return member_types[0];
-            }
 
-            return factory.union(member_types);
+            return tsz_solver::utils::union_or_single(self.ctx.types, member_types);
         }
 
         TypeId::ERROR
@@ -427,7 +423,6 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
         };
-        let factory = self.ctx.types.factory();
 
         // IntersectionType uses CompositeTypeData which has a types list
         if let Some(composite) = self.ctx.arena.get_composite_type(node) {
@@ -440,11 +435,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             if member_types.is_empty() {
                 return TypeId::UNKNOWN; // Empty intersection is unknown
             }
-            if member_types.len() == 1 {
-                return member_types[0];
-            }
 
-            return factory.intersection(member_types);
+            return tsz_solver::utils::intersection_or_single(self.ctx.types, member_types);
         }
 
         TypeId::ERROR
