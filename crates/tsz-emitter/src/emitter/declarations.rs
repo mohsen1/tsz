@@ -825,6 +825,9 @@ impl<'a> Printer<'a> {
         // Transform enum to IIFE pattern for all targets
         {
             let mut transformer = EnumES5Transformer::new(self.arena);
+            if let Some(source_text) = self.source_text {
+                transformer.set_source_text(source_text);
+            }
             if let Some(mut ir) = transformer.transform_enum(idx) {
                 let mut printer = IRPrinter::with_arena(self.arena);
                 printer.set_indent_level(self.writer.indent_level());
