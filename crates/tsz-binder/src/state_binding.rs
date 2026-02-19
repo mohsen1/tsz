@@ -2697,10 +2697,13 @@ impl BinderState {
                 return;
             }
 
-            // Type assertion (e.g., x as string)
-            k if k == syntax_kind_ext::AS_EXPRESSION || k == syntax_kind_ext::TYPE_ASSERTION => {
-                if let Some(as_expr) = arena.get_access_expr(node) {
-                    self.bind_expression(arena, as_expr.expression);
+            // Type assertion (e.g., x as string, <T>x, x satisfies T)
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = arena.get_type_assertion(node) {
+                    self.bind_expression(arena, assertion.expression);
                 }
                 return;
             }
