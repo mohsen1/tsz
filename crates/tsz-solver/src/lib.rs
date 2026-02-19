@@ -200,6 +200,9 @@ mod isomorphism_validation;
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/function_comprehensive_tests.rs"]
+mod function_comprehensive_tests;
+#[cfg(test)]
 #[path = "../tests/interface_comprehensive_tests.rs"]
 mod interface_comprehensive_tests;
 #[cfg(test)]
