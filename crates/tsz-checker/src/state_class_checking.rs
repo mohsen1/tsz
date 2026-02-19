@@ -1149,6 +1149,15 @@ impl<'a> CheckerState<'a> {
         let class_instance_type = self.get_class_instance_type(stmt_idx, class);
         self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
 
+        self.check_class_declaration(stmt_idx);
+
+        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+
+        // Check for decorator-related global types (TS2318)
+        // When experimentalDecorators is enabled and a method/accessor has decorators,
+        // TypedPropertyDescriptor must be available
+        self.check_decorator_global_types(&class.members.nodes);
+
         // Check for decorator-related global types (TS2318)
         // When experimentalDecorators is enabled and a method/accessor has decorators,
         // TypedPropertyDescriptor must be available

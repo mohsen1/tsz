@@ -127,12 +127,14 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // If target has an index signature, it accepts any properties
             if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
                 return;
             }
 
-            // Check for excess properties in source that don't exist in target
+            // If target has an index signature, it accepts any properties
+            if target_shape.string_index.is_some() || target_shape.number_index.is_some() {
+                return;
+            }
             // This is the "freshness" or "strict object literal" check
             for source_prop in source_props {
                 let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
@@ -330,21 +332,49 @@ impl<'a> CheckerState<'a> {
         };
         if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             return;
-        }
+        };
         let Some(init_lit) = self.ctx.arena.get_literal_expr(init_node) else {
             return;
         };
+
+        // Get the properties of the target type
+        let Some(target_shape) = query::object_shape(self.ctx.types, target_type) else {
+            return;
+        };
+        let target_props = target_shape.properties.as_slice();
 
         for &elem_idx in &init_lit.elements.nodes {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };
-            if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node)
-                && let Some(prop_name_node) = self.ctx.arena.get(prop.name)
-                && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
-            {
-                self.error_excess_property_at("[computed]", target_type, prop.name);
-            }
+
+            // Get the property name from this element
+            let prop_name = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name)),
+                _ => None,
+            };
+
+            let Some(prop_name) = prop_name else {
+                continue;
+            };
+
+            let prop_atom = self.ctx.types.intern_string(&prop_name);
+
+            // Check if the property exists in the target type
+            let target_prop = target_props.iter().find(|p| p.name == prop_atom);
+            if target_prop.is_none()
+                && let Some(ext) = self.ctx.arena.get_extended(elem_idx) {
+                    self.error_excess_property_at(&prop_name, target_type, ext.parent);
+                }
         }
     }
 
