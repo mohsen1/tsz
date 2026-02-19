@@ -34040,3 +34040,34 @@ declare module "moduleB" {
         checker.ctx.diagnostics
     );
 }
+
+#[test]
+fn test_ts2502_repro_circular_var() {
+    let source = "var x: typeof x;";
+
+    // Manually parse to get the root index
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2502),
+        "Expected TS2502 for circular reference, got: {:?}",
+        diagnostics
+    );
+}
