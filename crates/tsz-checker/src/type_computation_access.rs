@@ -489,6 +489,34 @@ impl<'a> CheckerState<'a> {
             };
         }
 
+        // Handle non-integer numeric literals (e.g., c[1.1], c[-1]) as property name access.
+        // Integer literals are handled above via literal_index. Non-integer numeric literals
+        // aren't covered by get_literal_string_from_node or get_literal_index_from_node,
+        // so we need to try property access using their text representation.
+        if result_type.is_none() && literal_index.is_none() && literal_string_is_none
+            && let Some(node) = self.ctx.arena.get(access.name_or_argument)
+                && node.kind == SyntaxKind::NumericLiteral as u16
+                && let Some(lit) = self.ctx.arena.get_literal(node)
+            {
+                let property_name = &lit.text;
+                let resolved_type = self.resolve_type_for_property_access(object_type_for_access);
+                let result = self.resolve_property_access_with_env(resolved_type, property_name);
+                if let PropertyAccessResult::Success {
+                    type_id,
+                    write_type,
+                    ..
+                } = result
+                {
+                    use_index_signature_check = false;
+                    let effective = if self.ctx.skip_flow_narrowing {
+                        write_type.unwrap_or(type_id)
+                    } else {
+                        type_id
+                    };
+                    result_type = Some(effective);
+                }
+            }
+
         let mut result_type = result_type.unwrap_or_else(|| {
             self.get_element_access_type(object_type_for_access, index_type, literal_index)
         });
