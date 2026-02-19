@@ -4,6 +4,7 @@
 use super::DiagnosticCategory;
 use super::DiagnosticMessage;
 
+/// All diagnostic messages from TypeScript's diagnosticMessages.json.
 pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
     DiagnosticMessage {
         code: 1002,
@@ -8211,6 +8212,11 @@ pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
         message: "Enable lib replacement.",
     },
     DiagnosticMessage {
+        code: 6809,
+        category: DiagnosticCategory::Message,
+        message: "Ensure types are ordered stably and deterministically across compilations.",
+    },
+    DiagnosticMessage {
         code: 6900,
         category: DiagnosticCategory::Message,
         message: "one of:",
@@ -8233,7 +8239,7 @@ pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
     DiagnosticMessage {
         code: 6905,
         category: DiagnosticCategory::Message,
-        message: "`false`, unless `strict` is set",
+        message: "`true`, unless `strict` is `false`",
     },
     DiagnosticMessage {
         code: 6906,
@@ -13679,11 +13685,13 @@ pub mod diagnostic_messages {
     pub const THIS_OPERATION_CAN_BE_SIMPLIFIED_THIS_SHIFT_IS_IDENTICAL_TO: &str =
         "This operation can be simplified. This shift is identical to `{0} {1} {2}`.";
     pub const ENABLE_LIB_REPLACEMENT: &str = "Enable lib replacement.";
+    pub const ENSURE_TYPES_ARE_ORDERED_STABLY_AND_DETERMINISTICALLY_ACROSS_COMPILATIONS: &str =
+        "Ensure types are ordered stably and deterministically across compilations.";
     pub const ONE_OF: &str = "one of:";
     pub const ONE_OR_MORE: &str = "one or more:";
     pub const TYPE: &str = "type:";
     pub const DEFAULT: &str = "default:";
-    pub const FALSE_UNLESS_STRICT_IS_SET: &str = "`false`, unless `strict` is set";
+    pub const TRUE_UNLESS_STRICT_IS_FALSE: &str = "`true`, unless `strict` is `false`";
     pub const FALSE_UNLESS_COMPOSITE_IS_SET: &str = "`false`, unless `composite` is set";
     pub const NODE_MODULES_BOWER_COMPONENTS_JSPM_PACKAGES_PLUS_THE_VALUE_OF_OUTDIR_IF_ONE_IS_S:
         &str = "`[\"node_modules\", \"bower_components\", \"jspm_packages\"]`, plus the value of `outDir` if one is specified.";
@@ -16668,11 +16676,12 @@ pub mod diagnostic_codes {
     pub const CHECK_SIDE_EFFECT_IMPORTS: u32 = 6806;
     pub const THIS_OPERATION_CAN_BE_SIMPLIFIED_THIS_SHIFT_IS_IDENTICAL_TO: u32 = 6807;
     pub const ENABLE_LIB_REPLACEMENT: u32 = 6808;
+    pub const ENSURE_TYPES_ARE_ORDERED_STABLY_AND_DETERMINISTICALLY_ACROSS_COMPILATIONS: u32 = 6809;
     pub const ONE_OF: u32 = 6900;
     pub const ONE_OR_MORE: u32 = 6901;
     pub const TYPE: u32 = 6902;
     pub const DEFAULT: u32 = 6903;
-    pub const FALSE_UNLESS_STRICT_IS_SET: u32 = 6905;
+    pub const TRUE_UNLESS_STRICT_IS_FALSE: u32 = 6905;
     pub const FALSE_UNLESS_COMPOSITE_IS_SET: u32 = 6906;
     pub const NODE_MODULES_BOWER_COMPONENTS_JSPM_PACKAGES_PLUS_THE_VALUE_OF_OUTDIR_IF_ONE_IS_S:
         u32 = 6907;

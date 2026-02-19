@@ -1,8 +1,28 @@
 //! ASI Conformance Tests
 //!
-//! Test ASI (Automatic Semicolon Insertion) behavior against JavaScript/TypeScript spec.
-//! Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
+//!
+// =============================================================================
+// Module Resolution Tests
+// =============================================================================
 
+#[test]
+fn test_es6_import_default_binding_followed_with_named_import1() {
+    let source = r#"
+import A, { b } from './module';
+"#;
+    let module_source = r#"
+export default function A() {}
+export const b = 1;
+"#;
+    let diags = check_with_module_sources(source, "main.ts", vec![("./module", module_source)]);
+    assert!(
+        has_error_code(&diags, 2305),
+        "Should emit TS2305 for default import followed by named import, got: {:?}",
+        diags
+    );
+}
+
+/// Focus on TS1005 (token expected) and TS1109 (expression expected) error codes.
 use crate::checker::diagnostics::diagnostic_codes;
 use crate::parser::ParserState;
 
