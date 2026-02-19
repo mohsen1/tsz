@@ -5,7 +5,6 @@ use crate::diagnostics::{
     Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
 };
 use crate::state::CheckerState;
-use tracing::trace;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
@@ -152,16 +151,6 @@ impl<'a> CheckerState<'a> {
     /// For ES2015+ types (Promise, Map, Set, Symbol, etc.), emits TS2585 with a suggestion
     /// to change the target library. For other types, emits TS2693 without the lib suggestion.
     pub fn error_type_only_value_at(&mut self, name: &str, idx: NodeIndex) {
-        if std::env::var_os("TSZ_DEBUG_PARSER_RECOVERY").is_some() && name == "yield" {
-            trace!(
-                target: "tsz_debug",
-                name,
-                file = %self.ctx.file_name,
-                idx = ?idx,
-                parse_errors = self.has_parse_errors(),
-                "tsz-debug: error_type_only_value_at"
-            );
-        }
         use tsz_binder::lib_loader;
 
         // Don't emit TS2693 for identifiers used as import equals module references.
@@ -338,16 +327,6 @@ impl<'a> CheckerState<'a> {
             }
 
             current = Some(ext.parent);
-        }
-
-        if std::env::var_os("TSZ_DEBUG_PARSER_RECOVERY").is_some() && seen_computed_property_name {
-            trace!(
-                target: "tsz_debug",
-                name,
-                file = %self.ctx.file_name,
-                computed_context = seen_computed_property_name,
-                "tsz-debug: computed property diagnostic context"
-            );
         }
 
         false

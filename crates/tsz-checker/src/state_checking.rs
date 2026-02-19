@@ -146,17 +146,6 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
-            let perf_log = |phase: &'static str, start: Instant| {
-                if perf_enabled {
-                    tracing::info!(
-                        target: "wasm::perf",
-                        phase,
-                        ms = start.elapsed().as_secs_f64() * 1000.0
-                    );
-                }
-            };
-
             self.ctx.compiler_options.no_implicit_any =
                 self.resolve_no_implicit_any_from_source(&sf.text);
             self.ctx.compiler_options.no_implicit_returns =
@@ -194,7 +183,7 @@ impl<'a> CheckerState<'a> {
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
             let env_start = Instant::now();
             let populated_env = self.build_type_environment();
-            perf_log("build_type_environment", env_start);
+            tracing::trace!(target: "wasm::perf", phase = "build_type_environment", ms = env_start.elapsed().as_secs_f64() * 1000.0);
             *self.ctx.type_env.borrow_mut() = populated_env.clone();
             // CRITICAL: Also populate type_environment (Rc-wrapped) for FlowAnalyzer
             // This ensures type alias narrowing works during control flow analysis
@@ -236,7 +225,7 @@ impl<'a> CheckerState<'a> {
             // Check for unreachable code at the source file level (TS7027)
             // Must run AFTER statement checking so types are resolved (avoids premature TS7006)
             self.check_unreachable_code_in_block(&sf.statements.nodes);
-            perf_log("check_statements", stmt_start);
+            tracing::trace!(target: "wasm::perf", phase = "check_statements", ms = stmt_start.elapsed().as_secs_f64() * 1000.0);
 
             let post_start = Instant::now();
             // Check for function overload implementations (2389, 2391)
@@ -268,10 +257,10 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file() {
                 let js_start = Instant::now();
                 self.check_js_grammar_statements(&sf.statements.nodes);
-                perf_log("check_js_grammar", js_start);
+                tracing::trace!(target: "wasm::perf", phase = "check_js_grammar", ms = js_start.elapsed().as_secs_f64() * 1000.0);
             }
 
-            perf_log("post_checks", post_start);
+            tracing::trace!(target: "wasm::perf", phase = "post_checks", ms = post_start.elapsed().as_secs_f64() * 1000.0);
         }
     }
 
