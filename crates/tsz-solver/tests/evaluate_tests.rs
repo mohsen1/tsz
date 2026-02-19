@@ -9713,7 +9713,6 @@ fn test_index_access_array() {
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_no_unchecked_indexed_access_array_union_key() {
     let interner = TypeInterner::new();
 

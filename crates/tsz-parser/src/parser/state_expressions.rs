@@ -2380,17 +2380,7 @@ impl ParserState {
         } else {
             None
         };
-        let value = if text.as_bytes().contains(&b'_') {
-            let mut sanitized = String::with_capacity(text.len());
-            for &byte in text.as_bytes() {
-                if byte != b'_' {
-                    sanitized.push(byte as char);
-                }
-            }
-            sanitized.parse::<f64>().ok()
-        } else {
-            text.parse::<f64>().ok()
-        };
+        let value = tsz_common::numeric::parse_numeric_literal_value(&text);
         self.next_token();
 
         // TS1351: If a numeric literal has an invalid separator and is immediately

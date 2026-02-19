@@ -232,15 +232,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(expr_node) = self.ctx.arena.get(access.expression) {
                     if expr_node.kind == SyntaxKind::Identifier as u16 {
                         if let Some(ident) = self.ctx.arena.get_identifier(expr_node)
-                            && ident.escaped_text == class_name {
-                                // Get the property name
-                                if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                                    && let Some(prop_ident) =
-                                        self.ctx.arena.get_identifier(name_node)
-                                {
-                                    accesses.push((prop_ident.escaped_text.clone(), node_idx));
-                                }
+                            && ident.escaped_text == class_name
+                        {
+                            // Get the property name
+                            if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
+                                && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+                            {
+                                accesses.push((prop_ident.escaped_text.clone(), node_idx));
                             }
+                        }
                     } else {
                         // Recurse into the expression part
                         self.collect_static_accesses_recursive(
@@ -275,13 +275,14 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::JSX_EXPRESSION => {
                 // For JSX expressions, recurse into the expression
                 if let Some(jsx_expr) = self.ctx.arena.get_jsx_expression(node)
-                    && !jsx_expr.expression.is_none() {
-                        self.collect_static_accesses_recursive(
-                            jsx_expr.expression,
-                            class_name,
-                            accesses,
-                        );
-                    }
+                    && !jsx_expr.expression.is_none()
+                {
+                    self.collect_static_accesses_recursive(
+                        jsx_expr.expression,
+                        class_name,
+                        accesses,
+                    );
+                }
             }
             k if k == syntax_kind_ext::JSX_OPENING_ELEMENT
                 || k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT =>
@@ -289,24 +290,20 @@ impl<'a> CheckerState<'a> {
                 // Check JSX element attributes
                 if let Some(jsx_elem) = self.ctx.arena.get_jsx_opening(node)
                     && let Some(attrs_node) = self.ctx.arena.get(jsx_elem.attributes)
-                        && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) {
-                            for &attr_idx in &attrs.properties.nodes {
-                                self.collect_static_accesses_recursive(
-                                    attr_idx, class_name, accesses,
-                                );
-                            }
-                        }
+                    && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
+                {
+                    for &attr_idx in &attrs.properties.nodes {
+                        self.collect_static_accesses_recursive(attr_idx, class_name, accesses);
+                    }
+                }
             }
             k if k == syntax_kind_ext::JSX_ATTRIBUTE => {
                 // Check JSX attribute initializer
                 if let Some(attr) = self.ctx.arena.get_jsx_attribute(node)
-                    && !attr.initializer.is_none() {
-                        self.collect_static_accesses_recursive(
-                            attr.initializer,
-                            class_name,
-                            accesses,
-                        );
-                    }
+                    && !attr.initializer.is_none()
+                {
+                    self.collect_static_accesses_recursive(attr.initializer, class_name, accesses);
+                }
             }
             k if k == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE => {
                 // Check JSX spread attribute
@@ -330,32 +327,35 @@ impl<'a> CheckerState<'a> {
                 // Check JSX element tag name for C.prop references
                 if let Some(jsx_elem) = self.ctx.arena.get_jsx_element(node) {
                     if let Some(opening_node) = self.ctx.arena.get(jsx_elem.opening_element)
-                        && let Some(opening) = self.ctx.arena.get_jsx_opening(opening_node) {
-                            // Recursively check tag name (might be C.x)
-                            self.collect_static_accesses_recursive(
-                                opening.tag_name,
-                                class_name,
-                                accesses,
-                            );
-                            // Also check attributes
-                            if let Some(attrs_node) = self.ctx.arena.get(opening.attributes)
-                                && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) {
-                                    for &attr_idx in &attrs.properties.nodes {
-                                        self.collect_static_accesses_recursive(
-                                            attr_idx, class_name, accesses,
-                                        );
-                                    }
-                                }
+                        && let Some(opening) = self.ctx.arena.get_jsx_opening(opening_node)
+                    {
+                        // Recursively check tag name (might be C.x)
+                        self.collect_static_accesses_recursive(
+                            opening.tag_name,
+                            class_name,
+                            accesses,
+                        );
+                        // Also check attributes
+                        if let Some(attrs_node) = self.ctx.arena.get(opening.attributes)
+                            && let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node)
+                        {
+                            for &attr_idx in &attrs.properties.nodes {
+                                self.collect_static_accesses_recursive(
+                                    attr_idx, class_name, accesses,
+                                );
+                            }
                         }
+                    }
                     if let Some(closing_node) = self.ctx.arena.get(jsx_elem.closing_element)
-                        && let Some(closing) = self.ctx.arena.get_jsx_closing(closing_node) {
-                            // Also check closing tag name
-                            self.collect_static_accesses_recursive(
-                                closing.tag_name,
-                                class_name,
-                                accesses,
-                            );
-                        }
+                        && let Some(closing) = self.ctx.arena.get_jsx_closing(closing_node)
+                    {
+                        // Also check closing tag name
+                        self.collect_static_accesses_recursive(
+                            closing.tag_name,
+                            class_name,
+                            accesses,
+                        );
+                    }
                 }
             }
 

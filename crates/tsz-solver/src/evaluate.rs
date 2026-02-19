@@ -157,7 +157,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
-    pub const fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
+    pub fn set_no_unchecked_indexed_access(&mut self, enabled: bool) {
+        if self.no_unchecked_indexed_access != enabled {
+            self.cache.clear();
+        }
         self.no_unchecked_indexed_access = enabled;
     }
 

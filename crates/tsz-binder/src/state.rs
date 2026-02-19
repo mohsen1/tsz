@@ -11,6 +11,7 @@ use crate::{
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
+use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{Level, debug, span};
@@ -3186,6 +3187,25 @@ impl BinderState {
                 // For other node types, no symbols to create
             }
         }
+    }
+
+    /// Get property name from a node index.
+    /// Handles Identifiers, `StringLiterals`, and `NumericLiterals` (normalized).
+    pub(crate) fn get_property_name(arena: &NodeArena, idx: NodeIndex) -> Option<Cow<'_, str>> {
+        if let Some(node) = arena.get(idx) {
+            if let Some(id) = arena.get_identifier(node) {
+                return Some(Cow::Borrowed(&id.escaped_text));
+            }
+            if let Some(lit) = arena.get_literal(node) {
+                if node.kind == tsz_scanner::SyntaxKind::NumericLiteral as u16
+                    && let Some(val) = lit.value
+                {
+                    return Some(Cow::Owned(val.to_string()));
+                }
+                return Some(Cow::Borrowed(&lit.text));
+            }
+        }
+        None
     }
 
     /// Get identifier name from a node index.

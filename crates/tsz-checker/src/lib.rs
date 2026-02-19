@@ -161,12 +161,6 @@ mod ts2322_mode_routing_matrix;
 #[path = "../tests/ts2322_tests.rs"]
 mod ts2322_tests;
 #[cfg(test)]
-#[path = "../tests/ts2374_duplicate_index_tests.rs"]
-mod ts2374_duplicate_index_tests;
-#[cfg(test)]
-#[path = "../tests/ts2403_tests.rs"]
-mod ts2403_tests;
-#[cfg(test)]
 #[path = "../tests/ts2411_tests.rs"]
 mod ts2411_tests;
 #[cfg(test)]

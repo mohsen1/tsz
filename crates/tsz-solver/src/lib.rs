@@ -200,6 +200,9 @@ mod isomorphism_validation;
 #[path = "../tests/array_comprehensive_tests.rs"]
 mod array_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/class_comprehensive_tests.rs"]
+mod class_comprehensive_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
 #[cfg(test)]
@@ -223,6 +226,9 @@ mod template_literal_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/tuple_comprehensive_tests.rs"]
 mod tuple_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/type_parameter_comprehensive_tests.rs"]
+mod type_parameter_comprehensive_tests;
 #[cfg(test)]
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;

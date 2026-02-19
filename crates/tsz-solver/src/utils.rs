@@ -44,7 +44,7 @@ pub fn is_numeric_literal_name(name: &str) -> bool {
 /// For example, `"1."`, `"1.0"`, and `"1"` all canonicalize to `"1"`.
 /// Returns `None` if the name is not a numeric literal.
 pub fn canonicalize_numeric_name(name: &str) -> Option<String> {
-    let value: f64 = name.parse().ok()?;
+    let value: f64 = tsz_common::numeric::parse_numeric_literal_value(name)?;
     if !value.is_finite() && !value.is_nan() {
         return None;
     }

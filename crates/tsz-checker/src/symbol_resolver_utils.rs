@@ -804,10 +804,14 @@ impl<'a> CheckerState<'a> {
     ///
     /// For some nodes (like short-hand properties), we need to walk up to find
     /// the actual declaration node to report the error on.
-    pub(crate) fn resolve_duplicate_decl_node(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(crate) fn resolve_duplicate_decl_node(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = decl_idx;
         for _ in 0..8 {
-            let node = self.ctx.arena.get(current)?;
+            let node = arena.get(current)?;
             match node.kind {
                 syntax_kind_ext::VARIABLE_DECLARATION
                 | syntax_kind_ext::FUNCTION_DECLARATION
@@ -822,7 +826,7 @@ impl<'a> CheckerState<'a> {
                     return Some(current);
                 }
                 _ => {
-                    if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    if let Some(ext) = arena.get_extended(current) {
                         current = ext.parent;
                     } else {
                         return None;
