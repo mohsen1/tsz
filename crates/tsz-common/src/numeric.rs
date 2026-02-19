@@ -42,29 +42,28 @@ fn parse_radix_digits(text: &str, base: u32) -> Option<f64> {
 
     let mut value = 0.0;
     let base_float = base as f64;
-    
+
     for byte in text.bytes() {
         if byte == b'_' {
             continue;
         }
-        
+
         let digit = match byte {
             b'0'..=b'9' => (byte - b'0') as u32,
             b'a'..=b'f' => (byte - b'a' + 10) as u32,
             b'A'..=b'F' => (byte - b'A' + 10) as u32,
             _ => return None, // Invalid digit for any supported base
         };
-        
+
         if digit >= base {
             return None; // Digit too large for base
         }
-        
+
         value = value * base_float + (digit as f64);
     }
-    
+
     Some(value)
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -82,7 +81,7 @@ mod tests {
         assert_eq!(parse_numeric_literal_value("0xFF"), Some(255.0));
         assert_eq!(parse_numeric_literal_value("0Xabc"), Some(2748.0));
         assert_eq!(parse_numeric_literal_value("0b1_0"), Some(2.0));
-        
+
         // Invalid
         assert_eq!(parse_numeric_literal_value("0b2"), None);
         assert_eq!(parse_numeric_literal_value("0o8"), None);

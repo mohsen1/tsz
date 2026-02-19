@@ -39,8 +39,7 @@ interface I {
     let count = codes.iter().filter(|&&c| c == 2374).count();
     assert_eq!(
         count, 2,
-        "Should emit 2 TS2374 for duplicate string indexers, got: {:?}",
-        codes
+        "Should emit 2 TS2374 for duplicate string indexers, got: {codes:?}"
     );
 }
 
@@ -57,8 +56,7 @@ interface I {
     let count = codes.iter().filter(|&&c| c == 2374).count();
     assert_eq!(
         count, 2,
-        "Should emit 2 TS2374 for duplicate number indexers, got: {:?}",
-        codes
+        "Should emit 2 TS2374 for duplicate number indexers, got: {codes:?}"
     );
 }
 
@@ -73,8 +71,7 @@ interface I {
     );
     assert!(
         !codes.contains(&2374),
-        "Should not emit TS2374 for single indexer, got: {:?}",
-        codes
+        "Should not emit TS2374 for single indexer, got: {codes:?}"
     );
 }
 
@@ -91,7 +88,6 @@ interface I {
     );
     assert!(
         !codes.contains(&2374),
-        "Should not emit TS2374 for mixed string/number indexers, got: {:?}",
-        codes
+        "Should not emit TS2374 for mixed string/number indexers, got: {codes:?}"
     );
 }

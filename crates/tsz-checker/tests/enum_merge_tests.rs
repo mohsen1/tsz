@@ -37,8 +37,7 @@ enum E { c = a }
     );
     assert!(
         !codes.contains(&2304),
-        "Should not emit TS2304 for 'a' in merged enum, got: {:?}",
-        codes
+        "Should not emit TS2304 for 'a' in merged enum, got: {codes:?}"
     );
 }
 
@@ -54,8 +53,7 @@ export enum Animals { CatDog = Cat | Dog }
     );
     assert!(
         !codes.contains(&2304),
-        "Should not emit TS2304 for Cat/Dog in merged exported enum, got: {:?}",
-        codes
+        "Should not emit TS2304 for Cat/Dog in merged exported enum, got: {codes:?}"
     );
 }
 
@@ -76,7 +74,6 @@ enum E {
     );
     assert!(
         !codes.contains(&2304),
-        "Should not emit TS2304 for locals inside IIFE in enum initializer, got: {:?}",
-        codes
+        "Should not emit TS2304 for locals inside IIFE in enum initializer, got: {codes:?}"
     );
 }

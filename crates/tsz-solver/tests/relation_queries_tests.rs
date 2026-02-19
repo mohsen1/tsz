@@ -178,14 +178,10 @@ fn query_relation_redeclaration_identity_uses_compat_identity_rules() {
         RelationContext::default(),
     );
 
-    assert!(
-        !any_to_string.is_related(),
-        "any !== string for redeclaration"
-    );
-    assert!(
-        !number_to_string.is_related(),
-        "number !== string for redeclaration"
-    );
+    // `any` is NOT identical to `string` for redeclaration at the solver level.
+    // The checker handles lib-context `any` suppression separately (TS2403).
+    assert!(!any_to_string.is_related());
+    assert!(!number_to_string.is_related());
     assert!(
         string_to_string.is_related(),
         "string === string for redeclaration"
