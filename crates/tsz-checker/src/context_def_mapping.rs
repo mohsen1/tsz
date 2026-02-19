@@ -155,20 +155,6 @@ impl<'a> CheckerContext<'a> {
         self.types.lazy(def_id)
     }
 
-    /// Convert `TypeData::Ref` to `TypeData::Lazy(DefId)` if needed (Phase 1 migration).
-    ///
-    /// This post-processes a `TypeId` created by `TypeLowering`. If the type is
-    /// `TypeData::Ref(SymbolRef)`, this creates a corresponding `TypeData::Lazy(DefId)`
-    /// for the same symbol. This enables gradual migration from `SymbolRef` to `DefId`.
-    ///
-    /// **Pattern:** `TypeLowering` creates Ref → post-process → returns Lazy
-    ///
-    /// PHASE 4.2: `TypeData::Ref` removed, all types are now Lazy(DefId).
-    /// This function is now a no-op since all types are already Lazy.
-    pub const fn maybe_create_lazy_from_resolved(&mut self, type_id: TypeId) -> TypeId {
-        type_id
-    }
-
     /// Look up the `SymbolId` for a `DefId` (reverse mapping).
     pub fn def_to_symbol_id(&self, def_id: DefId) -> Option<SymbolId> {
         self.def_to_symbol.borrow().get(&def_id).copied()
