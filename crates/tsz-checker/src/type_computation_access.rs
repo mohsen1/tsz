@@ -851,8 +851,12 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117: TypeScript always checks for duplicate properties regardless of target
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117: tsc only emits this for ES5 and earlier targets.
+                    if !skip_duplicate_check
+                        && properties.contains_key(&name_atom)
+                        && (self.ctx.compiler_options.target as u32)
+                            < (tsz_common::common::ScriptTarget::ES2015 as u32)
+                    {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
