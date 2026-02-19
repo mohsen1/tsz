@@ -24,8 +24,8 @@ use crate::types::{
 };
 use crate::visitor::{
     TypeVisitor, application_id, array_element_type, callable_shape_id, conditional_type_id,
-    enum_components, function_shape_id, intersection_list_id, intrinsic_kind, is_this_type,
-    keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
+    enum_components, function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind, is_this_type,
+    keyof_inner_type, lazy_def_id, literal_string, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, ref_symbol, template_literal_id,
     tuple_list_id, type_param_info, type_query_symbol, union_list_id, unique_symbol_ref,
 };
@@ -1219,6 +1219,125 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         SubtypeResult::True
+    }
+
+    /// Check if source is a subtype of an IndexAccess target where the index is generic.
+    ///
+    /// If `Target` is `Obj[K]` where `K` is generic, we check if `Source <: Obj[C]`
+    /// where `C` is the constraint of `K`.
+    /// Specifically, if `C` is a union of string literals `"a" | "b"`, we verify
+    /// `Source <: Obj["a"]` AND `Source <: Obj["b"]`.
+    fn check_generic_index_access_subtype(&mut self, source: TypeId, target: TypeId) -> bool {
+        let Some((t_obj, t_idx)) = index_access_parts(self.interner, target) else {
+            return false;
+        };
+
+        // Check if index is a generic type parameter
+        let Some(t_param) = type_param_info(self.interner, t_idx) else {
+            return false;
+        };
+
+        let Some(constraint) = t_param.constraint else {
+            return false;
+        };
+
+        // Evaluate the constraint to resolve any type aliases/applications
+        let constraint = self.evaluate_type(constraint);
+
+        // Collect all literal types from the constraint (if it's a union of literals)
+        // If constraint is a single literal, treat as union of 1.
+        let mut literals = Vec::new();
+
+        if let Some(s) = literal_string(self.interner, constraint) {
+            literals.push(self.interner.literal_string_atom(s));
+        } else if let Some(union_id) = union_list_id(self.interner, constraint) {
+            let members = self.interner.type_list(union_id);
+            for &m in members.iter() {
+                if let Some(s) = literal_string(self.interner, m) {
+                    literals.push(self.interner.literal_string_atom(s));
+                } else {
+                    // Constraint contains non-string-literal (e.g. number, or generic).
+                    // Can't distribute.
+                    return false;
+                }
+            }
+        } else {
+            // Constraint is not a literal or union of literals.
+            return false;
+        }
+
+        if literals.is_empty() {
+            return false;
+        }
+
+        // Check source <: Obj[L] for all L in literals
+        for lit_type in literals {
+            // Create IndexAccess(Obj, L)
+            // We use evaluate_type here to potentially resolve it to a concrete property type
+            // (e.g. Obj["a"] -> string)
+            let indexed_access = self.interner.index_access(t_obj, lit_type);
+            let evaluated = self.evaluate_type(indexed_access);
+
+            if !self.check_subtype(source, evaluated).is_true() {
+                return false;
+            }
+        }
+
+        true
+    }
+
+        // Check if index is a generic type parameter
+        let Some(t_param) = type_param_info(self.interner, t_idx) else {
+            return false;
+        };
+
+        let Some(constraint) = t_param.constraint else {
+            return false;
+        };
+
+        // Evaluate the constraint to resolve any type aliases/applications
+        let constraint = self.evaluate_type(constraint);
+
+        // Collect all literal types from the constraint (if it's a union of literals)
+        // If constraint is a single literal, treat as union of 1.
+        let mut literals = Vec::new();
+
+        if let Some(s) = literal_string(self.interner, constraint) {
+            literals.push(self.interner.literal_string_atom(s));
+        } else if let Some(union_id) = union_list_id(self.interner, constraint) {
+            let members = self.interner.type_list(union_id);
+            for &m in members.iter() {
+                if let Some(s) = literal_string(self.interner, m) {
+                    literals.push(self.interner.literal_string_atom(s));
+                } else {
+                    // Constraint contains non-string-literal (e.g. number, or generic).
+                    // Can't distribute.
+                    return false;
+                }
+            }
+        } else {
+            // Constraint is not a literal or union of literals.
+            return false;
+        }
+
+        if literals.is_empty() {
+            return false;
+        }
+
+        // Check source <: Obj[L] for all L in literals
+        for lit_type in literals {
+            // Create IndexAccess(Obj, L)
+            // We use evaluate_type here to potentially resolve it to a concrete property type
+            // (e.g. Obj["a"] -> string)
+            let indexed_access = self.interner.index_access(t_obj, lit_type);
+            let evaluated = self.evaluate_type(indexed_access);
+
+            if !self.check_subtype(source, evaluated).is_true() {
+                return false;
+            }
+        }
+
+        true
     }
 
     /// When a cycle is detected, we return `CycleDetected` (coinductive semantics)
@@ -2564,6 +2683,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Dispatch to the visitor using the extracted interner
         let result = visitor.visit_type(interner, source);
+
+        if result == SubtypeResult::False {
+            if self.check_generic_index_access_subtype(source, target) {
+                return SubtypeResult::True;
+            }
+        }
 
         // Trace: Generic fallback type mismatch (no specific reason matched above)
         if result == SubtypeResult::False
