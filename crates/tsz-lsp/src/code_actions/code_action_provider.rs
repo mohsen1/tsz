@@ -110,6 +110,9 @@ pub struct CodeAction {
     pub edit: Option<WorkspaceEdit>,
     /// Marks this as a preferred action (shown first in UI).
     pub is_preferred: bool,
+    /// Metadata for the action (e.g. fixId for TSServer)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
 /// Context passed when requesting code actions.
@@ -232,6 +235,11 @@ impl<'a> CodeActionProvider<'a> {
             kind: CodeActionKind::QuickFix,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: true,
+            data: Some(serde_json::json!({
+                "fixName": "unusedIdentifier",
+                "fixId": "unusedIdentifier_delete",
+                "fixAllDescription": "Delete all unused declarations"
+            })),
         })
     }
 
@@ -263,6 +271,11 @@ impl<'a> CodeActionProvider<'a> {
             kind: CodeActionKind::QuickFix,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: true,
+            data: Some(serde_json::json!({
+                "fixName": "unusedIdentifier",
+                "fixId": "unusedIdentifier_delete",
+                "fixAllDescription": "Delete all unused declarations"
+            })),
         })
     }
 
@@ -460,6 +473,11 @@ impl<'a> CodeActionProvider<'a> {
             kind: CodeActionKind::QuickFix,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
+            data: Some(serde_json::json!({
+                "fixName": "fixMissingMember",
+                "fixId": "fixMissingMember",
+                "fixAllDescription": "Add all missing members"
+            })),
         })
     }
 
@@ -511,6 +529,11 @@ impl<'a> CodeActionProvider<'a> {
                 kind: CodeActionKind::QuickFix,
                 edit: Some(WorkspaceEdit { changes }),
                 is_preferred: false,
+                data: Some(serde_json::json!({
+                    "fixName": "import",
+                    "fixId": "fixMissingImport",
+                    "fixAllDescription": "Add all missing imports"
+                })),
             });
         }
 
@@ -557,6 +580,9 @@ impl<'a> CodeActionProvider<'a> {
             kind: CodeActionKind::SourceOrganizeImports,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: false,
+            data: Some(serde_json::json!({
+                "fixName": "organizeImports"
+            })),
         })
     }
 
@@ -1964,6 +1990,7 @@ impl<'a> CodeActionProvider<'a> {
             kind: CodeActionKind::RefactorExtract,
             edit: Some(WorkspaceEdit { changes }),
             is_preferred: true,
+            data: None,
         })
     }
 

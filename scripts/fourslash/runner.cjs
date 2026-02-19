@@ -135,7 +135,7 @@ function discoverTests(testDir, filter) {
 
 async function runSequential(opts, testsToRun) {
     const tsDir = process.cwd();
-    const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter");
+    const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
 
     setupGlobals(tsDir);
     const { ts, Harness, FourSlash, HarnessLS, SessionClient } = loadHarnessModules(tsDir);
@@ -270,7 +270,7 @@ async function runParallel(opts, testsToRun) {
     let memoryWarnings = 0;
     const errors = [];
     const workerStats = [];
-    const workerFile = path.join(__dirname, "test-worker.js");
+    const workerFile = path.join(__dirname, "test-worker.cjs");
 
     // Track per-worker status for crash recovery
     const workerProgress = new Map(); // workerId -> { total, completed }
