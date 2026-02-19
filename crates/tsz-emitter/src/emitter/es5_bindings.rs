@@ -50,7 +50,7 @@ impl<'a> Printer<'a> {
                 continue;
             };
 
-            if self.is_binding_pattern(decl.name) && !decl.initializer.is_none() {
+            if self.is_binding_pattern(decl.name) && decl.initializer.is_some() {
                 if first {
                     self.write(" ");
                 }
@@ -147,7 +147,7 @@ impl<'a> Printer<'a> {
             .nodes
             .iter()
             .enumerate()
-            .find(|(i, n)| *i == binding_array_index && !n.is_none())
+            .find(|(i, n)| *i == binding_array_index && n.is_some())
             .map(|(_, &n)| n);
         let Some(elem_idx) = elem_idx else {
             return false;
@@ -535,7 +535,7 @@ impl<'a> Printer<'a> {
             .nodes
             .iter()
             .copied()
-            .filter(|n| !n.is_none());
+            .filter(|n| n.is_some());
         let Some(elem_idx) = elems.next() else {
             return false;
         };
@@ -556,7 +556,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let key_idx = if !elem.property_name.is_none() {
+        let key_idx = if elem.property_name.is_some() {
             elem.property_name
         } else {
             elem.name
@@ -676,7 +676,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let key_idx = if !elem.property_name.is_none() {
+        let key_idx = if elem.property_name.is_some() {
             elem.property_name
         } else {
             elem.name
@@ -876,7 +876,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let key_idx = if !child_elem.property_name.is_none() {
+        let key_idx = if child_elem.property_name.is_some() {
             child_elem.property_name
         } else {
             child_elem.name
@@ -894,7 +894,7 @@ impl<'a> Printer<'a> {
         self.write(source_name);
         self.write(".");
         self.write_identifier_text(key_idx);
-        if !child_elem.initializer.is_none() {
+        if child_elem.initializer.is_some() {
             self.write(" === void 0 ? ");
             self.emit_expression(child_elem.initializer);
             self.write(" : ");
@@ -957,7 +957,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let child_key_idx = if !child_elem.property_name.is_none() {
+        let child_key_idx = if child_elem.property_name.is_some() {
             child_elem.property_name
         } else {
             child_elem.name
@@ -1193,7 +1193,7 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.write(&elem_source);
 
-                        let target_temp = if !elem.initializer.is_none() {
+                        let target_temp = if elem.initializer.is_some() {
                             let defaulted = self.get_temp_var_name();
                             self.write(", ");
                             self.write(&defaulted);
@@ -1249,7 +1249,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
                 self.emit(elem.name);
                 self.write(" = ");
-                if !elem.initializer.is_none() {
+                if elem.initializer.is_some() {
                     let value_name = self.get_temp_var_name();
                     self.write(&value_name);
                     self.write(" = ");
@@ -1291,7 +1291,7 @@ impl<'a> Printer<'a> {
                     self.write(" = ");
                     self.write(&elem_source);
 
-                    let target_temp = if !elem.initializer.is_none() {
+                    let target_temp = if elem.initializer.is_some() {
                         let defaulted = self.get_temp_var_name();
                         self.write(", ");
                         self.write(&defaulted);
@@ -1398,7 +1398,7 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                     self.emit(elem.name);
                     self.write(" = ");
-                    if !elem.initializer.is_none() {
+                    if elem.initializer.is_some() {
                         self.write(&elem_temp);
                         self.write(" === void 0 ? ");
                         self.emit_expression(elem.initializer);
@@ -1409,7 +1409,7 @@ impl<'a> Printer<'a> {
                     }
                 } else if self.is_binding_pattern(elem.name) {
                     // Nested binding pattern - handle recursively
-                    let nested_temp = if !elem.initializer.is_none() {
+                    let nested_temp = if elem.initializer.is_some() {
                         let defaulted = self.get_temp_var_name();
                         self.write(", ");
                         self.write(&defaulted);
@@ -1442,7 +1442,7 @@ impl<'a> Printer<'a> {
     }
 
     fn get_binding_element_property_key(&self, elem: &BindingElementData) -> Option<NodeIndex> {
-        let key_idx = if !elem.property_name.is_none() {
+        let key_idx = if elem.property_name.is_some() {
             elem.property_name
         } else {
             elem.name
@@ -1491,7 +1491,7 @@ impl<'a> Printer<'a> {
             );
 
             // When there's a default, create a NEW temp for the defaulted value
-            let pattern_temp = if !elem.initializer.is_none() {
+            let pattern_temp = if elem.initializer.is_some() {
                 let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
                 self.write(&defaulted_name);
@@ -1594,7 +1594,7 @@ impl<'a> Printer<'a> {
             self.write("]");
 
             // When there's a default, create a NEW temp for the defaulted value
-            let pattern_temp = if !elem.initializer.is_none() {
+            let pattern_temp = if elem.initializer.is_some() {
                 let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
                 self.write(&defaulted_name);
@@ -1685,7 +1685,7 @@ impl<'a> Printer<'a> {
             );
 
             // When there's a default, create a NEW temp for the defaulted value
-            let pattern_temp = if !elem.initializer.is_none() {
+            let pattern_temp = if elem.initializer.is_some() {
                 let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
                 self.write(&defaulted_name);
@@ -1827,7 +1827,7 @@ impl<'a> Printer<'a> {
             self.write("]");
 
             // When there's a default, create a NEW temp for the defaulted value
-            let pattern_temp = if !elem.initializer.is_none() {
+            let pattern_temp = if elem.initializer.is_some() {
                 let defaulted_name = self.get_temp_var_name();
                 self.write(", ");
                 self.write(&defaulted_name);
@@ -2130,7 +2130,7 @@ impl<'a> Printer<'a> {
                 computed_key_temp.as_deref(),
             );
 
-            if !elem.initializer.is_none() {
+            if elem.initializer.is_some() {
                 self.write(", ");
                 self.write(&value_name);
                 self.write(" = ");
@@ -2150,7 +2150,7 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_param_assignment_prefix(started);
-        if !elem.initializer.is_none() {
+        if elem.initializer.is_some() {
             let value_name = self.get_temp_var_name();
             self.write(&value_name);
             self.write(" = ");
@@ -2232,7 +2232,7 @@ impl<'a> Printer<'a> {
             self.write_usize(index);
             self.write("]");
 
-            let source_name = if !elem.initializer.is_none() {
+            let source_name = if elem.initializer.is_some() {
                 // Allocate a NEW temp for the defaulted value
                 let default_name = self.get_temp_var_name();
                 self.write(", ");
@@ -2257,7 +2257,7 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_param_assignment_prefix(started);
-        if !elem.initializer.is_none() {
+        if elem.initializer.is_some() {
             let value_name = self.get_temp_var_name();
             self.write(&value_name);
             self.write(" = ");
@@ -2425,7 +2425,7 @@ impl<'a> Printer<'a> {
             if elem.dot_dot_dot_token {
                 continue;
             }
-            let key_idx = if !elem.property_name.is_none() {
+            let key_idx = if elem.property_name.is_some() {
                 elem.property_name
             } else {
                 elem.name

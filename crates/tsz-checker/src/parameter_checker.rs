@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
             && let Some(grand_ext) = self.ctx.arena.get_extended(parent_idx)
         {
             let grand_idx = grand_ext.parent;
-            if !grand_idx.is_none()
+            if grand_idx.is_some()
                 && let Some(grand_node) = self.ctx.arena.get(grand_idx)
                 && grand_node.kind == tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION
                 && let Some(call) = self.ctx.arena.get_call_expr(grand_node)
@@ -317,7 +317,7 @@ impl<'a> CheckerState<'a> {
         if let Some(elem) = self.ctx.arena.get_binding_element(node) {
             // Check computed property name expression for unresolved identifiers (TS2304)
             // e.g., in `{[z]: x}` where `z` is undefined
-            if !elem.property_name.is_none() {
+            if elem.property_name.is_some() {
                 self.check_computed_property_name(elem.property_name);
             }
             // Recurse on the name (which can be an identifier or another pattern)
@@ -367,7 +367,7 @@ impl<'a> CheckerState<'a> {
                 // A parameter is "required" only if it has neither `?` nor an initializer.
                 // Parameters with initializers (e.g., `options = {}`) are effectively optional
                 // and don't trigger TS1016 even after `?` parameters.
-                let has_initializer = !param.initializer.is_none();
+                let has_initializer = param.initializer.is_some();
                 if !has_initializer {
                     self.error_at_node(
                         param.name,
@@ -446,7 +446,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // If parameter has an initializer in an ambient function, emit TS2371
-            if !param.initializer.is_none() {
+            if param.initializer.is_some() {
                 self.error_at_node(
                     param.initializer,
                     "A parameter initializer is only allowed in a function or constructor implementation.",
@@ -475,7 +475,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check for TS7006 in nested function expressions within the default value
-            if !param.initializer.is_none() {
+            if param.initializer.is_some() {
                 self.check_for_nested_function_ts7006(param.initializer);
             }
 
@@ -538,7 +538,7 @@ impl<'a> CheckerState<'a> {
             // contextual type so that literal initializers keep their narrow types.
             // E.g., `function f(p: 1 = 1)` — without contextual typing, `1` widens
             // to `number` and fails assignability. With it, `1` stays as literal `1`.
-            let declared_type = if !param.type_annotation.is_none() {
+            let declared_type = if param.type_annotation.is_some() {
                 Some(self.get_type_from_type_node(param.type_annotation))
             } else {
                 None
@@ -596,7 +596,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !param.type_annotation.is_none() {
+            if param.type_annotation.is_some() {
                 // Has explicit type annotation — check the declared type
                 let declared_type = self.get_type_from_type_node(param.type_annotation);
 
@@ -617,7 +617,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
                     );
                 }
-            } else if !param.initializer.is_none() {
+            } else if param.initializer.is_some() {
                 // No type annotation, but has initializer (e.g., `...bar = 0`).
                 // Infer the type from the initializer.
                 let init_type = self.get_type_of_node(param.initializer);

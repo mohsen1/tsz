@@ -1336,12 +1336,12 @@ impl<'a> CheckerState<'a> {
 
         // Type alias - get type parameters from declaration
         if flags & symbol_flags::TYPE_ALIAS != 0 {
-            let decl_idx = if !value_decl.is_none() {
+            let decl_idx = if value_decl.is_some() {
                 value_decl
             } else {
                 declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
             {
@@ -1360,12 +1360,12 @@ impl<'a> CheckerState<'a> {
 
         // Class - get type parameters from declaration
         if flags & symbol_flags::CLASS != 0 {
-            let decl_idx = if !value_decl.is_none() {
+            let decl_idx = if value_decl.is_some() {
                 value_decl
             } else {
                 declarations.first().copied().unwrap_or(NodeIndex::NONE)
             };
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(class) = self.ctx.arena.get_class(node)
             {
@@ -1410,7 +1410,7 @@ impl<'a> CheckerState<'a> {
 
             // First try value_decl, then search all declarations for one with type params
             let mut decl_candidates = Vec::new();
-            if !value_decl.is_none() && is_matching_interface(self.ctx.arena, value_decl) {
+            if value_decl.is_some() && is_matching_interface(self.ctx.arena, value_decl) {
                 decl_candidates.push(value_decl);
             }
             for &decl in &declarations {
@@ -1581,7 +1581,7 @@ impl<'a> CheckerState<'a> {
                 // In value position, primitive type keywords should emit TS2693.
                 if let Some(ext) = self.ctx.arena.get_extended(idx) {
                     let parent = ext.parent;
-                    let recovery_stmt_kind = if !parent.is_none() {
+                    let recovery_stmt_kind = if parent.is_some() {
                         self.ctx
                             .arena
                             .get(parent)
@@ -1718,7 +1718,7 @@ impl<'a> CheckerState<'a> {
                     // as ARRAY_TYPE initializers. Emit TS2693 on the primitive keyword.
                     if let Some(ext) = self.ctx.arena.get_extended(idx) {
                         let parent = ext.parent;
-                        if !parent.is_none()
+                        if parent.is_some()
                             && let Some(parent_node) = self.ctx.arena.get(parent)
                             && matches!(
                                 parent_node.kind,

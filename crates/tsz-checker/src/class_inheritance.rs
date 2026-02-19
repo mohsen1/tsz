@@ -298,7 +298,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             .get(class_idx)
             .and_then(|node| self.ctx.arena.get_class(node))
             .map(|class| class.name)
-            .filter(|name| !name.is_none())
+            .filter(|name| name.is_some())
             .unwrap_or(class_idx);
 
         let Some((start, end)) = self.ctx.get_node_span(error_node_idx) else {

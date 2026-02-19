@@ -109,7 +109,7 @@ impl<'a> CheckerState<'a> {
         // Normalize to the enclosing VARIABLE_DECLARATION before checking const/init shape.
         if decl_node.kind == SyntaxKind::Identifier as u16
             && let Some(ext) = self.ctx.arena.get_extended(value_decl)
-            && !ext.parent.is_none()
+            && ext.parent.is_some()
             && let Some(parent_node) = self.ctx.arena.get(ext.parent)
             && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
         {
@@ -126,7 +126,7 @@ impl<'a> CheckerState<'a> {
         let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
             return false;
         };
-        if !var_decl.type_annotation.is_none() || var_decl.initializer.is_none() {
+        if var_decl.type_annotation.is_some() || var_decl.initializer.is_none() {
             return false;
         }
 
@@ -199,7 +199,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(param) = self.ctx.arena.get_parameter(parent_node)
                 {
                     // Check if current node is within the initializer
-                    if !param.initializer.is_none() {
+                    if param.initializer.is_some() {
                         let init_idx = param.initializer;
                         // Check if idx is within the initializer subtree
                         if self.is_node_within(idx, init_idx) {
@@ -315,7 +315,7 @@ impl<'a> CheckerState<'a> {
         // order.  `var` hoists the binding but NOT the initializer, so at the usage
         // point the variable is `undefined`.  Block-scoped variables (let/const) don't
         // need this: TDZ checks handle pre-declaration use separately.
-        if !var_data.initializer.is_none() {
+        if var_data.initializer.is_some() {
             let is_function_scoped =
                 symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
             if !is_function_scoped {
@@ -678,7 +678,7 @@ impl<'a> CheckerState<'a> {
 
         // 3. Get the declaration node
         // Prefer value_declaration, fall back to first declaration
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
@@ -746,7 +746,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // 3. Get the declaration node
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
@@ -816,7 +816,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // 3. Get the declaration node
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
@@ -897,7 +897,7 @@ impl<'a> CheckerState<'a> {
         let is_multi_file = self.ctx.all_arenas.is_some();
 
         // Get the declaration position
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
@@ -970,7 +970,7 @@ impl<'a> CheckerState<'a> {
         // If we reach the declaration's container without crossing a function
         // boundary, the usage executes immediately and IS a violation.
         let mut current = usage_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
@@ -1044,7 +1044,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let mut current = idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 return false;
             };
@@ -1135,7 +1135,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let mut current = idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };

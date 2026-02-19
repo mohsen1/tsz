@@ -30,7 +30,7 @@ impl<'a> CheckerState<'a> {
         // Find the class declaration. When a symbol has both CLASS and FUNCTION flags
         // (function-class merging), value_decl may point to the function, not the class.
         // Search all declarations to find the class node.
-        let decl_idx = if !value_decl.is_none()
+        let decl_idx = if value_decl.is_some()
             && self
                 .ctx
                 .arena
@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
             declarations
                 .iter()
                 .find(|&&d| {
-                    !d.is_none()
+                    d.is_some()
                         && self
                             .ctx
                             .arena
@@ -56,7 +56,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(NodeIndex::NONE)
         };
 
-        if !decl_idx.is_none()
+        if decl_idx.is_some()
             && let Some(node) = self.ctx.arena.get(decl_idx)
             && let Some(class) = self.ctx.arena.get_class(node)
         {
@@ -338,7 +338,7 @@ impl<'a> CheckerState<'a> {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
 
             // Find the enum declaration node
-            let decl_idx = if !value_decl.is_none() {
+            let decl_idx = if value_decl.is_some() {
                 value_decl
             } else {
                 declarations.first().copied().unwrap_or(NodeIndex::NONE)
@@ -349,7 +349,7 @@ impl<'a> CheckerState<'a> {
             // can hit `ctx.symbol_types` directly instead of running full symbol
             // resolution for each distinct member.
             let mut member_types = Vec::new();
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx)
             {
                 let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
@@ -498,9 +498,9 @@ impl<'a> CheckerState<'a> {
                     symbol: None,
                 };
                 factory.callable(shape)
-            } else if !value_decl.is_none() {
+            } else if value_decl.is_some() {
                 self.get_type_of_function(value_decl)
-            } else if !implementation_decl.is_none() {
+            } else if implementation_decl.is_some() {
                 self.get_type_of_function(implementation_decl)
             } else {
                 TypeId::UNKNOWN
@@ -595,12 +595,9 @@ impl<'a> CheckerState<'a> {
 
                 // Try to get type parameters from the interface declaration
                 let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                if !first_decl.is_none() {
-                    if let Some(node) = self.ctx.arena.get(first_decl) {
-                        if let Some(interface) = self.ctx.arena.get_interface(node) {
-                            (params, updates) =
-                                self.push_type_parameters(&interface.type_parameters);
-                        }
+                if let Some(node) = self.ctx.arena.get(first_decl) {
+                    if let Some(interface) = self.ctx.arena.get_interface(node) {
+                        (params, updates) = self.push_type_parameters(&interface.type_parameters);
                     }
                 }
 
@@ -646,7 +643,7 @@ impl<'a> CheckerState<'a> {
                 // Return the interface type along with the type parameters that were used
                 return (interface_type, params);
             }
-            if !value_decl.is_none() {
+            if value_decl.is_some() {
                 return (self.get_type_of_interface(value_decl), Vec::new());
             }
             return (TypeId::UNKNOWN, Vec::new());
@@ -680,13 +677,13 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(false)
                 })
                 .unwrap_or_else(|| {
-                    if !value_decl.is_none() {
+                    if value_decl.is_some() {
                         value_decl
                     } else {
                         declarations.first().copied().unwrap_or(NodeIndex::NONE)
                     }
                 });
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
             {
@@ -741,11 +738,11 @@ impl<'a> CheckerState<'a> {
 
             // Symbols can point at wrappers (export declarations, variable statements, or
             // declaration lists). Normalize to the concrete VariableDeclaration node.
-            if !resolved_value_decl.is_none() {
+            if resolved_value_decl.is_some() {
                 if let Some(node) = self.ctx.arena.get(resolved_value_decl)
                     && node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     && let Some(export_decl) = self.ctx.arena.get_export_decl(node)
-                    && !export_decl.export_clause.is_none()
+                    && export_decl.export_clause.is_some()
                 {
                     resolved_value_decl = export_decl.export_clause;
                 }
@@ -809,13 +806,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !resolved_value_decl.is_none()
+            if resolved_value_decl.is_some()
                 && let Some(node) = self.ctx.arena.get(resolved_value_decl)
             {
                 // Check if this is a variable declaration
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
                     // First try type annotation using type-node lowering (resolves through binder).
-                    if !var_decl.type_annotation.is_none() {
+                    if var_decl.type_annotation.is_some() {
                         return (
                             self.get_type_from_type_node(var_decl.type_annotation),
                             Vec::new(),
@@ -826,7 +823,7 @@ impl<'a> CheckerState<'a> {
                     {
                         return (jsdoc_type, Vec::new());
                     }
-                    if !var_decl.initializer.is_none()
+                    if var_decl.initializer.is_some()
                         && self.is_const_variable_declaration(resolved_value_decl)
                         && let Some(literal_type) =
                             self.literal_type_from_initializer(var_decl.initializer)
@@ -834,7 +831,7 @@ impl<'a> CheckerState<'a> {
                         return (literal_type, Vec::new());
                     }
                     // Fall back to inferring from initializer
-                    if !var_decl.initializer.is_none() {
+                    if var_decl.initializer.is_some() {
                         let mut inferred_type = self.get_type_of_node(var_decl.initializer);
                         let init_is_direct_empty_array = self
                             .ctx
@@ -886,7 +883,7 @@ impl<'a> CheckerState<'a> {
                 // Check if this is a function parameter
                 else if let Some(param) = self.ctx.arena.get_parameter(node) {
                     // Get type from annotation
-                    if !param.type_annotation.is_none() {
+                    if param.type_annotation.is_some() {
                         let mut type_id = self.get_type_from_type_node(param.type_annotation);
                         // Under strictNullChecks, optional parameters (?) include undefined
                         // in their type. E.g., `n?: number` has type `number | undefined`.
@@ -907,7 +904,7 @@ impl<'a> CheckerState<'a> {
                         return (jsdoc_type, Vec::new());
                     }
                     // Fall back to inferring from initializer (default value)
-                    if !param.initializer.is_none() {
+                    if param.initializer.is_some() {
                         return (self.get_type_of_node(param.initializer), Vec::new());
                     }
                 }
@@ -919,7 +916,7 @@ impl<'a> CheckerState<'a> {
 
         // Alias - resolve the aliased type (import x = ns.member or ES6 imports)
         if flags & symbol_flags::ALIAS != 0 {
-            if !value_decl.is_none()
+            if value_decl.is_some()
                 && let Some(node) = self.ctx.arena.get(value_decl)
                 && node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import) = self.ctx.arena.get_import_decl(node)
@@ -1236,7 +1233,7 @@ impl<'a> CheckerState<'a> {
                         // so missing `default` should be TS2305 (not TS1192).
                         // Use declarations list as fallback when value_decl is NONE
                         // (ES6 named imports don't set value_declaration).
-                        let binding_node = if !value_decl.is_none() {
+                        let binding_node = if value_decl.is_some() {
                             tracing::debug!(value_decl = %value_decl.0, "using value_decl as binding_node");
                             value_decl
                         } else {
@@ -1406,9 +1403,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let result = !clause.name.is_none();
+        let result = clause.name.is_some();
         tracing::debug!(
-            has_clause_name = !clause.name.is_none(),
+            has_clause_name = clause.name.is_some(),
             result,
             "checked clause.name, returning"
         );

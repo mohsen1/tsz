@@ -277,7 +277,7 @@ impl<'a> DefiniteAssignmentAnalyzer<'a> {
             if changed {
                 // Add successors (antecedents in flow graph terminology) to worklist
                 for &antecedent in &flow_node.antecedent {
-                    if !antecedent.is_none() && !in_worklist.contains(&antecedent) {
+                    if antecedent.is_some() && !in_worklist.contains(&antecedent) {
                         worklist.push(antecedent);
                         in_worklist.insert(antecedent);
                     }

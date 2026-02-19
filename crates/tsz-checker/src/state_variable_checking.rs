@@ -53,7 +53,7 @@ impl<'a> CheckerState<'a> {
 
             // TS1189/TS1190: The variable declaration of a for-in/for-of statement cannot have an initializer
             // Only check when there's a single declaration (TSC suppresses when TS1188 is reported)
-            if single_declaration && !var_decl.initializer.is_none() {
+            if single_declaration && var_decl.initializer.is_some() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 if is_for_in {
                     self.error_at_node(
@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // If there's a type annotation, check that the element type is assignable to it
-            if !var_decl.type_annotation.is_none() {
+            if var_decl.type_annotation.is_some() {
                 // TS2404: The left-hand side of a 'for...in' statement cannot use a type annotation
                 // TSC emits TS2404 and skips the assignability check for for-in loops.
                 // TS2483: The left-hand side of a 'for...of' statement cannot use a type annotation
@@ -500,7 +500,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
         ) {
             if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                && !accessor.type_annotation.is_none()
+                && accessor.type_annotation.is_some()
                 && let Some(found) = self.find_circular_reference_in_type_node(
                     accessor.type_annotation,
                     target_sym,
@@ -513,7 +513,7 @@ impl<'a> CheckerState<'a> {
             node.kind,
             syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::PROPERTY_DECLARATION
         ) && let Some(prop) = self.ctx.arena.get_property_decl(node)
-            && !prop.type_annotation.is_none()
+            && prop.type_annotation.is_some()
             && let Some(found) = self.find_circular_reference_in_type_node(
                 prop.type_annotation,
                 target_sym,
@@ -604,7 +604,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1263: ! with initializer is contradictory
-            if !var_decl.initializer.is_none() {
+            if var_decl.initializer.is_some() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     var_decl.name,
@@ -728,7 +728,7 @@ impl<'a> CheckerState<'a> {
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
         // TS1039/TS1254: Check initializers in ambient contexts
-        if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
+        if var_decl.initializer.is_some() && self.is_ambient_declaration(decl_idx) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let is_const = self.is_const_variable_declaration(decl_idx);
             if is_const && var_decl.type_annotation.is_none() {
@@ -751,7 +751,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
-            let mut has_type_annotation = !var_decl.type_annotation.is_none();
+            let mut has_type_annotation = var_decl.type_annotation.is_some();
             let mut declared_type = if has_type_annotation {
                 // Check for undefined type names in nested types (e.g., function type parameters)
                 // Skip top-level TYPE_REFERENCE to avoid duplicates with get_type_from_type_node
@@ -788,7 +788,7 @@ impl<'a> CheckerState<'a> {
 
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
-                if !var_decl.initializer.is_none() {
+                if var_decl.initializer.is_some() {
                     // Evaluate the declared type to resolve conditionals before using as context.
                     // This ensures types like `type C = string extends string ? "yes" : "no"`
                     // provide proper contextual typing for literals, preventing them from widening to string.
@@ -867,7 +867,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // No type annotation - infer from initializer
-            if !var_decl.initializer.is_none() {
+            if var_decl.initializer.is_some() {
                 // Clear cache for closure initializers so TS7006 is properly emitted.
                 // During build_type_environment, closures are typed without contextual info
                 // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate
@@ -987,7 +987,7 @@ impl<'a> CheckerState<'a> {
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
-            if !var_decl.type_annotation.is_none() {
+            if var_decl.type_annotation.is_some() {
                 // Try AST-based check first (catches complex circularities that confuse the solver)
                 let ast_circular = self
                     .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
@@ -1044,7 +1044,7 @@ impl<'a> CheckerState<'a> {
 
             // FIX: Update node_types cache with the widened type
             self.ctx.node_types.insert(decl_idx.0, final_type);
-            if !var_decl.name.is_none() {
+            if var_decl.name.is_some() {
                 self.ctx.node_types.insert(var_decl.name.0, final_type);
             }
 
@@ -1129,7 +1129,7 @@ impl<'a> CheckerState<'a> {
             //         `var f = function() { return f(); }`.
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
-                && !var_decl.initializer.is_none()
+                && var_decl.initializer.is_some()
                 && sym_cached_as_error
                 && self.type_contains_error(final_type)
             {
@@ -1245,7 +1245,7 @@ impl<'a> CheckerState<'a> {
                                 && let Some(lib_sym) = binder.get_symbol(lib_sym_id)
                             {
                                 for &lib_decl in &lib_sym.declarations {
-                                    if !lib_decl.is_none()
+                                    if lib_decl.is_some()
                                         && CheckerState::enter_cross_arena_delegation()
                                     {
                                         let mut lib_checker =
@@ -1294,7 +1294,7 @@ impl<'a> CheckerState<'a> {
                             if other_decl == decl_idx {
                                 break;
                             }
-                            if !other_decl.is_none() {
+                            if other_decl.is_some() {
                                 let other_type = self.get_type_of_node(other_decl);
 
                                 // Check if other declaration is mergeable (namespace, etc.)
@@ -1352,9 +1352,9 @@ impl<'a> CheckerState<'a> {
             // Prefer explicit type annotation; otherwise infer from initializer (matching tsc).
             // This type is used for both default-value checking and for assigning types to
             // binding element symbols created by the binder.
-            let pattern_type = if !var_decl.type_annotation.is_none() {
+            let pattern_type = if var_decl.type_annotation.is_some() {
                 self.get_type_from_type_node(var_decl.type_annotation)
-            } else if !var_decl.initializer.is_none() {
+            } else if var_decl.initializer.is_some() {
                 self.get_type_of_node(var_decl.initializer)
             } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
@@ -1456,7 +1456,7 @@ impl<'a> CheckerState<'a> {
             }
             // TS doesn't report tuple out-of-bounds for empty array destructuring
             // when the element has a default value.
-            if !element_data.initializer.is_none() {
+            if element_data.initializer.is_some() {
                 continue;
             }
 
@@ -1595,7 +1595,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let path_segment = if curr_is_object {
-                    if !element_data.property_name.is_none() {
+                    if element_data.property_name.is_some() {
                         if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
                             self.ctx
                                 .arena
@@ -1775,7 +1775,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the property name or index
-        if !element_data.property_name.is_none() {
+        if element_data.property_name.is_some() {
             // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
             // check index signatures when the key is not a simple identifier key.
             // This aligns with TS2537 behavior for destructuring from `{}`.
@@ -1840,7 +1840,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let property_name = if !element_data.property_name.is_none() {
+        let property_name = if element_data.property_name.is_some() {
             // { x: a } - property_name is "x"
             if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
                 self.ctx
@@ -1864,9 +1864,9 @@ impl<'a> CheckerState<'a> {
 
         if parent_type == TypeId::UNKNOWN {
             if let Some(prop_name_str) = property_name.as_deref() {
-                let error_node = if !element_data.property_name.is_none() {
+                let error_node = if element_data.property_name.is_some() {
                     element_data.property_name
-                } else if !element_data.name.is_none() {
+                } else if element_data.name.is_some() {
                     element_data.name
                 } else {
                     NodeIndex::NONE

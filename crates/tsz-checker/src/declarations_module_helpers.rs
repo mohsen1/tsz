@@ -178,7 +178,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_decl) = self.ctx.arena.get_export_decl(stmt_node) {
                         if export_decl.is_default_export
-                            || !export_decl.module_specifier.is_none()
+                            || export_decl.module_specifier.is_some()
                             || export_decl.export_clause.is_none()
                         {
                             return true;
@@ -247,7 +247,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return false;
         }
 
-        while !current.is_none() {
+        while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };

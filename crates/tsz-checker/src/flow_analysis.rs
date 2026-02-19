@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
                     let then_result =
                         self.analyze_statement(if_stmt.then_statement, &assigned, tracked);
 
-                    let else_result = if !if_stmt.else_statement.is_none() {
+                    let else_result = if if_stmt.else_statement.is_some() {
                         self.analyze_statement(if_stmt.else_statement, &assigned, tracked)
                     } else {
                         FlowResult {
@@ -241,7 +241,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 let mut assigned = assigned_in.clone();
                 if let Some(ret) = self.ctx.arena.get_return_statement(node)
-                    && !ret.expression.is_none()
+                    && ret.expression.is_some()
                 {
                     self.collect_assignments_in_expression(ret.expression, &mut assigned, tracked);
                 }
@@ -253,7 +253,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::THROW_STATEMENT => {
                 let mut assigned = assigned_in.clone();
                 if let Some(ret) = self.ctx.arena.get_return_statement(node)
-                    && !ret.expression.is_none()
+                    && ret.expression.is_some()
                 {
                     self.collect_assignments_in_expression(ret.expression, &mut assigned, tracked);
                 }
@@ -265,7 +265,7 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::EXPRESSION_STATEMENT => {
                 let mut assigned = assigned_in.clone();
                 if let Some(expr_stmt) = self.ctx.arena.get_expression_statement(node)
-                    && !expr_stmt.expression.is_none()
+                    && expr_stmt.expression.is_some()
                 {
                     self.collect_assignments_in_expression(
                         expr_stmt.expression,
@@ -285,7 +285,7 @@ impl<'a> CheckerState<'a> {
                     for &decl_idx in &var_stmt.declarations.nodes {
                         if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                             && let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                            && !decl.initializer.is_none()
+                            && decl.initializer.is_some()
                         {
                             self.collect_assignments_in_expression(
                                 decl.initializer,
@@ -304,7 +304,7 @@ impl<'a> CheckerState<'a> {
                 // For for/while loops: body might not execute
                 if let Some(loop_data) = self.ctx.arena.get_loop(node) {
                     let mut assigned = assigned_in.clone();
-                    if !loop_data.initializer.is_none() {
+                    if loop_data.initializer.is_some() {
                         if let Some(init_node) = self.ctx.arena.get(loop_data.initializer)
                             && init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                         {
@@ -321,7 +321,7 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                     }
-                    if !loop_data.condition.is_none() {
+                    if loop_data.condition.is_some() {
                         self.collect_assignments_in_expression(
                             loop_data.condition,
                             &mut assigned,
@@ -416,7 +416,7 @@ impl<'a> CheckerState<'a> {
         tracked: &FxHashSet<PropertyKey>,
     ) -> FlowResult {
         let try_result = self.analyze_statement(try_data.try_block, assigned_in, tracked);
-        let catch_result = if !try_data.catch_clause.is_none() {
+        let catch_result = if try_data.catch_clause.is_some() {
             if let Some(catch_node) = self.ctx.arena.get(try_data.catch_clause) {
                 if let Some(catch) = self.ctx.arena.get_catch_clause(catch_node) {
                     self.analyze_statement(catch.block, assigned_in, tracked)
@@ -450,7 +450,7 @@ impl<'a> CheckerState<'a> {
             self.combine_flow_sets(try_result.exits, catch_result.exits)
         };
 
-        if !try_data.finally_block.is_none() {
+        if try_data.finally_block.is_some() {
             let finally_result =
                 self.analyze_statement(try_data.finally_block, &FxHashSet::default(), tracked);
             let finally_assigned = self
@@ -558,7 +558,7 @@ impl<'a> CheckerState<'a> {
             let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
                 continue;
             };
-            if !decl.initializer.is_none() {
+            if decl.initializer.is_some() {
                 self.collect_assignments_in_expression(decl.initializer, assigned, tracked);
             }
         }
@@ -603,10 +603,10 @@ impl<'a> CheckerState<'a> {
                         if self.is_assignment_operator(bin.operator_token) {
                             self.collect_assignment_target(bin.left, assigned, tracked);
                         }
-                        if !bin.right.is_none() {
+                        if bin.right.is_some() {
                             stack.push(bin.right);
                         }
-                        if !bin.left.is_none() {
+                        if bin.left.is_some() {
                             stack.push(bin.left);
                         }
                     }
@@ -620,7 +620,7 @@ impl<'a> CheckerState<'a> {
                         {
                             self.collect_assignment_target(unary.operand, assigned, tracked);
                         }
-                        if !unary.operand.is_none() {
+                        if unary.operand.is_some() {
                             stack.push(unary.operand);
                         }
                     }
@@ -1524,7 +1524,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx
                         .arena
                         .get_extended(clause_idx)
-                        .and_then(|ext| (!ext.parent.is_none()).then_some(ext.parent))
+                        .and_then(|ext| (ext.parent.is_some()).then_some(ext.parent))
                 } else {
                     self.ctx.binder.get_switch_for_clause(clause_idx)
                 }?;
@@ -1793,7 +1793,7 @@ impl<'a> CheckerState<'a> {
         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
             if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
-                && !ext.parent.is_none()
+                && ext.parent.is_some()
                 && let Some(parent_node) = self.ctx.arena.get(ext.parent)
             {
                 let flags = parent_node.flags as u32;
@@ -1867,7 +1867,7 @@ impl<'a> CheckerState<'a> {
         // for the variable to be considered captured
         let mut scope_id = usage_fn_scope;
         let mut iterations = 0;
-        while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+        while scope_id.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
             if scope_id == decl_fn_scope {
                 return true;
             }
@@ -1892,7 +1892,7 @@ impl<'a> CheckerState<'a> {
 
         let mut current = scope_id;
         let mut iterations = 0;
-        while !current.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+        while current.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
             if let Some(scope) = self.ctx.binder.scopes.get(current.0 as usize) {
                 match scope.kind {
                     ContainerKind::Function | ContainerKind::SourceFile | ContainerKind::Module => {

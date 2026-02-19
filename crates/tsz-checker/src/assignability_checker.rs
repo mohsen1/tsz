@@ -247,7 +247,7 @@ impl<'a> CheckerState<'a> {
 
         let mut current = idx;
         let mut walk_guard = 0;
-        while !current.is_none() {
+        while current.is_some() {
             walk_guard += 1;
             if walk_guard > 512 {
                 break;

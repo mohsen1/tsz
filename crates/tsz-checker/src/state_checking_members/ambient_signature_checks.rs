@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS8010: Type annotations can only be used in TypeScript files
-            if !prop.type_annotation.is_none() {
+            if prop.type_annotation.is_some() {
                 self.error_at_node(
                     prop.type_annotation,
                     diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -68,14 +68,14 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.in_static_property_initializer);
         if is_static
-            && !prop.initializer.is_none()
+            && prop.initializer.is_some()
             && let Some(ref mut class_info) = self.ctx.enclosing_class
         {
             class_info.in_static_property_initializer = true;
         }
 
         if !is_static
-            && !prop.initializer.is_none()
+            && prop.initializer.is_some()
             && let Some(member_name) = self.get_property_name(prop.name)
         {
             self.check_constructor_param_capture_in_instance_initializer(
@@ -135,7 +135,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1263: ! with initializer is contradictory
-            if !prop.initializer.is_none() {
+            if prop.initializer.is_some() {
                 self.error_at_node(
                     prop.name,
                     diagnostic_messages::DECLARATIONS_WITH_INITIALIZERS_CANNOT_ALSO_HAVE_DEFINITE_ASSIGNMENT_ASSERTIONS,
@@ -155,7 +155,7 @@ impl<'a> CheckerState<'a> {
 
         // TS1039: Initializers are not allowed in ambient contexts.
         // A class property with `declare` modifier or in a `declare class` is ambient.
-        if !prop.initializer.is_none() {
+        if prop.initializer.is_some() {
             let has_declare = self.has_declare_modifier(&prop.modifiers);
             let in_declared_class = self
                 .ctx
@@ -172,12 +172,12 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for await expressions in the initializer (TS1308)
-        if !prop.initializer.is_none() {
+        if prop.initializer.is_some() {
             self.check_await_expression(prop.initializer);
         }
 
         // If property has type annotation and initializer, check type compatibility
-        if !prop.type_annotation.is_none() && !prop.initializer.is_none() {
+        if prop.type_annotation.is_some() && prop.initializer.is_some() {
             // Check for undefined type names in nested types (e.g., function type parameters).
             // This matches the variable declaration path in check_variable_declaration.
             self.check_type_for_missing_names_skip_top_level_ref(prop.type_annotation);
@@ -196,20 +196,20 @@ impl<'a> CheckerState<'a> {
             if declared_type != TypeId::ANY && !self.type_contains_error(declared_type) {
                 let _ = self.check_assignable_or_report(init_type, declared_type, prop.initializer);
             }
-        } else if !prop.initializer.is_none() {
+        } else if prop.initializer.is_some() {
             // Just check the initializer to catch errors within it
             self.get_type_of_node(prop.initializer);
         }
 
         // Error 2729: Property is used before its initialization
         // Check if initializer references properties declared after this one
-        if !prop.initializer.is_none() && !self.has_static_modifier(&prop.modifiers) {
+        if prop.initializer.is_some() && !self.has_static_modifier(&prop.modifiers) {
             self.check_property_initialization_order(member_idx, prop.initializer);
         }
 
         // Error 2729: Static property used before its initialization
         // Check if initializer references static properties declared after this one
-        if !prop.initializer.is_none() && self.has_static_modifier(&prop.modifiers) {
+        if prop.initializer.is_some() && self.has_static_modifier(&prop.modifiers) {
             self.check_static_property_initialization_order(member_idx, prop.initializer);
         }
 
@@ -240,9 +240,9 @@ impl<'a> CheckerState<'a> {
 
         // Cache the inferred type for the property node so DeclarationEmitter can use it
         // Get type: either from annotation or inferred from initializer
-        let prop_type = if !prop.type_annotation.is_none() {
+        let prop_type = if prop.type_annotation.is_some() {
             self.get_type_from_type_node(prop.type_annotation)
-        } else if !prop.initializer.is_none() {
+        } else if prop.initializer.is_some() {
             let init_type = self.get_type_of_node(prop.initializer);
             // Widen literal types for mutable class properties (tsc behavior).
             // `class Foo { name = "" }` infers `name: string`, not `name: ""`.
@@ -293,7 +293,7 @@ impl<'a> CheckerState<'a> {
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the method has a body,
         // OR if the method itself has a `declare` modifier and a body.
-        if !method.body.is_none() {
+        if method.body.is_some() {
             let in_declared_class = self
                 .ctx
                 .enclosing_class
@@ -329,7 +329,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                 {
-                    let type_id = if !param.type_annotation.is_none() {
+                    let type_id = if param.type_annotation.is_some() {
                         // Use explicit type annotation if present
                         Some(self.get_type_from_type_node(param.type_annotation))
                     } else {
@@ -341,7 +341,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let has_type_annotation = !method.type_annotation.is_none();
+        let has_type_annotation = method.type_annotation.is_some();
         let mut return_type = if has_type_annotation {
             self.get_type_from_type_node(method.type_annotation)
         } else {
@@ -384,7 +384,7 @@ impl<'a> CheckerState<'a> {
         self.check_non_impl_parameter_initializers(
             &method.parameters.nodes,
             self.has_declare_modifier(&method.modifiers),
-            !method.body.is_none(),
+            method.body.is_some(),
         );
 
         // Check for parameter properties (error 2369)
@@ -406,7 +406,7 @@ impl<'a> CheckerState<'a> {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
             {
-                if !param.type_annotation.is_none() {
+                if param.type_annotation.is_some() {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
                 if !skip_implicit_any {
@@ -423,7 +423,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check return type annotation for parameter properties in function types
-        if !method.type_annotation.is_none() {
+        if method.type_annotation.is_some() {
             self.check_type_for_parameter_properties(method.type_annotation);
         }
 
@@ -432,7 +432,7 @@ impl<'a> CheckerState<'a> {
         let is_generator = method.asterisk_token;
 
         // Check method body
-        if !method.body.is_none() {
+        if method.body.is_some() {
             if !has_type_annotation {
                 return_type = self.infer_return_type_from_body(method.body, None);
             }
@@ -520,7 +520,7 @@ impl<'a> CheckerState<'a> {
             } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::diagnostics::diagnostic_messages;
-                let error_node = if !method.name.is_none() {
+                let error_node = if method.name.is_some() {
                     method.name
                 } else {
                     method.body
@@ -552,7 +552,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check overload compatibility for method implementations
-        if !method.body.is_none() {
+        if method.body.is_some() {
             self.check_overload_compatibility(member_idx);
         }
 
@@ -592,7 +592,7 @@ impl<'a> CheckerState<'a> {
 
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the constructor has a body
-        if !ctor.body.is_none()
+        if ctor.body.is_some()
             && let Some(ref class_info) = self.ctx.enclosing_class
             && class_info.is_declared
         {
@@ -657,7 +657,7 @@ impl<'a> CheckerState<'a> {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
             {
-                if !param.type_annotation.is_none() {
+                if param.type_annotation.is_some() {
                     self.check_type_for_parameter_properties(param.type_annotation);
                 }
                 if !skip_implicit_any_ctor {
@@ -722,7 +722,7 @@ impl<'a> CheckerState<'a> {
         self.check_non_impl_parameter_initializers(
             &ctor.parameters.nodes,
             self.has_declare_modifier(&ctor.modifiers),
-            !ctor.body.is_none(),
+            ctor.body.is_some(),
         );
 
         // Set in_constructor flag for abstract property checks (error 2715)
@@ -732,7 +732,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check constructor body
-        if !ctor.body.is_none() {
+        if ctor.body.is_some() {
             // Get class instance type for constructor return expression validation
             let instance_type = if let Some(ref class_info) = self.ctx.enclosing_class {
                 let class_node = self.ctx.arena.get(class_info.class_idx);
@@ -779,7 +779,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check overload compatibility for constructor implementations
-        if !ctor.body.is_none() {
+        if ctor.body.is_some() {
             self.check_overload_compatibility(member_idx);
         }
     }
@@ -904,7 +904,7 @@ impl<'a> CheckerState<'a> {
 
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the accessor has a body
-        if !accessor.body.is_none()
+        if accessor.body.is_some()
             && let Some(ref class_info) = self.ctx.enclosing_class
             && class_info.is_declared
         {
@@ -917,7 +917,7 @@ impl<'a> CheckerState<'a> {
 
         // Error 1318: An abstract accessor cannot have an implementation
         // Abstract accessors must not have a body
-        if !accessor.body.is_none() && self.has_abstract_modifier(&accessor.modifiers) {
+        if accessor.body.is_some() && self.has_abstract_modifier(&accessor.modifiers) {
             self.error_at_node(
                 member_idx,
                 "An abstract accessor cannot have an implementation.",
@@ -926,7 +926,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_getter = node.kind == syntax_kind_ext::GET_ACCESSOR;
-        let has_type_annotation = is_getter && !accessor.type_annotation.is_none();
+        let has_type_annotation = is_getter && accessor.type_annotation.is_some();
         let mut return_type = if is_getter {
             if has_type_annotation {
                 // Check for TS2502 using AST inspection first
@@ -1000,7 +1000,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check accessor body
-        if !accessor.body.is_none() {
+        if accessor.body.is_some() {
             if is_getter && !has_type_annotation {
                 return_type = self.infer_getter_return_type(accessor.body);
             }
@@ -1071,7 +1071,7 @@ impl<'a> CheckerState<'a> {
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::diagnostics::diagnostic_messages;
-                    let error_node = if !accessor.name.is_none() {
+                    let error_node = if accessor.name.is_some() {
                         accessor.name
                     } else {
                         accessor.body
@@ -1215,7 +1215,7 @@ impl<'a> CheckerState<'a> {
                     .map(|accessor| accessor.body)
             };
             if let Some(body_idx) = body
-                && !body_idx.is_none()
+                && body_idx.is_some()
             {
                 if self.has_only_explicit_any_assertion_returns(body_idx) {
                     return;
@@ -1268,7 +1268,7 @@ impl<'a> CheckerState<'a> {
             let Some(param) = self.ctx.arena.get_parameter(param_node) else {
                 return false;
             };
-            if !param.type_annotation.is_none() {
+            if param.type_annotation.is_some() {
                 return false;
             }
             let name = self.parameter_name_for_error(param.name);
@@ -1507,12 +1507,12 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_function(node)
-                .is_some_and(|f| !f.type_annotation.is_none()),
+                .is_some_and(|f| f.type_annotation.is_some()),
             k if k == syntax_kind_ext::METHOD_DECLARATION => self
                 .ctx
                 .arena
                 .get_method_decl(node)
-                .is_some_and(|m| !m.type_annotation.is_none()),
+                .is_some_and(|m| m.type_annotation.is_some()),
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 // Constructors never have return type annotations
                 return None;
@@ -1535,12 +1535,12 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .arena
                 .get_function(node)
-                .is_some_and(|f| !f.type_annotation.is_none()),
+                .is_some_and(|f| f.type_annotation.is_some()),
             k if k == syntax_kind_ext::METHOD_DECLARATION => self
                 .ctx
                 .arena
                 .get_method_decl(node)
-                .is_some_and(|m| !m.type_annotation.is_none()),
+                .is_some_and(|m| m.type_annotation.is_some()),
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 return None;
             }

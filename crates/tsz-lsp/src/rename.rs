@@ -536,7 +536,7 @@ impl<'a> RenameProvider<'a> {
         // Check parent context
         if let Some(ext) = self.arena.get_extended(ref_node_idx) {
             let parent = ext.parent;
-            if !parent.is_none()
+            if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
             {
                 // Shorthand property assignment: `{ x }` => when renaming
@@ -639,7 +639,7 @@ impl<'a> RenameProvider<'a> {
             && let Some(ext) = self.arena.get_extended(node_idx)
         {
             let parent = ext.parent;
-            if !parent.is_none()
+            if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
                 && (parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
                     || parent_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT)
@@ -742,7 +742,7 @@ impl<'a> RenameProvider<'a> {
                 return RenameSymbolKind::Const;
             }
             if let Some(ext) = self.arena.get_extended(decl_idx)
-                && !ext.parent.is_none()
+                && ext.parent.is_some()
                 && let Some(parent_node) = self.arena.get(ext.parent)
                 && parent_node.flags as u32 & tsz_parser::parser::flags::node_flags::CONST != 0
             {

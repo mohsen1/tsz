@@ -109,7 +109,7 @@ impl<'a> CheckerState<'a> {
             let mut namespace_is_exported = false;
             let mut containing_module_name: Option<String> = None;
 
-            while !current.is_none() {
+            while current.is_some() {
                 if let Some(node) = self.ctx.arena.get(current) {
                     if node.kind == syntax_kind_ext::MODULE_DECLARATION {
                         // Check if this is an ambient module (declare module "...") or namespace
@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first) = symbol.declarations.first() {
             first
@@ -760,7 +760,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check default import name: `import package from "./mod"`
-        if !clause.name.is_none()
+        if clause.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(clause.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && is_strict_mode_reserved_name(&ident.escaped_text)
@@ -787,7 +787,7 @@ impl<'a> CheckerState<'a> {
         if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
             // `import * as package from "./mod"` — check the alias name
             if let Some(ns_data) = self.ctx.arena.get_named_imports(bindings_node)
-                && !ns_data.name.is_none()
+                && ns_data.name.is_some()
                 && let Some(name_node) = self.ctx.arena.get(ns_data.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 && is_strict_mode_reserved_name(&ident.escaped_text)

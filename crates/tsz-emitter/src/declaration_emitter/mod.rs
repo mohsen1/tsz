@@ -283,7 +283,7 @@ impl<'a> DeclarationEmitter<'a> {
                 };
 
                 // Walk import clause to extract imported symbols
-                if !import.import_clause.is_none() {
+                if import.import_clause.is_some() {
                     // Collect symbols to insert after binder is dropped
                     let symbols = self.collect_imported_symbols_from_clause(
                         self.arena,
@@ -320,7 +320,7 @@ impl<'a> DeclarationEmitter<'a> {
 
                 // Get the imported symbol from the import clause name
                 // For ImportEqualsDeclaration, import_clause points directly to Identifier node
-                if !import_eq.import_clause.is_none() {
+                if import_eq.import_clause.is_some() {
                     // For ImportEquals, the 'import_clause' field points directly to the Identifier node.
                     // We just need its SymbolId from the binder using the NodeIndex's raw u32 (.0).
                     if let Some(&sym_id) = binder.node_symbols.get(&import_eq.import_clause.0) {
@@ -347,7 +347,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Default import: import Def from './mod'
-        if !clause.name.is_none()
+        if clause.name.is_some()
             && let Some(&sym_id) = binder.node_symbols.get(&clause.name.0)
         {
             // Get the name from the symbol
@@ -357,14 +357,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Named imports: import { A, B, C as D } from './mod'
-        if !clause.named_bindings.is_none()
+        if clause.named_bindings.is_some()
             && let Some(bindings) = arena.get_named_imports_at(clause.named_bindings)
         {
             // Process each specifier
             for &spec_idx in &bindings.elements.nodes {
                 if let Some(spec) = arena.get_specifier_at(spec_idx) {
                     // Use the property_name if present (for 'as' imports), otherwise use name
-                    let name_idx = if !spec.property_name.is_none() {
+                    let name_idx = if spec.property_name.is_some() {
                         spec.property_name
                     } else {
                         spec.name
@@ -638,7 +638,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         // Return type
-        if !func.type_annotation.is_none() {
+        if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
@@ -780,10 +780,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Type - use explicit annotation if present, otherwise use inferred type
         // SPECIAL CASE: For private properties, TypeScript omits type annotations in .d.ts
-        if !prop.type_annotation.is_none() && !is_private {
+        if prop.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(prop.type_annotation);
-        } else if !is_private && (is_abstract || !prop.initializer.is_none()) {
+        } else if !is_private && (is_abstract || prop.initializer.is_some()) {
             // For abstract properties OR properties with initializers (non-private), use inferred type
             // Private properties never get inferred types (prevents type leak)
             if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
@@ -855,7 +855,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         // Return type - SPECIAL CASE: For private methods, TypeScript omits return type in .d.ts
-        if !method.type_annotation.is_none() && !is_private {
+        if method.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(method.type_annotation);
         }
@@ -983,7 +983,7 @@ impl<'a> DeclarationEmitter<'a> {
                     }
 
                     // Type annotation (omit for private properties, include for others)
-                    if !is_private && !param.type_annotation.is_none() {
+                    if !is_private && param.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(param.type_annotation);
                     }
@@ -1027,7 +1027,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(")");
 
         // Return type (for getters) - omit for private accessors
-        if is_getter && !is_private && !accessor.type_annotation.is_none() {
+        if is_getter && !is_private && accessor.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
         } else if is_getter
@@ -1059,7 +1059,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_parameters(&sig.parameters);
         self.write("]");
 
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(sig.type_annotation);
         }
@@ -1133,7 +1133,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if sig.question_token {
                         self.write("?");
                     }
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1150,7 +1150,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_parameters(params);
                     }
                     self.write(")");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1166,7 +1166,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_parameters(params);
                     }
                     self.write(")");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1183,7 +1183,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_parameters(params);
                     }
                     self.write(")");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1194,7 +1194,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("[");
                     self.emit_parameters(&sig.parameters);
                     self.write("]");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1203,7 +1203,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
                     // Emit readonly modifier if present
-                    if !mapped_type.readonly_token.is_none() {
+                    if mapped_type.readonly_token.is_some() {
                         self.write("readonly ");
                     }
 
@@ -1220,13 +1220,13 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" in ");
 
                         // Emit the constraint (e.g., "keyof T")
-                        if !type_param.constraint.is_none() {
+                        if type_param.constraint.is_some() {
                             self.emit_type(type_param.constraint);
                         }
                     }
 
                     // Handle the optional 'as' clause (key remapping)
-                    if !mapped_type.name_type.is_none() {
+                    if mapped_type.name_type.is_some() {
                         self.write(" as ");
                         self.emit_type(mapped_type.name_type);
                     }
@@ -1234,7 +1234,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
 
                     // Optionally emit question token (after the bracket)
-                    if !mapped_type.question_token.is_none() {
+                    if mapped_type.question_token.is_some() {
                         self.write("?");
                     }
 
@@ -1255,7 +1255,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("(");
                     self.emit_parameters(&accessor.parameters);
                     self.write(")");
-                    if !accessor.type_annotation.is_none() {
+                    if accessor.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(accessor.type_annotation);
                     }
@@ -1293,7 +1293,7 @@ impl<'a> DeclarationEmitter<'a> {
                     if sig.question_token {
                         self.write("?");
                     }
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1310,7 +1310,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_parameters(params);
                     }
                     self.write(")");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1326,7 +1326,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_parameters(params);
                     }
                     self.write(")");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1343,7 +1343,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.emit_parameters(params);
                     }
                     self.write(")");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1354,7 +1354,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("[");
                     self.emit_parameters(&sig.parameters);
                     self.write("]");
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(sig.type_annotation);
                     }
@@ -1363,7 +1363,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped_type) = self.arena.get_mapped_type(member_node) {
                     // Emit readonly modifier if present
-                    if !mapped_type.readonly_token.is_none() {
+                    if mapped_type.readonly_token.is_some() {
                         self.write("readonly ");
                     }
 
@@ -1380,7 +1380,7 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" in ");
 
                         // Emit constraint
-                        if !type_param.constraint.is_none() {
+                        if type_param.constraint.is_some() {
                             self.emit_type(type_param.constraint);
                         }
                     }
@@ -1388,7 +1388,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
 
                     // Emit name type annotation
-                    if !mapped_type.name_type.is_none() {
+                    if mapped_type.name_type.is_some() {
                         self.write(": ");
                         self.emit_type(mapped_type.name_type);
                     }
@@ -1403,7 +1403,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("(");
                     self.emit_parameters(&accessor.parameters);
                     self.write(")");
-                    if !accessor.type_annotation.is_none() {
+                    if accessor.type_annotation.is_some() {
                         self.write(": ");
                         self.emit_type(accessor.type_annotation);
                     }
@@ -1647,7 +1647,7 @@ impl<'a> DeclarationEmitter<'a> {
                         // Determine if we should emit a literal initializer for const
                         let use_literal_initializer = if keyword == "const"
                             && decl.type_annotation.is_none()
-                            && !decl.initializer.is_none()
+                            && decl.initializer.is_some()
                         {
                             // Check if initializer is a primitive literal (excluding null for .d.ts)
                             if let Some(init_node) = self.arena.get(decl.initializer) {
@@ -1672,11 +1672,11 @@ impl<'a> DeclarationEmitter<'a> {
                         } else {
                             // Check for unique symbol case: const x = Symbol()
                             let is_unique_symbol = keyword == "const"
-                                && !decl.initializer.is_none()
+                                && decl.initializer.is_some()
                                 && self.is_symbol_call(decl.initializer);
 
                             // Check if initializer is null/undefined (should emit `: any`)
-                            let is_null_or_undefined = if !decl.initializer.is_none() {
+                            let is_null_or_undefined = if decl.initializer.is_some() {
                                 if let Some(init_node) = self.arena.get(decl.initializer) {
                                     let k = init_node.kind;
                                     k == SyntaxKind::NullKeyword as u16
@@ -1689,7 +1689,7 @@ impl<'a> DeclarationEmitter<'a> {
                             };
 
                             // Emit explicit type annotation if present
-                            if !decl.type_annotation.is_none() {
+                            if decl.type_annotation.is_some() {
                                 self.write(": ");
                                 self.emit_type(decl.type_annotation);
                             } else if is_unique_symbol {
@@ -1803,7 +1803,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         if export.is_default_export {
-            if !export.export_clause.is_none()
+            if export.export_clause.is_some()
                 && let Some(clause_node) = self.arena.get(export.export_clause)
             {
                 match clause_node.kind {
@@ -1824,7 +1824,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Check if export_clause is a declaration (interface, class, function, type, enum)
-        if !export.export_clause.is_none()
+        if export.export_clause.is_some()
             && let Some(clause_node) = self.arena.get(export.export_clause)
         {
             match clause_node.kind {
@@ -1880,7 +1880,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("type ");
         }
 
-        if !export.export_clause.is_none() {
+        if export.export_clause.is_some() {
             if let Some(clause_node) = self.arena.get(export.export_clause) {
                 if clause_node.kind == syntax_kind_ext::NAMED_EXPORTS {
                     self.emit_named_exports(export.export_clause, !export.is_type_only);
@@ -1894,7 +1894,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("*");
         }
 
-        if !export.module_specifier.is_none() {
+        if export.module_specifier.is_some() {
             self.write(" from ");
             self.emit_node(export.module_specifier);
         }
@@ -1985,7 +1985,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_parameters(&func.parameters);
         self.write(")");
 
-        if !func.type_annotation.is_none() {
+        if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         }
@@ -2071,7 +2071,7 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        if !exports.name.is_none() && exports.elements.nodes.is_empty() {
+        if exports.name.is_some() && exports.elements.nodes.is_empty() {
             self.write("* as ");
             self.emit_node(exports.name);
             return;
@@ -2101,7 +2101,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("type ");
         }
 
-        if !spec.property_name.is_none() {
+        if spec.property_name.is_some() {
             self.emit_node(spec.property_name);
             self.write(" as ");
         }
@@ -2250,7 +2250,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.emit_parameters(&func.parameters);
         self.write(")");
 
-        if !func.type_annotation.is_none() {
+        if func.type_annotation.is_some() {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
@@ -2420,7 +2420,7 @@ impl<'a> DeclarationEmitter<'a> {
                         // Determine if we should emit a literal initializer for const
                         let use_literal_initializer = if keyword == "const"
                             && decl.type_annotation.is_none()
-                            && !decl.initializer.is_none()
+                            && decl.initializer.is_some()
                         {
                             // Check if initializer is a primitive literal
                             if let Some(init_node) = self.arena.get(decl.initializer) {
@@ -2444,10 +2444,10 @@ impl<'a> DeclarationEmitter<'a> {
                         } else {
                             // Check for unique symbol case: const x = Symbol()
                             let is_unique_symbol = keyword == "const"
-                                && !decl.initializer.is_none()
+                                && decl.initializer.is_some()
                                 && self.is_symbol_call(decl.initializer);
 
-                            if !decl.type_annotation.is_none() {
+                            if decl.type_annotation.is_some() {
                                 self.write(": ");
                                 self.emit_type(decl.type_annotation);
                             } else if is_unique_symbol {
@@ -2481,7 +2481,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Check if this import is being handled by the elision system
         // by checking if any of its imported symbols are in import_symbol_map
         let mut has_elided_symbols = false;
-        if !import.import_clause.is_none() {
+        if import.import_clause.is_some() {
             let binder = match &self.binder {
                 Some(b) => b,
                 None => {
@@ -2555,13 +2555,13 @@ impl<'a> DeclarationEmitter<'a> {
             let mut has_default = false;
 
             // Default import (only if used)
-            if !clause.name.is_none() && default_used > 0 {
+            if clause.name.is_some() && default_used > 0 {
                 self.emit_node(clause.name);
                 has_default = true;
             }
 
             // Named imports (filter to used ones)
-            if !clause.named_bindings.is_none() && named_used > 0 {
+            if clause.named_bindings.is_some() && named_used > 0 {
                 if has_default {
                     self.write(", ");
                 }
@@ -2588,7 +2588,7 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Handle namespace imports (* as ns)
-        if !imports.name.is_none() && imports.elements.nodes.is_empty() {
+        if imports.name.is_some() && imports.elements.nodes.is_empty() {
             // Check if namespace is used
             if self.should_emit_import_specifier(imports.name) {
                 self.write("* as ");
@@ -2627,7 +2627,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.write("type ");
         }
 
-        if !spec.property_name.is_none() {
+        if spec.property_name.is_some() {
             self.emit_node(spec.property_name);
             self.write(" as ");
         }
@@ -2669,7 +2669,7 @@ impl<'a> DeclarationEmitter<'a> {
         });
         self.emit_node(module.name);
 
-        if !module.body.is_none() {
+        if module.body.is_some() {
             self.write(" {");
             self.write_line();
             self.increase_indent();
@@ -2731,7 +2731,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("import ");
 
         // Emit variable name from import_clause
-        if !import_eq.import_clause.is_none() {
+        if import_eq.import_clause.is_some() {
             self.emit_node(import_eq.import_clause);
         }
 
@@ -2768,7 +2768,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.write("export as namespace ");
 
         // Emit namespace name from export_clause
-        if !export.export_clause.is_none() {
+        if export.export_clause.is_some() {
             self.emit_node(export.export_clause);
         }
 
@@ -2806,7 +2806,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
 
                 // Type
-                if !param.type_annotation.is_none() {
+                if param.type_annotation.is_some() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
                 }
@@ -2861,12 +2861,12 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.emit_node(param.name);
 
-                if !param.constraint.is_none() {
+                if param.constraint.is_some() {
                     self.write(" extends ");
                     self.emit_type(param.constraint);
                 }
 
-                if !param.default.is_none() {
+                if param.default.is_some() {
                     self.write(" = ");
                     self.emit_type(param.default);
                 }
@@ -3210,7 +3210,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("{ ");
 
                     // Emit readonly modifier if present (inside the braces)
-                    if !mapped_type.readonly_token.is_none() {
+                    if mapped_type.readonly_token.is_some() {
                         self.write("readonly ");
                     }
 
@@ -3227,13 +3227,13 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" in ");
 
                         // Emit the constraint (e.g., "keyof T")
-                        if !type_param.constraint.is_none() {
+                        if type_param.constraint.is_some() {
                             self.emit_type(type_param.constraint);
                         }
                     }
 
                     // Handle the optional 'as' clause (key remapping)
-                    if !mapped_type.name_type.is_none() {
+                    if mapped_type.name_type.is_some() {
                         self.write(" as ");
                         self.emit_type(mapped_type.name_type);
                     }
@@ -3241,7 +3241,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.write("]");
 
                     // Optionally emit question token (after the bracket)
-                    if !mapped_type.question_token.is_none() {
+                    if mapped_type.question_token.is_some() {
                         self.write("?");
                     }
 
@@ -3792,11 +3792,11 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(binder) = &self.binder
         {
             // Check default import
-            if !import.import_clause.is_none()
+            if import.import_clause.is_some()
                 && let Some(clause_node) = self.arena.get(import.import_clause)
                 && let Some(clause) = self.arena.get_import_clause(clause_node)
             {
-                if !clause.name.is_none()
+                if clause.name.is_some()
                     && let Some(&sym_id) = binder.node_symbols.get(&clause.name.0)
                     && used.contains_key(&sym_id)
                 {
@@ -3804,7 +3804,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
 
                 // Count named imports
-                if !clause.named_bindings.is_none()
+                if clause.named_bindings.is_some()
                     && let Some(bindings_node) = self.arena.get(clause.named_bindings)
                     && let Some(bindings) = self.arena.get_named_imports(bindings_node)
                 {
@@ -3822,7 +3822,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         } else {
             // No usage tracking - count everything as used
-            default_count = usize::from(!import.import_clause.is_none());
+            default_count = usize::from(import.import_clause.is_some());
             named_count = 1; // At least one if present
         }
 
@@ -4096,7 +4096,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 if let Some(decl) = self.arena.get_variable_declaration(node) {
                     let mut related = Vec::with_capacity(1);
-                    if !decl.initializer.is_none() {
+                    if decl.initializer.is_some() {
                         related.push(decl.initializer);
                     }
                     related.push(decl.type_annotation);
@@ -4108,7 +4108,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                 if let Some(decl) = self.arena.get_property_decl(node) {
                     let mut related = Vec::with_capacity(2);
-                    if !decl.initializer.is_none() {
+                    if decl.initializer.is_some() {
                         related.push(decl.initializer);
                     }
                     related.push(decl.type_annotation);
@@ -4119,7 +4119,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
             k if k == syntax_kind_ext::PARAMETER => {
                 if let Some(param) = self.arena.get_parameter(node) {
-                    if !param.initializer.is_none() {
+                    if param.initializer.is_some() {
                         vec![param.initializer]
                     } else {
                         Vec::new()
@@ -4210,7 +4210,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Walk up the parent chain
         let mut current_sym = symbol;
         let mut parent_id = current_sym.parent;
-        while !parent_id.is_none() {
+        while parent_id.is_some() {
             let parent_sym = binder.symbols.get(parent_id)?;
 
             // Check if parent is a module declaration

@@ -225,7 +225,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .resolve_identifier(self.arena, bin.left)
                         .and_then(|sym| self.binder.get_symbol(sym))
                         .map(|sym| sym.value_declaration)
-                        .filter(|decl| !decl.is_none())
+                        .filter(|decl| decl.is_some())
                         .and_then(|decl| node_types.get(&decl.0).copied())
                         .or_else(|| node_types.get(&bin.left.0).copied());
 
@@ -258,7 +258,7 @@ impl<'a> FlowAnalyzer<'a> {
         // statement and get the iterated expression's element type.
         if self.is_matching_reference(assignment_node, target)
             && let Some(ext) = self.arena.get_extended(assignment_node)
-            && !ext.parent.is_none()
+            && ext.parent.is_some()
             && let Some(parent_node) = self.arena.get(ext.parent)
             && (parent_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
                 || parent_node.kind == syntax_kind_ext::FOR_IN_STATEMENT)
@@ -350,10 +350,10 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             let decl = self.arena.get_variable_declaration(node)?;
-            if self.is_matching_reference(decl.name, reference) && !decl.initializer.is_none() {
+            if self.is_matching_reference(decl.name, reference) && decl.initializer.is_some() {
                 return Some(decl.initializer);
             }
-            if !decl.initializer.is_none()
+            if decl.initializer.is_some()
                 && let Some(rhs) =
                     self.match_destructuring_rhs(decl.name, decl.initializer, reference)
             {
@@ -376,10 +376,10 @@ impl<'a> FlowAnalyzer<'a> {
                 let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                     continue;
                 };
-                if self.is_matching_reference(decl.name, reference) && !decl.initializer.is_none() {
+                if self.is_matching_reference(decl.name, reference) && decl.initializer.is_some() {
                     return Some(decl.initializer);
                 }
-                if !decl.initializer.is_none()
+                if decl.initializer.is_some()
                     && let Some(rhs) =
                         self.match_destructuring_rhs(decl.name, decl.initializer, reference)
                 {
@@ -408,7 +408,7 @@ impl<'a> FlowAnalyzer<'a> {
             self.skip_parens_and_assertions(rhs)
         };
 
-        if !rhs.is_none() && self.is_matching_reference(pattern, target) {
+        if rhs.is_some() && self.is_matching_reference(pattern, target) {
             return Some(rhs);
         }
 
@@ -416,7 +416,7 @@ impl<'a> FlowAnalyzer<'a> {
         if rhs.is_none()
             && self.assignment_targets_reference_internal(pattern, target)
             && let Some(binding) = self.arena.get_binding_element_at(pattern)
-            && !binding.initializer.is_none()
+            && binding.initializer.is_some()
         {
             return Some(binding.initializer);
         }
@@ -493,7 +493,7 @@ impl<'a> FlowAnalyzer<'a> {
             k if k == syntax_kind_ext::BINDING_ELEMENT => {
                 let binding = self.arena.get_binding_element(node)?;
                 if self.assignment_targets_reference_internal(binding.name, target) {
-                    if !rhs.is_none() {
+                    if rhs.is_some() {
                         if let Some(found) = self.match_destructuring_rhs(binding.name, rhs, target)
                         {
                             return Some(found);
@@ -502,7 +502,7 @@ impl<'a> FlowAnalyzer<'a> {
                             return Some(rhs);
                         }
                     }
-                    if !binding.initializer.is_none() {
+                    if binding.initializer.is_some() {
                         if let Some(found) =
                             self.match_destructuring_rhs(binding.name, binding.initializer, target)
                         {
@@ -568,7 +568,7 @@ impl<'a> FlowAnalyzer<'a> {
                     }
                     return Some(rhs_value);
                 }
-                if !binding.initializer.is_none() {
+                if binding.initializer.is_some() {
                     if let Some(found) =
                         self.match_destructuring_rhs(binding.name, binding.initializer, target)
                     {
@@ -616,7 +616,7 @@ impl<'a> FlowAnalyzer<'a> {
                     .nodes
                     .get(index)
                     .copied()
-                    .filter(|n| !n.is_none());
+                    .filter(|n| n.is_some());
             }
             return None;
         }
@@ -1385,7 +1385,7 @@ impl<'a> FlowAnalyzer<'a> {
         if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
             return None;
         }
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?
@@ -1455,7 +1455,7 @@ impl<'a> FlowAnalyzer<'a> {
         // For variable declarations, the CONST flag is on the VARIABLE_DECLARATION_LIST parent
         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
             && let Some(ext) = self.arena.get_extended(decl_idx)
-            && !ext.parent.is_none()
+            && ext.parent.is_some()
             && let Some(parent_node) = self.arena.get(ext.parent)
         {
             let flags = parent_node.flags as u32;
@@ -1615,7 +1615,7 @@ impl<'a> FlowAnalyzer<'a> {
 
                 // CRITICAL FIX: Use flow analysis if we have a valid flow node
                 // This gets the flow-narrowed type of the other reference
-                if !antecedent_id.is_none() {
+                if antecedent_id.is_some() {
                     Some(self.get_flow_type(other_node, initial_type, antecedent_id))
                 } else {
                     // Fallback for tests or when no flow context exists

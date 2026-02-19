@@ -188,7 +188,7 @@ impl ParserState {
         {
             let start_pos = self.token_pos();
             let member = self.parse_type_member(true);
-            if !member.is_none() {
+            if member.is_some() {
                 members.push(member);
             }
 
@@ -716,7 +716,7 @@ impl ParserState {
             param_type_token,
             SyntaxKind::NoSubstitutionTemplateLiteral | SyntaxKind::TemplateHead
         );
-        let has_invalid_param_type = !param_type.is_none() && !is_valid_param_type;
+        let has_invalid_param_type = param_type.is_some() && !is_valid_param_type;
 
         // Index signatures must have a type annotation (TS1021).
         // Suppress when the parameter type is already invalid (TS1268),
@@ -1658,7 +1658,7 @@ impl ParserState {
         };
 
         // Parse comma if we have both default and named/namespace
-        if !name.is_none() && self.parse_optional(SyntaxKind::CommaToken) {
+        if name.is_some() && self.parse_optional(SyntaxKind::CommaToken) {
             // Continue to parse named bindings
         }
 
@@ -3205,7 +3205,7 @@ impl ParserState {
         {
             let pos_before = self.token_pos();
             let statement = self.parse_statement();
-            if !statement.is_none() {
+            if statement.is_some() {
                 statements.push(statement);
             }
             if self.token_pos() == pos_before {

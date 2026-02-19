@@ -38,7 +38,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // Check if the node or any ancestor has the AMBIENT flag or `declare` modifier
         let mut current = var_idx;
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(node) = self.ctx.arena.get(current) {
                 if (node.flags as u32) & node_flags::AMBIENT != 0 {
                     return true;
@@ -276,7 +276,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 };
 
                 // If parameter has an initializer in an ambient function, emit TS2371
-                if !param.initializer.is_none() {
+                if param.initializer.is_some() {
                     self.ctx.error(
                         param_node.pos,
                         param_node.end - param_node.pos,
@@ -575,7 +575,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             for &member_idx in &enum_data.members.nodes {
                 if let Some(member_node) = self.ctx.arena.get(member_idx)
                     && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
-                    && !member_data.initializer.is_none()
+                    && member_data.initializer.is_some()
                 {
                     // Check if the initializer is a constant expression
                     if !self.is_constant_expression(member_data.initializer)
@@ -734,7 +734,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 let mut allowed_context = false;
                 if let Some(ext) = self.ctx.arena.get_extended(module_idx) {
                     let parent = ext.parent;
-                    if !parent.is_none()
+                    if parent.is_some()
                         && let Some(parent_node) = self.ctx.arena.get(parent)
                     {
                         if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
@@ -792,7 +792,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // to precede a class/function they merge with.
             if !has_declare
                 && !is_string_named
-                && !module.body.is_none()
+                && module.body.is_some()
                 && !self.is_in_ambient_context(module_idx)
                 && self.is_namespace_declaration_instantiated(module_idx)
             {
@@ -979,7 +979,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .unwrap_or_default();
                 let mut reported_import = false;
                 let mut reported_export = false;
-                if !module.body.is_none()
+                if module.body.is_some()
                     && let Some(body_node) = self.ctx.arena.get(module.body)
                     && body_node.kind == syntax_kind_ext::MODULE_BLOCK
                     && let Some(block) = self.ctx.arena.get_module_block(body_node)
@@ -1022,7 +1022,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                     Some(export_decl) => {
                                         if export_decl.is_default_export {
                                             true
-                                        } else if !export_decl.module_specifier.is_none() {
+                                        } else if export_decl.module_specifier.is_some() {
                                             // Re-exports are not permitted in augmentations
                                             true
                                         } else if export_decl.export_clause.is_none() {
@@ -1066,7 +1066,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                                 continue;
                             };
                             if export_decl.is_default_export
-                                || !export_decl.module_specifier.is_none()
+                                || export_decl.module_specifier.is_some()
                                 || export_decl.export_clause.is_none()
                             {
                                 continue;
@@ -1354,7 +1354,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     .insert(module_key, value_decl_map);
             }
 
-            if !module.body.is_none() {
+            if module.body.is_some() {
                 // Check module body (which can be a block or nested module)
                 self.check_module_body(module.body);
             }
@@ -1849,7 +1849,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     || k == syntax_kind_ext::ARROW_FUNCTION =>
                 {
                     if let Some(func) = self.ctx.arena.get_function(parent_node)
-                        && !func.body.is_none()
+                        && func.body.is_some()
                         && block_has_use_strict(func.body)
                     {
                         return true;

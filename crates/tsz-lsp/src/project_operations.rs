@@ -130,7 +130,7 @@ impl Project {
                 continue;
             };
 
-            if export_name == "default" && !clause.name.is_none() {
+            if export_name == "default" && clause.name.is_some() {
                 bindings.push(clause.name);
             }
 
@@ -147,7 +147,7 @@ impl Project {
                     continue;
                 };
 
-                let export_ident = if !spec.property_name.is_none() {
+                let export_ident = if spec.property_name.is_some() {
                     spec.property_name
                 } else {
                     spec.name
@@ -231,7 +231,7 @@ impl Project {
                     continue;
                 };
 
-                let export_ident = if !spec.property_name.is_none() {
+                let export_ident = if spec.property_name.is_some() {
                     spec.property_name
                 } else {
                     spec.name
@@ -243,12 +243,12 @@ impl Project {
                     continue;
                 }
 
-                let local_ident = if !spec.name.is_none() {
+                let local_ident = if spec.name.is_some() {
                     spec.name
                 } else {
                     spec.property_name
                 };
-                let property_name = (!spec.property_name.is_none()).then_some(spec.property_name);
+                let property_name = (spec.property_name.is_some()).then_some(spec.property_name);
 
                 targets.push(ImportSpecifierTarget {
                     local_ident,
@@ -325,7 +325,7 @@ impl Project {
                     continue;
                 };
 
-                let export_ident = if !spec.property_name.is_none() {
+                let export_ident = if spec.property_name.is_some() {
                     spec.property_name
                 } else {
                     spec.name
@@ -337,7 +337,7 @@ impl Project {
                     continue;
                 }
 
-                let local_ident = if !spec.name.is_none() {
+                let local_ident = if spec.name.is_some() {
                     spec.name
                 } else {
                     spec.property_name
@@ -425,7 +425,7 @@ impl Project {
                         continue;
                     };
 
-                    let import_ident = if !spec.property_name.is_none() {
+                    let import_ident = if spec.property_name.is_some() {
                         spec.property_name
                     } else {
                         spec.name
@@ -441,7 +441,7 @@ impl Project {
                         refs.push(location);
                     }
 
-                    let export_ident = if !spec.name.is_none() {
+                    let export_ident = if spec.name.is_some() {
                         spec.name
                     } else {
                         spec.property_name
@@ -1947,7 +1947,7 @@ impl Project {
                             continue;
                         };
 
-                        let export_ident = if !spec.name.is_none() {
+                        let export_ident = if spec.name.is_some() {
                             spec.name
                         } else {
                             spec.property_name
@@ -2022,7 +2022,7 @@ impl Project {
                         continue;
                     };
 
-                    let export_ident = if !spec.name.is_none() {
+                    let export_ident = if spec.name.is_some() {
                         spec.name
                     } else {
                         spec.property_name
@@ -2120,7 +2120,7 @@ impl Project {
 
     pub(crate) fn is_member_access_node(&self, arena: &NodeArena, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(node) = arena.get(current) else {
                 break;
             };
@@ -2166,7 +2166,7 @@ impl Project {
         let mut import_clause = None;
         let mut import_decl = None;
 
-        while !current.is_none() {
+        while current.is_some() {
             let node = arena.get(current)?;
             match node.kind {
                 k if k == syntax_kind_ext::IMPORT_SPECIFIER => {
@@ -2194,7 +2194,7 @@ impl Project {
 
         let kind = if let Some(spec_idx) = import_specifier {
             let spec = arena.get_specifier_at(spec_idx)?;
-            let export_ident = if !spec.property_name.is_none() {
+            let export_ident = if spec.property_name.is_some() {
                 spec.property_name
             } else {
                 spec.name

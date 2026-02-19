@@ -362,7 +362,7 @@ impl<'a> CheckerState<'a> {
         let Some(param) = self.ctx.arena.get_parameter(param_node) else {
             return;
         };
-        if !param.type_annotation.is_none() {
+        if param.type_annotation.is_some() {
             self.check_type_for_missing_names(param.type_annotation);
         }
     }
@@ -457,12 +457,12 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check constraint type
-        if !param.constraint.is_none() {
+        if param.constraint.is_some() {
             self.check_type_for_missing_names(param.constraint);
         }
 
         // Check default type
-        if !param.default.is_none() {
+        if param.default.is_some() {
             self.check_type_for_missing_names(param.default);
         }
     }
@@ -505,7 +505,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     {
-                        if !param.type_annotation.is_none() {
+                        if param.type_annotation.is_some() {
                             self.check_type_for_parameter_properties(param.type_annotation);
                         }
                         self.maybe_report_implicit_any_parameter(param, false);
@@ -553,7 +553,7 @@ impl<'a> CheckerState<'a> {
             self.check_type_for_parameter_properties(paren.type_node);
         } else if node.kind == syntax_kind_ext::TYPE_PREDICATE
             && let Some(pred) = self.ctx.arena.get_type_predicate(node)
-            && !pred.type_node.is_none()
+            && pred.type_node.is_some()
         {
             self.check_type_for_parameter_properties(pred.type_node);
         }
@@ -704,7 +704,7 @@ impl<'a> CheckerState<'a> {
 
         // Check computed property name expression for unresolved identifiers (TS2304)
         // e.g., in `{[z]: x}` where `z` is undefined
-        if !element_data.property_name.is_none() {
+        if element_data.property_name.is_some() {
             self.check_computed_property_name(element_data.property_name);
         }
 
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
         // TypeScript only checks default value assignability in function parameter
         // destructuring, not in variable declaration destructuring.
         if check_default_assignability
-            && !element_data.initializer.is_none()
+            && element_data.initializer.is_some()
             && element_type != TypeId::ANY
             // For object binding patterns, a default initializer is only reachable when
             // the property can be missing/undefined. Skip assignability checks for required
@@ -818,7 +818,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2408: Setters cannot return a value.
-        if !return_data.expression.is_none() {
+        if return_data.expression.is_some() {
             use tsz_parser::parser::syntax_kind_ext;
             if let Some(enclosing_fn_idx) = self.find_enclosing_function(stmt_idx)
                 && let Some(enclosing_fn_node) = self.ctx.arena.get(enclosing_fn_idx)
@@ -838,7 +838,7 @@ impl<'a> CheckerState<'a> {
         let expected_type = self.current_return_type().unwrap_or(TypeId::UNKNOWN);
 
         // Get the type of the return expression (if any)
-        let return_type = if !return_data.expression.is_none() {
+        let return_type = if return_data.expression.is_some() {
             // TS1359: Check for await expressions outside async function
             self.check_await_expression(return_data.expression);
 
@@ -882,7 +882,7 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.in_constructor);
 
-        let error_node = if !return_data.expression.is_none() {
+        let error_node = if return_data.expression.is_some() {
             return_data.expression
         } else {
             stmt_idx
@@ -905,7 +905,7 @@ impl<'a> CheckerState<'a> {
 
         if expected_type != TypeId::ANY
             && expected_type != TypeId::UNKNOWN
-            && !return_data.expression.is_none()
+            && return_data.expression.is_some()
             && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
             && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
         {
@@ -971,10 +971,10 @@ impl<'a> CheckerState<'a> {
             match node.kind {
                 syntax_kind_ext::BINARY_EXPRESSION => {
                     if let Some(bin_expr) = self.ctx.arena.get_binary_expr(node) {
-                        if !bin_expr.right.is_none() {
+                        if bin_expr.right.is_some() {
                             stack.push(bin_expr.right);
                         }
-                        if !bin_expr.left.is_none() {
+                        if bin_expr.left.is_some() {
                             stack.push(bin_expr.left);
                         }
                     }
@@ -982,7 +982,7 @@ impl<'a> CheckerState<'a> {
                 syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                 | syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
                     if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
-                        && !unary_expr.expression.is_none()
+                        && unary_expr.expression.is_some()
                     {
                         stack.push(unary_expr.expression);
                     }
@@ -1014,7 +1014,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     if let Some(unary_expr) = self.ctx.arena.get_unary_expr_ex(node)
-                        && !unary_expr.expression.is_none()
+                        && unary_expr.expression.is_some()
                     {
                         stack.push(unary_expr.expression);
                     }
@@ -1024,26 +1024,26 @@ impl<'a> CheckerState<'a> {
                         // Check arguments (push in reverse order for correct traversal)
                         if let Some(ref args) = call_expr.arguments {
                             for &arg in args.nodes.iter().rev() {
-                                if !arg.is_none() {
+                                if arg.is_some() {
                                     stack.push(arg);
                                 }
                             }
                         }
-                        if !call_expr.expression.is_none() {
+                        if call_expr.expression.is_some() {
                             stack.push(call_expr.expression);
                         }
                     }
                 }
                 syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
                     if let Some(access_expr) = self.ctx.arena.get_access_expr(node)
-                        && !access_expr.expression.is_none()
+                        && access_expr.expression.is_some()
                     {
                         stack.push(access_expr.expression);
                     }
                 }
                 syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
                     if let Some(paren_expr) = self.ctx.arena.get_parenthesized(node)
-                        && !paren_expr.expression.is_none()
+                        && paren_expr.expression.is_some()
                     {
                         stack.push(paren_expr.expression);
                     }

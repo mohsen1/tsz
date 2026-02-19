@@ -3070,7 +3070,7 @@ impl ParserState {
         let mut properties = Vec::new();
         while !self.is_token(SyntaxKind::CloseBraceToken) {
             let prop = self.parse_property_assignment();
-            if !prop.is_none() {
+            if prop.is_some() {
                 properties.push(prop);
             }
 

@@ -95,7 +95,7 @@ impl<'a> LinkedEditingProvider<'a> {
     fn find_jsx_tag_context(&self, start_node: NodeIndex) -> Option<(NodeIndex, bool)> {
         let mut current = start_node;
 
-        while !current.is_none() {
+        while current.is_some() {
             let _node = self.arena.get(current)?;
             let parent_idx = self.arena.get_extended(current)?.parent;
 

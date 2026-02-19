@@ -132,6 +132,11 @@ impl SymbolId {
     pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
+
+    #[must_use]
+    pub const fn is_some(&self) -> bool {
+        self.0 != u32::MAX
+    }
 }
 
 /// A symbol represents a named entity in the program.
@@ -491,6 +496,11 @@ impl FlowNodeId {
     pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
     }
+
+    #[must_use]
+    pub const fn is_some(&self) -> bool {
+        self.0 != u32::MAX
+    }
 }
 
 /// A node in the control flow graph.
@@ -622,6 +632,11 @@ impl ScopeId {
     #[must_use]
     pub const fn is_none(&self) -> bool {
         self.0 == u32::MAX
+    }
+
+    #[must_use]
+    pub const fn is_some(&self) -> bool {
+        self.0 != u32::MAX
     }
 }
 
