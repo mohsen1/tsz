@@ -2148,13 +2148,22 @@ impl<'a> InferenceContext<'a> {
         // Filter out duplicates and special types
         let mut seen = FxHashSet::default();
         let mut unique: Vec<TypeId> = Vec::new();
+        let mut has_any = false;
         for &ty in types {
+            if ty == TypeId::ANY {
+                has_any = true;
+            }
             if ty == TypeId::NEVER {
                 continue; // never doesn't contribute to union
             }
             if seen.insert(ty) {
                 unique.push(ty);
             }
+        }
+
+        // Rule: If any type is 'any', the best common type is 'any'
+        if has_any {
+            return TypeId::ANY;
         }
 
         if unique.is_empty() {
@@ -2409,9 +2418,17 @@ impl<'a> InferenceContext<'a> {
             return true;
         }
 
-        // any <: T and T <: any
+        // any <: T and T <: any (only if both are any)
         if source == TypeId::ANY || target == TypeId::ANY {
-            return true;
+            return source == target;
+        }
+
+        // STRICT_ANY matches itself or unknown/any (only at top level)
+        if source == TypeId::STRICT_ANY || target == TypeId::STRICT_ANY {
+            return source == target
+                || target == TypeId::UNKNOWN
+                || target == TypeId::ANY
+                || source == TypeId::ANY;
         }
 
         // object keyword accepts any non-primitive type
@@ -2625,7 +2642,11 @@ impl<'a> InferenceContext<'a> {
 
     fn is_object_keyword_type(&self, source: TypeId) -> bool {
         match source {
-            TypeId::ANY | TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
+            TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
+            TypeId::ANY => {
+                // In BCT context, we want strict matching for ANY
+                return false;
+            }
             TypeId::UNKNOWN
             | TypeId::VOID
             | TypeId::NULL

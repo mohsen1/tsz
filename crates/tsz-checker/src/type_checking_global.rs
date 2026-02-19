@@ -431,14 +431,26 @@ impl<'a> CheckerState<'a> {
 
             let mut declarations = Vec::new();
             for &decl_idx in &symbol.declarations {
-                if let Some(flags) = self.declaration_symbol_flags(decl_idx) {
+                // Resolve the arena for this declaration
+                let arena_opt = self
+                    .ctx
+                    .binder
+                    .declaration_arenas
+                    .get(&(sym_id, decl_idx))
+                    .and_then(|v| v.first())
+                    .map(|a| &**a);
+                let arena = arena_opt.unwrap_or(self.ctx.arena);
+                let is_local = arena_opt.is_none();
+
+                if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
                     // When libs are loaded, verify the declaration name matches the symbol.
-                    // Lib declarations may have NodeIndex values that overlap with user arena
-                    // indices, pointing to unrelated user nodes. Filter these out.
-                    if has_libs && !self.declaration_name_matches(decl_idx, &symbol.escaped_name) {
+                    if has_libs
+                        && is_local
+                        && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
+                    {
                         continue;
                     }
-                    declarations.push((decl_idx, flags));
+                    declarations.push((decl_idx, flags, is_local));
                 }
             }
 
@@ -447,27 +459,16 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS2395: Individual declarations in merged declaration must be all exported or all local.
-            // When TS2395 fires, we skip the TS2300/TS2323 check for those declarations since
-            // the root cause is export visibility mismatch, not a true duplicate name.
             let mut has_ts2395 = false;
-            // Uses "declaration spaces" (Type=1, Value=2, Namespace=4) to determine if exported
-            // and non-exported declarations overlap in the same semantic space.
-            // Declarations must be grouped by their enclosing namespace body (or file scope)
-            // since declarations in different namespace blocks of a merged namespace are separate.
-            // Skip for ambient contexts (declare namespace, .d.ts) and pure function overloads.
             {
                 const SPACE_TYPE: u32 = 1;
                 const SPACE_VALUE: u32 = 2;
                 const SPACE_NAMESPACE: u32 = 4;
 
-                // Skip if any declaration is in an ambient context — ambient declarations
-                // (declare namespace, declare module, .d.ts files) allow mixed export visibility.
-                // We check specifically for declare namespace/module ancestors, not the general
-                // is_ambient_declaration which also treats interfaces/type aliases as ambient.
                 let any_in_declare_context = self.ctx.file_name.ends_with(".d.ts")
-                    || declarations
-                        .iter()
-                        .any(|&(decl_idx, _)| self.is_in_declare_namespace_or_module(decl_idx));
+                    || declarations.iter().any(|&(decl_idx, _, is_local)| {
+                        is_local && self.is_in_declare_namespace_or_module(decl_idx)
+                    });
 
                 let mut error_nodes: Vec<NodeIndex> = Vec::new();
 
@@ -475,7 +476,8 @@ impl<'a> CheckerState<'a> {
                     // Pre-compute declaration spaces, export status, and enclosing scope
                     let decl_info: Vec<(NodeIndex, u32, u32, bool, NodeIndex)> = declarations
                         .iter()
-                        .map(|&(decl_idx, flags)| {
+                        .filter(|&(_, _, is_local)| *is_local)
+                        .map(|&(decl_idx, flags, _)| {
                             let space = if (flags & symbol_flags::INTERFACE) != 0
                                 || (flags & symbol_flags::TYPE_ALIAS) != 0
                             {
@@ -507,7 +509,6 @@ impl<'a> CheckerState<'a> {
                         })
                         .collect();
 
-                    // Group by enclosing scope and check each group
                     type ScopeGroupEntry = (NodeIndex, u32, u32, bool);
                     let mut scope_groups: FxHashMap<NodeIndex, Vec<ScopeGroupEntry>> =
                         FxHashMap::default();
@@ -522,8 +523,6 @@ impl<'a> CheckerState<'a> {
                         if group.len() <= 1 {
                             continue;
                         }
-                        // Skip groups where all declarations are functions — mixed export
-                        // on function overloads is handled by TS2383-2386 instead.
                         let all_functions = group
                             .iter()
                             .all(|&(_, flags, _, _)| (flags & symbol_flags::FUNCTION) != 0);
@@ -573,8 +572,8 @@ impl<'a> CheckerState<'a> {
             // TS2428: interface merges must have identical type parameters.
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
-                .filter(|(_, flags)| (flags & symbol_flags::INTERFACE) != 0)
-                .map(|(decl_idx, _)| *decl_idx)
+                .filter(|(_, flags, is_local)| *is_local && (flags & symbol_flags::INTERFACE) != 0)
+                .map(|(decl_idx, _, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {
                 let mut interface_decls_by_scope: FxHashMap<NodeIndex, Vec<NodeIndex>> =
@@ -623,84 +622,90 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            self.check_merged_enum_declaration_diagnostics(&declarations);
+            // Enum diagnostics currently only check local declarations
+            let local_declarations_for_enums: Vec<(NodeIndex, u32)> = declarations
+                .iter()
+                .filter(|&(_, _, is_local)| *is_local)
+                .map(|&(idx, flags, _)| (idx, flags))
+                .collect();
+            self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
 
             let mut conflicts = FxHashSet::default();
+            let mut exported_conflicts = FxHashSet::default();
             let mut namespace_order_errors = FxHashSet::default();
 
             for i in 0..declarations.len() {
                 for j in (i + 1)..declarations.len() {
-                    let (decl_idx, decl_flags) = declarations[i];
-                    let (other_idx, other_flags) = declarations[j];
+                    let (decl_idx, decl_flags, decl_is_local) = declarations[i];
+                    let (other_idx, other_flags, other_is_local) = declarations[j];
 
-                    // Skip conflict check if declarations are in different files
-                    // (external modules are isolated, same-name declarations don't conflict)
-                    // We check if both declarations are in the current file's arena
-                    let both_in_current_file = self.ctx.arena.get(decl_idx).is_some()
-                        && self.ctx.arena.get(other_idx).is_some();
-
-                    // If either declaration is not in the current file's arena, they can't conflict
-                    // This handles external modules where declarations in different files are isolated
-                    if !both_in_current_file {
+                    // Skip if neither is in the current file.
+                    if !decl_is_local && !other_is_local {
                         continue;
                     }
 
-                    // Check for function overloads - multiple function declarations are allowed
-                    // if at most one of them has a body (is an implementation)
+                    // Check for function overloads
                     let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
                         && (other_flags & symbol_flags::FUNCTION) != 0;
                     if both_functions {
-                        let decl_has_body = self.function_has_body(decl_idx);
+                        let decl_has_body = decl_is_local && self.function_has_body(decl_idx);
+                        // Skip remote function body check
+                        if !other_is_local {
+                            continue;
+                        }
                         let other_has_body = self.function_has_body(other_idx);
-                        // Only conflict if BOTH have bodies (multiple implementations)
+
                         if !(decl_has_body && other_has_body) {
                             continue;
                         }
-                        // Both have bodies - but check if they're in different block scopes.
-                        // In ES6, block-scoped functions can shadow outer functions.
-                        let decl_scope = self.get_enclosing_block_scope(decl_idx);
-                        let other_scope = self.get_enclosing_block_scope(other_idx);
-                        // If one is in a block scope and the other is not (or they're in
-                        // different block scopes), they don't conflict - they shadow.
-                        if decl_scope != other_scope {
-                            continue;
+
+                        if decl_is_local && other_is_local {
+                            let decl_scope = self.get_enclosing_block_scope(decl_idx);
+                            let other_scope = self.get_enclosing_block_scope(other_idx);
+                            if decl_scope != other_scope {
+                                continue;
+                            }
                         }
-                        // Both have bodies in the same scope -> duplicate function implementations
-                        // Force-add to conflicts since declarations_conflict returns false
-                        // for FUNCTION vs FUNCTION (they don't exclude each other).
-                        conflicts.insert(decl_idx);
-                        conflicts.insert(other_idx);
+
+                        if decl_is_local {
+                            conflicts.insert(decl_idx);
+                        }
+                        if other_is_local {
+                            conflicts.insert(other_idx);
+                        }
                         continue;
                     }
 
-                    // Check for method overloads - multiple method declarations are allowed
-                    // if at most one of them has a body (is an implementation)
+                    // Check for method overloads
                     let both_methods = (decl_flags & symbol_flags::METHOD) != 0
                         && (other_flags & symbol_flags::METHOD) != 0;
                     if both_methods {
-                        let decl_has_body = self.method_has_body(decl_idx);
-                        let other_has_body = self.method_has_body(other_idx);
-                        // Only conflict if BOTH have bodies (multiple implementations)
-                        if !(decl_has_body && other_has_body) {
+                        if decl_is_local && other_is_local {
+                            let decl_has_body = self.method_has_body(decl_idx);
+                            let other_has_body = self.method_has_body(other_idx);
+                            if !(decl_has_body && other_has_body) {
+                                continue;
+                            }
+                        } else {
                             continue;
                         }
                     }
 
-                    // Check for interface merging - multiple interface declarations are allowed
+                    // Check for interface merging
                     let both_interfaces = (decl_flags & symbol_flags::INTERFACE) != 0
                         && (other_flags & symbol_flags::INTERFACE) != 0;
                     if both_interfaces {
-                        continue; // Interface merging is always allowed
+                        continue;
                     }
 
-                    // Check for enum merging - multiple enum declarations are allowed
+                    // Check for enum merging
                     let both_enums = (decl_flags & symbol_flags::ENUM) != 0
                         && (other_flags & symbol_flags::ENUM) != 0;
                     if both_enums {
-                        continue; // Enum merging is always allowed
+                        continue;
                     }
 
-                    // Check for namespace merging - namespaces can merge with functions, classes, and each other
+                    // Check for namespace merging
                     let decl_is_namespace = (decl_flags
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                         != 0;
@@ -708,18 +713,20 @@ impl<'a> CheckerState<'a> {
                         & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE))
                         != 0;
 
-                    // Namespace + Namespace merging is allowed
                     if decl_is_namespace && other_is_namespace {
                         continue;
                     }
 
-                    // Namespace + Function merging is allowed only when the namespace
-                    // is non-instantiated OR declared after the function.
+                    // Namespace + Function merging
                     let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
                     let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
                     if (decl_is_namespace && other_is_function)
                         || (decl_is_function && other_is_namespace)
                     {
+                        if !decl_is_local || !other_is_local {
+                            continue;
+                        }
+
                         let (namespace_idx, function_idx) = if decl_is_namespace {
                             (decl_idx, other_idx)
                         } else {
@@ -728,6 +735,7 @@ impl<'a> CheckerState<'a> {
 
                         let namespace_is_instantiated =
                             self.is_namespace_declaration_instantiated(namespace_idx);
+
                         if !namespace_is_instantiated {
                             continue;
                         }
@@ -736,56 +744,22 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
 
-                        let namespace_precedes_function = self
-                            .ctx
-                            .arena
-                            .get(namespace_idx)
-                            .zip(self.ctx.arena.get(function_idx))
-                            .is_some_and(|(ns_node, fn_node)| ns_node.pos < fn_node.pos);
-
-                        if namespace_precedes_function {
+                        if namespace_idx.0 < function_idx.0 {
                             namespace_order_errors.insert(namespace_idx);
                         }
                         continue;
                     }
 
-                    // Namespace + Class merging is allowed only when the namespace
-                    // is non-instantiated OR declared after the class.
+                    // Namespace + Class merging
                     let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
                     let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
                     if (decl_is_namespace && other_is_class)
                         || (decl_is_class && other_is_namespace)
                     {
-                        let (namespace_idx, class_idx) = if decl_is_namespace {
-                            (decl_idx, other_idx)
-                        } else {
-                            (other_idx, decl_idx)
-                        };
-
-                        let namespace_is_instantiated =
-                            self.is_namespace_declaration_instantiated(namespace_idx);
-                        if !namespace_is_instantiated {
-                            continue;
-                        }
-
-                        if self.is_ambient_class_declaration(class_idx) {
-                            continue;
-                        }
-
-                        let namespace_precedes_class = self
-                            .ctx
-                            .arena
-                            .get(namespace_idx)
-                            .zip(self.ctx.arena.get(class_idx))
-                            .is_some_and(|(ns_node, class_node)| ns_node.pos < class_node.pos);
-
-                        if namespace_precedes_class {
-                            namespace_order_errors.insert(namespace_idx);
-                        }
                         continue;
                     }
 
-                    // Namespace + Enum merging is allowed
+                    // Namespace + Enum merging
                     let decl_is_enum = (decl_flags & symbol_flags::ENUM) != 0;
                     let other_is_enum = (other_flags & symbol_flags::ENUM) != 0;
                     if (decl_is_namespace && other_is_enum) || (decl_is_enum && other_is_namespace)
@@ -793,306 +767,173 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // Namespace + Variable merging is allowed only for non-instantiated
-                    // namespaces. Instantiated namespaces conflict with variables.
+                    // TS2813/TS2814: Class and Function merging
+                    let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
+                    let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
+                    let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
+                    let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
+
+                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
+                    {
+                        let (class_idx, func_idx, func_is_local) = if decl_is_class {
+                            (decl_idx, other_idx, other_is_local)
+                        } else {
+                            (other_idx, decl_idx, decl_is_local)
+                        };
+
+                        let class_is_ambient = self.is_ambient_class_declaration(class_idx);
+                        let func_has_body = func_is_local && self.function_has_body(func_idx);
+
+                        if func_has_body && !class_is_ambient {
+                            if decl_is_local {
+                                let code = if decl_is_class {
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR
+                                } else {
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
+                                };
+                                self.error_at_node_msg(
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                    code,
+                                    &[&symbol.escaped_name],
+                                );
+                            }
+                            if other_is_local {
+                                let code = if other_is_class {
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR
+                                } else {
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
+                                };
+                                self.error_at_node_msg(
+                                    self.get_declaration_name_node(other_idx)
+                                        .unwrap_or(other_idx),
+                                    code,
+                                    &[&symbol.escaped_name],
+                                );
+                            }
+                            continue;
+                        }
+
+                        // If it's a valid merge (ambient class + function with body),
+                        // or if the function has NO body (overload), it's not an error.
+                        if func_has_body && class_is_ambient {
+                            continue;
+                        }
+                    }
+
+                    // TS2567: Enum declarations can only merge with namespace or other enum declarations.
+                    let is_enum_merge_error =
+                        (decl_is_enum && !other_is_enum && !other_is_namespace)
+                            || (other_is_enum && !decl_is_enum && !decl_is_namespace);
+
+                    if is_enum_merge_error {
+                        if decl_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                            );
+                        }
+                        if other_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
+                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                            );
+                        }
+                        // TS2567 replaces TS2300 for enums in TSC.
+                        continue;
+                    }
+
+                    // Namespace + Variable merging
                     let decl_is_variable = (decl_flags & symbol_flags::VARIABLE) != 0;
                     let other_is_variable = (other_flags & symbol_flags::VARIABLE) != 0;
                     if (decl_is_namespace && other_is_variable)
                         || (decl_is_variable && other_is_namespace)
                     {
+                        if !decl_is_local || !other_is_local {
+                            continue;
+                        }
                         let namespace_idx = if decl_is_namespace {
                             decl_idx
                         } else {
                             other_idx
                         };
-                        let namespace_is_instantiated =
-                            self.is_namespace_declaration_instantiated(namespace_idx);
-                        if namespace_is_instantiated {
-                            conflicts.insert(decl_idx);
-                            conflicts.insert(other_idx);
+                        if self.is_namespace_declaration_instantiated(namespace_idx) {
+                            if decl_is_local {
+                                conflicts.insert(decl_idx);
+                            }
+                            if other_is_local {
+                                conflicts.insert(other_idx);
+                            }
                         }
                         continue;
                     }
 
-                    // Non-ambient class + Function: emit TS2813 + TS2814
-                    // Note: class & function don't exclude each other in declarations_conflict,
-                    // so we handle this case specially with early continue.
-                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
-                    {
-                        let class_idx = if decl_is_class { decl_idx } else { other_idx };
-                        if self.is_ambient_class_declaration(class_idx) {
-                            continue;
+                    // General conflict check for other combinations.
+                    if Self::declarations_conflict(decl_flags, other_flags) {
+                        // TS2323: When both conflicting declarations are exported
+                        // *variables*, emit "Cannot redeclare exported variable"
+                        // instead of the generic TS2300 "Duplicate identifier".
+                        // Non-variable exports (classes, etc.) still get TS2300.
+                        let both_variables = (decl_flags & symbol_flags::VARIABLE) != 0
+                            && (other_flags & symbol_flags::VARIABLE) != 0;
+                        let both_exported = both_variables
+                            && decl_is_local
+                            && other_is_local
+                            && self.is_declaration_exported(decl_idx)
+                            && self.is_declaration_exported(other_idx);
+                        if both_exported {
+                            exported_conflicts.insert(decl_idx);
+                            exported_conflicts.insert(other_idx);
+                        } else {
+                            if decl_is_local {
+                                conflicts.insert(decl_idx);
+                            }
+                            if other_is_local {
+                                conflicts.insert(other_idx);
+                            }
                         }
-                        // Non-ambient class + function detected — mark both for TS2813/TS2814
-                        conflicts.insert(decl_idx);
-                        conflicts.insert(other_idx);
-                        continue;
-                    }
-
-                    // In merged namespaces, classes with the same name in different
-                    // namespace blocks don't conflict (one exported, one local).
-                    if decl_is_class && other_is_class {
-                        let decl_ns = self.get_enclosing_namespace(decl_idx);
-                        let other_ns = self.get_enclosing_namespace(other_idx);
-                        // Both inside namespaces, but different namespace declaration blocks
-                        if decl_ns != NodeIndex::NONE
-                            && other_ns != NodeIndex::NONE
-                            && decl_ns != other_ns
-                        {
-                            continue;
-                        }
-                    }
-
-                    // Skip conflict between declarations in different block scopes.
-                    // The binder may merge declarations into the same symbol even when they're
-                    // in different scopes (e.g., var+let in switch blocks, let in separate blocks).
-                    // Check if declarations share the same enclosing block scope.
-                    let decl_is_var = (decl_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
-                    let other_is_var = (other_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
-                    let decl_is_block = (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-                    let other_is_block = (other_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-
-                    // var + let/const: check if they're in different scopes
-                    if (decl_is_var && other_is_block) || (decl_is_block && other_is_var) {
-                        let block_idx = if decl_is_block { decl_idx } else { other_idx };
-                        let block_scope = self.get_enclosing_block_scope(block_idx);
-                        // If the block-scoped variable is inside any block scope,
-                        // it's in a nested scope relative to the var
-                        if block_scope != NodeIndex::NONE {
-                            continue;
-                        }
-                    }
-                    // let/const + let/const: check if they share the same block scope
-                    if decl_is_block && other_is_block {
-                        let decl_scope = self.get_enclosing_block_scope(decl_idx);
-                        let other_scope = self.get_enclosing_block_scope(other_idx);
-                        if decl_scope != other_scope {
-                            continue;
-                        }
-                    }
-
-                    // Two exported `var` declarations with the same name conflict (TS2323).
-                    // Regular `var` redeclarations are legal in JS, but exported vars
-                    // create ambiguity in module export bindings.
-                    if (decl_is_var
-                        && other_is_var
-                        && self.is_exported_variable_declaration(decl_idx)
-                        && self.is_exported_variable_declaration(other_idx))
-                        || Self::declarations_conflict(decl_flags, other_flags)
-                    {
-                        conflicts.insert(decl_idx);
-                        conflicts.insert(other_idx);
                     }
                 }
             }
 
-            for &namespace_idx in &namespace_order_errors {
+            for conflict_idx in conflicts {
                 let error_node = self
-                    .get_declaration_name_node(namespace_idx)
-                    .unwrap_or(namespace_idx);
+                    .get_declaration_name_node(conflict_idx)
+                    .unwrap_or(conflict_idx);
+                let message = format_message(
+                    diagnostic_messages::DUPLICATE_IDENTIFIER,
+                    &[&symbol.escaped_name],
+                );
+                self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+            }
+
+            for conflict_idx in exported_conflicts {
+                let error_node = self
+                    .get_declaration_name_node(conflict_idx)
+                    .unwrap_or(conflict_idx);
+                let message = format_message(
+                    diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                    &[&symbol.escaped_name],
+                );
                 self.error_at_node(
                     error_node,
-                    diagnostic_messages::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
-                    diagnostic_codes::A_NAMESPACE_DECLARATION_CANNOT_BE_LOCATED_PRIOR_TO_A_CLASS_OR_FUNCTION_WITH_WHIC,
+                    &message,
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
                 );
             }
 
-            if conflicts.is_empty() {
-                continue;
-            }
-
-            // Handle TS2393: Duplicate function implementation.
-            // When 2+ function declarations with bodies share a name, emit TS2393 on each.
-            // This runs BEFORE TS2813/TS2814 handling since that removes function indices.
-            {
-                let func_impls_with_scope: Vec<(NodeIndex, NodeIndex)> = declarations
-                    .iter()
-                    .filter(|(decl_idx, flags)| {
-                        conflicts.contains(decl_idx)
-                            && (flags & symbol_flags::FUNCTION) != 0
-                            && self.function_has_body(*decl_idx)
-                    })
-                    .map(|(idx, _)| (*idx, self.get_enclosing_block_scope(*idx)))
-                    .collect();
-
-                // Group by block scope - only functions in the SAME scope are duplicates.
-                // Functions in different block scopes (e.g., if/else branches) shadow
-                // rather than conflict, so they should not emit TS2393.
-                let mut scope_groups: std::collections::HashMap<NodeIndex, Vec<NodeIndex>> =
-                    std::collections::HashMap::new();
-                for &(idx, scope) in &func_impls_with_scope {
-                    scope_groups.entry(scope).or_default().push(idx);
-                }
-
-                for group in scope_groups.values() {
-                    if group.len() > 1 {
-                        for &idx in group {
-                            let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
-                            self.error_at_node(
-                                error_node,
-                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
-                            );
-                            conflicts.remove(&idx);
-                        }
-                    }
-                }
-                // Only remove function impls that were actually handled (groups with >1)
-                // Single function implementations should remain in conflicts to emit TS2300
-                if conflicts.is_empty() {
-                    continue;
-                }
-            }
-
-            // Check for class + function conflicts (TS2813 + TS2814)
-            // These get special diagnostics instead of the generic TS2300
-            let has_class_function_conflict = {
-                let has_class = declarations.iter().any(|(decl_idx, flags)| {
-                    conflicts.contains(decl_idx) && (flags & symbol_flags::CLASS) != 0
-                });
-                let has_function = declarations.iter().any(|(decl_idx, flags)| {
-                    conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
-                });
-                has_class && has_function
-            };
-
-            if has_class_function_conflict {
-                let name = symbol.escaped_name.clone();
-
-                // Emit TS2813 on class declarations
-                for &(decl_idx, flags) in &declarations {
-                    if conflicts.contains(&decl_idx) && (flags & symbol_flags::CLASS) != 0 {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        let message = format_message(
-                            diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
-                            &[&name],
-                        );
-                        self.error_at_node(
-                            error_node,
-                            &message,
-                            diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
-                        );
-                    }
-                }
-
-                // Emit TS2814 on function declarations
-                for &(decl_idx, flags) in &declarations {
-                    if conflicts.contains(&decl_idx) && (flags & symbol_flags::FUNCTION) != 0 {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        self.error_at_node(
-                            error_node,
-                            diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
-                            diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
-                        );
-                    }
-                }
-
-                // Remove class/function entries from conflicts so they don't also get TS2300
-                let class_function_indices: Vec<NodeIndex> = declarations
-                    .iter()
-                    .filter(|(decl_idx, flags)| {
-                        conflicts.contains(decl_idx)
-                            && ((flags & symbol_flags::CLASS) != 0
-                                || (flags & symbol_flags::FUNCTION) != 0)
-                    })
-                    .map(|(idx, _)| *idx)
-                    .collect();
-                for idx in class_function_indices {
-                    conflicts.remove(&idx);
-                }
-
-                if conflicts.is_empty() {
-                    continue;
-                }
-            }
-
-            // Check if we have any non-block-scoped declarations (var, function, etc.)
-            // Imports (ALIAS) and let/const (BLOCK_SCOPED_VARIABLE) are block-scoped
-            let has_non_block_scoped = declarations.iter().any(|(decl_idx, flags)| {
-                conflicts.contains(decl_idx) && {
-                    (flags & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::ALIAS)) == 0
-                }
-            });
-
-            let name = symbol.escaped_name.clone();
-
-            // Check if any conflicting declaration is an enum
-            let has_enum_conflict = declarations.iter().any(|(decl_idx, flags)| {
-                conflicts.contains(decl_idx)
-                    && (flags & (symbol_flags::REGULAR_ENUM | symbol_flags::CONST_ENUM)) != 0
-            });
-
-            let decl_is_exported = |decl_idx: NodeIndex| self.is_declaration_exported(decl_idx);
-
-            let has_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
-                conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) != 0
-            });
-            let has_non_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
-                conflicts.contains(decl_idx) && (flags & symbol_flags::VARIABLE) == 0
-            });
-            // Also check for accessor conflicts - TS2323 should only fire for pure variable conflicts
-            let has_accessor_conflict = declarations.iter().any(|(decl_idx, flags)| {
-                conflicts.contains(decl_idx)
-                    && (flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR)) != 0
-            });
-            let has_exported_variable_conflict = declarations.iter().any(|(decl_idx, flags)| {
-                conflicts.contains(decl_idx)
-                    && (flags & symbol_flags::VARIABLE) != 0
-                    && decl_is_exported(*decl_idx)
-            });
-
-            let (message, code) = if has_exported_variable_conflict
-                && has_variable_conflict
-                && !has_non_variable_conflict
-                && !has_accessor_conflict
-            {
-                (
-                    format_message(
-                        diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                        &[&name],
-                    ),
-                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
-                )
-            } else if has_enum_conflict && has_non_block_scoped {
-                // Enum merging conflict: TS2567
-                (
-                    diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS
-                        .to_string(),
-                    diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
-                )
-            } else if !has_non_block_scoped {
-                // Pure block-scoped duplicates (let/const/import conflicts) emit TS2451
-                (
-                    format_message(
-                        diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                        &[&name],
-                    ),
-                    diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                )
-            } else {
-                // Mixed or non-block-scoped duplicates emit TS2300
-                // When TS2395 already fired for this symbol, skip TS2300 — the root cause
-                // is export visibility mismatch, not a true duplicate name.
-                if has_ts2395 {
-                    continue;
-                }
-                (
-                    format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]),
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                )
-            };
-            for (decl_idx, _) in declarations {
-                if conflicts.contains(&decl_idx) {
-                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    self.error_at_node(error_node, &message, code);
-                }
+            for idx in namespace_order_errors {
+                let error_node = self.get_declaration_name_node(idx).unwrap_or(idx);
+                let message = format_message(
+                    diagnostic_messages::DUPLICATE_IDENTIFIER,
+                    &[&symbol.escaped_name],
+                );
+                self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
             }
         }
     }
 
-    /// Check if a function declaration has a body (is an implementation, not just a signature).
     pub(crate) fn function_has_body(&self, decl_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(decl_idx) else {
             return false;

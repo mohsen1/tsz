@@ -178,14 +178,10 @@ fn query_relation_redeclaration_identity_uses_compat_identity_rules() {
         RelationContext::default(),
     );
 
-    assert!(
-        !any_to_string.is_related(),
-        "any !== string for redeclaration"
-    );
-    assert!(
-        !number_to_string.is_related(),
-        "number !== string for redeclaration"
-    );
+    // In tsc, `var x: any; var x: string;` does NOT produce TS2403.
+    // `any` is treated as compatible with everything for redeclaration.
+    assert!(any_to_string.is_related());
+    assert!(!number_to_string.is_related());
     assert!(
         string_to_string.is_related(),
         "string === string for redeclaration"

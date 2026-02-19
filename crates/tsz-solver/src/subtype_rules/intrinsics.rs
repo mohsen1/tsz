@@ -99,8 +99,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// This is used in subtype checking to determine when structural typing rules apply.
     pub(crate) fn is_object_keyword_type(&mut self, source: TypeId) -> bool {
+        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         match source {
-            TypeId::ANY | TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
+            TypeId::ANY if allow_any => return true,
+            TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
             TypeId::UNKNOWN
             | TypeId::VOID
             | TypeId::NULL
@@ -110,6 +112,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             | TypeId::STRING
             | TypeId::BIGINT
             | TypeId::SYMBOL => return false,
+            // Fall through to structural check for ANY in strict mode and all other types
             _ => {}
         }
 
@@ -238,8 +241,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// Rule #29: Function intrinsic accepts any callable type as a subtype.
     pub(crate) fn is_callable_type(&mut self, source: TypeId) -> bool {
+        let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         match source {
-            TypeId::ANY | TypeId::NEVER | TypeId::ERROR | TypeId::FUNCTION => return true,
+            TypeId::ANY if allow_any => return true,
+            TypeId::NEVER | TypeId::ERROR | TypeId::FUNCTION => return true,
+            // Fall through to structural check for ANY in strict mode and all other types
             _ => {}
         }
 

@@ -441,6 +441,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.strict_null_checks = config.strict_null_checks;
         self.exact_optional_property_types = config.exact_optional_property_types;
         self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+
+        // North Star: any should NOT silence structural mismatches in strict mode
+        self.lawyer.allow_any_suppression = !config.strict_function_types && !config.sound_mode;
+
         // Clear cache as configuration changed
         self.cache.clear();
     }
@@ -791,12 +795,18 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Any at the top-level is assignable to/from everything
         // UNLESS strict any propagation is enabled (disables suppression)
         if source == TypeId::ANY || target == TypeId::ANY {
-            // If strict any propagation is on (allow_any_suppression is false),
-            // we must fall through to structural checking unless both are ANY
-            if !self.lawyer.allow_any_suppression && source != target {
-                return None;
+            // North Star Fix: any should not silence structural mismatches.
+            // We only allow any to match any here, and fall through to structural
+            // checking for mixed pairs.
+            if source == target {
+                return Some(true);
             }
-            return Some(true);
+            // If legacy suppression is allowed, we still return true here.
+            if self.lawyer.allow_any_suppression {
+                return Some(true);
+            }
+            // Fall through to structural checking for unsound pairs
+            return None;
         }
 
         // Null/undefined in non-strict null check mode
@@ -1749,20 +1759,14 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        // 2. Error propagation only — suppress cascading errors from ERROR types.
-        // IMPORTANT: `any` is NOT treated as identical to other types here.
-        // TS2403 specifically requires `any !== number`, `any !== string`, etc.
-        // Only `any === any` (caught by the identity check above).
+        // 2. Error/any propagation — suppress cascading errors from ERROR types,
+        // and treat `any` as compatible with everything for redeclaration.
+        // In tsc, `var x: any; var x: string;` does NOT produce TS2403.
         if a == TypeId::ERROR || b == TypeId::ERROR {
             return true;
         }
-
-        // 3. `any` is NOT identical to non-`any` types for redeclaration (TS2403).
-        // In TypeScript, `any` is both a subtype and supertype of all types,
-        // but for redeclaration checking, `var x: any; var x: number;` must error.
-        // The bidirectional subtype check would incorrectly say they're identical.
         if a == TypeId::ANY || b == TypeId::ANY {
-            return false;
+            return true;
         }
 
         // 4. Enum Nominality Check

@@ -52,10 +52,18 @@ impl Default for RelationPolicy {
 }
 
 impl RelationPolicy {
-    pub fn from_flags(flags: u16) -> Self {
+    pub const fn from_flags(flags: u16) -> Self {
+        use crate::RelationCacheKey;
+        let strict_any = (flags & RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES) != 0;
         Self {
             flags,
-            ..Self::default()
+            strict_subtype_checking: false,
+            strict_any_propagation: strict_any,
+            any_propagation_mode: if strict_any {
+                AnyPropagationMode::TopLevelOnly
+            } else {
+                AnyPropagationMode::All
+            },
         }
     }
 
