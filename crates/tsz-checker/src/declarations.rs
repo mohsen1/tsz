@@ -2179,8 +2179,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 | syntax_kind_ext::VARIABLE_STATEMENT
         );
 
-        if is_declaration_or_variable {
-            if let Some((pos, end)) = self.ctx.get_node_span(label_idx) {
+        if is_declaration_or_variable
+            && let Some((pos, end)) = self.ctx.get_node_span(label_idx) {
                 self.ctx.error(
                     pos,
                     end - pos,
@@ -2188,7 +2188,6 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     1344, // TS1344
                 );
             }
-        }
     }
 
     /// Check parameter properties (only valid in constructors).
