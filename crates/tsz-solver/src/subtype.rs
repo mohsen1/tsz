@@ -101,10 +101,10 @@ pub enum AnyPropagationMode {
 
 impl AnyPropagationMode {
     #[inline]
-    pub(crate) const fn allows_any_at_depth(self, _depth: u32) -> bool {
+    pub(crate) const fn allows_any_at_depth(self, depth: u32) -> bool {
         match self {
             Self::All => true,
-            Self::TopLevelOnly => false, // Fix: even top-level any should be strict in strict mode
+            Self::TopLevelOnly => depth == 0,
         }
     }
 }
@@ -1705,6 +1705,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+<<<<<<< HEAD
         // If not allowing any, ANY/STRICT_ANY only match itself or unknown.
         if !allow_any
             && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
@@ -1717,17 +1718,24 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && (target == TypeId::ANY || target == TypeId::STRICT_ANY)
             && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
         {
+=======
+        // If not allowing any (nested strict any), any still matches Top types as source,
+        // but any as target ALWAYS matches (it's a top type).
+        if !allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
+            if target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN {
+                return SubtypeResult::True;
+            }
+            // Fall through to structural check (which will fail for STRICT_ANY)
+        }
+        if !allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
+>>>>>>> f3fc0e500 (fix(solver): refine `any` propagation in strict mode)
             return SubtypeResult::True;
         }
         // Fall through to structural check (which will fail for STRICT_ANY)
 
         // Everything is assignable to unknown
         if target == TypeId::UNKNOWN {
-            // STRICT_ANY/ANY in strict mode should NOT vacuously match unknown
-            // if it was already checked in the allow_any block above.
-            if allow_any || (source != TypeId::ANY && source != TypeId::STRICT_ANY) {
-                return SubtypeResult::True;
-            }
+            return SubtypeResult::True;
         }
 
         // Never is assignable to everything

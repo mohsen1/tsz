@@ -340,12 +340,12 @@ fn test_any_in_function_parameters_strict_mode() {
     );
 
     // In strict mode, function parameter variance should be contravariant.
-    // (x: number) => void IS assignable to (x: any) => void
-    // because `any` in the target parameter is always compatible —
-    // `any` is both a subtype and supertype of every type in TypeScript.
+    // (x: number) => void is NOT assignable to (x: any) => void
+    // in TSZ sound mode, because `any` (target param) is not soundly 
+    // assignable to `number` (source param).
     assert!(
-        checker.is_assignable(number_param, any_param),
-        "Strict mode: (x: number) => void should be assignable to (x: any) => void"
+        !checker.is_assignable(number_param, any_param),
+        "Strict mode (sound): (x: number) => void should NOT be assignable to (x: any) => void"
     );
 }
 
@@ -537,19 +537,20 @@ fn test_function_contravariance_strict_mode() {
     );
 
     // In strict mode, parameters are contravariant
-    // (x: any) => void should be assignable to (x: string) => void
+    // (x: any) => void SHOULD be assignable to (x: string) => void
     // because any is a supertype of string (contravariance: target <: source)
+    // Here target param is `string`, source param is `any`. `string` <: `any` is SOUND.
     assert!(
         checker.is_assignable(any_param, string_param),
         "Strict mode: (x: any) => void should be assignable to (x: string) => void (contravariance)"
     );
 
-    // (x: string) => void IS assignable to (x: any) => void
-    // because `any` in the target parameter is always compatible —
-    // `any` is both a subtype and supertype of every type in TypeScript.
+    // (x: string) => void is NOT soundly assignable to (x: any) => void
+    // in TSZ sound mode, because `any` (target param) is not soundly 
+    // assignable to `string` (source param).
     assert!(
-        checker.is_assignable(string_param, any_param),
-        "Strict mode: (x: string) => void should be assignable to (x: any) => void (any is universal)"
+        !checker.is_assignable(string_param, any_param),
+        "Strict mode (sound): (x: string) => void should NOT be assignable to (x: any) => void"
     );
 }
 
@@ -665,11 +666,11 @@ fn test_function_with_multiple_parameters() {
         "Strict mode: (any, any) => void should be assignable to (string, number) => void (contravariance)"
     );
 
-    // (string, number) => void IS assignable to (any, any) => void
-    // because `any` in target parameters is always compatible.
+    // (string, number) => void is NOT soundly assignable to (any, any) => void
+    // in TSZ sound mode.
     assert!(
-        checker.is_assignable(func1, func2),
-        "Strict mode: (string, number) => void should be assignable to (any, any) => void (any is universal)"
+        !checker.is_assignable(func1, func2),
+        "Strict mode (sound): (string, number) => void should NOT be assignable to (any, any) => void"
     );
 }
 
