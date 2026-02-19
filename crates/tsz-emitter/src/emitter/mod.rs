@@ -299,7 +299,7 @@ pub struct Printer<'a> {
     /// Used for nested exported namespaces to emit proper IIFE parameters.
     pub(super) current_namespace_name: Option<String>,
 
-    /// Override name for anonymous default exports (e.g., "default_1").
+    /// Override name for anonymous default exports (e.g., "`default_1`").
     /// When set, class/function emitters use this instead of leaving the name blank.
     pub(super) anonymous_default_export_name: Option<String>,
 
