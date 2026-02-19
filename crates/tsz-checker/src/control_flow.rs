@@ -106,6 +106,8 @@ pub struct FlowAnalyzer<'a> {
     /// Cache for switch-reference relevance checks.
     /// Key: (`switch_expr_node`, `reference_node`) -> whether switch can narrow reference.
     switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
+    /// Optional shared switch-reference cache.
+    pub(crate) shared_switch_reference_cache: Option<&'a ReferenceMatchCache>,
     /// Cache for `is_matching_reference` results.
     /// Key: (`node_a`, `node_b`) -> whether references match (same symbol/property chain).
     /// This avoids O(N²) repeated comparisons during flow analysis with many variables.
@@ -119,6 +121,11 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) numeric_atom_cache: RefCell<FxHashMap<u64, Atom>>,
     /// Optional shared narrowing cache.
     pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
+    /// Reusable buffers for flow analysis.
+    pub(crate) flow_worklist: Option<&'a RefCell<VecDeque<(FlowNodeId, TypeId)>>>,
+    pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
+    pub(crate) flow_visited: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
+    pub(crate) flow_results: Option<&'a RefCell<FxHashMap<FlowNodeId, TypeId>>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -150,10 +157,15 @@ impl<'a> FlowAnalyzer<'a> {
             flow_cache: None,
             type_environment: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
+            shared_switch_reference_cache: None,
             reference_match_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             narrowing_cache: None,
+            flow_worklist: None,
+            flow_in_worklist: None,
+            flow_visited: None,
+            flow_results: None,
         }
     }
 
@@ -173,10 +185,15 @@ impl<'a> FlowAnalyzer<'a> {
             flow_cache: None,
             type_environment: None,
             switch_reference_cache: RefCell::new(FxHashMap::default()),
+            shared_switch_reference_cache: None,
             reference_match_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             narrowing_cache: None,
+            flow_worklist: None,
+            flow_in_worklist: None,
+            flow_visited: None,
+            flow_results: None,
         }
     }
 
@@ -195,9 +212,30 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
+    /// Set a shared switch-reference cache.
+    pub const fn with_switch_reference_cache(mut self, cache: &'a ReferenceMatchCache) -> Self {
+        self.shared_switch_reference_cache = Some(cache);
+        self
+    }
+
     /// Set a shared narrowing cache.
     pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
         self.narrowing_cache = Some(cache);
+        self
+    }
+
+    /// Set reusable flow buffers.
+    pub const fn with_flow_buffers(
+        mut self,
+        worklist: &'a RefCell<VecDeque<(FlowNodeId, TypeId)>>,
+        in_worklist: &'a RefCell<FxHashSet<FlowNodeId>>,
+        visited: &'a RefCell<FxHashSet<FlowNodeId>>,
+        results: &'a RefCell<FxHashMap<FlowNodeId, TypeId>>,
+    ) -> Self {
+        self.flow_worklist = Some(worklist);
+        self.flow_in_worklist = Some(in_worklist);
+        self.flow_visited = Some(visited);
+        self.flow_results = Some(results);
         self
     }
 
@@ -228,6 +266,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let key = (switch_expr.0, reference.0);
+        if let Some(shared) = self.shared_switch_reference_cache
+            && let Some(&cached) = shared.borrow().get(&key)
+        {
+            return cached;
+        }
         if let Some(&cached) = self.switch_reference_cache.borrow().get(&key) {
             return cached;
         }
@@ -239,6 +282,9 @@ impl<'a> FlowAnalyzer<'a> {
             // switch (typeof x) narrows x through typeof comparison
             || self.is_typeof_target(switch_expr, reference);
 
+        if let Some(shared) = self.shared_switch_reference_cache {
+            shared.borrow_mut().insert(key, affects);
+        }
         self.switch_reference_cache
             .borrow_mut()
             .insert(key, affects);
@@ -408,13 +454,33 @@ impl<'a> FlowAnalyzer<'a> {
         _visited: &mut Vec<FlowNodeId>,
         symbol_id: Option<SymbolId>,
     ) -> TypeId {
-        // Work item: (flow_id, type_at_this_point)
-        let mut worklist: VecDeque<(FlowNodeId, TypeId)> = VecDeque::new();
-        let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
-        let mut visited: FxHashSet<FlowNodeId> = FxHashSet::default();
+        // Reusable buffers to avoid heap allocations in hot path.
+        // Use try_borrow_mut to handle re-entrancy safely (e.g. during bidirectional narrowing).
+        let mut local_worklist = VecDeque::new();
+        let mut local_in_worklist = FxHashSet::default();
+        let mut local_visited = FxHashSet::default();
+        let mut local_results = FxHashMap::default();
 
-        // Result cache: flow_id -> narrowed_type
-        let mut results: FxHashMap<FlowNodeId, TypeId> = FxHashMap::default();
+        // Borrow shared buffers if available and NOT already borrowed, otherwise fallback to local ones
+        let mut worklist_borrow = self.flow_worklist.and_then(|b| b.try_borrow_mut().ok());
+        let mut in_worklist_borrow = self.flow_in_worklist.and_then(|b| b.try_borrow_mut().ok());
+        let mut visited_borrow = self.flow_visited.and_then(|b| b.try_borrow_mut().ok());
+        let mut results_borrow = self.flow_results.and_then(|b| b.try_borrow_mut().ok());
+
+        let worklist = worklist_borrow.as_deref_mut()
+            .unwrap_or(&mut local_worklist);
+        let in_worklist = in_worklist_borrow.as_deref_mut()
+            .unwrap_or(&mut local_in_worklist);
+        let visited = visited_borrow.as_deref_mut()
+            .unwrap_or(&mut local_visited);
+        let results = results_borrow.as_deref_mut()
+            .unwrap_or(&mut local_results);
+
+        // Clear buffers for reuse
+        worklist.clear();
+        in_worklist.clear();
+        visited.clear();
+        results.clear();
 
         // CRITICAL: Check if initial type contains type parameters ONCE, outside the loop.
         // This prevents caching generic types across different instantiations.
@@ -641,7 +707,7 @@ impl<'a> FlowAnalyzer<'a> {
                 }
 
                 // Switch clause - apply switch-specific narrowing
-                self.handle_switch_clause_iterative(reference, current_type, flow, &results)
+                self.handle_switch_clause_iterative(reference, current_type, flow, results)
             } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
                 // OPTIMIZATION: Quick symbol-based filtering before expensive AST comparison.
                 // If we have a resolved symbol and the assignment's target has a different symbol,
@@ -860,7 +926,7 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             } else if flow.has_any_flags(flow_flags::CALL) {
                 // Call expression - check for type predicates
-                self.handle_call_iterative(reference, current_type, flow, &results)
+                self.handle_call_iterative(reference, current_type, flow, results)
             } else if flow.has_any_flags(flow_flags::START) {
                 // Start node - check if we're crossing a closure boundary
                 // For mutable variables (let/var), we cannot trust narrowing from outer scope

@@ -254,9 +254,19 @@ pub struct CheckerContext<'a> {
     pub flow_analysis_cache:
         RefCell<FxHashMap<(tsz_binder::FlowNodeId, tsz_binder::SymbolId, TypeId), TypeId>>,
 
+    /// Reusable buffers for flow analysis to avoid frequent heap allocations in `check_flow`.
+    pub flow_worklist: RefCell<VecDeque<(tsz_binder::FlowNodeId, TypeId)>>,
+    pub flow_in_worklist: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
+    pub flow_visited: RefCell<FxHashSet<tsz_binder::FlowNodeId>>,
+    pub flow_results: RefCell<FxHashMap<tsz_binder::FlowNodeId, TypeId>>,
+
     /// Shared cache for narrowing operations (type resolution, property lookup).
     /// Reused across flow analysis passes to prevent O(N^2) behavior in CFA chains.
     pub narrowing_cache: tsz_solver::NarrowingCache,
+
+    /// Cache for switch-reference relevance checks.
+    /// Reused across `FlowAnalyzer` instances within a single file check.
+    pub flow_switch_reference_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 
     /// Shared reference-equivalence cache used by flow narrowing.
     /// Key: (`node_a`, `node_b`) -> whether they reference the same symbol/property chain.
