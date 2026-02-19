@@ -42,12 +42,10 @@ fn get_error_codes(source: &str) -> Vec<u32> {
 fn test_var_any_then_number_ts2403() {
     // var x: any; var x = 2; should emit TS2403
     let diags = get_diagnostics("var x: any;\nvar x = 2;");
-    eprintln!("TS2403 test diags: {:?}", diags);
     let codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
     assert!(
         codes.contains(&2403),
-        "Expected TS2403 for var x: any; var x = 2; but got: {:?}",
-        diags
+        "Expected TS2403 for var x: any; var x = 2; but got: {diags:?}"
     );
 }
 
@@ -55,12 +53,10 @@ fn test_var_any_then_number_ts2403() {
 fn test_var_string_then_bare_ts2403() {
     // var y = ""; var y; should emit TS2403
     let diags = get_diagnostics("var y = \"\";\nvar y;");
-    eprintln!("TS2403 bare test diags: {:?}", diags);
     let codes: Vec<u32> = diags.iter().map(|(c, _)| *c).collect();
     assert!(
         codes.contains(&2403),
-        "Expected TS2403 for var y = ''; var y; but got: {:?}",
-        diags
+        "Expected TS2403 for var y = ''; var y; but got: {diags:?}"
     );
 }
 
@@ -70,7 +66,6 @@ fn test_var_any_then_any_no_error() {
     let codes = get_error_codes("var z: any;\nvar z;");
     assert!(
         !codes.contains(&2403),
-        "Should NOT emit TS2403 for var z: any; var z; but got: {:?}",
-        codes
+        "Should NOT emit TS2403 for var z: any; var z; but got: {codes:?}"
     );
 }

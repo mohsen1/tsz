@@ -2302,7 +2302,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Check for conflicting properties
         for s_prop in &s_shape.properties {
             // Find property in Object interface (target)
-            if let Some(t_prop) = self.lookup_property(&t_shape.properties, Some(t_shape_id), s_prop.name) {
+            if let Some(t_prop) =
+                self.lookup_property(&t_shape.properties, Some(t_shape_id), s_prop.name)
+            {
                 // Found potential conflict: check compatibility
                 let result = self.check_property_compatibility(s_prop, t_prop);
                 if !result.is_true() {
