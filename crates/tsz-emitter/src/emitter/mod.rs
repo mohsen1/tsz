@@ -2445,12 +2445,18 @@ impl<'a> Printer<'a> {
 
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
-                    // In CommonJS mode, defer single-line (//) comments to after the
-                    // preamble (ODP + exports.X = void 0). Block comments (/* */) stay
-                    // before the preamble since they're often copyright/license headers
-                    // that TSC preserves at the top.
-                    let is_line_comment = comment_text.starts_with("//");
-                    if is_commonjs && is_line_comment {
+                    // In CommonJS mode, "detached" comments (followed by a blank
+                    // line before the next content) are file-level and go BEFORE
+                    // the __esModule marker. "Attached" comments (no blank line
+                    // after them) are deferred to AFTER the preamble.
+                    let next_content_pos = self
+                        .all_comments
+                        .get(self.comment_emit_idx + 1)
+                        .map_or(first_stmt_pos, |next_c| next_c.pos);
+                    let between_after = &text[c_end as usize..next_content_pos as usize];
+                    let is_detached =
+                        between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
+                    if is_commonjs && !is_detached {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
                         self.write_comment(comment_text);
