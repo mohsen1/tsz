@@ -660,8 +660,23 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         
-                        if decl_is_local { conflicts.insert(decl_idx); }
-                        if other_is_local { conflicts.insert(other_idx); }
+                        // Both have bodies in same scope - report TS2393
+                        if decl_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            );
+                            conflicts.insert(decl_idx);
+                        }
+                        if other_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
+                                diagnostic_messages::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                                diagnostic_codes::DUPLICATE_FUNCTION_IMPLEMENTATION,
+                            );
+                            conflicts.insert(other_idx);
+                        }
                         continue;
                     }
 
@@ -753,6 +768,80 @@ impl<'a> CheckerState<'a> {
                     let other_is_enum = (other_flags & symbol_flags::ENUM) != 0;
                     if (decl_is_namespace && other_is_enum) || (decl_is_enum && other_is_namespace)
                     {
+                        continue;
+                    }
+
+                    // TS2813/TS2814: Class and Function merging
+                    let decl_is_function = (decl_flags & symbol_flags::FUNCTION) != 0;
+                    let other_is_function = (other_flags & symbol_flags::FUNCTION) != 0;
+                    let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
+                    let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
+
+                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class) {
+                        let (class_idx, func_idx, func_is_local) = if decl_is_class {
+                            (decl_idx, other_idx, other_is_local)
+                        } else {
+                            (other_idx, decl_idx, decl_is_local)
+                        };
+
+                        let class_is_ambient = self.is_ambient_class_declaration(class_idx);
+                        let func_has_body = func_is_local && self.function_has_body(func_idx);
+
+                        if func_has_body && !class_is_ambient {
+                            if decl_is_local {
+                                let code = if decl_is_class {
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR
+                                } else {
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
+                                };
+                                self.error_at_node_msg(
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                    code,
+                                    &[&symbol.escaped_name],
+                                );
+                            }
+                            if other_is_local {
+                                let code = if other_is_class {
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR
+                                } else {
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
+                                };
+                                self.error_at_node_msg(
+                                    self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
+                                    code,
+                                    &[&symbol.escaped_name],
+                                );
+                            }
+                            continue;
+                        }
+                        
+                        // If it's a valid merge (ambient class + function with body),
+                        // or if the function has NO body (overload), it's not an error.
+                        if func_has_body && class_is_ambient {
+                            continue;
+                        }
+                    }
+
+                    // TS2567: Enum declarations can only merge with namespace or other enum declarations.
+                    let is_enum_merge_error = (decl_is_enum && !other_is_enum && !other_is_namespace)
+                        || (other_is_enum && !decl_is_enum && !decl_is_namespace);
+                    
+                    if is_enum_merge_error {
+                        if decl_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx),
+                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                            );
+                        }
+                        if other_is_local {
+                            self.error_at_node(
+                                self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
+                                diagnostic_messages::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                                diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                            );
+                        }
+                        // TS2567 replaces TS2300 for enums in TSC.
                         continue;
                     }
 
