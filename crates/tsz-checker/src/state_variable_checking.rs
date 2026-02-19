@@ -295,8 +295,17 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2405: For for-in, also check that the LHS type is string or any.
-        // This applies to identifiers and property/element access expressions.
-        if !is_for_of {
+        // This applies only to valid LHS forms (identifiers and property/element access).
+        // Skip if we already emitted TS2491 (destructuring) or TS2406 (invalid form).
+        if !is_for_of
+            && let Some(init_node) = self.ctx.arena.get(initializer)
+            && matches!(
+                init_node.kind,
+                k if k == SyntaxKind::Identifier as u16
+                    || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                    || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            )
+        {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let var_type = self.get_type_of_node(initializer);
             // The LHS type must be string, any, or a type assignable to string
