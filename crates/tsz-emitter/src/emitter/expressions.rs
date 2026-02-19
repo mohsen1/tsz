@@ -1953,11 +1953,7 @@ impl<'a> Printer<'a> {
                     self.write(",");
                 }
 
-                if newline_before_prop {
-                    self.write_line();
-                    self.decrease_indent();
-                    self.write("}");
-                } else if newline_before_close {
+                if newline_before_prop || newline_before_close {
                     self.write_line();
                     self.decrease_indent();
                     self.write("}");
