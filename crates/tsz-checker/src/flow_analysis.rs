@@ -27,8 +27,7 @@
 
 use crate::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{
-    are_types_mutually_subtype_with_env, object_shape_for_type, tuple_elements_for_type,
-    union_members_for_type,
+    are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use rustc_hash::FxHashSet;
@@ -1440,10 +1439,11 @@ impl<'a> CheckerState<'a> {
                 if !binding.property_name.is_empty() {
                     let mut current = member;
                     for segment in binding.property_name.split('.') {
-                        let shape = object_shape_for_type(self.ctx.types, current)?;
-                        let prop = shape.properties.iter().find(|p| {
-                            self.ctx.types.resolve_atom_ref(p.name).as_ref() == segment
-                        })?;
+                        let prop = tsz_solver::type_queries::find_property_in_object_by_str(
+                            self.ctx.types,
+                            current,
+                            segment,
+                        )?;
                         current = prop.type_id;
                     }
                     Some(current)
@@ -1697,13 +1697,12 @@ impl<'a> CheckerState<'a> {
                 let mut current = *member;
                 let mut resolved = Some(current);
                 for segment in info.property_name.split('.') {
-                    resolved = object_shape_for_type(self.ctx.types, current).and_then(|shape| {
-                        shape
-                            .properties
-                            .iter()
-                            .find(|p| self.ctx.types.resolve_atom_ref(p.name).as_ref() == segment)
-                            .map(|p| p.type_id)
-                    });
+                    resolved = tsz_solver::type_queries::find_property_in_object_by_str(
+                        self.ctx.types,
+                        current,
+                        segment,
+                    )
+                    .map(|p| p.type_id);
                     if let Some(next) = resolved {
                         current = next;
                     } else {
