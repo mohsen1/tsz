@@ -7,7 +7,8 @@ use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::subtype::TypeResolver;
 use crate::types::{
     IntrinsicKind, LiteralValue, MappedModifier, MappedTypeId, ObjectShape, ObjectShapeId,
-    PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData, TypeId, TypeListId, TypeParamInfo,
+    PropertyInfo, SymbolRef, TupleElement, TupleListId, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use crate::utils;
 use crate::visitor::{
