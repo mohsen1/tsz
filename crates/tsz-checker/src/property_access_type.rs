@@ -868,27 +868,16 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::is_compiler_managed_type;
         use tsz_solver::operations_property::PropertyAccessResult;
         use tsz_solver::type_queries::{
-            get_array_element_type, get_tuple_elements, get_type_application, unwrap_readonly,
+            get_array_element_type, get_tuple_element_type_union, get_type_application,
+            unwrap_readonly,
         };
 
         let base_type = unwrap_readonly(self.ctx.types, object_type);
 
         let element_type = if let Some(elem) = get_array_element_type(self.ctx.types, base_type) {
             Some(elem)
-        } else if let Some(elems) = get_tuple_elements(self.ctx.types, base_type) {
-            let mut members = Vec::new();
-            for elem in elems {
-                let mut ty = if elem.rest {
-                    get_array_element_type(self.ctx.types, elem.type_id).unwrap_or(elem.type_id)
-                } else {
-                    elem.type_id
-                };
-                if elem.optional {
-                    ty = self.ctx.types.factory().union(vec![ty, TypeId::UNDEFINED]);
-                }
-                members.push(ty);
-            }
-            Some(self.ctx.types.factory().union(members))
+        } else if let Some(union_ty) = get_tuple_element_type_union(self.ctx.types, base_type) {
+            Some(union_ty)
         } else if let Some(app) = get_type_application(self.ctx.types, base_type) {
             app.args.first().copied()
         } else {

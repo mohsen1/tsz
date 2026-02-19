@@ -918,6 +918,31 @@ pub fn get_tuple_elements(
     }
 }
 
+/// Get the union of all element types in a tuple.
+///
+/// For each element: rest elements are unwrapped to their array element type,
+/// and optional elements include `undefined` in the result. Returns the union
+/// of all resulting types, or `None` if the type is not a tuple.
+///
+/// This encapsulates the common checker pattern of iterating tuple elements
+/// and rebuilding a union from their types.
+pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let elems = get_tuple_elements(db, type_id)?;
+    let mut members = Vec::with_capacity(elems.len());
+    for elem in elems {
+        let mut ty = if elem.rest {
+            get_array_element_type(db, elem.type_id).unwrap_or(elem.type_id)
+        } else {
+            elem.type_id
+        };
+        if elem.optional {
+            ty = db.union(vec![ty, TypeId::UNDEFINED]);
+        }
+        members.push(ty);
+    }
+    Some(db.union(members))
+}
+
 /// Get the applicable contextual type for an array literal from a (possibly union) type.
 ///
 /// When the contextual type is a union like `[number] | string`, this extracts only
