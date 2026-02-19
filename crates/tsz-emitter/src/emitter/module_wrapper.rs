@@ -32,6 +32,37 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Extract the last `/// <amd-module name='...' />` directive name from source text.
+    fn extract_amd_module_name(&self) -> Option<String> {
+        let text = self.source_text?;
+        let mut last_name = None;
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("///") {
+                if !trimmed.is_empty() && !trimmed.starts_with("//") {
+                    break;
+                }
+                continue;
+            }
+            let comment = trimmed.trim_start_matches('/').trim();
+            if !comment.contains("<amd-module") || !comment.contains("name=") {
+                continue;
+            }
+            // Extract name value from name='...' or name="..."
+            if let Some(pos) = comment.find("name=") {
+                let after = &comment[pos + 5..];
+                let quote = after.as_bytes().first().copied();
+                if matches!(quote, Some(b'\'' | b'"')) {
+                    let q = quote.unwrap() as char;
+                    if let Some(end) = after[1..].find(q) {
+                        last_name = Some(after[1..1 + end].to_string());
+                    }
+                }
+            }
+        }
+        last_name
+    }
+
     pub(super) fn emit_amd_wrapper(
         &mut self,
         dependencies: &[String],
@@ -40,7 +71,14 @@ impl<'a> Printer<'a> {
     ) {
         use crate::transforms::module_commonjs;
 
-        self.write("define([\"require\", \"exports\"");
+        let amd_name = self.extract_amd_module_name();
+        self.write("define(");
+        if let Some(name) = &amd_name {
+            self.write("\"");
+            self.write(name);
+            self.write("\", ");
+        }
+        self.write("[\"require\", \"exports\"");
         for dep in dependencies {
             self.write(", \"");
             self.write(dep);
@@ -83,7 +121,14 @@ impl<'a> Printer<'a> {
         self.write("else if (typeof define === \"function\" && define.amd) {");
         self.write_line();
         self.increase_indent();
-        self.write("define([\"require\", \"exports\"], factory);");
+        let amd_name = self.extract_amd_module_name();
+        self.write("define(");
+        if let Some(name) = &amd_name {
+            self.write("\"");
+            self.write(name);
+            self.write("\", ");
+        }
+        self.write("[\"require\", \"exports\"], factory);");
         self.write_line();
         self.decrease_indent();
         self.write("}");
