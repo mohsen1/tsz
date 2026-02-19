@@ -1487,24 +1487,10 @@ impl ParserState {
             self.parse_string_literal()
         } else {
             if !self.is_token(SyntaxKind::FromKeyword) {
-                // TS1435-style token suggestions are too noisy for this branch
-                // and produce extra noise in known recovery cases.
-                // Emit the primary 'from' expected error and consume the token so
-                // we can keep parser recovery in sync.
-                if self.is_token(SyntaxKind::Identifier)
-                    && self.scanner.get_token_value_ref() == "From"
-                {
-                    self.parse_error_at_current_token(
-                        &format!(
-                            "'{}' expected.",
-                            Self::token_to_string(SyntaxKind::FromKeyword)
-                        ),
-                        diagnostic_codes::EXPECTED,
-                    );
-                    self.next_token();
-                } else {
-                    self.parse_expected(SyntaxKind::FromKeyword);
-                }
+                self.parse_error_at_current_token(
+                    "Import statement expects a 'from' clause.",
+                    diagnostic_codes::IMPORT_EXPECTS_FROM_CLAUSE,
+                );
             } else {
                 self.parse_expected(SyntaxKind::FromKeyword);
             }
