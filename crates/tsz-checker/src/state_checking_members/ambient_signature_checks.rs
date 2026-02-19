@@ -1319,6 +1319,40 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        // Fast path: if there are no overload declarations for this symbol,
+        // skip expensive signature lowering/compatibility setup entirely.
+        let has_overload_decl = symbol.declarations.iter().copied().any(|decl_idx| {
+            if decl_idx == impl_node_idx {
+                return false;
+            }
+
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+
+            match decl_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_function(decl_node)
+                    .is_some_and(|f| f.body.is_none()),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(decl_node)
+                    .is_some_and(|m| m.body.is_none()),
+                k if k == syntax_kind_ext::CONSTRUCTOR => self
+                    .ctx
+                    .arena
+                    .get_constructor(decl_node)
+                    .is_some_and(|c| c.body.is_none()),
+                _ => false,
+            }
+        });
+        if !has_overload_decl {
+            return;
+        }
+
         // 2. Create TypeLowering instance for manual signature lowering
         // This unblocks overload validation for methods/constructors where get_type_of_node returns ERROR
         let type_resolver = |node_idx: NodeIndex| -> Option<u32> {
