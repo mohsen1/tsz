@@ -1920,6 +1920,7 @@ impl<'a> Printer<'a> {
                     self.increase_indent();
                 } else {
                     self.write(" ");
+                    self.increase_indent();
                 }
 
                 self.emit(prop);
@@ -1933,8 +1934,10 @@ impl<'a> Printer<'a> {
                     self.write("}");
                 } else if newline_before_close {
                     self.write_line();
+                    self.decrease_indent();
                     self.write("}");
                 } else {
+                    self.decrease_indent();
                     self.write(" }");
                 }
                 return;
