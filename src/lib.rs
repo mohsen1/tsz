@@ -137,6 +137,10 @@ mod variable_redeclaration_tests;
 #[path = "../tests/strict_mode_and_module_tests.rs"]
 mod strict_mode_and_module_tests;
 
+#[cfg(test)]
+#[path = "../tests/overload_compatibility_tests.rs"]
+mod overload_compatibility_tests;
+
 // Cross-file module resolution tests
 #[cfg(test)]
 #[path = "../tests/module_resolution_tests.rs"]
