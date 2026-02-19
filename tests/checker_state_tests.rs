@@ -34078,3 +34078,64 @@ fn test_ts2502_repro_circular_var() {
         diagnostics
     );
 }
+
+#[test]
+fn test_ts2451_global_redeclaration() {
+    let source = "
+    const x = 1;
+    declare global {
+        const x: number;
+    }
+    ";
+
+    let mut parser = crate::parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = tsz_solver::TypeInterner::new();
+    let mut checker = crate::checker::state::CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+
+    checker.check_source_file(root);
+
+    let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2451),
+        "Expected TS2451 for global redeclaration, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
+fn test_namespace_export_binds_global() {
+    let source = "
+    export as namespace foo;
+    export const x = 1;
+    ";
+
+    let mut parser = crate::parser::ParserState::new("test.d.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = crate::binder::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    // Verify 'foo' is in global scope
+    // Global scope is binder.scopes[0] usually (or binder.scope_stack bottom if active?)
+    // After bind, scopes are in binder.scopes.
+    // We need to find the global scope.
+    // Assuming the first scope created is global.
+
+    let global_scope = &binder.scopes[0]; // Is this safe assumption?
+    assert!(
+        global_scope.table.has("foo"),
+        "Global scope should contain 'foo'"
+    );
+}

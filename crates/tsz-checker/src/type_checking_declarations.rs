@@ -1773,6 +1773,12 @@ impl<'a> CheckerState<'a> {
         let Some(namespace_node) = self.ctx.arena.get(namespace_idx) else {
             return false;
         };
+
+        // NAMESPACE_EXPORT_DECLARATION (export as namespace X) is always instantiated as it creates a global value.
+        if namespace_node.kind == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION {
+            return true;
+        }
+
         if namespace_node.kind != syntax_kind_ext::MODULE_DECLARATION {
             return false;
         }

@@ -625,8 +625,10 @@ impl NodeArena {
     #[inline]
     #[must_use]
     pub fn get_export_decl(&self, node: &Node) -> Option<&ExportDeclData> {
-        use super::syntax_kind_ext::EXPORT_DECLARATION;
-        if node.has_data() && node.kind == EXPORT_DECLARATION {
+        use super::syntax_kind_ext::{EXPORT_DECLARATION, NAMESPACE_EXPORT_DECLARATION};
+        if node.has_data()
+            && (node.kind == EXPORT_DECLARATION || node.kind == NAMESPACE_EXPORT_DECLARATION)
+        {
             self.export_decls.get(node.data_index as usize)
         } else {
             None
