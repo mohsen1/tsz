@@ -11,9 +11,7 @@
 //! This module extends `CheckerState` with assignment-related methods as part of
 //! the Phase 2 architecture refactoring (task 2.3 - file splitting).
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -330,15 +328,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
-                start: node.pos,
-                length: node.end.saturating_sub(node.pos),
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                node.pos,
+                node.end.saturating_sub(node.pos),
+                message,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_NOT_A_VARIABLE,
+            ));
             return true;
         }
 
@@ -352,15 +348,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
-                start: node.pos,
-                length: node.end.saturating_sub(node.pos),
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code: diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                node.pos,
+                node.end.saturating_sub(node.pos),
+                message,
+                diagnostic_codes::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_FUNCTION,
+            ));
             return true;
         }
 
@@ -409,15 +403,13 @@ impl<'a> CheckerState<'a> {
         };
 
         let message = format_message(msg_template, &[name]);
-        self.ctx.diagnostics.push(Diagnostic {
-            file: self.ctx.file_name.clone(),
-            start: node.pos,
-            length: node.end.saturating_sub(node.pos),
-            message_text: message,
-            category: DiagnosticCategory::Error,
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            node.pos,
+            node.end.saturating_sub(node.pos),
+            message,
             code,
-            related_information: Vec::new(),
-        });
+        ));
         true
     }
 
@@ -750,27 +742,11 @@ impl<'a> CheckerState<'a> {
         let right_is_valid = self.is_arithmetic_operand(right_eval);
 
         if !left_is_valid && let Some(loc) = self.get_source_location(left_idx) {
-            self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                    category: DiagnosticCategory::Error,
-                    message_text: "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(), diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
         }
 
         if !right_is_valid && let Some(loc) = self.get_source_location(right_idx) {
-            self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                    category: DiagnosticCategory::Error,
-                    message_text: "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(),
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string(), diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
         }
 
         !left_is_valid || !right_is_valid
@@ -782,15 +758,7 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "The '{op_str}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD));
         }
     }
 

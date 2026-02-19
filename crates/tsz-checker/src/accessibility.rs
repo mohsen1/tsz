@@ -11,7 +11,7 @@
 //!
 //! Methods use a `verify_` or `check_` prefix for clarity.
 
-use crate::diagnostics::{Diagnostic, DiagnosticCategory, diagnostic_codes};
+use crate::diagnostics::{Diagnostic, diagnostic_codes};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -177,15 +177,13 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                message_text: message,
-                category: DiagnosticCategory::Error,
+                message,
                 code,
-                related_information: Vec::new(),
-            });
+            ));
         }
     }
 
@@ -194,15 +192,13 @@ impl<'a> CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(idx) {
             let length = end.saturating_sub(start);
             let message = format!("Cannot create an instance of an abstract class '{class_name}'.");
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code: 2511, // TS2511
-                related_information: Vec::new(),
-            });
+                message,
+                2511,
+            ));
         }
     }
 
@@ -218,15 +214,13 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Constructor of class '{source_name}' is private and only accessible within the class declaration."
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code: 2673, // TS2673
-                related_information: Vec::new(),
-            });
+                message,
+                2673,
+            ));
         }
     }
 }

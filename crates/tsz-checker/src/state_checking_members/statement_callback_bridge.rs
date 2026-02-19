@@ -903,22 +903,19 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 let case_str = self.format_type(effective_case_type);
                 let switch_str = self.format_type(effective_switch_type);
                 use crate::diagnostics::{
-                    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages,
-                    format_message,
+                    Diagnostic, diagnostic_codes, diagnostic_messages, format_message,
                 };
                 let message = format_message(
                     diagnostic_messages::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
                     &[&case_str, &switch_str],
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    start: loc.start,
-                    length: loc.length(),
-                    file: self.ctx.file_name.clone(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_COMPARABLE_TO_TYPE,
+                ));
             }
         }
     }
