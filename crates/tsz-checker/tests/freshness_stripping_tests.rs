@@ -215,30 +215,6 @@ let y: { a: { b: number } } = x;  // Should NOT trigger EPC
     );
 }
 
-// TODO: Investigate destructuring from literals
-// These tests are skipped because destructuring from array/object literals
-// in a single declaration (e.g., `let [x] = [{...}]`) may need special handling
-// that's beyond the scope of basic freshness stripping.
-// #[test]
-// fn test_array_destructuring_strips_freshness() {
-//     test_no_errors(
-//         r#"
-// let [x] = [{ a: 1, b: 2 }];  // Freshness stripped
-// let y: { a: number } = x;  // Should NOT trigger EPC
-// "#,
-//     );
-// }
-
-// #[test]
-// fn test_object_destructuring_strips_freshness() {
-//     test_no_errors(
-//         r#"
-// let { x } = { x: { a: 1, b: 2 } };  // Freshness stripped
-// let y: { a: number } = x;  // Should NOT trigger EPC
-// "#,
-//     );
-// }
-
 #[test]
 fn test_freshness_preserved_for_const_with_no_type_annotation() {
     // Even const declarations strip freshness for consistency

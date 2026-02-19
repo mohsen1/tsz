@@ -820,29 +820,6 @@ impl<'a> UsageAnalyzer<'a> {
                 }
             }
 
-            // Import type (import("./module").Type)
-            // Note: Handler added but commented out until parser exposes ImportType data
-            // k if k == syntax_kind_ext::IMPORT_TYPE => {
-            //     if let Some(import_type) = self.arena.get_import_type(type_node) {
-            //         // Handle qualifier (e.g., the ".Bar" in import("./foo").Bar)
-            //         if !import_type.qualifier.is_none() {
-            //             self.analyze_entity_name(import_type.qualifier);
-            //         } else {
-            //             // If no qualifier, the node itself is the module reference
-            //             if let Some(&sym_id) = self.binder.node_symbols.get(&type_idx.0) {
-            //                 self.mark_symbol_used(sym_id, crate::declaration_emitter::usage_analyzer::UsageKind::TYPE);
-            //             }
-            //         }
-            //
-            //         // Handle type arguments: import("./foo").Bar<T>
-            //         if let Some(ref type_args) = import_type.type_arguments {
-            //             for &arg_idx in &type_args.nodes {
-            //                 self.analyze_type_node(arg_idx);
-            //             }
-            //         }
-            //     }
-            // }
-
             // Type operator (keyof, readonly, etc.)
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 if let Some(type_op) = self.arena.get_type_operator(type_node) {
