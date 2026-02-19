@@ -1101,6 +1101,18 @@ impl<'a> CheckerState<'a> {
                                                     lib_checker.get_type_of_node(lib_decl);
                                                 CheckerState::leave_cross_arena_delegation();
 
+                                                // Skip comparison when lib type is unknown/error —
+                                                // this means the lib didn't properly resolve the global.
+                                                // Comparing against unknown produces false positives.
+                                                if lib_type == TypeId::UNKNOWN
+                                                    || lib_type == TypeId::ERROR
+                                                {
+                                                    prior_type_found = Some(
+                                                        prior_type_found.unwrap_or(final_type),
+                                                    );
+                                                    continue;
+                                                }
+
                                                 // Check compatibility
                                                 if !self.are_var_decl_types_compatible(
                                                     lib_type, final_type,
