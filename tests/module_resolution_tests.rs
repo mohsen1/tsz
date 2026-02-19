@@ -1413,8 +1413,8 @@ export const b = 1;
 "#;
     let diags = check_with_module_sources(source, "main.ts", vec![("./module", module_source)]);
     assert!(
-        has_error_code(&diags, 2305),
-        "Should emit TS2305 for default import followed by named import, got: {:?}",
+        diags.is_empty(),
+        "Default import with named import from module with both exports should produce no errors, got: {:?}",
         diags
     );
 }
