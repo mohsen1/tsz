@@ -206,6 +206,9 @@ mod keyof_comprehensive_tests;
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/tuple_comprehensive_tests.rs"]
+mod tuple_comprehensive_tests;
+#[cfg(test)]
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
 #[cfg(test)]
