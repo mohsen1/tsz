@@ -54,6 +54,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
+        // Everything is a subtype of any and unknown
+        if target == IntrinsicKind::Any || target == IntrinsicKind::Unknown {
+            return SubtypeResult::True;
+        }
+
+        // any is a subtype of everything (bottom type behavior in assignability)
+        if source == IntrinsicKind::Any {
+            return SubtypeResult::True;
+        }
+
         // null and undefined are subtypes of their non-strict counterparts
         match (source, target) {
             // void accepts undefined

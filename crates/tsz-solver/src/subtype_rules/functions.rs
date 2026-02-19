@@ -796,16 +796,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check parameter types
-        // In strict function mode, temporarily use TopLevelOnly for any propagation
-        // to prevent any from silencing structural mismatches in function parameters.
-        // NOTE: North Star mandate #3.3 - any should not silence structural mismatches.
-        use crate::subtype::AnyPropagationMode;
-
-        let old_mode = self.any_propagation;
-        if self.strict_function_types {
-            self.any_propagation = AnyPropagationMode::TopLevelOnly;
-        }
-
         let param_check_result = (|| -> SubtypeResult {
             // Compare fixed parameters (using unpacked params)
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
@@ -912,9 +902,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             SubtypeResult::True
         })();
-
-        // Restore the original any_propagation mode
-        self.any_propagation = old_mode;
 
         param_check_result
     }
