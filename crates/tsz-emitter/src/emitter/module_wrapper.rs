@@ -33,6 +33,21 @@ impl<'a> Printer<'a> {
     }
 
     /// Extract the last `/// <amd-module name='...' />` directive name from source text.
+    /// Extract a quoted attribute value from a triple-slash directive.
+    fn extract_directive_attr(content: &str, attr: &str) -> Option<String> {
+        let needle = format!("{attr}=");
+        let pos = content.find(&needle)?;
+        let after = &content[pos + needle.len()..];
+        let quote = after.as_bytes().first().copied()?;
+        if !matches!(quote, b'\'' | b'"') {
+            return None;
+        }
+        let q = quote as char;
+        let end = after[1..].find(q)?;
+        Some(after[1..1 + end].to_string())
+    }
+
+    /// Extract the last `/// <amd-module name='...' />` directive name from source text.
     fn extract_amd_module_name(&self) -> Option<String> {
         let text = self.source_text?;
         let mut last_name = None;
@@ -48,19 +63,38 @@ impl<'a> Printer<'a> {
             if !comment.contains("<amd-module") || !comment.contains("name=") {
                 continue;
             }
-            // Extract name value from name='...' or name="..."
-            if let Some(pos) = comment.find("name=") {
-                let after = &comment[pos + 5..];
-                let quote = after.as_bytes().first().copied();
-                if matches!(quote, Some(b'\'' | b'"')) {
-                    let q = quote.unwrap() as char;
-                    if let Some(end) = after[1..].find(q) {
-                        last_name = Some(after[1..1 + end].to_string());
-                    }
-                }
+            if let Some(name) = Self::extract_directive_attr(comment, "name") {
+                last_name = Some(name);
             }
         }
         last_name
+    }
+
+    /// Extract `/// <amd-dependency path='...' name='...'/>` directives.
+    /// Returns (path, optional_name, original_line) tuples.
+    fn extract_amd_dependencies(&self) -> Vec<(String, Option<String>, String)> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let mut deps = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("///") {
+                if !trimmed.is_empty() && !trimmed.starts_with("//") {
+                    break;
+                }
+                continue;
+            }
+            let comment = trimmed.trim_start_matches('/').trim();
+            if !comment.contains("<amd-dependency") || !comment.contains("path=") {
+                continue;
+            }
+            if let Some(path) = Self::extract_directive_attr(comment, "path") {
+                let name = Self::extract_directive_attr(comment, "name");
+                deps.push((path, name, trimmed.to_string()));
+            }
+        }
+        deps
     }
 
     pub(super) fn emit_amd_wrapper(
@@ -72,6 +106,14 @@ impl<'a> Printer<'a> {
         use crate::transforms::module_commonjs;
 
         let amd_name = self.extract_amd_module_name();
+        let amd_deps = self.extract_amd_dependencies();
+
+        // Emit `/// <amd-dependency .../>` comments before `define()`.
+        for (_, _, original_line) in &amd_deps {
+            self.write(original_line);
+            self.write_line();
+        }
+
         self.write("define(");
         if let Some(name) = &amd_name {
             self.write("\"");
@@ -79,12 +121,40 @@ impl<'a> Printer<'a> {
             self.write("\", ");
         }
         self.write("[\"require\", \"exports\"");
+
+        // Named AMD deps come first, then unnamed, then import deps.
+        let named_deps: Vec<_> = amd_deps
+            .iter()
+            .filter(|(_, name, _)| name.is_some())
+            .collect();
+        let unnamed_deps: Vec<_> = amd_deps
+            .iter()
+            .filter(|(_, name, _)| name.is_none())
+            .collect();
+
+        for (path, _, _) in &named_deps {
+            self.write(", \"");
+            self.write(path);
+            self.write("\"");
+        }
         for dep in dependencies {
             self.write(", \"");
             self.write(dep);
             self.write("\"");
         }
+        for (path, _, _) in &unnamed_deps {
+            self.write(", \"");
+            self.write(path);
+            self.write("\"");
+        }
+
         self.write("], function (require, exports");
+        for (_, name, _) in &named_deps {
+            if let Some(n) = name {
+                self.write(", ");
+                self.write(n);
+            }
+        }
         for dep in dependencies {
             let name = module_commonjs::sanitize_module_name(dep);
             self.write(", ");
