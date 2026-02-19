@@ -52,6 +52,7 @@ pub trait TypeDatabase {
     fn literal_bigint_with_sign(&self, negative: bool, digits: &str) -> TypeId;
 
     fn union(&self, members: Vec<TypeId>) -> TypeId;
+    fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId;
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId;
     fn union3(&self, first: TypeId, second: TypeId, third: TypeId) -> TypeId;
     fn intersection(&self, members: Vec<TypeId>) -> TypeId;
@@ -192,6 +193,10 @@ impl TypeDatabase for TypeInterner {
 
     fn union(&self, members: Vec<TypeId>) -> TypeId {
         Self::union(self, members)
+    }
+
+    fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId {
+        Self::union_from_sorted_vec(self, flat)
     }
 
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
@@ -1252,6 +1257,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.union(members)
     }
 
+    fn union_from_sorted_vec(&self, flat: Vec<TypeId>) -> TypeId {
+        self.interner.union_from_sorted_vec(flat)
+    }
+
     fn union2(&self, left: TypeId, right: TypeId) -> TypeId {
         self.interner.union2(left, right)
     }
@@ -1791,12 +1800,40 @@ impl QueryDatabase for QueryCache<'_> {
     }
 
     fn get_type_param_variance(&self, def_id: DefId) -> Option<Arc<[Variance]>> {
-        // Check cache first
+        // 1. Check cache first (lock-free read)
+        if let Ok(cache) = self.variance_cache.read()
+            && let Some(cached) = cache.get(&def_id) {
+                return Some(Arc::clone(cached));
+            }
 
-        match self.variance_cache.read() {
-            Ok(cache) => cache.get(&def_id).cloned(),
-            Err(e) => e.into_inner().get(&def_id).cloned(),
+        // 2. Compute variance using the type's body
+        // This requires the database to also be a TypeResolver (which QueryDatabase is)
+        let params = self.get_lazy_type_params(def_id)?;
+        if params.is_empty() {
+            return None;
         }
+
+        let body = self.resolve_lazy(def_id, self.as_type_database())?;
+
+        let mut variances = Vec::with_capacity(params.len());
+        for param in &params {
+            // Compute variance for each type parameter
+            let v = crate::variance::compute_variance(self, body, param.name);
+            variances.push(v);
+        }
+        let result = Arc::from(variances);
+
+        // 3. Store in cache
+        match self.variance_cache.write() {
+            Ok(mut cache) => {
+                cache.insert(def_id, Arc::clone(&result));
+            }
+            Err(e) => {
+                e.into_inner().insert(def_id, Arc::clone(&result));
+            }
+        }
+
+        Some(result)
     }
 
     fn canonical_id(&self, type_id: TypeId) -> TypeId {
