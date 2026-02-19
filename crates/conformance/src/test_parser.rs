@@ -121,7 +121,7 @@ pub fn expand_option_variants(options: &HashMap<String, String>) -> Vec<HashMap<
     // (generate-tsc-cache.rs / generate-tsc-cache-fast.mjs) takes only the
     // first comma-separated value for non-list options like target, so the
     // runner must do the same to produce matching error-code sets.
-    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "jsx", "alwaysstrict"];
+    const MULTI_VALUE_KEYS: &[&str] = &["module", "moduleresolution", "jsx", "alwaysstrict", "nolib"];
 
     let mut variants = vec![options.clone()];
     for key in MULTI_VALUE_KEYS {
