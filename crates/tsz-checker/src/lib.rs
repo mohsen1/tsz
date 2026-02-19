@@ -9,15 +9,12 @@
 //! - `flow_analyzer` - Definite assignment analysis
 //! - `reachability_analyzer` - Unreachable code detection
 //! - `control_flow` - Flow analyzer for type narrowing
-//! - `accessibility` - Accessibility checking (private/protected)
 //! - `error_reporter` - Error reporting utilities
 //!
 //! Note: The thin checker is the unified checker pipeline; `CheckerState`
 //! is an alias to the thin checker.
 
-pub mod accessibility;
 pub mod accessor_checker;
-pub mod array_type;
 pub mod assignability_checker;
 pub mod assignment_checker;
 pub mod call_checker;
@@ -27,7 +24,6 @@ mod class_checker_compat;
 mod class_implements_checker;
 pub mod class_inheritance;
 pub mod class_type;
-pub mod conditional_type;
 pub mod constructor_checker;
 pub mod context;
 mod context_constructors;
@@ -51,22 +47,18 @@ mod flow_analysis_definite;
 mod flow_analysis_usage;
 pub mod flow_analyzer;
 pub mod flow_graph_builder;
-pub mod flow_narrowing;
 pub mod function_type;
 pub mod generic_checker;
 pub mod import_checker;
 mod import_declaration_checker;
 pub mod interface_type;
-pub mod intersection_type;
 pub mod iterable_checker;
-pub mod jsx;
 pub mod jsx_checker;
 pub mod judge_integration;
 pub mod literal_type;
 pub mod module_checker;
 pub mod module_resolution;
 pub mod namespace_checker;
-pub mod nullish;
 pub mod object_type;
 pub mod optional_chain;
 pub mod parameter_checker;
@@ -79,7 +71,6 @@ pub mod reachability_analyzer;
 pub mod reachability_checker;
 pub mod scope_finder;
 pub mod signature_builder;
-pub mod sound_checker;
 pub mod state;
 pub mod state_checking;
 mod state_checking_members;
@@ -100,7 +91,6 @@ pub mod super_checker;
 pub mod symbol_resolver;
 mod symbol_resolver_utils;
 pub mod triple_slash_validator;
-pub mod tuple_type;
 pub mod type_api;
 pub mod type_checking;
 mod type_checking_declarations;
@@ -121,8 +111,6 @@ mod type_computation_call_helpers;
 mod type_computation_complex;
 pub mod type_literal_checker;
 pub mod type_node;
-pub mod type_query;
-pub mod union_type;
 pub mod diagnostics {
     pub use tsz_common::diagnostics::{
         Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,
