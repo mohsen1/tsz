@@ -546,7 +546,11 @@ impl<'a> CheckerState<'a> {
                 if !emitted_strict {
                     use tsz_solver::BinaryOpEvaluator;
                     let evaluator = BinaryOpEvaluator::new(self.ctx.types);
-                    let is_valid = evaluator.is_arithmetic_operand(operand_type);
+                    // When strictNullChecks is off, null/undefined are silently
+                    // assignable to number, so skip arithmetic check for them.
+                    let is_valid = evaluator.is_arithmetic_operand(operand_type)
+                        || (!self.ctx.strict_null_checks()
+                            && (operand_type == TypeId::NULL || operand_type == TypeId::UNDEFINED));
 
                     if !is_valid {
                         arithmetic_ok = false;

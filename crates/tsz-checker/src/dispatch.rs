@@ -626,7 +626,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             // Check if operand is valid for increment/decrement
                             use tsz_solver::BinaryOpEvaluator;
                             let evaluator = BinaryOpEvaluator::new(self.checker.ctx.types);
-                            let is_valid = evaluator.is_arithmetic_operand(operand_type);
+                            let is_valid = evaluator.is_arithmetic_operand(operand_type)
+                                || (!self.checker.ctx.strict_null_checks()
+                                    && (operand_type == TypeId::NULL
+                                        || operand_type == TypeId::UNDEFINED));
 
                             if !is_valid {
                                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
