@@ -66,8 +66,9 @@ impl<'a> CheckerState<'a> {
                         // Report 2729 if:
                         // 1. Target is declared after current property, OR
                         // 2. Target is an abstract property (no initializer in this class)
-                        let should_error =
-                            target_pos > current_pos || self.is_abstract_property(target_idx) || self.has_no_initializer(target_idx);
+                        let should_error = target_pos > current_pos
+                            || self.is_abstract_property(target_idx)
+                            || self.has_no_initializer(target_idx);
                         if should_error {
                             self.error_at_node(
                                 access_node_idx,
@@ -182,7 +183,10 @@ impl<'a> CheckerState<'a> {
                         if target_pos > current_pos {
                             self.error_at_node(
                                 access_node_idx,
-                                &format!("Property '{}' is used before its initialization.", member_name),
+                                &format!(
+                                    "Property '{}' is used before its initialization.",
+                                    member_name
+                                ),
                                 diagnostic_codes::PROPERTY_IS_USED_BEFORE_ITS_INITIALIZATION,
                             );
                         }
@@ -232,7 +236,8 @@ impl<'a> CheckerState<'a> {
                             if ident.escaped_text == class_name {
                                 // Get the property name
                                 if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
-                                    && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
+                                    && let Some(prop_ident) =
+                                        self.ctx.arena.get_identifier(name_node)
                                 {
                                     accesses.push((prop_ident.escaped_text.clone(), node_idx));
                                 }
@@ -240,7 +245,11 @@ impl<'a> CheckerState<'a> {
                         }
                     } else {
                         // Recurse into the expression part
-                        self.collect_static_accesses_recursive(access.expression, class_name, accesses);
+                        self.collect_static_accesses_recursive(
+                            access.expression,
+                            class_name,
+                            accesses,
+                        );
                     }
                 }
             }
@@ -269,17 +278,25 @@ impl<'a> CheckerState<'a> {
                 // For JSX expressions, recurse into the expression
                 if let Some(jsx_expr) = self.ctx.arena.get_jsx_expression(node) {
                     if !jsx_expr.expression.is_none() {
-                        self.collect_static_accesses_recursive(jsx_expr.expression, class_name, accesses);
+                        self.collect_static_accesses_recursive(
+                            jsx_expr.expression,
+                            class_name,
+                            accesses,
+                        );
                     }
                 }
             }
-            k if k == syntax_kind_ext::JSX_OPENING_ELEMENT || k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => {
+            k if k == syntax_kind_ext::JSX_OPENING_ELEMENT
+                || k == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT =>
+            {
                 // Check JSX element attributes
                 if let Some(jsx_elem) = self.ctx.arena.get_jsx_opening(node) {
                     if let Some(attrs_node) = self.ctx.arena.get(jsx_elem.attributes) {
                         if let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) {
                             for &attr_idx in &attrs.properties.nodes {
-                                self.collect_static_accesses_recursive(attr_idx, class_name, accesses);
+                                self.collect_static_accesses_recursive(
+                                    attr_idx, class_name, accesses,
+                                );
                             }
                         }
                     }
@@ -289,7 +306,11 @@ impl<'a> CheckerState<'a> {
                 // Check JSX attribute initializer
                 if let Some(attr) = self.ctx.arena.get_jsx_attribute(node) {
                     if !attr.initializer.is_none() {
-                        self.collect_static_accesses_recursive(attr.initializer, class_name, accesses);
+                        self.collect_static_accesses_recursive(
+                            attr.initializer,
+                            class_name,
+                            accesses,
+                        );
                     }
                 }
             }
@@ -317,12 +338,18 @@ impl<'a> CheckerState<'a> {
                     if let Some(opening_node) = self.ctx.arena.get(jsx_elem.opening_element) {
                         if let Some(opening) = self.ctx.arena.get_jsx_opening(opening_node) {
                             // Recursively check tag name (might be C.x)
-                            self.collect_static_accesses_recursive(opening.tag_name, class_name, accesses);
+                            self.collect_static_accesses_recursive(
+                                opening.tag_name,
+                                class_name,
+                                accesses,
+                            );
                             // Also check attributes
                             if let Some(attrs_node) = self.ctx.arena.get(opening.attributes) {
                                 if let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) {
                                     for &attr_idx in &attrs.properties.nodes {
-                                        self.collect_static_accesses_recursive(attr_idx, class_name, accesses);
+                                        self.collect_static_accesses_recursive(
+                                            attr_idx, class_name, accesses,
+                                        );
                                     }
                                 }
                             }
@@ -331,7 +358,11 @@ impl<'a> CheckerState<'a> {
                     if let Some(closing_node) = self.ctx.arena.get(jsx_elem.closing_element) {
                         if let Some(closing) = self.ctx.arena.get_jsx_closing(closing_node) {
                             // Also check closing tag name
-                            self.collect_static_accesses_recursive(closing.tag_name, class_name, accesses);
+                            self.collect_static_accesses_recursive(
+                                closing.tag_name,
+                                class_name,
+                                accesses,
+                            );
                         }
                     }
                 }
@@ -342,7 +373,6 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
 
     /// Collect all `this.propertyName` accesses in an expression.
     ///
