@@ -2273,6 +2273,17 @@ impl<'a> Printer<'a> {
                 self.emit_binding_element(node);
             }
 
+            // ExpressionWithTypeArguments / instantiation expression:
+            // Strip type arguments and emit just the expression, wrapped in
+            // parentheses to preserve semantics (e.g. `obj.fn<T>` → `(obj.fn)`).
+            k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                if let Some(data) = self.arena.get_expr_type_args(node) {
+                    self.write("(");
+                    self.emit(data.expression);
+                    self.write(")");
+                }
+            }
+
             // Default: do nothing (or handle other cases as needed)
             _ => {}
         }
