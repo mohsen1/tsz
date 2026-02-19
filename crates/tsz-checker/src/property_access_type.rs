@@ -43,6 +43,11 @@ impl<'a> CheckerState<'a> {
             let _ = self.get_type_of_node(access.expression);
             return TypeId::ERROR;
         };
+        let property_name_for_probe = self
+            .ctx
+            .arena
+            .get_identifier(name_node)
+            .map(|ident| ident.escaped_text.clone());
         if let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text.is_empty()
         {
@@ -104,14 +109,65 @@ impl<'a> CheckerState<'a> {
         // narrowing on the object expression. E.g., for `target.info.a_count = 3` inside
         // `if (target instanceof A2)`, `target` must narrow to A2 so we can resolve `info`.
         // Only the final property access result should skip narrowing.
+        //
+        // Hot path optimization: in literal equality comparisons (`obj.prop === "x"`),
+        // probing the property on the non-flow object type is often enough. If the
+        // property is found without flow narrowing, keep that cheaper object type and
+        // avoid an additional flow walk on the object expression.
+        let skip_result_flow =
+            !self.ctx.skip_flow_narrowing && self.should_skip_property_result_flow_narrowing(idx);
+        let skip_optional_base_flow = !self.ctx.skip_flow_narrowing
+            && access.question_dot_token
+            && self.should_skip_property_result_flow_narrowing_for_result(idx);
         let prev_skip = self.ctx.skip_flow_narrowing;
-        self.ctx.skip_flow_narrowing = false;
-        let original_object_type = self.get_type_of_node(access.expression);
-        self.ctx.skip_flow_narrowing = prev_skip;
 
-        // Evaluate Application types to resolve generic type aliases/interfaces
-        // But preserve original for error messages to maintain nominal identity (e.g., D<string>)
-        let object_type = self.evaluate_application_type(original_object_type);
+        let original_object_type = if skip_optional_base_flow {
+            self.ctx.skip_flow_narrowing = true;
+            let object_type_no_flow = self.get_type_of_node(access.expression);
+            self.ctx.skip_flow_narrowing = prev_skip;
+            object_type_no_flow
+        } else if skip_result_flow {
+            self.ctx.skip_flow_narrowing = true;
+            let object_type_no_flow = self.get_type_of_node(access.expression);
+            self.ctx.skip_flow_narrowing = prev_skip;
+
+            let can_use_no_flow = if let Some(property_name) = property_name_for_probe.as_deref() {
+                let evaluated_no_flow = self.evaluate_application_type(object_type_no_flow);
+                let resolved_no_flow = self.resolve_type_for_property_access(evaluated_no_flow);
+                !matches!(
+                    self.resolve_property_access_with_env(resolved_no_flow, property_name),
+                    PropertyAccessResult::PropertyNotFound { .. }
+                )
+            } else {
+                false
+            };
+
+            if can_use_no_flow {
+                object_type_no_flow
+            } else {
+                self.ctx.skip_flow_narrowing = false;
+                let object_type_with_flow = self.get_type_of_node(access.expression);
+                self.ctx.skip_flow_narrowing = prev_skip;
+                object_type_with_flow
+            }
+        } else {
+            self.ctx.skip_flow_narrowing = false;
+            let object_type_with_flow = self.get_type_of_node(access.expression);
+            self.ctx.skip_flow_narrowing = prev_skip;
+            object_type_with_flow
+        };
+
+        // Evaluate Application types to resolve generic type aliases/interfaces.
+        // But preserve original for error messages to maintain nominal identity (e.g., D<string>).
+        //
+        // For `obj?.prop ?? fallback`, defer this work: the optional-chain fast path
+        // below will resolve property access through `resolve_type_for_property_access`,
+        // and eagerly evaluating applications here is redundant on hot paths.
+        let object_type = if access.question_dot_token && skip_optional_base_flow {
+            original_object_type
+        } else {
+            self.evaluate_application_type(original_object_type)
+        };
 
         // Handle optional chain continuations: for `o?.b.c`, when processing `.c`,
         // the object type from `o?.b` includes `undefined` from the optional chain.
@@ -126,6 +182,79 @@ impl<'a> CheckerState<'a> {
         } else {
             object_type
         };
+
+        // Fast path for optional chaining on non-class receivers when the
+        // property resolves successfully without diagnostics.
+        //
+        // This avoids the full property-access diagnostic pipeline for common
+        // patterns like `opts?.timeout` / `opts?.retries` in hot call sites.
+        if access.question_dot_token
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && !self.is_super_expression(access.expression)
+        {
+            let property_name = &ident.escaped_text;
+            let (non_nullish_base, base_nullish) = self.split_nullish_type(object_type);
+            let Some(non_nullish_base) = non_nullish_base else {
+                return TypeId::UNDEFINED;
+            };
+
+            // Keep class/private/protected semantics on the full path.
+            if self
+                .resolve_class_for_access(access.expression, non_nullish_base)
+                .is_none()
+            {
+                let resolved_base = self.resolve_type_for_property_access(non_nullish_base);
+                let fast_result = self.ctx.types.resolve_property_access_with_options(
+                    resolved_base,
+                    property_name,
+                    self.ctx.compiler_options.no_unchecked_indexed_access,
+                );
+                let result = if matches!(
+                    fast_result,
+                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
+                ) {
+                    // Fallback keeps environment-aware behavior for mapped/application
+                    // cases when the direct solver lookup cannot resolve.
+                    self.resolve_property_access_with_env(resolved_base, property_name)
+                } else {
+                    fast_result
+                };
+                match result {
+                    PropertyAccessResult::Success {
+                        type_id,
+                        write_type,
+                        ..
+                    } => {
+                        let mut result_type = if self.ctx.skip_flow_narrowing {
+                            write_type.unwrap_or(type_id)
+                        } else {
+                            type_id
+                        };
+                        if base_nullish.is_some() {
+                            result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                        }
+                        return if !self.ctx.skip_flow_narrowing
+                            && self.should_skip_property_result_flow_narrowing_for_result(idx)
+                        {
+                            result_type
+                        } else {
+                            self.apply_flow_narrowing(idx, result_type)
+                        };
+                    }
+                    PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                        let mut result_type = property_type.unwrap_or(TypeId::ERROR);
+                        if base_nullish.is_some() {
+                            result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
+                        }
+                        return self.apply_flow_narrowing(idx, result_type);
+                    }
+                    PropertyAccessResult::PropertyNotFound { .. }
+                    | PropertyAccessResult::IsUnknown => {
+                        // Fall through to full diagnostic path.
+                    }
+                }
+            }
+        }
 
         if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
             return self.get_type_of_private_property_access(
@@ -342,7 +471,7 @@ impl<'a> CheckerState<'a> {
                         prop_type
                     };
                     if !self.ctx.skip_flow_narrowing
-                        && self.should_skip_property_result_flow_narrowing(idx)
+                        && self.should_skip_property_result_flow_narrowing_for_result(idx)
                     {
                         effective_type
                     } else {
@@ -681,6 +810,49 @@ impl<'a> CheckerState<'a> {
                 || k == SyntaxKind::FalseKeyword as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
         )
+    }
+
+    /// Additional skip conditions for applying flow narrowing to property
+    /// access results.
+    ///
+    /// For `obj?.prop ?? fallback`, flow narrowing the left operand result is
+    /// generally redundant and adds overhead in hot optional-chain paths.
+    fn should_skip_property_result_flow_narrowing_for_result(&self, idx: NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        if self.should_skip_property_result_flow_narrowing(idx) {
+            return true;
+        }
+
+        let Some(ext) = self.ctx.arena.get_extended(idx) else {
+            return false;
+        };
+        let parent = ext.parent;
+        if parent.is_none() {
+            return false;
+        }
+
+        let Some(parent_node) = self.ctx.arena.get(parent) else {
+            return false;
+        };
+        if parent_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+            return false;
+        };
+
+        if binary.operator_token != SyntaxKind::QuestionQuestionToken as u16 || binary.left != idx {
+            return false;
+        }
+
+        let Some(access_node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(access_node) else {
+            return false;
+        };
+        access.question_dot_token
     }
 
     fn resolve_array_global_augmentation_property(

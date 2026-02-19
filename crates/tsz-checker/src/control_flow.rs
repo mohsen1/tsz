@@ -32,6 +32,7 @@ use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeId, TypePredica
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
+type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 
 // =============================================================================
 // FlowGraph
@@ -112,6 +113,9 @@ pub struct FlowAnalyzer<'a> {
     /// Key: (`node_a`, `node_b`) -> whether references match (same symbol/property chain).
     /// This avoids O(N²) repeated comparisons during flow analysis with many variables.
     pub(crate) reference_match_cache: ReferenceMatchCache,
+    /// Cache for `reference_symbol` lookups.
+    /// Key: `node` -> resolved symbol (or `None` when not resolvable as a symbol).
+    pub(crate) reference_symbol_cache: ReferenceSymbolCache,
     /// Optional shared reference-match cache from the checker context.
     /// When provided, this lets multiple `FlowAnalyzer` instances reuse reference
     /// equivalence results within the same file check.
@@ -161,6 +165,7 @@ impl<'a> FlowAnalyzer<'a> {
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             shared_switch_reference_cache: None,
             reference_match_cache: RefCell::new(FxHashMap::default()),
+            reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
@@ -190,6 +195,7 @@ impl<'a> FlowAnalyzer<'a> {
             switch_reference_cache: RefCell::new(FxHashMap::default()),
             shared_switch_reference_cache: None,
             reference_match_cache: RefCell::new(FxHashMap::default()),
+            reference_symbol_cache: RefCell::new(FxHashMap::default()),
             shared_reference_match_cache: None,
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
