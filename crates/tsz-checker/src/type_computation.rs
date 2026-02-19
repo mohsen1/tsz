@@ -212,13 +212,19 @@ impl<'a> CheckerState<'a> {
         };
 
         if array.elements.nodes.is_empty() {
-            // Empty array literal: infer from context or use never[]
+            // Empty array literal: infer from context or use never[]/any[]
             // TypeScript uses "evolving array types" where [] starts as never[] and widens
             // via control flow.
             if let Some(contextual) = self.ctx.contextual_type {
                 // Resolve lazy types (type aliases) before using the contextual type
                 let resolved = self.resolve_type_for_property_access(contextual);
                 return self.resolve_lazy_type(resolved);
+            }
+            // When noImplicitAny is off, empty array literals without contextual type
+            // are typed as any[] (matching tsc behavior). With noImplicitAny on, use never[]
+            // which is the "evolving array type" starting point.
+            if !self.ctx.no_implicit_any() {
+                return factory.array(TypeId::ANY);
             }
             return factory.array(TypeId::NEVER);
         }
