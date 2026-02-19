@@ -330,8 +330,12 @@ impl<'a> CheckerState<'a> {
             }
         };
 
-                                   if !self.is_assignable_to(evaluated_rhs_type, declaring_type) {            let shadowed = symbols.iter().skip(1).any(|sym_id| {                self.private_member_declaring_type(*sym_id)
-                                                                                   .is_some_and(|ty| self.is_assignable_to(evaluated_rhs_type, ty))            });            if shadowed {
+        if !self.is_assignable_to(evaluated_rhs_type, declaring_type) {
+            let shadowed = symbols.iter().skip(1).any(|sym_id| {
+                self.private_member_declaring_type(*sym_id)
+                    .is_some_and(|ty| self.is_assignable_to(evaluated_rhs_type, ty))
+            });
+            if shadowed {
                 return;
             }
 
