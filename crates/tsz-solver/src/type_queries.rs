@@ -976,6 +976,26 @@ pub fn get_tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> O
     Some(db.union(members))
 }
 
+/// Compute the `keyof` type for an object shape.
+///
+/// Returns the union of string literal types for all property names in the object.
+/// Returns `TypeId::NEVER` if the object has no properties, or `None` if the type
+/// is not an object type.
+///
+/// This is the type-computation portion of `keyof T` when T is an object.
+pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let shape = get_object_shape(db, type_id)?;
+    if shape.properties.is_empty() {
+        return Some(TypeId::NEVER);
+    }
+    let key_types: Vec<TypeId> = shape
+        .properties
+        .iter()
+        .map(|p| db.literal_string_atom(p.name))
+        .collect();
+    Some(crate::utils::union_or_single(db, key_types))
+}
+
 /// Get the applicable contextual type for an array literal from a (possibly union) type.
 ///
 /// When the contextual type is a union like `[number] | string`, this extracts only
