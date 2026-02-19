@@ -264,6 +264,21 @@ impl<'a> Printer<'a> {
         result
     }
 
+    /// Skip (suppress) all comments within a source range.
+    /// Used to consume comments inside erased syntax regions like type parameter lists.
+    pub(super) fn skip_comments_in_range(&mut self, start: u32, end: u32) {
+        while self.comment_emit_idx < self.all_comments.len() {
+            let c = &self.all_comments[self.comment_emit_idx];
+            if c.pos >= start && c.end <= end {
+                self.comment_emit_idx += 1;
+            } else if c.pos >= end {
+                break;
+            } else {
+                self.comment_emit_idx += 1;
+            }
+        }
+    }
+
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
     /// Advances `comment_emit_idx` past any comments whose end position falls within the node's range,
     /// including trailing same-line comments (e.g. `// ERROR` after a constructor overload).
