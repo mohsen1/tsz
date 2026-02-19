@@ -191,3 +191,8 @@ Skill usage rules:
 4. Does the path resolve `Lazy(DefId)` via `TypeEnvironment` before relation checks?
 5. Is traversal/precondition discovery delegated to solver visitors (no checker type recursion)?
 6. Is the diagnostic generated from solver failure reason instead of checker-local heuristics?
+
+## 24) Local Setup Requirements
+- Run `./scripts/setup.sh` once per workspace and keep `scripts/githooks` active.
+- This ensures `pre-commit` checks run locally before commits.
+- If hooks are not installed, local lint guardrails can be bypassed accidentally.
