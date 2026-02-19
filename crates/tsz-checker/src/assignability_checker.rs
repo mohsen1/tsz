@@ -1238,7 +1238,7 @@ impl<'a> CheckerState<'a> {
 
     /// Try checking redeclaration compatibility using enum object shape substitution.
     ///
-    /// When one type is a nominal enum type (TypeData::Enum) and the other is a
+    /// When one type is a nominal enum type (`TypeData::Enum`) and the other is a
     /// structural non-enum type, attempts to replace the enum type with its
     /// "typeof enum" object shape and retries the compatibility check.
     ///
