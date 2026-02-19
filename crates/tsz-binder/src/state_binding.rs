@@ -844,7 +844,8 @@ impl BinderState {
                     && let Some(name) = Self::get_identifier_name(arena, clause.name)
                 {
                     // Use import_clause node as the declaration node
-                    let sym_id = self.declare_symbol(name, symbol_flags::ALIAS, import.import_clause, false);
+                    let sym_id =
+                        self.declare_symbol(name, symbol_flags::ALIAS, import.import_clause, false);
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         sym.is_type_only = clause_type_only;
                         // Track module for cross-file resolution
@@ -886,8 +887,12 @@ impl BinderState {
                             && let Some(name) = Self::get_identifier_name(arena, named.name)
                         {
                             // Use named_bindings (NamespaceImport) as the declaration node
-                            let sym_id =
-                                self.declare_symbol(name, symbol_flags::ALIAS, clause.named_bindings, false);
+                            let sym_id = self.declare_symbol(
+                                name,
+                                symbol_flags::ALIAS,
+                                clause.named_bindings,
+                                false,
+                            );
                             if let Some(sym) = self.symbols.get_mut(sym_id) {
                                 sym.is_type_only = clause_type_only;
                                 // Track module for cross-file resolution

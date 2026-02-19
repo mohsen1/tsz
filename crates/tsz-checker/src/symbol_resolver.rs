@@ -1439,7 +1439,7 @@ impl<'a> CheckerState<'a> {
     /// Get the text representation of an entity name node.
     ///
     /// Get the text representation of an expression (simple chains only).
-    /// Handles Identifiers and PropertyAccessExpressions (e.g., `a.b.c`).
+    /// Handles Identifiers and `PropertyAccessExpressions` (e.g., `a.b.c`).
     pub(crate) fn expression_text(&self, idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(idx)?;
         match node.kind {
