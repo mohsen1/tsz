@@ -29335,7 +29335,6 @@ fn test_tier_2_type_checker_accuracy_fixes() {
 /// fully implemented. The `is_in_namespace_context` function doesn't correctly traverse
 /// the AST to detect when a node is inside a namespace.
 #[test]
-#[ignore = "Namespace context detection through AST traversal not fully implemented"]
 fn test_is_in_namespace_context_ast_traversal() {
     use crate::parser::ParserState;
     use crate::parser::syntax_kind_ext;
@@ -29393,10 +29392,20 @@ namespace MyNamespace {
         .nodes
         .iter()
         .copied()
-        .find(|&idx| {
-            arena
-                .get(idx)
-                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+        .find_map(|idx| {
+            let node = arena.get(idx)?;
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                return Some(idx);
+            }
+            // Look inside EXPORT_DECLARATION for the inner function
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let export_data = arena.get_export_decl(node)?;
+                let inner = arena.get(export_data.export_clause)?;
+                if inner.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    return Some(export_data.export_clause);
+                }
+            }
+            None
         })
         .expect("function declaration inside namespace");
 
@@ -29503,10 +29512,19 @@ module MyModule {
         .nodes
         .iter()
         .copied()
-        .find(|&idx| {
-            arena3
-                .get(idx)
-                .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+        .find_map(|idx| {
+            let node = arena3.get(idx)?;
+            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                return Some(idx);
+            }
+            if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                let export_data = arena3.get_export_decl(node)?;
+                let inner = arena3.get(export_data.export_clause)?;
+                if inner.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+                    return Some(export_data.export_clause);
+                }
+            }
+            None
         })
         .expect("function declaration inside module");
 
