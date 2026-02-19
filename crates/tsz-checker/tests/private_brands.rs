@@ -168,17 +168,17 @@ fn test_private_methods_create_brands() {
 }
 
 /// Test that assigning object literal with extra property to class with private member.
-/// Object literals can't have private members, so this should fail.
+/// Object literals can't have private members, so this should fail with TS2353 (excess property).
 #[test]
-#[ignore = "TODO: Object literal extra property check with private class fields"]
 fn test_object_literal_extra_property_to_class_with_private() {
-    // TS2322: Object literal can't match private member
-    test_private_brands(
+    // TSC emits TS2353: "Object literal may only specify known properties, and 'y' does not exist in type 'A'."
+    test_private_brands_with_codes(
         r"
         class A { private x: number = 1; }
         let a: A = { x: 1, y: 2 };
         ",
         1,
+        &[2353],
     );
 }
 
