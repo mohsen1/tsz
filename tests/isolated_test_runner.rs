@@ -172,8 +172,7 @@ where
     // Use the existing test_harness infrastructure
     let completed = Arc::new(AtomicBool::new(false));
     let completed_clone = completed.clone();
-    let should_terminate = Arc::new(AtomicBool::new(false));
-    let should_terminate_clone = should_terminate.clone();
+    let should_terminate_clone = Arc::new(AtomicBool::new(false));
 
     let handle = thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -192,7 +191,7 @@ where
 
     let monitor_handle = thread::spawn({
         let completed = completed.clone();
-        let should_terminate = should_terminate_clone.clone();
+        let should_terminate = should_terminate_clone;
         let check_interval = Duration::from_millis(100);
 
         move || {

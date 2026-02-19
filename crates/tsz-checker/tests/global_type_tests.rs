@@ -426,8 +426,8 @@ class C {
 
     let lib_contexts = vec![
         LibContext {
-            arena: arena_a.clone(),
-            binder: binder_a.clone(),
+            arena: arena_a,
+            binder: binder_a,
         },
         LibContext {
             arena: arena_b.clone(),
