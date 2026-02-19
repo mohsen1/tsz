@@ -1193,9 +1193,12 @@ impl<'a> CheckerState<'a> {
 
                     // Use raw_declared_type (before contextual override) for TS2403.
                     // A bare `var y;` has declared type `any`.
-                    // We skip the check if the current declaration is an implicit `any` (no annotation),
-                    // because `var x: string; var x;` is valid in TypeScript.
-                    let is_implicit_any = var_decl.type_annotation.is_none();
+                    // We skip the check if the current declaration is an implicit `any` (no annotation
+                    // AND no initializer), because `var x: string; var x;` is valid in TypeScript.
+                    // But `var x: string; var x = 42;` should still error since the initializer
+                    // infers a concrete type.
+                    let is_implicit_any =
+                        var_decl.type_annotation.is_none() && var_decl.initializer.is_none();
 
                     if !is_mergeable_declaration
                         && !is_implicit_any
@@ -1264,8 +1267,9 @@ impl<'a> CheckerState<'a> {
                                         CheckerState::leave_cross_arena_delegation();
 
                                         // Check compatibility
-                                        // Skip if current is implicit any
-                                        let is_implicit_any = var_decl.type_annotation.is_none();
+                                        // Skip if current is implicit any (bare `var x;`)
+                                        let is_implicit_any = var_decl.type_annotation.is_none()
+                                            && var_decl.initializer.is_none();
                                         if !is_implicit_any
                                             && !self
                                                 .are_var_decl_types_compatible(lib_type, final_type)
@@ -1312,7 +1316,8 @@ impl<'a> CheckerState<'a> {
                                         false
                                     };
 
-                                let is_implicit_any = var_decl.type_annotation.is_none();
+                                let is_implicit_any = var_decl.type_annotation.is_none()
+                                    && var_decl.initializer.is_none();
                                 if !is_other_mergeable
                                     && !is_implicit_any
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
