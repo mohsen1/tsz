@@ -49,6 +49,8 @@ pub mod recursion;
 pub mod relation_queries;
 pub mod sound;
 mod subtype;
+mod subtype_explain;
+mod subtype_overlap;
 mod subtype_rules;
 pub mod tracer;
 mod type_factory;
