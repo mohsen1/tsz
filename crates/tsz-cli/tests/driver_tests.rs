@@ -3622,19 +3622,7 @@ fn compile_generic_utility_library_type_utilities() {
     write_file(
         &base.join("src/types.ts"),
         r#"
-declare const Object: {
-    freeze<T>(o: T): T;
-    keys(o: object): string[];
-};
-
-// Declare built-in utility types
-type Readonly<T> = {
-    readonly [P in keyof T]: T[P];
-};
-
-type Partial<T> = {
-    [P in keyof T]?: T[P];
-};
+// Note: Object, Readonly, Partial are provided by lib.d.ts
 
 // Type-level utilities (erased at runtime)
 export type DeepReadonly<T> = {
