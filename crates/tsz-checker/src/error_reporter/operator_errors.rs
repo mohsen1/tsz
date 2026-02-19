@@ -360,8 +360,11 @@ impl<'a> CheckerState<'a> {
         if requires_numeric_operands {
             // For arithmetic and bitwise operators, emit specific left/right errors (TS2362, TS2363)
             // Skip operands that already got TS18050 (null/undefined with strictNullChecks)
+            // tsc suppresses TS2362/TS2363 when TS18050 was already emitted for the operand.
             let mut emitted_specific_error = emitted_nullish_error;
-            if !left_is_valid_arithmetic && let Some(loc) = self.get_source_location(left_idx) {
+            if !(left_is_valid_arithmetic || left_is_nullish && should_emit_nullish_error)
+                && let Some(loc) = self.get_source_location(left_idx)
+            {
                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                 self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
@@ -374,7 +377,9 @@ impl<'a> CheckerState<'a> {
                     });
                 emitted_specific_error = true;
             }
-            if !right_is_valid_arithmetic && let Some(loc) = self.get_source_location(right_idx) {
+            if !(right_is_valid_arithmetic || right_is_nullish && should_emit_nullish_error)
+                && let Some(loc) = self.get_source_location(right_idx)
+            {
                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
                 self.ctx.diagnostics.push(Diagnostic {
                         code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
