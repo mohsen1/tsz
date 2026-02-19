@@ -10482,7 +10482,6 @@ type Alias = Foo.Bar;
 }
 
 #[test]
-#[ignore = "TS2434 (namespace declaration before class/function) not yet implemented"]
 fn test_checker_namespace_merges_with_class_exports_reverse_order() {
     use crate::parser::ParserState;
     use tsz_solver::TypeData;
@@ -10515,18 +10514,12 @@ type Alias = Foo.Bar;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    // tsc emits TS2434: "A namespace declaration cannot be located prior to a class or function
-    // with which it is merged." when namespace appears before the class.
-    let ts2434: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2434)
-        .collect();
-    assert_eq!(
-        ts2434.len(),
-        1,
-        "Expected exactly one TS2434, got diagnostics: {:?}",
+    // tsc does NOT emit TS2434 for non-instantiated namespaces (interfaces/types only).
+    // Only instantiated namespaces (with runtime members like variables, functions, classes)
+    // trigger TS2434 when they precede the class/function they merge with.
+    assert!(
+        checker.ctx.diagnostics.iter().all(|d| d.code != 2434),
+        "Non-instantiated namespace should NOT trigger TS2434: {:?}",
         checker.ctx.diagnostics
     );
 
@@ -10607,7 +10600,6 @@ const direct = Foo.value;
 ///
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "TS2434 (namespace declaration before class/function) not yet implemented"]
 fn test_checker_namespace_merges_with_class_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -10830,7 +10822,6 @@ const direct = Merge.extra;
 ///
 /// NOTE: Previously ignored due to wrong type expectation.
 #[test]
-#[ignore = "TS2434 (namespace declaration before class/function) not yet implemented"]
 fn test_checker_namespace_merges_with_function_value_exports_reverse_order() {
     use crate::parser::ParserState;
 
@@ -10951,7 +10942,6 @@ type Alias = Merge.Extra;
 }
 
 #[test]
-#[ignore = "TS2434 (namespace declaration before class/function) not yet implemented"]
 fn test_checker_namespace_merges_with_function_type_exports_reverse_order() {
     use crate::parser::ParserState;
     use tsz_solver::TypeData;
@@ -10984,17 +10974,10 @@ type Alias = Merge.Extra;
     );
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
-    // tsc emits TS2434 when namespace appears before the function it merges with
-    let ts2434: Vec<_> = checker
-        .ctx
-        .diagnostics
-        .iter()
-        .filter(|d| d.code == 2434)
-        .collect();
-    assert_eq!(
-        ts2434.len(),
-        1,
-        "Expected exactly one TS2434, got diagnostics: {:?}",
+    // tsc does NOT emit TS2434 for non-instantiated namespaces (interfaces/types only).
+    assert!(
+        checker.ctx.diagnostics.iter().all(|d| d.code != 2434),
+        "Non-instantiated namespace should NOT trigger TS2434: {:?}",
         checker.ctx.diagnostics
     );
 
