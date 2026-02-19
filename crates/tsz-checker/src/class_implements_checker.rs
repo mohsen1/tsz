@@ -530,11 +530,12 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Report error for missing members
-                    let diagnostic_code = if interface_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
-                    } else {
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    };
+                    let diagnostic_code =
+                        if interface_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+                        } else {
+                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                        };
 
                     if !missing_members.is_empty() {
                         let missing_list = missing_members

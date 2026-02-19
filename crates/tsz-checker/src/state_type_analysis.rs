@@ -1036,7 +1036,9 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         default_type,
                     )
-                                                                                   && !self.is_assignable_to(default_type, constraint_type)                {                    let type_str = self.format_type(default_type);
+                    && !self.is_assignable_to(default_type, constraint_type)
+                {
+                    let type_str = self.format_type(default_type);
                     let constraint_str = self.format_type(constraint_type);
                     self.error_at_node_msg(
                         data.default,

@@ -154,7 +154,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Use subtype checking for more complex cases
-                                   self.is_assignable_to(enum_type, target_type)    }
+        self.is_assignable_to(enum_type, target_type)
+    }
     // =========================================================================
     // Enum Expression Utilities
     // =========================================================================

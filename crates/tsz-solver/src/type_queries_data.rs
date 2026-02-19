@@ -371,6 +371,7 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     let key_types: Vec<TypeId> = shape
         .properties
         .iter()
+        .filter(|p| p.visibility == crate::Visibility::Public)
         .map(|p| db.literal_string_atom(p.name))
         .collect();
     Some(crate::utils::union_or_single(db, key_types))
