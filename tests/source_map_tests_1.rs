@@ -17661,7 +17661,7 @@ fn test_sourcemap_parity_for_in() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 24;
+    const EXPECTED_MISSING: usize = 20;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
