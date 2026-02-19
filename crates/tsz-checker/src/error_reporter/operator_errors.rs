@@ -331,10 +331,15 @@ impl<'a> CheckerState<'a> {
         // This properly handles number, bigint, any, and enum types (unions of number literals)
         // Note: evaluator was already created above for symbol checking
         // Skip arithmetic checks for symbol operands (we already emitted TS2469)
-        let left_is_valid_arithmetic =
-            !left_is_symbol && evaluator.is_arithmetic_operand(eval_left);
-        let right_is_valid_arithmetic =
-            !right_is_symbol && evaluator.is_arithmetic_operand(eval_right);
+        // When strictNullChecks is off, null/undefined are implicitly assignable to
+        // number, so they should not trigger arithmetic errors.
+        let snc_off = !self.ctx.compiler_options.strict_null_checks;
+        let left_is_valid_arithmetic = !left_is_symbol
+            && (evaluator.is_arithmetic_operand(eval_left)
+                || (snc_off && (eval_left == TypeId::NULL || eval_left == TypeId::UNDEFINED)));
+        let right_is_valid_arithmetic = !right_is_symbol
+            && (evaluator.is_arithmetic_operand(eval_right)
+                || (snc_off && (eval_right == TypeId::NULL || eval_right == TypeId::UNDEFINED)));
 
         // For + operator, TSC emits TS2365 ("Operator '+' cannot be applied to types"),
         // never TS2362/TS2363. But if null/undefined operands already got TS18050,
