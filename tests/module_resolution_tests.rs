@@ -101,7 +101,7 @@ fn check_with_module_exports(
 
 /// Helper similar to check_with_module_exports but allows specifying custom source
 /// for each module. This is useful for testing with class exports, namespace patterns, etc.
-fn check_with_module_sources(
+pub fn check_with_module_sources(
     source: &str,
     file_name: &str,
     module_sources: Vec<(&str, &str)>,
@@ -247,7 +247,7 @@ fn check_single_file(source: &str, file_name: &str) -> Vec<(u32, String)> {
         .collect()
 }
 
-fn has_error_code(diagnostics: &[(u32, String)], code: u32) -> bool {
+pub fn has_error_code(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
 }
 
