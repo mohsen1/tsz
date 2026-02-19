@@ -247,10 +247,7 @@ impl<'a> CheckerState<'a> {
                 return member_type;
             }
 
-            // Not found - report TS2694 unless this is a namespace/module symbol
-            if symbol.flags & symbol_flags::MODULE != 0 {
-                return TypeId::ERROR;
-            }
+            // Not found - report TS2694
             let namespace_name = self
                 .entity_name_text(qn.left)
                 .unwrap_or_else(|| symbol.escaped_name.clone());

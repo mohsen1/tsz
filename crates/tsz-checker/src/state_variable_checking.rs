@@ -445,33 +445,35 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                 } else if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                    && let Some(access) = self.ctx.arena.get_access_expr(expr_node) {
-                        // Check expression
-                        if let Some(node) = self.ctx.arena.get(access.expression)
-                            && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                        {
-                            referenced_sym = self
-                                .ctx
-                                .binder
-                                .get_node_symbol(access.expression)
-                                .or_else(|| {
-                                    self.ctx
-                                        .binder
-                                        .resolve_identifier(self.ctx.arena, access.expression)
-                                });
-                            error_node = access.expression;
-                        }
+                    && let Some(access) = self.ctx.arena.get_access_expr(expr_node)
+                {
+                    // Check expression
+                    if let Some(node) = self.ctx.arena.get(access.expression)
+                        && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                    {
+                        referenced_sym = self
+                            .ctx
+                            .binder
+                            .get_node_symbol(access.expression)
+                            .or_else(|| {
+                                self.ctx
+                                    .binder
+                                    .resolve_identifier(self.ctx.arena, access.expression)
+                            });
+                        error_node = access.expression;
                     }
+                }
 
                 if let Some(sym) = referenced_sym
-                    && sym == target_sym {
-                        // Found a reference to the target symbol!
-                        // If we are in a lazy context AND it's a bare identifier, it's safe.
-                        if current_lazy && is_bare_identifier {
-                            return None;
-                        }
-                        return Some(error_node);
+                    && sym == target_sym
+                {
+                    // Found a reference to the target symbol!
+                    // If we are in a lazy context AND it's a bare identifier, it's safe.
+                    if current_lazy && is_bare_identifier {
+                        return None;
                     }
+                    return Some(error_node);
+                }
 
                 // Also check type arguments if any (always recursive)
                 if let Some(ref args) = query.type_arguments {
@@ -496,26 +498,27 @@ impl<'a> CheckerState<'a> {
         ) {
             if let Some(accessor) = self.ctx.arena.get_accessor(node)
                 && !accessor.type_annotation.is_none()
-                    && let Some(found) = self.find_circular_reference_in_type_node(
-                        accessor.type_annotation,
-                        target_sym,
-                        current_lazy,
-                    ) {
-                        return Some(found);
-                    }
+                && let Some(found) = self.find_circular_reference_in_type_node(
+                    accessor.type_annotation,
+                    target_sym,
+                    current_lazy,
+                )
+            {
+                return Some(found);
+            }
         } else if matches!(
             node.kind,
             syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::PROPERTY_DECLARATION
-        )
-            && let Some(prop) = self.ctx.arena.get_property_decl(node)
-                && !prop.type_annotation.is_none()
-                    && let Some(found) = self.find_circular_reference_in_type_node(
-                        prop.type_annotation,
-                        target_sym,
-                        current_lazy,
-                    ) {
-                        return Some(found);
-                    }
+        ) && let Some(prop) = self.ctx.arena.get_property_decl(node)
+            && !prop.type_annotation.is_none()
+            && let Some(found) = self.find_circular_reference_in_type_node(
+                prop.type_annotation,
+                target_sym,
+                current_lazy,
+            )
+        {
+            return Some(found);
+        }
 
         // Recursive descent
         for child in self.ctx.arena.get_children(type_idx) {
