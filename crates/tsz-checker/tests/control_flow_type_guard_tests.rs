@@ -145,12 +145,16 @@ function beastFoo(beast: Object) {
     checker.check_source_file(root);
 
     // Collect all diagnostics
-    let diagnostics: Vec<(u32, String)> = checker.ctx.diagnostics.iter()
+    let diagnostics: Vec<(u32, String)> = checker
+        .ctx
+        .diagnostics
+        .iter()
         .map(|d| (d.code, d.message_text.clone()))
         .collect();
 
     // Filter out TS2318 (missing global types) and TS2345 (Beast argument error which we expect)
-    let relevant: Vec<_> = diagnostics.iter()
+    let relevant: Vec<_> = diagnostics
+        .iter()
         .filter(|(code, _)| *code != 2318 && *code != 2345)
         .cloned()
         .collect();
@@ -158,9 +162,9 @@ function beastFoo(beast: Object) {
     // Now we check if TS2322 is present. It SHOULD NOT be present if fixed.
     // If it is present, we have reproduced the failure.
     if relevant.iter().any(|(code, _)| *code == 2322) {
-        panic!("Found TS2322 error (Narrowing failed): {:?}", relevant);
+        panic!("Found TS2322 error (Narrowing failed): {relevant:?}");
     }
-    
+
     // Also check if we found TS2345 (just to confirm weak type check is working)
     // We expect TS2345 in beastFoo if tsz implements strict weak type checks
     // let found_2345 = diagnostics.iter().any(|(code, _)| *code == 2345);
