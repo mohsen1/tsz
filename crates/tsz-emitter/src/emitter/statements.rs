@@ -34,20 +34,25 @@ impl<'a> Printer<'a> {
                     .get(self.comment_emit_idx)
                     .is_some_and(|c| c.end <= closing_brace_pos);
             if has_inner_comments {
+                self.map_opening_brace(node);
                 self.write("{");
                 self.write_line();
                 self.increase_indent();
                 self.emit_comments_before_pos(closing_brace_pos);
                 self.decrease_indent();
+                self.map_closing_brace(node);
                 self.write("}");
             } else if self.is_single_line(node) {
                 // Single-line empty block: { }
+                self.map_opening_brace(node);
                 self.write("{ }");
             } else {
                 // Multi-line empty block (has newlines in source): {\n}
                 // TypeScript preserves multi-line format even for empty blocks
+                self.map_opening_brace(node);
                 self.write("{");
                 self.write_line();
+                self.map_closing_brace(node);
                 self.write("}");
             }
             // Trailing comments are handled by the calling context
@@ -73,8 +78,10 @@ impl<'a> Printer<'a> {
             } else {
                 self.ctx.block_scope_state.enter_scope();
             }
+            self.map_opening_brace(node);
             self.write("{ ");
             self.emit(block.statements.nodes[0]);
+            self.map_closing_brace(node);
             self.write(" }");
             self.ctx.block_scope_state.exit_scope();
             // Trailing comments are handled by the calling context
@@ -86,6 +93,8 @@ impl<'a> Printer<'a> {
         } else {
             self.ctx.block_scope_state.enter_scope();
         }
+        // Map opening `{` to its source position
+        self.map_opening_brace(node);
         self.write("{");
         self.write_line();
         self.increase_indent();
@@ -507,6 +516,12 @@ impl<'a> Printer<'a> {
 
         if !if_stmt.else_statement.is_none() {
             self.write_line();
+            // Map the `else` keyword to its source position
+            if let Some(then_node) = self.arena.get(if_stmt.then_statement)
+                && let Some(else_node) = self.arena.get(if_stmt.else_statement)
+            {
+                self.map_token_after_skipping_whitespace(then_node.end, else_node.pos);
+            }
             self.write("else ");
             self.emit(if_stmt.else_statement);
         }
