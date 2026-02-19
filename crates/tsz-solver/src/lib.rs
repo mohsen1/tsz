@@ -49,6 +49,7 @@ pub mod objects;
 pub mod operations;
 mod operations_constraints;
 mod operations_constructors;
+mod operations_generic_call;
 pub mod operations_generics;
 pub mod operations_iterators;
 pub mod operations_property;
