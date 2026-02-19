@@ -606,10 +606,6 @@ impl<'a> BinaryOpEvaluator<'a> {
             // left && right
             let falsy_left = ctx.narrow_to_falsy(left);
             let truthy_left = ctx.narrow_by_truthiness(left);
-            
-            eprintln!("&& Left: {:?} ({:?})", left, self.interner.lookup(left));
-            eprintln!("FalsyLeft: {:?}", falsy_left);
-            eprintln!("TruthyLeft: {:?}", truthy_left);
 
             if truthy_left == TypeId::NEVER {
                 left
