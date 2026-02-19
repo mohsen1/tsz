@@ -16,6 +16,8 @@ pub mod lib_loader;
 pub mod module_resolution_debug;
 pub mod state;
 mod state_binding;
+mod state_lib_merge;
+mod state_node_binding;
 pub use state::{
     BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, GlobalAugmentation, LibContext,
     ModuleAugmentation, ValidationError,
