@@ -2236,7 +2236,16 @@ impl ParserState {
             SyntaxKind::VarKeyword
             | SyntaxKind::LetKeyword
             | SyntaxKind::UsingKeyword
-            | SyntaxKind::AwaitKeyword => self.parse_variable_statement(),
+            | SyntaxKind::AwaitKeyword => {
+                use tsz_scanner::SyntaxKind;
+                let export_node = self.arena.add_token(
+                    SyntaxKind::ExportKeyword as u16,
+                    start_pos,
+                    start_pos + 6,
+                );
+                let modifiers = self.make_node_list(vec![export_node]);
+                self.parse_variable_statement_with_modifiers(Some(start_pos), Some(modifiers))
+            },
             SyntaxKind::ConstKeyword => self.parse_export_const_or_variable(),
             SyntaxKind::AtToken => self.parse_export_decorated_declaration(),
             // Duplicate 'export' modifier (e.g., `export export class Foo {}`)

@@ -425,10 +425,7 @@ impl<'a> CheckerState<'a> {
 
             let mut declarations = Vec::<(NodeIndex, u32, bool, bool)>::new();
             for &decl_idx in &symbol.declarations {
-                let arena_opt = self
-                    .ctx
-                    .binder
-                    .declaration_arenas
+                let arena_opt = self.ctx.binder.declaration_arenas
                     .get(&(sym_id, decl_idx))
                     .and_then(|v| v.first())
                     .map(|a| &**a);
@@ -436,10 +433,7 @@ impl<'a> CheckerState<'a> {
                 let is_local = arena_opt.is_none();
 
                 if let Some(flags) = self.declaration_symbol_flags(arena, decl_idx) {
-                    if has_libs
-                        && is_local
-                        && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
-                    {
+                    if has_libs && is_local && !self.declaration_name_matches(decl_idx, &symbol.escaped_name) {
                         continue;
                     }
                     let is_exported = self.is_declaration_exported(arena, decl_idx);
@@ -459,9 +453,9 @@ impl<'a> CheckerState<'a> {
                 const SPACE_NAMESPACE: u32 = 4;
 
                 let any_in_declare_context = self.ctx.file_name.ends_with(".d.ts")
-                    || declarations.iter().any(|&(decl_idx, _, is_local, _)| {
-                        is_local && self.is_in_declare_namespace_or_module(decl_idx)
-                    });
+                    || declarations
+                        .iter()
+                        .any(|&(decl_idx, _, is_local, _)| is_local && self.is_in_declare_namespace_or_module(decl_idx));
 
                 let mut error_nodes: Vec<NodeIndex> = Vec::new();
 
@@ -562,9 +556,7 @@ impl<'a> CheckerState<'a> {
 
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
-                .filter(|(_, flags, is_local, _)| {
-                    *is_local && (flags & symbol_flags::INTERFACE) != 0
-                })
+                .filter(|(_, flags, is_local, _)| *is_local && (flags & symbol_flags::INTERFACE) != 0)
                 .map(|(decl_idx, _, _, _)| *decl_idx)
                 .collect();
             if interface_decls.len() > 1 {
@@ -631,7 +623,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let decl_is_module_scoped_local = is_external_module
+let decl_is_module_scoped_local = is_external_module
                         && decl_is_local
                         && self.get_enclosing_namespace(decl_idx).is_none();
                     let other_is_module_scoped_local = is_external_module
@@ -650,19 +642,29 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Check for function overloads
+
+// TS2323: Check exported variable conflict using symbol.is_exported
+                    let decl_is_var = (decl_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
+                    let other_is_var = (other_flags & symbol_flags::FUNCTION_SCOPED_VARIABLE) != 0;
+                    if decl_is_var && other_is_var {
+                        if symbol.is_exported {
+                            if decl_is_local { conflicts.insert(decl_idx); }
+                            if other_is_local { conflicts.insert(other_idx); }
+                        }
+                        // If symbol is not exported, they merge (no conflict)
+                        continue;
+                    }
                     let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
                         && (other_flags & symbol_flags::FUNCTION) != 0;
                     if both_functions {
                         let decl_has_body = decl_is_local && self.function_has_body(decl_idx);
-                        if !other_is_local {
-                            continue;
-                        }
+                        if !other_is_local { continue; }
                         let other_has_body = self.function_has_body(other_idx);
-
+                        
                         if !(decl_has_body && other_has_body) {
                             continue;
                         }
-
+                        
                         if decl_is_local && other_is_local {
                             let decl_scope = self.get_enclosing_block_scope(decl_idx);
                             let other_scope = self.get_enclosing_block_scope(other_idx);
@@ -670,13 +672,9 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                         }
-
-                        if decl_is_local {
-                            conflicts.insert(decl_idx);
-                        }
-                        if other_is_local {
-                            conflicts.insert(other_idx);
-                        }
+                        
+                        if decl_is_local { conflicts.insert(decl_idx); }
+                        if other_is_local { conflicts.insert(other_idx); }
                         continue;
                     }
 
@@ -725,7 +723,7 @@ impl<'a> CheckerState<'a> {
                         if !decl_is_local || !other_is_local {
                             continue;
                         }
-
+                        
                         let (namespace_idx, function_idx) = if decl_is_namespace {
                             (decl_idx, other_idx)
                         } else {
@@ -734,7 +732,7 @@ impl<'a> CheckerState<'a> {
 
                         let namespace_is_instantiated =
                             self.is_namespace_declaration_instantiated(namespace_idx);
-
+                        
                         if !namespace_is_instantiated {
                             continue;
                         }
@@ -770,29 +768,17 @@ impl<'a> CheckerState<'a> {
                         if !decl_is_local || !other_is_local {
                             continue;
                         }
-                        let namespace_idx = if decl_is_namespace {
-                            decl_idx
-                        } else {
-                            other_idx
-                        };
+                        let namespace_idx = if decl_is_namespace { decl_idx } else { other_idx };
                         if self.is_namespace_declaration_instantiated(namespace_idx) {
-                            if decl_is_local {
-                                conflicts.insert(decl_idx);
-                            }
-                            if other_is_local {
-                                conflicts.insert(other_idx);
-                            }
+                            if decl_is_local { conflicts.insert(decl_idx); }
+                            if other_is_local { conflicts.insert(other_idx); }
                         }
                         continue;
                     }
 
                     if Self::declarations_conflict(decl_flags, other_flags) {
-                        if decl_is_local {
-                            conflicts.insert(decl_idx);
-                        }
-                        if other_is_local {
-                            conflicts.insert(other_idx);
-                        }
+                        if decl_is_local { conflicts.insert(decl_idx); }
+                        if other_is_local { conflicts.insert(other_idx); }
                     }
                 }
             }
@@ -815,8 +801,7 @@ impl<'a> CheckerState<'a> {
                 let func_impls_with_scope: Vec<(NodeIndex, NodeIndex)> = declarations
                     .iter()
                     .filter(|(decl_idx, flags, is_local, _)| {
-                        *is_local
-                            && conflicts.contains(decl_idx)
+                        *is_local && conflicts.contains(decl_idx)
                             && (flags & symbol_flags::FUNCTION) != 0
                             && self.function_has_body(*decl_idx)
                     })
@@ -861,30 +846,18 @@ impl<'a> CheckerState<'a> {
             if has_class_function_conflict {
                 let name = symbol.escaped_name.clone();
                 for &(decl_idx, flags, is_local, _) in &declarations {
-                    if is_local
-                        && conflicts.contains(&decl_idx)
-                        && (flags & symbol_flags::CLASS) != 0
-                    {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    if is_local && conflicts.contains(&decl_idx) && (flags & symbol_flags::CLASS) != 0 {
+                        let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                         let message = format_message(
                             diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
                             &[&name],
                         );
-                        self.error_at_node(
-                            error_node,
-                            &message,
-                            diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
-                        );
+                        self.error_at_node(error_node, &message, diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR);
                     }
                 }
                 for &(decl_idx, flags, is_local, _) in &declarations {
-                    if is_local
-                        && conflicts.contains(&decl_idx)
-                        && (flags & symbol_flags::FUNCTION) != 0
-                    {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    if is_local && conflicts.contains(&decl_idx) && (flags & symbol_flags::FUNCTION) != 0 {
+                        let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                         self.error_at_node(
                             error_node,
                             diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
@@ -896,8 +869,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .filter(|(decl_idx, flags, _, _)| {
                         conflicts.contains(decl_idx)
-                            && ((flags & symbol_flags::CLASS) != 0
-                                || (flags & symbol_flags::FUNCTION) != 0)
+                            && ((flags & symbol_flags::CLASS) != 0 || (flags & symbol_flags::FUNCTION) != 0)
                     })
                     .map(|(idx, _, _, _)| *idx)
                     .collect();
@@ -932,16 +904,10 @@ impl<'a> CheckerState<'a> {
                 conflicts.contains(decl_idx)
                     && (flags & (symbol_flags::GET_ACCESSOR | symbol_flags::SET_ACCESSOR)) != 0
             });
-
-            // TS2323: Check exported variable conflict
-            let has_exported_variable_conflict =
-                declarations
-                    .iter()
-                    .any(|(decl_idx, flags, _, is_exported)| {
-                        conflicts.contains(decl_idx)
-                            && (flags & symbol_flags::VARIABLE) != 0
-                            && *is_exported
-                    });
+            
+            // TS2323: Check exported variable conflict using symbol.is_exported
+            let has_exported_variable_conflict = symbol.is_exported
+                && has_variable_conflict;
 
             let (message, code) = if !has_non_block_scoped {
                 (
@@ -978,26 +944,11 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::DUPLICATE_IDENTIFIER,
                 )
             };
-
-            for (decl_idx, decl_flags, is_local, _) in declarations {
+            
+            for (decl_idx, _, is_local, _) in declarations {
                 if is_local && conflicts.contains(&decl_idx) {
                     let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    // Per-declaration error code: block-scoped variables get TS2451,
-                    // others use the computed error code for the group.
-                    let is_block_scoped = (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-                    if is_block_scoped && code == diagnostic_codes::DUPLICATE_IDENTIFIER {
-                        let per_decl_msg = format_message(
-                            diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                            &[&name],
-                        );
-                        self.error_at_node(
-                            error_node,
-                            &per_decl_msg,
-                            diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                        );
-                    } else {
-                        self.error_at_node(error_node, &message, code);
-                    }
+                    self.error_at_node(error_node, &message, code);
                 }
             }
         }
