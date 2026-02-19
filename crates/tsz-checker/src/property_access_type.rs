@@ -209,16 +209,11 @@ impl<'a> CheckerState<'a> {
                     property_name,
                     self.ctx.compiler_options.no_unchecked_indexed_access,
                 );
-                let result = if matches!(
+                let result = self.resolve_property_access_with_env_post_query(
+                    resolved_base,
+                    property_name,
                     fast_result,
-                    PropertyAccessResult::PropertyNotFound { .. } | PropertyAccessResult::IsUnknown
-                ) {
-                    // Fallback keeps environment-aware behavior for mapped/application
-                    // cases when the direct solver lookup cannot resolve.
-                    self.resolve_property_access_with_env(resolved_base, property_name)
-                } else {
-                    fast_result
-                };
+                );
                 match result {
                     PropertyAccessResult::Success {
                         type_id,

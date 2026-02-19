@@ -417,14 +417,28 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Only check if there's an explicit return type annotation
             let is_async = func.is_async;
             let is_generator = func.asterisk_token;
-            let check_return_type =
-                self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
-            let requires_return = self.requires_return_value(check_return_type);
-            let has_return = self.body_has_return_with_value(func.body);
-            let falls_through = self.function_body_falls_through(func.body);
+            let check_explicit_return_paths = has_type_annotation && !is_async;
+            let requires_return = if check_explicit_return_paths {
+                let check_return_type =
+                    self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+                self.requires_return_value(check_return_type)
+            } else {
+                false
+            };
+            let check_no_implicit_returns = self.ctx.no_implicit_returns();
+            let need_return_flow_scan =
+                (check_explicit_return_paths && requires_return) || check_no_implicit_returns;
+            let (has_return, falls_through) = if need_return_flow_scan {
+                (
+                    self.body_has_return_with_value(func.body),
+                    self.function_body_falls_through(func.body),
+                )
+            } else {
+                (false, false)
+            };
 
             // TS2355: Skip for async functions - they implicitly return Promise<void>
-            if has_type_annotation && requires_return && falls_through && !is_async {
+            if check_explicit_return_paths && requires_return && falls_through {
                 if !has_return {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
@@ -441,7 +455,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 }
-            } else if self.ctx.no_implicit_returns() && has_return && falls_through {
+            } else if check_no_implicit_returns && has_return && falls_through {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let error_node = if !func.name.is_none() {
