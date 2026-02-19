@@ -16719,3 +16719,137 @@ var x = 1;"#;
         output
     );
 }
+
+#[test]
+fn test_computed_property_name_bracket_source_mapping() {
+    // tsc maps both `[` and `]` brackets of computed property names to their
+    // source positions. Verify that the closing `]` gets a mapping.
+    let source = r#"class C {
+    ["hello"]() {
+        debugger;
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+
+    let decoded = decode_mappings(mappings_str);
+
+    // Find the source position of `]` in the computed property name `["hello"]`
+    // The `]` follows `"hello"` on the same line
+    let (bracket_line, bracket_col) = find_line_col(source, "]()");
+
+    let has_closing_bracket_mapping = decoded
+        .iter()
+        .any(|m| m.original_line == bracket_line && m.original_column == bracket_col);
+
+    assert!(
+        has_closing_bracket_mapping,
+        "Expected a source map mapping for the closing `]` at source line {} col {}\n\
+         Decoded mappings: {:#?}\nOutput:\n{}",
+        bracket_line, bracket_col, decoded, output
+    );
+}
+
+#[test]
+fn test_computed_property_name_getter_bracket_mapping() {
+    // Verify that getter with computed property name also maps brackets.
+    let source = r#"class C {
+    get ["goodbye"]() {
+        return 0;
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+
+    let decoded = decode_mappings(mappings_str);
+
+    // Find the closing `]` in `["goodbye"]`
+    let (bracket_line, bracket_col) = find_line_col(source, "]()");
+
+    let has_closing_bracket_mapping = decoded
+        .iter()
+        .any(|m| m.original_line == bracket_line && m.original_column == bracket_col);
+
+    assert!(
+        has_closing_bracket_mapping,
+        "Expected a source map mapping for the closing `]` at source line {} col {}\n\
+         Decoded mappings: {:#?}\nOutput:\n{}",
+        bracket_line, bracket_col, decoded, output
+    );
+}
+
+#[test]
+fn test_computed_property_object_literal_bracket_mapping() {
+    // Verify that object literal computed properties also map brackets.
+    let source = r#"var v = {
+    ["hello"]() {
+        return 0;
+    }
+};"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions::default();
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_map_text(parser.get_source_text());
+    printer.enable_source_map("test.js", "test.ts");
+    printer.emit(root);
+
+    let output = printer.get_output().to_string();
+    let map_json = printer
+        .generate_source_map_json()
+        .expect("source map should be generated");
+    let map: Value = serde_json::from_str(&map_json).expect("valid JSON");
+    let mappings_str = map["mappings"].as_str().expect("mappings string");
+
+    let decoded = decode_mappings(mappings_str);
+
+    // Find the closing `]` in `["hello"]`
+    let (bracket_line, bracket_col) = find_line_col(source, "]()");
+
+    let has_closing_bracket_mapping = decoded
+        .iter()
+        .any(|m| m.original_line == bracket_line && m.original_column == bracket_col);
+
+    assert!(
+        has_closing_bracket_mapping,
+        "Expected a source map mapping for closing `]` at source line {} col {}\n\
+         Decoded mappings: {:#?}\nOutput:\n{}",
+        bracket_line, bracket_col, decoded, output
+    );
+}

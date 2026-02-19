@@ -2091,6 +2091,17 @@ impl<'a> Printer<'a> {
                 if let Some(computed) = self.arena.get_computed_property(node) {
                     self.write("[");
                     self.emit(computed.expression);
+                    // Map closing `]` to its source position.
+                    // The expression's end points past the expression, so `]`
+                    // is at the expression's end position (where the expression
+                    // text ends and `]` begins).
+                    if let Some(text) = self.source_text_for_map() {
+                        let expr_end = self
+                            .arena
+                            .get(computed.expression)
+                            .map_or(node.pos + 1, |e| e.end);
+                        self.pending_source_pos = Some(source_position_from_offset(text, expr_end));
+                    }
                     self.write("]");
                 }
             }
