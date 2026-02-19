@@ -448,7 +448,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             None => {
                 // Target has string index, source doesn't
-                // All source properties must be compatible with target's string index
+                // All source properties must be compatible with target's string index.
+                // Implicit Index Signature Rule: Source must have at least one property
+                // to satisfy the index signature requirement implicitly.
+                if source.properties.is_empty() {
+                    return SubtypeResult::False;
+                }
+
                 for prop in &source.properties {
                     if !t_string_idx.readonly && prop.readonly {
                         return SubtypeResult::False;
@@ -519,13 +525,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             None => {
                 // Check any numeric-keyed source properties against the target's
                 // number index type. If a numeric property has an incompatible type,
-                // the assignment fails. If there are no numeric properties at all,
-                // the assignment is vacuously compatible — TypeScript allows
-                // `{} = { [n: number]: string }` for this reason.
+                // the assignment fails.
+                //
+                // Implicit Index Signature Rule:
+                // If the source has no index signature, it is considered to have one
+                // implicitly IF AND ONLY IF it has properties that match the index key type.
+                // If there are NO numeric properties, the source does NOT satisfy the
+                // numeric index signature requirement.
+                let mut found_numeric_prop = false;
                 for prop in &source.properties {
                     if !utils::is_numeric_property_name(self.interner, prop.name) {
                         continue;
                     }
+                    found_numeric_prop = true;
 
                     if !t_number_idx.readonly && prop.readonly {
                         return SubtypeResult::False;
@@ -544,7 +556,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
-                SubtypeResult::True
+                if found_numeric_prop {
+                    SubtypeResult::True
+                } else {
+                    SubtypeResult::False
+                }
             }
         }
     }
