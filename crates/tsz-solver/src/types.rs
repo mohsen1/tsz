@@ -856,6 +856,11 @@ impl PropertyInfo {
             ..Self::new(name, type_id)
         }
     }
+
+    /// Find a property by name in a slice of properties.
+    pub fn find_in_slice<'a>(props: &'a [Self], name: Atom) -> Option<&'a Self> {
+        props.iter().find(|p| p.name == name)
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

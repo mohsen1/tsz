@@ -1279,7 +1279,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let shape = self.interner().object_shape(shape_id);
 
             // Try to find the property in the Object's properties
-            if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 // Get type params from the array base type (stored during test setup)
                 let type_params = self.db.get_array_base_type_params();
 
@@ -1325,7 +1325,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let shape = self.interner().object_shape(ObjectShapeId(shape_id.0));
 
             // Try to find the property in the ObjectWithIndex's properties
-            if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 // Get type params
                 let type_params = self.db.get_array_base_type_params();
 
@@ -1376,7 +1376,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             let shape = self.interner().callable_shape(shape_id);
 
             // Try to find the property in the Callable's properties
-            if let Some(prop) = shape.properties.iter().find(|p| p.name == prop_atom) {
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
                 // For Callable properties, we need to substitute type parameters
                 // The Array Callable has properties that reference the type parameter T
                 // We need to substitute T with the element_type from app.args[0]
