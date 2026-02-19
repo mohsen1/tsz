@@ -6,7 +6,6 @@ use crate::test_fixtures::{merge_shared_lib_symbols, setup_lib_contexts};
 use tsz_solver::TypeInterner;
 
 #[test]
-#[ignore = "Regression: TS2403 not being emitted for incompatible var redeclarations"]
 fn test_variable_redeclaration_incompatible() {
     let source = r#"
 var x: number = 1;

@@ -1076,18 +1076,12 @@ impl<'a> CheckerState<'a> {
                                         let lib_type = lib_checker.get_type_of_node(lib_decl);
                                         CheckerState::leave_cross_arena_delegation();
 
-                                        // Skip comparison when lib type is unknown/error —
-                                        // this means the lib didn't properly resolve the global.
-                                        // Comparing against unknown produces false positives.
-                                        if lib_type == TypeId::UNKNOWN || lib_type == TypeId::ERROR
-                                        {
-                                            prior_type_found =
-                                                Some(prior_type_found.unwrap_or(final_type));
-                                            continue;
-                                        }
-
                                         // Check compatibility
-                                        if !self.are_var_decl_types_compatible(lib_type, final_type)
+                                        // Skip if current is implicit any
+                                        let is_implicit_any = var_decl.type_annotation.is_none();
+                                        if !is_implicit_any
+                                            && !self
+                                                .are_var_decl_types_compatible(lib_type, final_type)
                                             && let Some(ref name) = var_name
                                         {
                                             self.error_subsequent_variable_declaration(
@@ -1125,16 +1119,15 @@ impl<'a> CheckerState<'a> {
                                                 | syntax_kind_ext::ENUM_DECLARATION
                                                 | syntax_kind_ext::CLASS_DECLARATION
                                                 | syntax_kind_ext::INTERFACE_DECLARATION
-                                                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                                 | syntax_kind_ext::FUNCTION_DECLARATION
-                                                | syntax_kind_ext::IMPORT_DECLARATION
-                                                | syntax_kind_ext::EXPORT_DECLARATION
                                         )
                                     } else {
                                         false
                                     };
 
+                                let is_implicit_any = var_decl.type_annotation.is_none();
                                 if !is_other_mergeable
+                                    && !is_implicit_any
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
                                     && let Some(ref name) = var_name
                                 {

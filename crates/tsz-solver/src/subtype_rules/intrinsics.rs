@@ -102,7 +102,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         match source {
             TypeId::ANY if allow_any => return true,
-            TypeId::ANY => {} // Fall through to structural check in strict mode
             TypeId::NEVER | TypeId::ERROR | TypeId::OBJECT => return true,
             TypeId::UNKNOWN
             | TypeId::VOID
@@ -113,6 +112,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             | TypeId::STRING
             | TypeId::BIGINT
             | TypeId::SYMBOL => return false,
+            // Fall through to structural check for ANY in strict mode and all other types
             _ => {}
         }
 
@@ -244,8 +244,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         match source {
             TypeId::ANY if allow_any => return true,
-            TypeId::ANY => {} // Fall through to structural check in strict mode
             TypeId::NEVER | TypeId::ERROR | TypeId::FUNCTION => return true,
+            // Fall through to structural check for ANY in strict mode and all other types
             _ => {}
         }
 

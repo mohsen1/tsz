@@ -46,7 +46,8 @@ use crate::visitor::{
     object_with_index_shape_id, template_literal_id, type_param_info, union_list_id,
 };
 use crate::{QueryDatabase, TypeDatabase};
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tracing::{Level, span, trace};
 use tsz_common::interner::Atom;
 
@@ -247,16 +248,48 @@ pub struct DiscriminantInfo {
 }
 
 /// Narrowing context for type guards and control flow analysis.
+/// Shared across multiple narrowing contexts to persist resolution results.
+#[derive(Default, Clone)]
+pub struct NarrowingCache {
+    /// Cache for type resolution (Lazy/App/Template -> Structural)
+    pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,
+    /// Cache for top-level property type lookups (TypeId, `PropName`) -> `PropType`
+    pub property_cache: RefCell<FxHashMap<(TypeId, Atom), Option<TypeId>>>,
+}
+
+impl NarrowingCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Narrowing context for type guards and control flow analysis.
 pub struct NarrowingContext<'a> {
     db: &'a dyn QueryDatabase,
     /// Optional `TypeResolver` for resolving Lazy types (e.g., type aliases).
     /// When present, this enables proper narrowing of type aliases like `type Shape = Circle | Square`.
     resolver: Option<&'a dyn TypeResolver>,
+    /// Cache for narrowing operations.
+    /// If provided, uses the shared cache; otherwise uses a local ephemeral cache.
+    cache: std::borrow::Cow<'a, NarrowingCache>,
 }
 
 impl<'a> NarrowingContext<'a> {
     pub fn new(db: &'a dyn QueryDatabase) -> Self {
-        NarrowingContext { db, resolver: None }
+        NarrowingContext {
+            db,
+            resolver: None,
+            cache: std::borrow::Cow::Owned(NarrowingCache::new()),
+        }
+    }
+
+    /// Create a new context with a shared cache.
+    pub fn with_cache(db: &'a dyn QueryDatabase, cache: &'a NarrowingCache) -> Self {
+        NarrowingContext {
+            db,
+            resolver: None,
+            cache: std::borrow::Cow::Borrowed(cache),
+        }
     }
 
     /// Set the `TypeResolver` for this context.
@@ -276,7 +309,20 @@ impl<'a> NarrowingContext<'a> {
     ///
     /// This ensures that type aliases, interfaces, and generics are resolved
     /// to their actual structural types before performing narrowing operations.
-    fn resolve_type(&self, mut type_id: TypeId) -> TypeId {
+    fn resolve_type(&self, type_id: TypeId) -> TypeId {
+        if let Some(&cached) = self.cache.resolve_cache.borrow().get(&type_id) {
+            return cached;
+        }
+
+        let result = self.resolve_type_uncached(type_id);
+        self.cache
+            .resolve_cache
+            .borrow_mut()
+            .insert(type_id, result);
+        result
+    }
+
+    fn resolve_type_uncached(&self, mut type_id: TypeId) -> TypeId {
         // Prevent infinite loops with a fuel counter
         let mut fuel = 100;
 
@@ -557,7 +603,18 @@ impl<'a> NarrowingContext<'a> {
     /// This avoids `PropertyAccessEvaluator` for the common discriminant pattern
     /// `x.kind === "..."` where we only need a direct property read from object-like
     /// union members. Falls back to the general path for complex structures.
-    fn get_top_level_property_type_fast(
+    fn get_top_level_property_type_fast(&self, type_id: TypeId, property: Atom) -> Option<TypeId> {
+        let key = (type_id, property);
+        if let Some(&cached) = self.cache.property_cache.borrow().get(&key) {
+            return cached;
+        }
+
+        let result = self.get_top_level_property_type_fast_uncached(type_id, property);
+        self.cache.property_cache.borrow_mut().insert(key, result);
+        result
+    }
+
+    fn get_top_level_property_type_fast_uncached(
         &self,
         mut type_id: TypeId,
         property: Atom,
