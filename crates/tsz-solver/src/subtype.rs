@@ -1707,12 +1707,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // If not allowing any (nested strict any), any still matches Top types as source,
         // but any as target ALWAYS matches (it's a top type).
-        if !allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY) {
-            if target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN {
+        if !allow_any && (source == TypeId::ANY || source == TypeId::STRICT_ANY)
+            && (target == TypeId::ANY || target == TypeId::STRICT_ANY || target == TypeId::UNKNOWN) {
                 return SubtypeResult::True;
             }
             // Fall through to structural check (which will fail for STRICT_ANY)
-        }
         if !allow_any && (target == TypeId::ANY || target == TypeId::STRICT_ANY) {
             return SubtypeResult::True;
         }
