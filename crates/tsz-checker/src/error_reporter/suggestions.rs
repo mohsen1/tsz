@@ -64,20 +64,11 @@ impl<'a> CheckerState<'a> {
     pub(super) fn class_extends_any_base(&mut self, type_id: TypeId) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_scanner::SyntaxKind;
-        use tsz_solver::visitor::{callable_shape_id, object_shape_id, object_with_index_shape_id};
 
         let sym_id = self
             .ctx
             .resolve_type_to_symbol_id(type_id)
-            .or_else(|| {
-                object_shape_id(self.ctx.types, type_id)
-                    .or_else(|| object_with_index_shape_id(self.ctx.types, type_id))
-                    .and_then(|shape_id| self.ctx.types.object_shape(shape_id).symbol)
-            })
-            .or_else(|| {
-                callable_shape_id(self.ctx.types, type_id)
-                    .and_then(|shape_id| self.ctx.types.callable_shape(shape_id).symbol)
-            });
+            .or_else(|| tsz_solver::type_queries::get_type_shape_symbol(self.ctx.types, type_id));
         let Some(sym_id) = sym_id else {
             return false;
         };
