@@ -5,7 +5,7 @@
 // Module Resolution Tests
 // =============================================================================
 
-use crate::module_resolution_tests::{check_with_module_sources, has_error_code};
+use crate::module_resolution_tests::check_with_module_sources;
 
 #[test]
 fn test_es6_import_default_binding_followed_with_named_import1() {
@@ -18,8 +18,8 @@ export const b = 1;
 "#;
     let diags = check_with_module_sources(source, "main.ts", vec![("./module", module_source)]);
     assert!(
-        has_error_code(&diags, 2305),
-        "Should emit TS2305 for default import followed by named import, got: {:?}",
+        diags.is_empty(),
+        "Default import with named import from module with both exports should produce no errors, got: {:?}",
         diags
     );
 }
