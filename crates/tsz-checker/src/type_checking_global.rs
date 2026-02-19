@@ -558,7 +558,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-                }
+            }
 
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
