@@ -207,6 +207,12 @@ impl<'a> CheckerState<'a> {
             self.check_property_initialization_order(member_idx, prop.initializer);
         }
 
+        // Error 2729: Static property used before its initialization
+        // Check if initializer references static properties declared after this one
+        if !prop.initializer.is_none() && self.has_static_modifier(&prop.modifiers) {
+            self.check_static_property_initialization_order(member_idx, prop.initializer);
+        }
+
         // TS7008: Member implicitly has an 'any' type
         // Report this error when noImplicitAny is enabled and the property has no type annotation
         // AND no initializer (if there's an initializer, TypeScript can infer the type)

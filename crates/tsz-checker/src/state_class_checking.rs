@@ -1042,36 +1042,23 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Collect class name and static members for error 2662 suggestions
-        let class_name = if !class.name.is_none() {
-            if let Some(name_node) = self.ctx.arena.get(class.name) {
-                self.ctx
-                    .arena
-                    .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // Collect class name
+        let class_name = self.get_class_name_from_decl(stmt_idx);
 
         // Save previous enclosing class and set current
         let prev_enclosing_class = self.ctx.enclosing_class.take();
-        if let Some(name) = class_name {
-            self.ctx.enclosing_class = Some(EnclosingClassInfo {
-                name,
-                class_idx: stmt_idx,
-                member_nodes: class.members.nodes.clone(),
-                in_constructor: false,
-                is_declared,
-                in_static_property_initializer: false,
-                in_static_method: false,
-                has_super_call_in_current_constructor: false,
-                cached_instance_this_type: None,
-                type_param_names: class_type_param_names,
-            });
-        }
+        self.ctx.enclosing_class = Some(EnclosingClassInfo {
+            name: class_name,
+            class_idx: stmt_idx,
+            member_nodes: class.members.nodes.clone(),
+            in_constructor: false,
+            is_declared,
+            in_static_property_initializer: false,
+            in_static_method: false,
+            has_super_call_in_current_constructor: false,
+            cached_instance_this_type: None,
+            type_param_names: class_type_param_names,
+        });
 
         // Class bodies reset the async context — field initializers and static blocks
         // don't inherit async from the enclosing function. Methods define their own context.
