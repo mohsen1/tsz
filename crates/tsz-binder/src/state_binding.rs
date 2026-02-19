@@ -628,6 +628,14 @@ impl BinderState {
             // This allows enum members to be accessed as Enum.MemberName
             // and enables enum + namespace merging
             self.enter_scope(ContainerKind::Block, idx);
+
+            // Seed the new scope with existing exports from prior declarations.
+            // This allows merged enum declarations to reference members from
+            // earlier declarations (e.g., `enum E { a } enum E { c = a }`).
+            for (name, sym_id) in exports.iter() {
+                self.current_scope.set(name.to_string(), *sym_id);
+            }
+
             for &member_idx in &enum_decl.members.nodes {
                 if let Some(member_node) = arena.get(member_idx)
                     && let Some(member) = arena.get_enum_member(member_node)
@@ -646,6 +654,13 @@ impl BinderState {
                     self.node_symbols.insert(member_idx.0, sym_id);
                     // Add to exports for namespace merging
                     exports.set(member_name.to_string(), sym_id);
+
+                    // Bind the initializer expression so that nested functions,
+                    // IIFEs, and closures within enum member initializers get
+                    // their scopes and symbols properly bound.
+                    if !member.initializer.is_none() {
+                        self.bind_expression(arena, member.initializer);
+                    }
                 }
             }
             self.exit_scope(arena);
