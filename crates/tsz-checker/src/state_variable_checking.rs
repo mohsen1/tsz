@@ -1055,51 +1055,49 @@ impl<'a> CheckerState<'a> {
                             // Lookup by name in lib binder to ensure we find the matching symbol
                             // even if SymbolIds are not perfectly aligned across contexts.
                             if let Some(lib_sym_id) = binder.file_locals.get(&name)
-                                && let Some(lib_sym) = binder.get_symbol(lib_sym_id) {
-                                    for &lib_decl in &lib_sym.declarations {
-                                        if !lib_decl.is_none()
-                                            && CheckerState::enter_cross_arena_delegation() {
-                                                let mut lib_checker =
-                                                    CheckerState::new_with_shared_def_store(
-                                                        &arena,
-                                                        &binder,
-                                                        types,
-                                                        "lib.d.ts".to_string(),
-                                                        compiler_options.clone(),
-                                                        definition_store.clone(),
-                                                    );
-                                                // Ensure lib checker can resolve types from other lib files
-                                                lib_checker
-                                                    .ctx
-                                                    .set_lib_contexts(lib_contexts.clone());
+                                && let Some(lib_sym) = binder.get_symbol(lib_sym_id)
+                            {
+                                for &lib_decl in &lib_sym.declarations {
+                                    if !lib_decl.is_none()
+                                        && CheckerState::enter_cross_arena_delegation()
+                                    {
+                                        let mut lib_checker =
+                                            CheckerState::new_with_shared_def_store(
+                                                &arena,
+                                                &binder,
+                                                types,
+                                                "lib.d.ts".to_string(),
+                                                compiler_options.clone(),
+                                                definition_store.clone(),
+                                            );
+                                        // Ensure lib checker can resolve types from other lib files
+                                        lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
 
-                                                let lib_type =
-                                                    lib_checker.get_type_of_node(lib_decl);
-                                                CheckerState::leave_cross_arena_delegation();
+                                        let lib_type = lib_checker.get_type_of_node(lib_decl);
+                                        CheckerState::leave_cross_arena_delegation();
 
-                                                // Check compatibility
-                                                // Skip if current is implicit any
-                                                let is_implicit_any =
-                                                    var_decl.type_annotation.is_none();
-                                                if !is_implicit_any
-                                                    && !self.are_var_decl_types_compatible(
-                                                        lib_type, final_type,
-                                                    )
-                                                    && let Some(ref name) = var_name {
-                                                        self.error_subsequent_variable_declaration(
-                                                            name, lib_type, final_type, decl_idx,
-                                                        );
-                                                    }
+                                        // Check compatibility
+                                        // Skip if current is implicit any
+                                        let is_implicit_any = var_decl.type_annotation.is_none();
+                                        if !is_implicit_any
+                                            && !self
+                                                .are_var_decl_types_compatible(lib_type, final_type)
+                                            && let Some(ref name) = var_name
+                                        {
+                                            self.error_subsequent_variable_declaration(
+                                                name, lib_type, final_type, decl_idx,
+                                            );
+                                        }
 
-                                                prior_type_found =
-                                                    Some(if let Some(prev) = prior_type_found {
-                                                        self.refine_var_decl_type(prev, lib_type)
-                                                    } else {
-                                                        lib_type
-                                                    });
-                                            }
+                                        prior_type_found =
+                                            Some(if let Some(prev) = prior_type_found {
+                                                self.refine_var_decl_type(prev, lib_type)
+                                            } else {
+                                                lib_type
+                                            });
                                     }
                                 }
+                            }
                         }
                     }
 
@@ -1131,11 +1129,12 @@ impl<'a> CheckerState<'a> {
                                 if !is_other_mergeable
                                     && !is_implicit_any
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
-                                    && let Some(ref name) = var_name {
-                                        self.error_subsequent_variable_declaration(
-                                            name, other_type, final_type, decl_idx,
-                                        );
-                                    }
+                                    && let Some(ref name) = var_name
+                                {
+                                    self.error_subsequent_variable_declaration(
+                                        name, other_type, final_type, decl_idx,
+                                    );
+                                }
 
                                 prior_type_found = Some(if let Some(prev) = prior_type_found {
                                     self.refine_var_decl_type(prev, other_type)

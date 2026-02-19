@@ -2034,6 +2034,7 @@ impl<'a> CheckerContext<'a> {
             strict_null_checks: self.strict_null_checks(),
             exact_optional_property_types: self.exact_optional_property_types(),
             no_unchecked_indexed_access: self.no_unchecked_indexed_access(),
+            sound_mode: self.sound_mode(),
         }
     }
 

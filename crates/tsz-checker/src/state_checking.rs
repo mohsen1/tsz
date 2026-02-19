@@ -179,6 +179,8 @@ impl<'a> CheckerState<'a> {
                 self.resolve_no_unused_locals_from_source(&sf.text);
             self.ctx.compiler_options.no_unused_parameters =
                 self.resolve_no_unused_parameters_from_source(&sf.text);
+            self.ctx.compiler_options.always_strict =
+                self.resolve_always_strict_from_source(&sf.text);
             if self.has_ts_nocheck_pragma(&sf.text) {
                 return;
             }
@@ -812,19 +814,53 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    pub(crate) fn declaration_symbol_flags(&self, decl_idx: NodeIndex) -> Option<u32> {
+    fn has_static_modifier_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        self.get_modifier_index_in_arena(
+            arena,
+            modifiers,
+            tsz_scanner::SyntaxKind::StaticKeyword as u16,
+        )
+        .is_some()
+    }
+
+    fn get_modifier_index_in_arena(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        kind: u16,
+    ) -> Option<NodeIndex> {
+        if let Some(mods) = modifiers {
+            for &mod_idx in &mods.nodes {
+                if let Some(mod_node) = arena.get(mod_idx)
+                    && mod_node.kind == kind
+                {
+                    return Some(mod_idx);
+                }
+            }
+        }
+        None
+    }
+
+    pub(crate) fn declaration_symbol_flags(
+        &self,
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> Option<u32> {
         use tsz_parser::parser::node_flags;
 
-        let decl_idx = self.resolve_duplicate_decl_node(decl_idx)?;
-        let node = self.ctx.arena.get(decl_idx)?;
+        let decl_idx = self.resolve_duplicate_decl_node(arena, decl_idx)?;
+        let node = arena.get(decl_idx)?;
 
         match node.kind {
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 let mut decl_flags = node.flags as u32;
                 if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
-                    && let Some(parent) =
-                        self.ctx.arena.get_extended(decl_idx).map(|ext| ext.parent)
-                    && let Some(parent_node) = self.ctx.arena.get(parent)
+                    && let Some(parent) = arena.get_extended(decl_idx).map(|ext| ext.parent)
+                    && let Some(parent_node) = arena.get(parent)
                     && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                 {
                     decl_flags |= parent_node.flags as u32;
@@ -841,14 +877,12 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
             syntax_kind_ext::ENUM_DECLARATION => {
                 // Check if this is a const enum by looking for const modifier
-                let is_const_enum = self
-                    .ctx
-                    .arena
+                let is_const_enum = arena
                     .get_enum(node)
                     .and_then(|enum_decl| enum_decl.modifiers.as_ref())
                     .is_some_and(|modifiers| {
                         modifiers.nodes.iter().any(|&mod_idx| {
-                            self.ctx.arena.get(mod_idx).is_some_and(|mod_node| {
+                            arena.get(mod_idx).is_some_and(|mod_node| {
                                 mod_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
                             })
                         })
@@ -865,8 +899,8 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::GET_ACCESSOR => {
                 let mut flags = symbol_flags::GET_ACCESSOR;
-                if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && self.has_static_modifier(&accessor.modifiers)
+                if let Some(accessor) = arena.get_accessor(node)
+                    && self.has_static_modifier_in_arena(arena, &accessor.modifiers)
                 {
                     flags |= symbol_flags::STATIC;
                 }
@@ -874,8 +908,8 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::SET_ACCESSOR => {
                 let mut flags = symbol_flags::SET_ACCESSOR;
-                if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                    && self.has_static_modifier(&accessor.modifiers)
+                if let Some(accessor) = arena.get_accessor(node)
+                    && self.has_static_modifier_in_arena(arena, &accessor.modifiers)
                 {
                     flags |= symbol_flags::STATIC;
                 }
@@ -883,8 +917,8 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::METHOD_DECLARATION => {
                 let mut flags = symbol_flags::METHOD;
-                if let Some(method) = self.ctx.arena.get_method_decl(node)
-                    && self.has_static_modifier(&method.modifiers)
+                if let Some(method) = arena.get_method_decl(node)
+                    && self.has_static_modifier_in_arena(arena, &method.modifiers)
                 {
                     flags |= symbol_flags::STATIC;
                 }
@@ -892,8 +926,8 @@ impl<'a> CheckerState<'a> {
             }
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 let mut flags = symbol_flags::PROPERTY;
-                if let Some(prop) = self.ctx.arena.get_property_decl(node)
-                    && self.has_static_modifier(&prop.modifiers)
+                if let Some(prop) = arena.get_property_decl(node)
+                    && self.has_static_modifier_in_arena(arena, &prop.modifiers)
                 {
                     flags |= symbol_flags::STATIC;
                 }

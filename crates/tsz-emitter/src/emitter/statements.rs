@@ -475,37 +475,48 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let then_is_multiline_in_source = self.source_text.is_some_and(|text| {
-            let cond_end = self
-                .arena
-                .get(if_stmt.expression)
-                .map_or(node.pos as usize, |n| n.end as usize);
-            let then_start = self
-                .arena
-                .get(if_stmt.then_statement)
-                .map_or(node.end as usize, |n| n.pos as usize);
-            if cond_end >= then_start || then_start > text.len() {
-                return false;
-            }
-            text[cond_end..then_start].contains('\n')
-        }) || self.source_text.is_some_and(|text| {
-            let Some(then_node) = self.arena.get(if_stmt.then_statement) else {
-                return false;
-            };
-            if then_node.kind == syntax_kind_ext::BLOCK {
-                return false;
-            }
-            let start = then_node.pos as usize;
-            let end = then_node.end as usize;
-            if start >= end || end > text.len() {
-                return false;
-            }
-            text[start..end].contains("...")
-        }) || (!self.is_single_line(node)
-            && self
-                .arena
-                .get(if_stmt.then_statement)
-                .is_some_and(|n| n.kind != syntax_kind_ext::BLOCK))
+        let then_is_block = self
+            .arena
+            .get(if_stmt.then_statement)
+            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
+
+        // tsc always puts `{` on the same line as `if (cond)`, even if the source
+        // had the brace on a new line. Multiline formatting only applies to
+        // non-block then-statements (e.g., `if (cond)\n  foo();`).
+        let then_is_multiline_in_source = (!then_is_block
+            && self.source_text.is_some_and(|text| {
+                let cond_end = self
+                    .arena
+                    .get(if_stmt.expression)
+                    .map_or(node.pos as usize, |n| n.end as usize);
+                let then_start = self
+                    .arena
+                    .get(if_stmt.then_statement)
+                    .map_or(node.end as usize, |n| n.pos as usize);
+                if cond_end >= then_start || then_start > text.len() {
+                    return false;
+                }
+                text[cond_end..then_start].contains('\n')
+            }))
+            || self.source_text.is_some_and(|text| {
+                let Some(then_node) = self.arena.get(if_stmt.then_statement) else {
+                    return false;
+                };
+                if then_node.kind == syntax_kind_ext::BLOCK {
+                    return false;
+                }
+                let start = then_node.pos as usize;
+                let end = then_node.end as usize;
+                if start >= end || end > text.len() {
+                    return false;
+                }
+                text[start..end].contains("...")
+            })
+            || (!self.is_single_line(node)
+                && self
+                    .arena
+                    .get(if_stmt.then_statement)
+                    .is_some_and(|n| n.kind != syntax_kind_ext::BLOCK))
             || self
                 .arena
                 .get(if_stmt.then_statement)
@@ -514,10 +525,6 @@ impl<'a> Printer<'a> {
         self.write("if (");
         self.emit(if_stmt.expression);
         self.write(")");
-        let then_is_block = self
-            .arena
-            .get(if_stmt.then_statement)
-            .is_some_and(|n| n.kind == syntax_kind_ext::BLOCK);
         if then_is_multiline_in_source {
             self.write_line();
             if !then_is_block {

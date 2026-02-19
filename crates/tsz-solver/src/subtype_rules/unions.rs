@@ -109,24 +109,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         allow_bivariant: bool,
     ) -> SubtypeResult {
-        if !allow_bivariant {
-            return self.check_subtype(source, target);
+        if allow_bivariant {
+            // Method bivariance: temporarily disable strict_function_types
+            // so check_parameter_compatibility uses bivariant parameter checks.
+            // This only affects parameter variance, NOT return type variance.
+            let prev = self.strict_function_types;
+            self.strict_function_types = false;
+            let result = self.check_subtype(source, target);
+            self.strict_function_types = prev;
+            return result;
         }
-
-        // If we're already in bivariant mode, don't nest - just check normally
-        // This prevents infinite recursion when methods contain other methods
-        if !self.strict_function_types && self.allow_bivariant_param_count {
-            return self.check_subtype(source, target);
-        }
-
-        let prev = self.strict_function_types;
-        let prev_param_count = self.allow_bivariant_param_count;
-        self.strict_function_types = false;
-        self.allow_bivariant_param_count = true;
-        let result = self.check_subtype(source, target);
-        self.allow_bivariant_param_count = prev_param_count;
-        self.strict_function_types = prev;
-        result
+        self.check_subtype(source, target)
     }
 
     /// Explain failure with method bivariance rules.
@@ -136,24 +129,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         allow_bivariant: bool,
     ) -> Option<SubtypeFailureReason> {
-        if !allow_bivariant {
-            return self.explain_failure(source, target);
+        if allow_bivariant {
+            let prev = self.strict_function_types;
+            self.strict_function_types = false;
+            let result = self.explain_failure(source, target);
+            self.strict_function_types = prev;
+            return result;
         }
-
-        // If we're already in bivariant mode, don't nest - just check normally
-        // This prevents infinite recursion when methods contain other methods
-        if !self.strict_function_types && self.allow_bivariant_param_count {
-            return self.explain_failure(source, target);
-        }
-
-        let prev = self.strict_function_types;
-        let prev_param_count = self.allow_bivariant_param_count;
-        self.strict_function_types = false;
-        self.allow_bivariant_param_count = true;
-        let result = self.explain_failure(source, target);
-        self.allow_bivariant_param_count = prev_param_count;
-        self.strict_function_types = prev;
-        result
+        self.explain_failure(source, target)
     }
 
     /// Check if source is related to a discriminated union type.

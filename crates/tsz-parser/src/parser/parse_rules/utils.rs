@@ -68,7 +68,9 @@ pub fn look_ahead_is_module_declaration(
         matches!(
             token,
             SyntaxKind::StringLiteral | SyntaxKind::OpenBraceToken
-        ) || is_identifier_or_keyword(token)
+        ) || (token == SyntaxKind::Identifier
+            || (tsz_scanner::token_is_keyword(token)
+                && !tsz_scanner::token_is_reserved_word(token)))
     })
 }
 
