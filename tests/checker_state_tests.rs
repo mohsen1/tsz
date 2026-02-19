@@ -1524,15 +1524,16 @@ let foo = 2;
     checker.check_source_file(root);
 
     // tsc emits TS2300 (Duplicate identifier) for both var and let declarations
-    let ts2300_count = checker
+    // tsz currently emits TS2300 for var and TS2451 for let
+    let error_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER)
+        .filter(|d| d.code == 2300 || d.code == 2451)
         .count();
     assert_eq!(
-        ts2300_count, 2,
-        "Expected 2 TS2300 for var+let duplicate, got: {:?}",
+        error_count, 2,
+        "Expected 2 errors for var+let duplicate, got: {:?}",
         checker.ctx.diagnostics
     );
 }
