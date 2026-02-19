@@ -811,7 +811,9 @@ impl<'a> Printer<'a> {
                 if let Some(block_node) = self.arena.get(func.body) {
                     if let Some(block) = self.arena.get_block(block_node) {
                         if block.statements.nodes.is_empty() {
-                            self.write("{ }");
+                            self.write("{");
+                            self.write_line();
+                            self.write("}");
                             return;
                         }
                         if !needs_param_prologue
