@@ -1997,14 +1997,8 @@ impl<'a> CheckerState<'a> {
     /// If `type_id` is an object type with a synthetic `"new"` member, return that member type.
     /// This supports constructor-like interfaces that lower construct signatures as properties.
     pub(crate) fn constructor_type_from_new_property(&self, type_id: TypeId) -> Option<TypeId> {
-        let shape_id = query::object_shape_id(self.ctx.types, type_id)?;
-
         let new_atom = self.ctx.types.intern_string("new");
-        let shape = self.ctx.types.object_shape(shape_id);
-        shape
-            .properties
-            .iter()
-            .find(|prop| prop.name == new_atom)
+        tsz_solver::type_queries::find_property_in_object(self.ctx.types, type_id, new_atom)
             .map(|prop| prop.type_id)
     }
 

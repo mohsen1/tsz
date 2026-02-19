@@ -1,4 +1,4 @@
-use tsz_solver::{CallableShape, ObjectShapeId, TypeDatabase, TypeId};
+use tsz_solver::{CallableShape, TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries_extended::{
     AbstractClassCheckKind, CallSignaturesKind, ClassDeclTypeKind, LazyTypeKind,
@@ -49,10 +49,6 @@ pub(crate) fn classify_for_call_signatures(
 
 pub(crate) fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_readonly_type(db, type_id)
-}
-
-pub(crate) fn object_shape_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<ObjectShapeId> {
-    tsz_solver::type_queries::get_object_shape_id(db, type_id)
 }
 
 pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
