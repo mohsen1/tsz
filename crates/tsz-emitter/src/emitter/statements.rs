@@ -35,13 +35,13 @@ impl<'a> Printer<'a> {
                     .is_some_and(|c| c.end <= closing_brace_pos);
             if has_inner_comments {
                 self.map_opening_brace(node);
-                self.write("{");
+                self.write_with_end_marker("{");
                 self.write_line();
                 self.increase_indent();
                 self.emit_comments_before_pos(closing_brace_pos);
                 self.decrease_indent();
                 self.map_closing_brace(node);
-                self.write("}");
+                self.write_with_end_marker("}");
             } else if self.is_single_line(node) {
                 // Single-line empty block: { }
                 self.map_opening_brace(node);
@@ -50,10 +50,10 @@ impl<'a> Printer<'a> {
                 // Multi-line empty block (has newlines in source): {\n}
                 // TypeScript preserves multi-line format even for empty blocks
                 self.map_opening_brace(node);
-                self.write("{");
+                self.write_with_end_marker("{");
                 self.write_line();
                 self.map_closing_brace(node);
-                self.write("}");
+                self.write_with_end_marker("}");
             }
             // Trailing comments are handled by the calling context
             // (class member loop, statement loop, etc.)
@@ -95,7 +95,7 @@ impl<'a> Printer<'a> {
         }
         // Map opening `{` to its source position
         self.map_opening_brace(node);
-        self.write("{");
+        self.write_with_end_marker("{");
         self.write_line();
         self.increase_indent();
 
@@ -203,7 +203,7 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
         // Map closing `}` to its source position for accurate debugger stepping
         self.map_closing_brace(node);
-        self.write("}");
+        self.write_with_end_marker("}");
         self.ctx.block_scope_state.exit_scope();
         // Trailing comments after the block's closing brace are handled by
         // the calling context (class member loop, statement loop, etc.)
@@ -551,13 +551,47 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Pre-locate both `;` positions in the for-header by scanning from
+        // the statement start to the body start.  The parser often includes the
+        // `;` inside the preceding node's range, so per-child scans miss them.
+        let (semi1_src, semi2_src) = {
+            let body_start = self
+                .arena
+                .get(loop_stmt.statement)
+                .map_or(node.end, |n| n.pos);
+            if let Some(text) = self.source_text_for_map() {
+                let bytes = text.as_bytes();
+                let start = node.pos as usize;
+                let end = (body_start as usize).min(bytes.len());
+                let mut semis = Vec::new();
+                for (i, &b) in bytes[start..end].iter().enumerate() {
+                    if b == b';' {
+                        semis.push(start + i);
+                    }
+                }
+                let s1 = semis
+                    .first()
+                    .map(|&p| crate::source_writer::source_position_from_offset(text, p as u32));
+                let s2 = semis
+                    .get(1)
+                    .map(|&p| crate::source_writer::source_position_from_offset(text, p as u32));
+                (s1, s2)
+            } else {
+                (None, None)
+            }
+        };
+
         self.write("for (");
         self.emit(loop_stmt.initializer);
+        // Map first `;` in for-header
+        self.pending_source_pos = semi1_src;
         self.write(";");
         if !loop_stmt.condition.is_none() {
             self.write(" ");
             self.emit(loop_stmt.condition);
         }
+        // Map second `;` in for-header
+        self.pending_source_pos = semi2_src;
         self.write(";");
         if !loop_stmt.incrementor.is_none() {
             self.write(" ");

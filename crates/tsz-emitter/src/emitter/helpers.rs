@@ -24,6 +24,16 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Write a mapped token and also emit an end-of-token mapping.
+    /// tsc emits these for single-character tokens like `;`, `{`, `}`.
+    pub(super) fn write_with_end_marker(&mut self, text: &str) {
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_node_with_end(text, source_pos);
+        } else {
+            self.writer.write(text);
+        }
+    }
+
     /// Write identifier text to output with name mapping when available.
     pub(super) fn write_identifier(&mut self, text: &str) {
         if let Some(source_pos) = self.take_pending_source_pos() {
@@ -74,7 +84,7 @@ impl<'a> Printer<'a> {
     /// Write a semicolon (respecting options).
     pub(super) fn write_semicolon(&mut self) {
         if !self.ctx.options.omit_trailing_semicolon {
-            self.write(";");
+            self.write_with_end_marker(";");
         }
     }
 
