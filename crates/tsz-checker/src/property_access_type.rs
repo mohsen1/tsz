@@ -158,7 +158,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Property access on `never` returns `never` (bottom type propagation).
+        // In TypeScript, this is an error: Property 'X' does not exist on type 'never'.
         if object_type == TypeId::NEVER {
+            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+                let property_name = &ident.escaped_text;
+                if !property_name.starts_with('#') {
+                    self.error_property_not_exist_at(property_name, TypeId::NEVER, idx);
+                }
+            }
             return TypeId::NEVER;
         }
 
