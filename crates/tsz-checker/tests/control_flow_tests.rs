@@ -3572,7 +3572,6 @@ switch (x) {
 /// Test: recursive flow analysis (bidirectional narrowing) doesn't panic when using shared buffers.
 #[test]
 fn test_recursive_flow_analysis_no_panic() {
-    
     use tsz_common::checker_options::CheckerOptions;
 
     let source = r#"
