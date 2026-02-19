@@ -2769,9 +2769,20 @@ impl<'a> Printer<'a> {
             self.emit(stmt_idx);
             // Only add newline if something was actually emitted
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
-                // Emit trailing comments on the same line as the statement
+                // Emit trailing comments on the same line as the statement.
+                // Use the next statement's pos as upper bound to avoid scanning
+                // into the next statement's trivia (same pattern as emit_block_body).
                 if let Some(stmt_node) = self.arena.get(stmt_idx) {
-                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, stmt_node.end);
+                    let stmts = &source.statements.nodes;
+                    let stmt_i = stmts.iter().position(|&s| s == stmt_idx);
+                    let next_pos = stmt_i.and_then(|i| {
+                        stmts
+                            .get(i + 1)
+                            .and_then(|&next_idx| self.arena.get(next_idx))
+                            .map(|n| n.pos)
+                    });
+                    let upper_bound = next_pos.unwrap_or(stmt_node.end);
+                    let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
                     self.emit_trailing_comments(token_end);
                 }
                 self.write_line();
