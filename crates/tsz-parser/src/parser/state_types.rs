@@ -2222,39 +2222,39 @@ impl ParserState {
             let last_child_stole_closer =
                 self.check_last_child_stole_closer(&children, opening_tag_name);
 
-            let closing = if let Some((child_opening_tag, child_closing_idx)) =
-                last_child_stole_closer
-            {
-                // TS17008: The child element was never properly closed
-                // (dedup at same position handles double emission from inner + outer)
-                self.emit_jsx_unclosed_tag_error(child_opening_tag);
-                // Reuse the child's closing element as our own
-                child_closing_idx
-            } else {
-                // Parse our own closing element
-                let closing = self.parse_jsx_closing_element();
-                // Check for tag name mismatch
-                if let Some(open_tag) = opening_tag_name
-                    && let Some(close_node) = self.arena.get(closing)
-                        && let Some(close_data) = self.arena.get_jsx_closing(close_node) {
-                            let close_tag = close_data.tag_name;
-                            let open_text = self.get_jsx_tag_name_text(open_tag);
-                            let close_text = self.get_jsx_tag_name_text(close_tag);
-                            if open_text != close_text {
-                                // Check if closing matches parent's tag (tsc pattern)
-                                let matches_parent = currently_opened_tag
-                                    .is_some_and(|pt| self.get_jsx_tag_name_text(pt) == close_text);
-                                if matches_parent {
-                                    // TS17008: Our tag is unclosed (closer belongs to parent)
-                                    self.emit_jsx_unclosed_tag_error(open_tag);
-                                } else {
-                                    // TS17002: Wrong closing tag
-                                    self.emit_jsx_mismatched_closing_tag_error(open_tag, close_tag);
-                                }
+            let closing =
+                if let Some((child_opening_tag, child_closing_idx)) = last_child_stole_closer {
+                    // TS17008: The child element was never properly closed
+                    // (dedup at same position handles double emission from inner + outer)
+                    self.emit_jsx_unclosed_tag_error(child_opening_tag);
+                    // Reuse the child's closing element as our own
+                    child_closing_idx
+                } else {
+                    // Parse our own closing element
+                    let closing = self.parse_jsx_closing_element();
+                    // Check for tag name mismatch
+                    if let Some(open_tag) = opening_tag_name
+                        && let Some(close_node) = self.arena.get(closing)
+                        && let Some(close_data) = self.arena.get_jsx_closing(close_node)
+                    {
+                        let close_tag = close_data.tag_name;
+                        let open_text = self.get_jsx_tag_name_text(open_tag);
+                        let close_text = self.get_jsx_tag_name_text(close_tag);
+                        if open_text != close_text {
+                            // Check if closing matches parent's tag (tsc pattern)
+                            let matches_parent = currently_opened_tag
+                                .is_some_and(|pt| self.get_jsx_tag_name_text(pt) == close_text);
+                            if matches_parent {
+                                // TS17008: Our tag is unclosed (closer belongs to parent)
+                                self.emit_jsx_unclosed_tag_error(open_tag);
+                            } else {
+                                // TS17002: Wrong closing tag
+                                self.emit_jsx_mismatched_closing_tag_error(open_tag, close_tag);
                             }
                         }
-                closing
-            };
+                    }
+                    closing
+                };
 
             let end_pos = self.token_end();
 
@@ -2593,7 +2593,7 @@ impl ParserState {
     }
 
     /// Parse JSX children (elements, text, expressions).
-    /// `opening_tag_name` is the [`NodeIndex`] of the opening element's tag name,
+    /// `opening_tag_name` is the `NodeIndex` of the opening element's tag name,
     /// used to emit TS17008 if we hit EOF without a corresponding closing tag.
     pub(crate) fn parse_jsx_children(&mut self, opening_tag_name: Option<NodeIndex>) -> NodeList {
         let mut children = Vec::new();
@@ -2620,9 +2620,10 @@ impl ParserState {
                     // If the child is a JsxElement with mismatched tags and its
                     // closing tag matches our opening tag, break early.
                     if let Some(parent_tag) = opening_tag_name
-                        && self.jsx_child_stole_closer(child, parent_tag) {
-                            break;
-                        }
+                        && self.jsx_child_stole_closer(child, parent_tag)
+                    {
+                        break;
+                    }
                 }
                 SyntaxKind::OpenBraceToken => {
                     // JSX expression: {expr}
@@ -2695,9 +2696,10 @@ impl ParserState {
         if let Some(node) = self.arena.get(tag_name) {
             // For property access expressions (Foo.Bar), use the name child's end
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                && let Some(access) = self.arena.get_access_expr(node) {
-                    return self.get_jsx_tag_name_end(access.name_or_argument);
-                }
+                && let Some(access) = self.arena.get_access_expr(node)
+            {
+                return self.get_jsx_tag_name_end(access.name_or_argument);
+            }
             node.end
         } else {
             0
@@ -2715,9 +2717,7 @@ impl ParserState {
             self.parse_error_at(
                 start,
                 end - start,
-                &format!(
-                    "JSX element '{tag_text}' has no corresponding closing tag."
-                ),
+                &format!("JSX element '{tag_text}' has no corresponding closing tag."),
                 diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
             );
         }
@@ -2738,15 +2738,13 @@ impl ParserState {
             self.parse_error_at(
                 start,
                 length,
-                &format!(
-                    "Expected corresponding JSX closing tag for '{open_text}'."
-                ),
+                &format!("Expected corresponding JSX closing tag for '{open_text}'."),
                 diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR,
             );
         }
     }
 
-    /// Check if a child [`JsxElement`] has mismatched tags where its closing tag
+    /// Check if a child `JsxElement` has mismatched tags where its closing tag
     /// matches the given parent opening tag name. This implements the tsc pattern
     /// where a child element "steals" the parent's closing tag.
     fn jsx_child_stole_closer(&self, child: NodeIndex, parent_tag_name: NodeIndex) -> bool {
@@ -2781,7 +2779,7 @@ impl ParserState {
         }
     }
 
-    /// Check if the last child in a [`NodeList`] stole the parent's closing tag.
+    /// Check if the last child in a `NodeList` stole the parent's closing tag.
     /// Returns (`child_opening_tag_name`, `child_closing_element`) if so.
     fn check_last_child_stole_closer(
         &self,

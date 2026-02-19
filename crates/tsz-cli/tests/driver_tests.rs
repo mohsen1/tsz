@@ -4860,8 +4860,6 @@ fn compile_string_enum() {
     write_file(
         &base.join("src/direction.ts"),
         r#"
-declare const console: { log: (...args: any[]) => void };
-
 export enum Direction {
     Up = "UP",
     Down = "DOWN",
@@ -5279,8 +5277,6 @@ fn compile_function_call_spread() {
     write_file(
         &base.join("src/calls.ts"),
         r#"
-declare const console: { log: (...args: any[]) => void };
-
 export function apply(fn: (...args: number[]) => number, args: number[]): number {
     return fn(...args);
 }
