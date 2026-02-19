@@ -844,7 +844,27 @@ impl<'a> CheckerState<'a> {
                     }
                     // Fall back to inferring from initializer
                     if !var_decl.initializer.is_none() {
-                        let inferred_type = self.get_type_of_node(var_decl.initializer);
+                        let mut inferred_type = self.get_type_of_node(var_decl.initializer);
+                        let init_is_direct_empty_array = self
+                            .ctx
+                            .arena
+                            .get(var_decl.initializer)
+                            .is_some_and(|init_node| {
+                                init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                                    && self
+                                        .ctx
+                                        .arena
+                                        .get_literal_expr(init_node)
+                                        .is_some_and(|lit| lit.elements.nodes.is_empty())
+                            });
+                        if init_is_direct_empty_array
+                            && tsz_solver::type_queries::get_array_element_type(
+                                self.ctx.types,
+                                inferred_type,
+                            ) == Some(TypeId::NEVER)
+                        {
+                            inferred_type = self.ctx.types.factory().array(TypeId::ANY);
+                        }
                         // Literal Widening for mutable bindings (let/var):
                         // Only widen when the initializer is a "fresh" literal expression
                         // (direct literal in source code). Types from variable references,

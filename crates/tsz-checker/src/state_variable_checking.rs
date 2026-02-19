@@ -728,7 +728,32 @@ impl<'a> CheckerState<'a> {
                 {
                     checker.clear_type_cache_recursive(var_decl.initializer);
                 }
-                let init_type = checker.get_type_of_node(var_decl.initializer);
+                let mut init_type = checker.get_type_of_node(var_decl.initializer);
+
+                // TypeScript treats unannotated empty-array declaration initializers
+                // (`let/var/const x = []`) as evolving-any arrays for subsequent writes.
+                // Keep expression-level `[]` behavior unchanged by only applying this to
+                // direct declaration initializers.
+                let init_is_direct_empty_array = checker
+                    .ctx
+                    .arena
+                    .get(var_decl.initializer)
+                    .is_some_and(|init_node| {
+                        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                            && checker
+                                .ctx
+                                .arena
+                                .get_literal_expr(init_node)
+                                .is_some_and(|lit| lit.elements.nodes.is_empty())
+                    });
+                if init_is_direct_empty_array
+                    && tsz_solver::type_queries::get_array_element_type(
+                        checker.ctx.types,
+                        init_type,
+                    ) == Some(TypeId::NEVER)
+                {
+                    init_type = checker.ctx.types.factory().array(TypeId::ANY);
+                }
 
                 // When strictNullChecks is off, undefined and null widen to any
                 // (TypeScript treats `var x = undefined` as `any` without strict)
