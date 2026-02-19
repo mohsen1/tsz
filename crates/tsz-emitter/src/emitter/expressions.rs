@@ -93,6 +93,12 @@ impl<'a> Printer<'a> {
             self.write(", ");
         } else {
             self.write_space();
+            // Map the operator token to its source position
+            if let Some(left_node) = self.arena.get(binary.left)
+                && let Some(right_node) = self.arena.get(binary.right)
+            {
+                self.map_token_after_skipping_whitespace(left_node.end, right_node.pos);
+            }
             self.write(get_operator_text(binary.operator_token));
             if has_newline_before_right {
                 self.write_line();
@@ -659,6 +665,10 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(unary.operand);
+        // Map the postfix operator (e.g., ++ or --) to its source position
+        if let Some(operand_node) = self.arena.get(unary.operand) {
+            self.map_token_after_skipping_whitespace(operand_node.end, node.end);
+        }
         self.write(get_operator_text(unary.operator));
     }
 
