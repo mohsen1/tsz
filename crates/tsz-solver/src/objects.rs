@@ -234,7 +234,7 @@ impl<'a, R: TypeResolver> PropertyCollector<'a, R> {
             for member_result in member_props.iter().skip(1) {
                 match member_result {
                     PropertyCollectionResult::Properties { properties, .. } => {
-                        if let Some(other_prop) = properties.iter().find(|p| p.name == prop.name) {
+                        if let Some(other_prop) = PropertyInfo::find_in_slice(&properties, prop.name) {
                             type_ids.push(other_prop.type_id);
                             all_optional = all_optional && other_prop.optional;
                             any_readonly = any_readonly || other_prop.readonly;

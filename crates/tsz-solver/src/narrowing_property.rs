@@ -257,7 +257,7 @@ impl<'a> NarrowingContext<'a> {
         // Helper to check a specific shape
         let check_shape = |shape_id: ObjectShapeId| -> bool {
             let shape = self.db.object_shape(shape_id);
-            if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
                 return !prop.optional;
             }
             false
@@ -316,7 +316,7 @@ impl<'a> NarrowingContext<'a> {
             let shape = self.db.object_shape(shape_id);
 
             // Check if the property exists in the object's properties
-            if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
                 return Some(prop.type_id);
             }
 
@@ -343,7 +343,7 @@ impl<'a> NarrowingContext<'a> {
             let shape = self.db.object_shape(shape_id);
 
             // Check properties first
-            if let Some(prop) = shape.properties.iter().find(|p| p.name == property_name) {
+            if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, property_name) {
                 return Some(prop.type_id);
             }
 
