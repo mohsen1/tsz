@@ -411,19 +411,21 @@ impl<'a> CheckerState<'a> {
         // emit TS2365: "Operator '<' cannot be applied to types 'X' and 'Y'."
         let is_relational = matches!(op, "<" | ">" | "<=" | ">=");
         if is_relational
-            && !emitted_nullish_error && let Some(loc) = self.get_source_location(node_idx) {
-                let message = format!(
-                    "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
-                );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
-            }
+            && !emitted_nullish_error
+            && let Some(loc) = self.get_source_location(node_idx)
+        {
+            let message = format!(
+                "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
+            );
+            self.ctx.diagnostics.push(Diagnostic {
+                code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                category: DiagnosticCategory::Error,
+                message_text: message,
+                file: self.ctx.file_name.clone(),
+                start: loc.start,
+                length: loc.length(),
+                related_information: Vec::new(),
+            });
+        }
     }
 }
