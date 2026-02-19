@@ -1648,42 +1648,67 @@ impl<'a> Printer<'a> {
                         } else {
                             // Find the separator comma in the source that follows this element.
                             let elem_end = self.arena.get(elem).map(|n| n.end).unwrap_or(0);
-                            let comma_pos = self.find_comma_pos_after(elem_end, node.end);
-                            // Emit any comments between the element's end and the comma.
-                            // A comment on its own line → write_line() before it, then ` ,`.
-                            // A same-line comment (e.g. `1 /* c */,`) → write_space(), then `,`.
-                            let mut wrote_pre_sep = false;
-                            let mut last_was_newline_comment = false;
-                            if let (Some(sep), Some(text)) = (comma_pos, self.source_text) {
-                                while self.comment_emit_idx < self.all_comments.len() {
-                                    let c_pos = self.all_comments[self.comment_emit_idx].pos;
-                                    let c_end = self.all_comments[self.comment_emit_idx].end;
-                                    if c_pos >= elem_end && c_end <= sep {
-                                        let preceded_by_newline =
-                                            self.comment_preceded_by_newline(c_pos);
-                                        if preceded_by_newline {
-                                            self.write_line();
-                                        } else {
-                                            self.write_space();
-                                        }
-                                        let comment_text = crate::printer::safe_slice::slice(
-                                            text,
-                                            c_pos as usize,
-                                            c_end as usize,
-                                        );
-                                        self.write_comment(comment_text);
-                                        wrote_pre_sep = true;
-                                        last_was_newline_comment = preceded_by_newline;
-                                        self.comment_emit_idx += 1;
-                                    } else {
-                                        break;
+
+                            // Some element nodes (e.g. function expressions) include the
+                            // trailing comma and whitespace in their `end` span.  In that
+                            // case, `find_comma_pos_after(elem_end, ...)` would skip the
+                            // real separator and find the NEXT comma.  Detect this by
+                            // scanning backward from `elem_end` through trivia for a comma.
+                            let comma_already_past = self.source_text.is_some_and(|text| {
+                                let bytes = text.as_bytes();
+                                let mut j = (elem_end as usize).min(bytes.len());
+                                while j > 0 {
+                                    j -= 1;
+                                    match bytes[j] {
+                                        b',' => return true,
+                                        b' ' | b'\t' | b'\n' | b'\r' => continue,
+                                        _ => return false,
                                     }
                                 }
-                            }
-                            if wrote_pre_sep && last_was_newline_comment {
-                                self.write(" ,");
-                            } else {
+                                false
+                            });
+
+                            if comma_already_past {
+                                // Comma is within the element's span – just write it.
                                 self.write(",");
+                            } else {
+                                let comma_pos = self.find_comma_pos_after(elem_end, node.end);
+                                // Emit any comments between the element's end and the comma.
+                                // A comment on its own line → write_line() before it, then ` ,`.
+                                // A same-line comment (e.g. `1 /* c */,`) → write_space(), then `,`.
+                                let mut wrote_pre_sep = false;
+                                let mut last_was_newline_comment = false;
+                                if let (Some(sep), Some(text)) = (comma_pos, self.source_text) {
+                                    while self.comment_emit_idx < self.all_comments.len() {
+                                        let c_pos = self.all_comments[self.comment_emit_idx].pos;
+                                        let c_end = self.all_comments[self.comment_emit_idx].end;
+                                        if c_pos >= elem_end && c_end <= sep {
+                                            let preceded_by_newline =
+                                                self.comment_preceded_by_newline(c_pos);
+                                            if preceded_by_newline {
+                                                self.write_line();
+                                            } else {
+                                                self.write_space();
+                                            }
+                                            let comment_text = crate::printer::safe_slice::slice(
+                                                text,
+                                                c_pos as usize,
+                                                c_end as usize,
+                                            );
+                                            self.write_comment(comment_text);
+                                            wrote_pre_sep = true;
+                                            last_was_newline_comment = preceded_by_newline;
+                                            self.comment_emit_idx += 1;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if wrote_pre_sep && last_was_newline_comment {
+                                    self.write(" ,");
+                                } else {
+                                    self.write(",");
+                                }
                             }
                         }
                     }
