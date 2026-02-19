@@ -762,13 +762,12 @@ const result = a - b;  // TS2362: left-hand side must be number/bigint/any/enum
 }
 
 #[test]
-#[ignore = "TS18050 for never type property access not yet emitted"]
-fn test_never_type_property_access_emits_ts18050() {
-    // Test accessing property on a value that narrows to never type
-    // This happens when exhaustive narrowing produces an impossible union
+fn test_never_type_property_access_no_error() {
+    // In TSC, property access on `never` returns `never` without any error.
+    // `never` is the bottom type — accessing properties on it is valid because
+    // it represents unreachable code (exhaustive narrowing patterns).
     let source = r"
 function test(x: never) {
-    // x is never type - property access should emit TS18050
     const y = x.toString();
 }
 ";
@@ -789,26 +788,24 @@ function test(x: never) {
 
     checker.check_source_file(root);
 
-    // Should emit TS18050 for property access on never type
+    // TSC does NOT emit TS18050 for property access on never — it returns never
     let ts18050_count = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 18050)
         .count();
-    assert!(
-        ts18050_count >= 1,
-        "Expected at least 1 TS18050 error for never type property access, got {ts18050_count}"
+    assert_eq!(
+        ts18050_count, 0,
+        "Property access on never should NOT emit TS18050 (TSC returns never silently)"
     );
 }
 
 #[test]
-#[ignore = "TS18050 for never type call not yet emitted"]
-fn test_never_type_call_emits_ts18050() {
-    // Test calling a value that is never type
+fn test_never_type_call_no_error() {
+    // In TSC, calling `never` returns `never` without any error.
     let source = r"
 function test(x: never) {
-    // x is never type - calling it should emit TS18050
     const y = x();
 }
 ";
@@ -829,16 +826,16 @@ function test(x: never) {
 
     checker.check_source_file(root);
 
-    // Should emit TS18050 for call on never type
+    // TSC does NOT emit TS18050 for calling never — it returns never
     let ts18050_count = checker
         .ctx
         .diagnostics
         .iter()
         .filter(|d| d.code == 18050)
         .count();
-    assert!(
-        ts18050_count >= 1,
-        "Expected at least 1 TS18050 error for never type call, got {ts18050_count}"
+    assert_eq!(
+        ts18050_count, 0,
+        "Calling never should NOT emit TS18050 (TSC returns never silently)"
     );
 }
 

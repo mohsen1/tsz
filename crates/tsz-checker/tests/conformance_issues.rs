@@ -574,7 +574,7 @@ class C extends B {
 /// Complexity: HIGH - requires improving control flow analysis
 /// See: docs/conformance-analysis-slice3.md
 #[test]
-#[ignore = "Strict null checking with never-returning functions - HIGH complexity"]
+#[ignore = "Control flow does not narrow after never-returning function call in if-body (emits TS18048)"]
 fn test_narrowing_after_never_returning_function() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -590,10 +590,14 @@ function f01(x: string | undefined) {
         "#,
     );
 
-    // Should emit no errors
+    // Filter out TS2318 (missing global types - test harness doesn't load full lib)
+    let semantic_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
     assert!(
-        diagnostics.is_empty(),
-        "Should emit no errors - x is narrowed to string after never-returning call.\nActual errors: {diagnostics:#?}"
+        semantic_errors.is_empty(),
+        "Should emit no semantic errors - x is narrowed to string after never-returning call.\nActual errors: {semantic_errors:#?}"
     );
 }
 
