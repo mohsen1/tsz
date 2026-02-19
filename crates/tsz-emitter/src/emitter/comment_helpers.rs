@@ -237,6 +237,33 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Collect leading comment texts for a node at the given position.
+    /// Returns the text of comments whose end is before `pos` and that haven't been emitted yet.
+    /// Does NOT advance the comment index — use this before `skip_comments_for_erased_node`.
+    pub(super) fn collect_leading_comments(&self, pos: u32) -> Vec<String> {
+        if self.ctx.options.remove_comments {
+            return Vec::new();
+        }
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let actual_start = self.skip_whitespace_forward(pos, pos + 1024);
+        let mut result = Vec::new();
+        let mut idx = self.comment_emit_idx;
+        while idx < self.all_comments.len() {
+            let c = &self.all_comments[idx];
+            if c.end <= actual_start {
+                let comment_text =
+                    crate::printer::safe_slice::slice(text, c.pos as usize, c.end as usize);
+                result.push(comment_text.to_string());
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+        result
+    }
+
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
     /// Advances `comment_emit_idx` past any comments whose end position falls within the node's range,
     /// including trailing same-line comments (e.g. `// ERROR` after a constructor overload).

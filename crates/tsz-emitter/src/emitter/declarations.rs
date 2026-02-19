@@ -335,7 +335,7 @@ impl<'a> Printer<'a> {
 
         // Collect property initializers that need lowering
         let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
-        let mut static_field_inits: Vec<(String, NodeIndex, u32)> = Vec::new(); // (name, init, member_pos)
+        let mut static_field_inits: Vec<(String, NodeIndex, u32, Vec<String>)> = Vec::new(); // (name, init, member_pos, leading_comments)
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
                 if let Some(member_node) = self.arena.get(member_idx)
@@ -352,7 +352,12 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {
-                        static_field_inits.push((name, prop.initializer, member_node.pos));
+                        static_field_inits.push((
+                            name,
+                            prop.initializer,
+                            member_node.pos,
+                            Vec::new(), // leading_comments filled during class body emission
+                        ));
                     } else {
                         field_inits.push((name, prop.initializer));
                     }
@@ -440,7 +445,17 @@ impl<'a> Printer<'a> {
                 && !prop.initializer.is_none()
                 && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
             {
-                // Skip - lowered to constructor or after class
+                // For static properties, save leading comments before skipping so they
+                // can be emitted when the initialization is moved after the class body.
+                if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {
+                    let leading = self.collect_leading_comments(member_node.pos);
+                    if let Some(entry) = static_field_inits
+                        .iter_mut()
+                        .find(|e| e.2 == member_node.pos)
+                    {
+                        entry.3 = leading;
+                    }
+                }
                 if let Some(member_node) = self.arena.get(member_idx) {
                     self.skip_comments_for_erased_node(member_node);
                 }
@@ -679,9 +694,12 @@ impl<'a> Printer<'a> {
             let class_name = self.get_identifier_text_idx(class.name);
             if !class_name.is_empty() {
                 self.write_line();
-                for (name, init_idx, member_pos) in &static_field_inits {
-                    // Emit leading comment from the original static property declaration
-                    self.emit_comments_before_pos(*member_pos);
+                for (name, init_idx, _member_pos, leading_comments) in &static_field_inits {
+                    // Emit saved leading comments from the original static property declaration
+                    for comment_text in leading_comments {
+                        self.write_comment(comment_text);
+                        self.write_line();
+                    }
                     if self.ctx.options.use_define_for_class_fields {
                         self.write("Object.defineProperty(");
                         self.write(&class_name);
