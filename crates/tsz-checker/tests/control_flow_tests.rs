@@ -3569,6 +3569,35 @@ switch (x) {
     let _ = true; // Unreachable code in switch fallthrough
 }
 
+/// Test: recursive flow analysis (bidirectional narrowing) doesn't panic when using shared buffers.
+#[test]
+fn test_recursive_flow_analysis_no_panic() {
+    
+    use tsz_common::checker_options::CheckerOptions;
+
+    let source = r#"
+        function test(x: "a" | "b", y: "a" | "b") {
+            if (x === y) {
+                x;
+            }
+        }
+    "#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let interner = TypeInterner::new();
+    let options = CheckerOptions::default();
+    let mut state = CheckerState::new(arena, &binder, &interner, "test.ts".to_string(), options);
+
+    // This triggers apply_flow_narrowing, which uses shared buffers and handles re-entrancy.
+    state.check_source_file(root);
+}
+
 // ============================================================================
 
 // ============================================================================
