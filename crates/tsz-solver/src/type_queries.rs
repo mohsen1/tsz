@@ -1144,6 +1144,27 @@ pub fn get_construct_signatures(
     get_callable_shape(db, type_id).map(|shape| shape.construct_signatures.clone())
 }
 
+/// Get the union of all construct signature return types from a callable shape.
+///
+/// Returns `Some(TypeId)` for the union of all construct signature return types,
+/// or `None` if the shape has no construct signatures. This encapsulates the common
+/// pattern of iterating construct signatures to collect instance types.
+pub fn get_construct_return_type_union(
+    db: &dyn TypeDatabase,
+    shape_id: crate::types::CallableShapeId,
+) -> Option<TypeId> {
+    let shape = db.callable_shape(shape_id);
+    if shape.construct_signatures.is_empty() {
+        return None;
+    }
+    let returns: Vec<TypeId> = shape
+        .construct_signatures
+        .iter()
+        .map(|sig| sig.return_type)
+        .collect();
+    Some(crate::utils::union_or_single(db, returns))
+}
+
 /// Get the function shape ID for a function type.
 ///
 /// Returns None if the type is not a Function.

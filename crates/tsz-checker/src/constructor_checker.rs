@@ -268,7 +268,6 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<TypeId> {
-        let factory = self.ctx.types.factory();
         if ctor_type == TypeId::ERROR {
             return None;
         }
@@ -294,19 +293,10 @@ impl<'a> CheckerState<'a> {
             }
             match classify_for_instance_type(self.ctx.types, current) {
                 InstanceTypeKind::Callable(shape_id) => {
-                    let shape = self.ctx.types.callable_shape(shape_id);
-                    let mut returns = Vec::new();
-                    for sig in &shape.construct_signatures {
-                        returns.push(sig.return_type);
-                    }
-                    if returns.is_empty() {
-                        return None;
-                    }
-                    let instance_type = if returns.len() == 1 {
-                        returns[0]
-                    } else {
-                        factory.union(returns)
-                    };
+                    let instance_type = tsz_solver::type_queries::get_construct_return_type_union(
+                        self.ctx.types,
+                        shape_id,
+                    )?;
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
                 InstanceTypeKind::Function(shape_id) => {
@@ -317,41 +307,27 @@ impl<'a> CheckerState<'a> {
                     return Some(self.resolve_type_for_property_access(shape.return_type));
                 }
                 InstanceTypeKind::Intersection(members) => {
-                    let mut instance_types = Vec::new();
-                    for member in members {
-                        if let Some(instance_type) =
-                            self.instance_type_from_constructor_type_inner(member, visited)
-                        {
-                            instance_types.push(instance_type);
-                        }
-                    }
+                    let instance_types: Vec<TypeId> = members
+                        .into_iter()
+                        .filter_map(|m| self.instance_type_from_constructor_type_inner(m, visited))
+                        .collect();
                     if instance_types.is_empty() {
                         return None;
                     }
-                    let instance_type = if instance_types.len() == 1 {
-                        instance_types[0]
-                    } else {
-                        factory.intersection(instance_types)
-                    };
+                    let instance_type =
+                        tsz_solver::utils::intersection_or_single(self.ctx.types, instance_types);
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
                 InstanceTypeKind::Union(members) => {
-                    let mut instance_types = Vec::new();
-                    for member in members {
-                        if let Some(instance_type) =
-                            self.instance_type_from_constructor_type_inner(member, visited)
-                        {
-                            instance_types.push(instance_type);
-                        }
-                    }
+                    let instance_types: Vec<TypeId> = members
+                        .into_iter()
+                        .filter_map(|m| self.instance_type_from_constructor_type_inner(m, visited))
+                        .collect();
                     if instance_types.is_empty() {
                         return None;
                     }
-                    let instance_type = if instance_types.len() == 1 {
-                        instance_types[0]
-                    } else {
-                        factory.union(instance_types)
-                    };
+                    let instance_type =
+                        tsz_solver::utils::union_or_single(self.ctx.types, instance_types);
                     return Some(self.resolve_type_for_property_access(instance_type));
                 }
                 InstanceTypeKind::Readonly(inner) => {
