@@ -17137,8 +17137,8 @@ fn test_sourcemap_parity_switch() {
         }
     }
 
-    // Track parity progress
-    const EXPECTED_MISSING: usize = 16;
+    // Track parity progress (switch)
+    const EXPECTED_MISSING: usize = 14;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17218,7 +17218,7 @@ fn test_sourcemap_parity_while() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 8;
+    const EXPECTED_MISSING: usize = 7;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17302,7 +17302,7 @@ fn test_sourcemap_parity_do_while() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 16;
+    const EXPECTED_MISSING: usize = 14;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
@@ -17395,7 +17395,7 @@ fn test_sourcemap_parity_if_else() {
         }
     }
 
-    const EXPECTED_MISSING: usize = 33;
+    const EXPECTED_MISSING: usize = 29;
     let num_missing = missing.len();
     if num_missing > EXPECTED_MISSING {
         let mut msg = format!(
