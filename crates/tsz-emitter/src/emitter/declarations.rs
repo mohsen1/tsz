@@ -104,7 +104,7 @@ impl<'a> Printer<'a> {
         // Name
         if !func.name.is_none() {
             self.write_space();
-            self.emit(func.name);
+            self.emit_decl_name(func.name);
         } else {
             // Space before ( for anonymous functions: `function ()` not `function()`
             self.write(" ");
@@ -185,7 +185,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit(decl.name);
+        self.emit_decl_name(decl.name);
 
         // Skip type annotation for JavaScript emit
 
@@ -294,7 +294,7 @@ impl<'a> Printer<'a> {
 
         if !class.name.is_none() {
             self.write_space();
-            self.emit(class.name);
+            self.emit_decl_name(class.name);
         }
 
         if let Some(ref heritage_clauses) = class.heritage_clauses {
@@ -1164,6 +1164,48 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Collect exported *variable* names from a namespace body for identifier qualification.
+    ///
+    /// Only `export var` names need qualification because their local declaration is replaced
+    /// by a namespace property assignment (`ns.x = expr;`).
+    /// Exported classes/functions/enums keep their local declaration, so their names
+    /// remain in scope without qualification.
+    fn collect_namespace_exported_names(
+        &self,
+        module: &tsz_parser::parser::node::ModuleData,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(body_node) = self.arena.get(module.body) else {
+            return names;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let Some(export) = self.arena.get_export_decl(stmt_node) else {
+                continue;
+            };
+            let inner_kind = self.arena.get(export.export_clause).map_or(0, |n| n.kind);
+            // Only collect variable names - classes/functions/enums keep their local bindings
+            if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                let export_names = self.get_export_names_from_clause(export.export_clause);
+                for name in export_names {
+                    names.insert(name);
+                }
+            }
+        }
+        names
+    }
+
     /// Emit body statements of a namespace IIFE, handling exports.
     fn emit_namespace_body_statements(
         &mut self,
@@ -1175,6 +1217,9 @@ impl<'a> Printer<'a> {
             && let Some(block) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block.statements
         {
+            // Collect exported names for identifier qualification in emit_identifier
+            let prev_exported = std::mem::take(&mut self.namespace_exported_names);
+            self.namespace_exported_names = self.collect_namespace_exported_names(module);
             for &stmt_idx in &stmts.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
                     continue;
@@ -1285,6 +1330,8 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
             }
+            // Restore previous exported names
+            self.namespace_exported_names = prev_exported;
         }
     }
 
