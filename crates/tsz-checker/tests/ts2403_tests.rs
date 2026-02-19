@@ -69,3 +69,23 @@ fn test_var_any_then_any_no_error() {
         "Should NOT emit TS2403 for var z: any; var z; but got: {codes:?}"
     );
 }
+
+#[test]
+fn test_declare_var_no_ts2403() {
+    // declare var should not trigger TS2403 against lib globals
+    let codes = get_error_codes("declare var console: any;");
+    assert!(
+        !codes.contains(&2403),
+        "Should NOT emit TS2403 for declare var console: any; but got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_declare_var_with_type_no_ts2403() {
+    // declare var with object type should not trigger TS2403 against lib globals
+    let codes = get_error_codes("declare var console: { log(msg: string): void; };");
+    assert!(
+        !codes.contains(&2403),
+        "Should NOT emit TS2403 for declare var console with object type, but got: {codes:?}"
+    );
+}

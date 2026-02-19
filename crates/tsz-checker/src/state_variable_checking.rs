@@ -1071,7 +1071,10 @@ impl<'a> CheckerState<'a> {
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
 
-                    if is_top_level && let Some(name) = symbol_name {
+                    if is_top_level
+                        && !is_ambient
+                        && let Some(name) = symbol_name
+                    {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
                             // even if SymbolIds are not perfectly aligned across contexts.
