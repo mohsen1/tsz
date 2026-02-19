@@ -146,6 +146,10 @@ impl TypeId {
     /// This is NOT a real type and should never escape ExpressionChecker/CheckerState.
     pub const DELEGATE: Self = Self(18);
 
+    /// Internal sentinel used to represent 'any' in strict mode (North Star Fix).
+    /// Behaves like 'any' but does NOT silence structural mismatches.
+    pub const STRICT_ANY: Self = Self(19);
+
     /// First user-defined type ID (after built-in intrinsics)
     pub const FIRST_USER: u32 = 100;
 

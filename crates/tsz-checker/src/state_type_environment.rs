@@ -1534,7 +1534,10 @@ impl<'a> CheckerState<'a> {
                     if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
-                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                    if cached == TypeId::ERROR
+                        && self.ctx.type_parameter_scope.is_empty()
+                        && !self.ctx.node_resolution_set.contains(&idx)
+                    {
                         return cached;
                     }
                     // cached == ERROR but type_parameter_scope is non-empty: re-resolve
@@ -1567,7 +1570,10 @@ impl<'a> CheckerState<'a> {
                     if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
-                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                    if cached == TypeId::ERROR
+                        && self.ctx.type_parameter_scope.is_empty()
+                        && !self.ctx.node_resolution_set.contains(&idx)
+                    {
                         return cached;
                     }
                 }
@@ -1583,7 +1589,10 @@ impl<'a> CheckerState<'a> {
                     if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
-                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                    if cached == TypeId::ERROR
+                        && self.ctx.type_parameter_scope.is_empty()
+                        && !self.ctx.node_resolution_set.contains(&idx)
+                    {
                         return cached;
                     }
                 }
@@ -1598,7 +1607,10 @@ impl<'a> CheckerState<'a> {
                     if cached != TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
                         return cached;
                     }
-                    if cached == TypeId::ERROR && self.ctx.type_parameter_scope.is_empty() {
+                    if cached == TypeId::ERROR
+                        && self.ctx.type_parameter_scope.is_empty()
+                        && !self.ctx.node_resolution_set.contains(&idx)
+                    {
                         return cached;
                     }
                 }
