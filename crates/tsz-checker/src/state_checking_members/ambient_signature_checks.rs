@@ -1523,6 +1523,9 @@ impl<'a> CheckerState<'a> {
     /// Matches tsc's `isImplementationCompatibleWithOverload`:
     /// 1. Check if return types are compatible in EITHER direction (or target is void)
     /// 2. If so, check parameter-only assignability (with return types ignored)
+    ///
+    /// Uses bivariant assignability because tsc uses non-strict function types
+    /// for overload compatibility (implementation params can be wider or narrower).
     fn is_implementation_compatible_with_overload(
         &mut self,
         impl_type: tsz_solver::TypeId,
@@ -1539,24 +1542,25 @@ impl<'a> CheckerState<'a> {
                 // Bidirectional return type check: either direction must be assignable,
                 // or the overload returns void
                 let return_compatible = overload_ret == tsz_solver::TypeId::VOID
-                    || self.is_assignable_to(overload_ret, impl_ret)
-                    || self.is_assignable_to(impl_ret, overload_ret);
+                    || self.is_assignable_to_bivariant(overload_ret, impl_ret)
+                    || self.is_assignable_to_bivariant(impl_ret, overload_ret);
 
                 if !return_compatible {
                     return false;
                 }
 
                 // Now check parameter-only compatibility by creating versions
-                // with ANY return types
+                // with ANY return types. Use bivariant check to match tsc's
+                // non-strict function types for overload compatibility.
                 let impl_with_any_ret =
                     self.replace_return_type(impl_type, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
                     self.replace_return_type(overload_type, tsz_solver::TypeId::ANY);
-                self.is_assignable_to(impl_with_any_ret, overload_with_any_ret)
+                self.is_assignable_to_bivariant(impl_with_any_ret, overload_with_any_ret)
             }
             _ => {
-                // If we can't get return types, fall back to direct assignability
-                self.is_assignable_to(impl_type, overload_type)
+                // If we can't get return types, fall back to bivariant assignability
+                self.is_assignable_to_bivariant(impl_type, overload_type)
             }
         }
     }

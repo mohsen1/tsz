@@ -1219,7 +1219,7 @@ impl ParserState {
                 );
                 // Consume the entire template expression/literal to avoid trailing errors
                 self.parse_template_literal();
-                
+
                 // Create a missing identifier for recovery so the name is always valid
                 let name_start = self.token_pos();
                 let name_end = self.token_pos();
@@ -1339,7 +1339,7 @@ impl ParserState {
                 );
                 // Consume the entire template expression/literal to avoid trailing errors
                 self.parse_template_literal();
-                
+
                 // Create a missing identifier for recovery so the name is always valid
                 let name_start = self.token_pos();
                 let name_end = self.token_pos();
