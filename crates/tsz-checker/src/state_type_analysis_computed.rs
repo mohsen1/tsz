@@ -4,7 +4,6 @@
 use crate::query_boundaries::state_type_environment;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tracing::debug;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -602,14 +601,6 @@ impl<'a> CheckerState<'a> {
                             (params, updates) =
                                 self.push_type_parameters(&interface.type_parameters);
                         }
-                    } else if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                        debug!(
-                            name = %escaped_name,
-                            sym_id = sym_id.0,
-                            first_decl = ?first_decl,
-                            arena_len = self.ctx.arena.len(),
-                            "[DEBUG] Interface first_decl NOT FOUND in arena"
-                        );
                     }
                 }
 
@@ -1202,15 +1193,6 @@ impl<'a> CheckerState<'a> {
                     // it gets the augmented type with all merged members
                     self.ctx.symbol_types.insert(export_sym_id, result);
 
-                    if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                        debug!(
-                            export_name = %export_name,
-                            module_name = %module_name,
-                            export_sym_id = export_sym_id.0,
-                            result_type_id = result.0,
-                            "[DEBUG] ALIAS"
-                        );
-                    }
                     return (result, Vec::new());
                 }
 
