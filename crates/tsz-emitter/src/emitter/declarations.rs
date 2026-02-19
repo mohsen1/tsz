@@ -137,20 +137,21 @@ impl<'a> Printer<'a> {
         }
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
-        // Map closing `)` to its source position (after last param's type annotation)
+        // Map closing `)` — scan backward from body start since parser may
+        // include `)` in the last parameter node's range.
         {
             let search_start = func
                 .parameters
                 .nodes
-                .last()
+                .first()
                 .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.end);
+                .map_or(node.pos, |n| n.pos);
             let search_end = if !func.body.is_none() {
                 self.arena.get(func.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
             };
-            self.map_token_after(search_start, search_end, b')');
+            self.map_closing_paren_backward(search_start, search_end);
         }
         self.write(")");
 
@@ -1642,20 +1643,21 @@ impl<'a> Printer<'a> {
         }
         self.write("(");
         self.emit_function_parameters_js(&method.parameters.nodes);
-        // Map closing `)` to its source position
+        // Map closing `)` — scan backward from body start since parser may
+        // include `)` in the last parameter node's range.
         {
             let search_start = method
                 .parameters
                 .nodes
-                .last()
+                .first()
                 .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.end);
+                .map_or(node.pos, |n| n.pos);
             let search_end = if !method.body.is_none() {
                 self.arena.get(method.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
             };
-            self.map_token_after(search_start, search_end, b')');
+            self.map_closing_paren_backward(search_start, search_end);
         }
         self.write(")");
 
@@ -2263,6 +2265,16 @@ impl<'a> Printer<'a> {
         self.emit(accessor.name);
         self.write("(");
         self.emit_function_parameters_js(&accessor.parameters.nodes);
+        // Map closing `)` — scan backward from body start
+        if let Some(body_node) = self.arena.get(accessor.body) {
+            let search_start = accessor
+                .parameters
+                .nodes
+                .first()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.pos);
+            self.map_closing_paren_backward(search_start, body_node.pos);
+        }
         self.write(")");
 
         if !accessor.body.is_none() {
