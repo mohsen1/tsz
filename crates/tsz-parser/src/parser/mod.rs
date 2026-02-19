@@ -48,6 +48,10 @@ mod spelling_integration_tests;
 mod duplicate_label_tests;
 
 #[cfg(test)]
+#[path = "../../tests/jsx_unclosed_tag_tests.rs"]
+mod jsx_unclosed_tag_tests;
+
+#[cfg(test)]
 #[path = "../../tests/state_expression_tests.rs"]
 mod state_expression_tests;
 
