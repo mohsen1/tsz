@@ -110,7 +110,7 @@ pub struct CodeAction {
     pub edit: Option<WorkspaceEdit>,
     /// Marks this as a preferred action (shown first in UI).
     pub is_preferred: bool,
-    /// Metadata for the action (e.g. fixId for TSServer)
+    /// Metadata for the action (e.g. fixId for `TSServer`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
 }
