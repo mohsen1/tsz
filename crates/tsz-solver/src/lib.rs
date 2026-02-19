@@ -39,6 +39,8 @@ mod narrowing;
 mod object_literal;
 pub mod objects;
 pub mod operations;
+pub mod operations_generics;
+pub mod operations_iterators;
 pub mod operations_property;
 mod query_trace;
 pub mod recursion;
