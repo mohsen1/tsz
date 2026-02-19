@@ -52,6 +52,7 @@ pub mod tracer;
 mod type_factory;
 pub mod type_queries;
 pub mod type_queries_extended;
+pub mod type_resolver;
 pub mod types;
 pub mod unsoundness_audit;
 pub mod utils;
