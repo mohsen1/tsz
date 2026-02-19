@@ -110,6 +110,16 @@ impl<'a> Printer<'a> {
             self.write(" ");
         }
 
+        // Skip comments inside type parameter list (e.g., `<T, U /*extends T*/>`)
+        // since type parameters are stripped in JS output
+        if let Some(ref type_params) = func.type_parameters {
+            for &tp_idx in &type_params.nodes {
+                if let Some(tp_node) = self.arena.get(tp_idx) {
+                    self.skip_comments_in_range(tp_node.pos, tp_node.end);
+                }
+            }
+        }
+
         // Parameters - only emit names, not types for JavaScript
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
@@ -274,8 +284,11 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     // Skip TypeScript-only modifiers (abstract, declare, etc.)
+                    // Also skip `async` — it's an error on class declarations but
+                    // TSC still emits the class without the modifier.
                     if mod_node.kind == SyntaxKind::AbstractKeyword as u16
                         || mod_node.kind == SyntaxKind::DeclareKeyword as u16
+                        || mod_node.kind == SyntaxKind::AsyncKeyword as u16
                     {
                         continue;
                     }
