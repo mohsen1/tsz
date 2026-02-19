@@ -10,7 +10,10 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    pub(super) fn get_binding_element_property_key(&self, elem: &BindingElementData) -> Option<NodeIndex> {
+    pub(super) fn get_binding_element_property_key(
+        &self,
+        elem: &BindingElementData,
+    ) -> Option<NodeIndex> {
         let key_idx = if elem.property_name.is_some() {
             elem.property_name
         } else {
@@ -116,7 +119,10 @@ impl<'a> Printer<'a> {
 
     /// If `key_idx` is a computed property, emit a temp variable assignment and return the temp name
     /// Returns None if not computed
-    pub(super) fn emit_computed_key_temp_if_needed(&mut self, key_idx: NodeIndex) -> Option<String> {
+    pub(super) fn emit_computed_key_temp_if_needed(
+        &mut self,
+        key_idx: NodeIndex,
+    ) -> Option<String> {
         let key_node = self.arena.get(key_idx)?;
 
         if key_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
@@ -975,7 +981,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_destructuring_pattern_idx(&mut self, pattern_idx: NodeIndex, temp_name: &str) {
+    pub(super) fn emit_es5_destructuring_pattern_idx(
+        &mut self,
+        pattern_idx: NodeIndex,
+        temp_name: &str,
+    ) {
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return;
         };

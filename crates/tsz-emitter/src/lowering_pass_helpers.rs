@@ -121,7 +121,10 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
-    pub(super) fn get_extends_heritage(&self, heritage_clauses: &Option<NodeList>) -> Option<NodeIndex> {
+    pub(super) fn get_extends_heritage(
+        &self,
+        heritage_clauses: &Option<NodeList>,
+    ) -> Option<NodeIndex> {
         let clauses = heritage_clauses.as_ref()?;
 
         for &clause_idx in &clauses.nodes {
@@ -168,7 +171,11 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    pub(super) fn mark_class_helpers(&mut self, class_node: NodeIndex, heritage: Option<NodeIndex>) {
+    pub(super) fn mark_class_helpers(
+        &mut self,
+        class_node: NodeIndex,
+        heritage: Option<NodeIndex>,
+    ) {
         if heritage.is_some() {
             self.transforms.helpers_mut().extends = true;
         }
@@ -187,7 +194,10 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    pub(super) fn class_has_private_members(&self, class_data: &tsz_parser::parser::node::ClassData) -> bool {
+    pub(super) fn class_has_private_members(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -460,7 +470,11 @@ impl<'a> LoweringPass<'a> {
         self.get_module_root_name_inner(name_idx, 0)
     }
 
-    pub(super) fn get_module_root_name_inner(&self, name_idx: NodeIndex, depth: u32) -> Option<IdentifierId> {
+    pub(super) fn get_module_root_name_inner(
+        &self,
+        name_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<IdentifierId> {
         // Stack overflow protection for qualified names
         if depth >= MAX_QUALIFIED_NAME_DEPTH {
             return None;
@@ -491,7 +505,10 @@ impl<'a> LoweringPass<'a> {
         Some(ident.escaped_text.clone())
     }
 
-    pub(super) fn get_block_like(&self, node: &Node) -> Option<&tsz_parser::parser::node::BlockData> {
+    pub(super) fn get_block_like(
+        &self,
+        node: &Node,
+    ) -> Option<&tsz_parser::parser::node::BlockData> {
         if node.kind == syntax_kind_ext::BLOCK || node.kind == syntax_kind_ext::CASE_BLOCK {
             self.arena.blocks.get(node.data_index as usize)
         } else {

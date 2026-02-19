@@ -44,6 +44,7 @@ mod es5_bindings;
 mod es5_bindings_assignment;
 mod es5_bindings_patterns;
 mod es5_helpers;
+mod es5_helpers_async;
 mod es5_templates;
 mod expressions;
 mod expressions_literals;

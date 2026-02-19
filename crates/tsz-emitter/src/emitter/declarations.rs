@@ -3,9 +3,9 @@ use crate::transforms::ClassES5Emitter;
 use crate::transforms::enum_es5::EnumES5Transformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::NodeIndex;
 use tsz_scanner::SyntaxKind;
 
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`

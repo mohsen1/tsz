@@ -353,7 +353,10 @@ impl<'a> Printer<'a> {
         false
     }
 
-    pub(super) fn unwrap_parenthesized_binding_pattern(&self, mut pattern_idx: NodeIndex) -> NodeIndex {
+    pub(super) fn unwrap_parenthesized_binding_pattern(
+        &self,
+        mut pattern_idx: NodeIndex,
+    ) -> NodeIndex {
         while let Some(node) = self.arena.get(pattern_idx) {
             if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
                 break;
@@ -1217,7 +1220,11 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_es5_destructuring_with_read_tail(&mut self, pattern_idx: NodeIndex, source_expr: &str) {
+    pub(super) fn emit_es5_destructuring_with_read_tail(
+        &mut self,
+        pattern_idx: NodeIndex,
+        source_expr: &str,
+    ) {
         let Some(pattern_node) = self.arena.get(pattern_idx) else {
             return;
         };
