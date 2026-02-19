@@ -1210,6 +1210,30 @@ impl ParserState {
                 )
             } else if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
+            } else if tsz_scanner::token_is_template_literal(self.token()) {
+                // TS1443: Module declaration names may only use ' or " quoted strings.
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Module declaration names may only use ' or \" quoted strings.",
+                    diagnostic_codes::MODULE_DECLARATION_NAMES_MAY_ONLY_USE_OR_QUOTED_STRINGS,
+                );
+                // Consume the entire template expression/literal to avoid trailing errors
+                self.parse_template_literal();
+                
+                // Create a missing identifier for recovery so the name is always valid
+                let name_start = self.token_pos();
+                let name_end = self.token_pos();
+                self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    name_start,
+                    name_end,
+                    IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                )
             } else {
                 self.parse_identifier()
             }
@@ -1306,6 +1330,30 @@ impl ParserState {
                 )
             } else if self.is_token(SyntaxKind::StringLiteral) {
                 self.parse_string_literal()
+            } else if tsz_scanner::token_is_template_literal(self.token()) {
+                // TS1443: Module declaration names may only use ' or " quoted strings.
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "Module declaration names may only use ' or \" quoted strings.",
+                    diagnostic_codes::MODULE_DECLARATION_NAMES_MAY_ONLY_USE_OR_QUOTED_STRINGS,
+                );
+                // Consume the entire template expression/literal to avoid trailing errors
+                self.parse_template_literal();
+                
+                // Create a missing identifier for recovery so the name is always valid
+                let name_start = self.token_pos();
+                let name_end = self.token_pos();
+                self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    name_start,
+                    name_end,
+                    IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                )
             } else {
                 self.parse_identifier()
             }

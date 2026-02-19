@@ -133,6 +133,10 @@ mod checker_state_tests;
 #[path = "../tests/variable_redeclaration_tests.rs"]
 mod variable_redeclaration_tests;
 
+#[cfg(test)]
+#[path = "../tests/strict_mode_and_module_tests.rs"]
+mod strict_mode_and_module_tests;
+
 // Cross-file module resolution tests
 #[cfg(test)]
 #[path = "../tests/module_resolution_tests.rs"]

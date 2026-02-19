@@ -179,6 +179,8 @@ impl<'a> CheckerState<'a> {
                 self.resolve_no_unused_locals_from_source(&sf.text);
             self.ctx.compiler_options.no_unused_parameters =
                 self.resolve_no_unused_parameters_from_source(&sf.text);
+            self.ctx.compiler_options.always_strict =
+                self.resolve_always_strict_from_source(&sf.text);
             if self.has_ts_nocheck_pragma(&sf.text) {
                 return;
             }
