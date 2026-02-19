@@ -217,12 +217,63 @@ impl ConstraintSet {
         }
     }
 
+    /// Perform transitive reduction on upper bounds to remove redundant constraints.
+    ///
+    /// If we have constraints (T <: A) and (T <: B) and we know (A <: B),
+    /// then (T <: B) is redundant and can be removed.
+    ///
+    /// This reduces N² pairwise checks in `detect_conflicts` to O(N * `reduced_N`).
+    pub fn transitive_reduction(&mut self, interner: &dyn TypeDatabase) {
+        if self.upper_bounds.len() < 2 {
+            return;
+        }
+
+        let mut redundant = FxHashSet::default();
+        let bounds = &self.upper_bounds;
+
+        for (i, &u1) in bounds.iter().enumerate() {
+            for (j, &u2) in bounds.iter().enumerate() {
+                if i == j || redundant.contains(&u1) || redundant.contains(&u2) {
+                    continue;
+                }
+
+                // If u1 <: u2, then u2 is redundant (u1 is a stricter constraint)
+                if crate::subtype::is_subtype_of(interner, u1, u2) {
+                    redundant.insert(u2);
+                }
+            }
+        }
+
+        if !redundant.is_empty() {
+            self.upper_bounds.retain(|ty| !redundant.contains(ty));
+        }
+    }
+
     /// Detect early conflicts between collected constraints.
     /// This allows failing fast before full resolution.
     pub fn detect_conflicts(&self, interner: &dyn TypeDatabase) -> Option<ConstraintConflict> {
+        // PERF: Transitive reduction of upper bounds to minimize N² checks.
+        let mut reduced_upper = self.upper_bounds.clone();
+        if reduced_upper.len() >= 2 {
+            let mut redundant = FxHashSet::default();
+            for (i, &u1) in reduced_upper.iter().enumerate() {
+                for (j, &u2) in reduced_upper.iter().enumerate() {
+                    if i == j || redundant.contains(&u1) || redundant.contains(&u2) {
+                        continue;
+                    }
+                    if crate::subtype::is_subtype_of(interner, u1, u2) {
+                        redundant.insert(u2);
+                    }
+                }
+            }
+            if !redundant.is_empty() {
+                reduced_upper.retain(|ty| !redundant.contains(ty));
+            }
+        }
+
         // 1. Check for mutually exclusive upper bounds
-        for (i, &u1) in self.upper_bounds.iter().enumerate() {
-            for &u2 in &self.upper_bounds[i + 1..] {
+        for (i, &u1) in reduced_upper.iter().enumerate() {
+            for &u2 in &reduced_upper[i + 1..] {
                 if are_disjoint(interner, u1, u2) {
                     return Some(ConstraintConflict::DisjointUpperBounds(u1, u2));
                 }
@@ -231,7 +282,7 @@ impl ConstraintSet {
 
         // 2. Check if any lower bound is incompatible with any upper bound
         for &lower in &self.lower_bounds {
-            for &upper in &self.upper_bounds {
+            for &upper in &reduced_upper {
                 // Ignore ERROR and ANY for conflict detection
                 if lower == TypeId::ERROR
                     || upper == TypeId::ERROR
@@ -1143,7 +1194,10 @@ impl<'a> InferenceContext<'a> {
             }
 
             // ReadonlyType: unwrap if both are readonly (e.g. readonly [T] vs readonly [number])
-            (Some(TypeData::ReadonlyType(source_inner)), Some(TypeData::ReadonlyType(target_inner))) => {
+            (
+                Some(TypeData::ReadonlyType(source_inner)),
+                Some(TypeData::ReadonlyType(target_inner)),
+            ) => {
                 self.infer_from_types(source_inner, target_inner, priority)?;
             }
 

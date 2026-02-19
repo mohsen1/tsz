@@ -11,6 +11,7 @@ use crate::types::{
     IndexSignature, IntrinsicKind, LiteralValue, MappedModifier, MappedType, ObjectFlags,
     ObjectShape, PropertyInfo, TupleListId, TypeData, TypeId,
 };
+use rustc_hash::FxHashMap;
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
@@ -71,66 +72,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Ok(Some(remapped))
     }
 
-    /// Helper to get property modifiers for a given key in a source object.
-    ///
-    /// Uses `collect_properties` to handle Lazy (Interfaces), Ref, Intersections,
-    /// and `TypeParameter` types automatically (North Star Rule 3).
-    fn get_property_modifiers_for_key(
-        &mut self,
-        source_object: Option<TypeId>,
-        key_name: Atom,
-    ) -> (bool, bool) {
-        let Some(source_obj) = source_object else {
-            return (false, false);
-        };
-
-        // NORTH STAR: Use collect_properties instead of manual TypeData matching.
-        // This handles Lazy (Interfaces), Ref, and Intersections automatically.
-        match collect_properties(source_obj, self.interner(), self.resolver()) {
-            PropertyCollectionResult::Properties { properties, .. } => {
-                for prop in properties {
-                    if prop.name == key_name {
-                        return (prop.optional, prop.readonly);
-                    }
-                }
-            }
-            PropertyCollectionResult::Any => {
-                // 'any' properties are effectively neither readonly nor optional
-                // in the context of mapped type preservation.
-                return (false, false);
-            }
-            PropertyCollectionResult::NonObject => {}
-        }
-
-        (false, false)
-    }
-
-    /// Get the DECLARED type of a property from `source_object`, without adding
-    /// `| undefined` for optional properties. This is distinct from `IndexedAccess`
-    /// evaluation which adds `| undefined` for optional properties.
-    ///
-    /// Used in homomorphic mapped types where the template type should use the
-    /// property's declared type, not the accessed type.
-    fn get_declared_property_type_for_key(
-        &mut self,
-        source_object: Option<TypeId>,
-        key_name: Atom,
-    ) -> Option<TypeId> {
-        let source_obj = source_object?;
-        match collect_properties(source_obj, self.interner(), self.resolver()) {
-            PropertyCollectionResult::Properties { properties, .. } => {
-                for prop in properties {
-                    if prop.name == key_name {
-                        // Return the declared type, NOT optional_property_type which adds | undefined
-                        return Some(prop.type_id);
-                    }
-                }
-                None
-            }
-            _ => None,
-        }
-    }
-
     /// Helper to compute modifiers for a mapped type property.
     fn get_mapped_modifiers(
         &mut self,
@@ -139,7 +80,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_object: Option<TypeId>,
         key_name: Atom,
     ) -> (bool, bool) {
-        let source_mods = self.get_property_modifiers_for_key(source_object, key_name);
+        // NOTE: This helper is now only used for index signatures.
+        // Direct property modifiers are handled via the memoized map in evaluate_mapped.
+        let source_mods = if let Some(source_obj) = source_object {
+            match collect_properties(source_obj, self.interner(), self.resolver()) {
+                PropertyCollectionResult::Properties { properties, .. } => properties
+                    .iter()
+                    .find(|p| p.name == key_name)
+                    .map_or((false, false), |p| (p.optional, p.readonly)),
+                _ => (false, false),
+            }
+        } else {
+            (false, false)
+        };
 
         let optional = match mapped.optional_modifier {
             Some(MappedModifier::Add) => true,
@@ -248,6 +201,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             None
         };
 
+        // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
+        // This avoids repeated O(N) collect_properties calls inside the loop.
+        let mut source_prop_map = FxHashMap::default();
+        if let Some(source) = source_object {
+            match collect_properties(source, self.interner(), self.resolver()) {
+                PropertyCollectionResult::Properties { properties, .. } => {
+                    for prop in properties {
+                        source_prop_map
+                            .insert(prop.name, (prop.optional, prop.readonly, prop.type_id));
+                    }
+                }
+                PropertyCollectionResult::Any | PropertyCollectionResult::NonObject => {
+                    // Any type properties are treated as (false, false, ANY)
+                }
+            }
+        }
+
         // HOMOMORPHIC ARRAY/TUPLE PRESERVATION
         // If source_object is an Array or Tuple, preserve the structure instead of
         // degrading to a plain Object. This preserves Array methods (push, pop, map)
@@ -355,31 +325,46 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             // Get modifiers for this specific key (preserves homomorphic behavior)
-            let (optional, readonly) =
-                self.get_mapped_modifiers(mapped, is_homomorphic, source_object, key_name);
+            // Use memoized source property info for O(1) lookup.
+            let source_info = source_prop_map.get(&key_name);
+            let (source_optional, source_readonly) =
+                source_info.map_or((false, false), |(opt, ro, _)| (*opt, *ro));
+
+            let optional = match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    if is_homomorphic {
+                        source_optional
+                    } else {
+                        false
+                    }
+                }
+            };
+
+            let readonly = match mapped.readonly_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => {
+                    if is_homomorphic {
+                        source_readonly
+                    } else {
+                        false
+                    }
+                }
+            };
 
             // TypeScript homomorphic mapped type behavior: when `-?` removes optionality
             // from an optional source property, the property type should be the DECLARED
             // type (without the `| undefined` that IndexedAccess adds for optional properties).
-            //
-            // Example: `Required<{a?: string}>` = `{a: string}`, NOT `{a: string|undefined}`.
-            // The IndexedAccess `T["a"]` evaluates to `string | undefined` for optional `a`,
-            // but the mapped type template should use the declared type `string`.
-            // This matches TypeScript's `getTypeOfPropertyOfType` behavior in mapped types.
             if !optional
                 && matches!(mapped.optional_modifier, Some(MappedModifier::Remove))
                 && is_homomorphic
+                && source_optional
             {
-                let source_was_optional = self
-                    .get_property_modifiers_for_key(source_object, key_name)
-                    .0;
-                if source_was_optional {
-                    // Use the declared type directly to strip the | undefined from optionality
-                    if let Some(declared) =
-                        self.get_declared_property_type_for_key(source_object, key_name)
-                    {
-                        property_type = declared;
-                    }
+                // Use the memoized declared type directly
+                if let Some((_, _, declared_type)) = source_info {
+                    property_type = *declared_type;
                 }
             }
 
