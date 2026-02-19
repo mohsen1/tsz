@@ -891,6 +891,39 @@ pub fn map_compound_members(
     }
 }
 
+/// Like [`map_compound_members`], but only reconstructs the compound type if at least
+/// one member was changed by the mapping function. Returns the original `type_id`
+/// unchanged if all mapped members are identical to the originals.
+///
+/// Returns `None` if the type is not a union or intersection.
+pub fn map_compound_members_if_changed(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut f: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members.iter().map(|&m| f(m)).collect();
+            if mapped.iter().eq(members.iter()) {
+                Some(type_id)
+            } else {
+                Some(db.union(mapped))
+            }
+        }
+        Some(TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            let mapped: Vec<TypeId> = members.iter().map(|&m| f(m)).collect();
+            if mapped.iter().eq(members.iter()) {
+                Some(type_id)
+            } else {
+                Some(db.intersection(mapped))
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Get the element type of an array.
 ///
 /// Returns None if the type is not an array.

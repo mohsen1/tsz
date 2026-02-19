@@ -27,10 +27,13 @@ fn classifies_and_extracts_environment_resolution_shapes() {
         Some((TypeId::STRING, vec![TypeId::NUMBER]))
     );
     assert_eq!(
-        union_members(&types, union),
+        tsz_solver::type_queries::get_union_members(&types, union),
         Some(vec![TypeId::NUMBER, TypeId::STRING])
     );
-    assert_eq!(intersection_members(&types, TypeId::STRING), None);
+    assert_eq!(
+        tsz_solver::type_queries::get_intersection_members(&types, TypeId::STRING),
+        None
+    );
     assert!(matches!(
         classify_mapped_constraint(&types, keyof_string),
         MappedConstraintKind::KeyOf(inner) if inner == TypeId::STRING

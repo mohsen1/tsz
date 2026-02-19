@@ -1222,7 +1222,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         SubtypeResult::True
     }
 
-    /// Check if source is a subtype of an IndexAccess target where the index is generic.
+    /// Check if source is a subtype of an `IndexAccess` target where the index is generic.
     ///
     /// If `Target` is `Obj[K]` where `K` is generic, we check if `Source <: Obj[C]`
     /// where `C` is the constraint of `K`.
@@ -2631,10 +2631,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Dispatch to the visitor using the extracted interner
         let result = visitor.visit_type(interner, source);
 
-        if result == SubtypeResult::False {
-            if self.check_generic_index_access_subtype(source, target) {
-                return SubtypeResult::True;
-            }
+        if result == SubtypeResult::False && self.check_generic_index_access_subtype(source, target)
+        {
+            return SubtypeResult::True;
         }
 
         // Trace: Generic fallback type mismatch (no specific reason matched above)
