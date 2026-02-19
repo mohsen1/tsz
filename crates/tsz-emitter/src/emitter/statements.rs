@@ -643,6 +643,20 @@ impl<'a> Printer<'a> {
 
         if !try_stmt.finally_block.is_none() {
             self.write_line();
+            // Map the `finally` keyword to its source position
+            // The keyword is between the catch block end and finally block start
+            if let Some(finally_node) = self.arena.get(try_stmt.finally_block) {
+                let search_start = if !try_stmt.catch_clause.is_none() {
+                    self.arena
+                        .get(try_stmt.catch_clause)
+                        .map_or(node.pos, |n| n.end)
+                } else {
+                    self.arena
+                        .get(try_stmt.try_block)
+                        .map_or(node.pos, |n| n.end)
+                };
+                self.map_token_after_skipping_whitespace(search_start, finally_node.pos);
+            }
             self.write("finally ");
             self.emit(try_stmt.finally_block);
         }
@@ -656,7 +670,10 @@ impl<'a> Printer<'a> {
         self.write("catch");
 
         if !catch.variable_declaration.is_none() {
-            self.write(" (");
+            self.write(" ");
+            // Map the `(` to its source position
+            self.map_token_after(node.pos, node.end, b'(');
+            self.write("(");
             self.emit(catch.variable_declaration);
             self.write(")");
         } else if self.ctx.needs_es2019_lowering {
