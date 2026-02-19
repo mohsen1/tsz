@@ -419,8 +419,32 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters (without types for JavaScript)
+        // Map opening `(` to its source position
+        {
+            let search_start = if !func.name.is_none() {
+                self.arena.get(func.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.map_token_after(search_start, node.end, b'(');
+        }
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
+        // Map closing `)` to its source position
+        {
+            let search_start = func
+                .parameters
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.end);
+            let search_end = if !func.body.is_none() {
+                self.arena.get(func.body).map_or(node.end, |n| n.pos)
+            } else {
+                node.end
+            };
+            self.map_token_after(search_start, search_end, b')');
+        }
         self.write(") ");
 
         // Emit body - tsc never collapses multi-line function expression bodies

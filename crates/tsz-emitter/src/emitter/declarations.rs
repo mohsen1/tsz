@@ -121,8 +121,37 @@ impl<'a> Printer<'a> {
         }
 
         // Parameters - only emit names, not types for JavaScript
+        // Map opening `(` to its source position (after name/type params)
+        {
+            let search_start = if let Some(ref tp) = func.type_parameters {
+                tp.nodes
+                    .last()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(node.pos, |n| n.end)
+            } else if !func.name.is_none() {
+                self.arena.get(func.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.map_token_after(search_start, node.end, b'(');
+        }
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
+        // Map closing `)` to its source position (after last param's type annotation)
+        {
+            let search_start = func
+                .parameters
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.end);
+            let search_end = if !func.body.is_none() {
+                self.arena.get(func.body).map_or(node.end, |n| n.pos)
+            } else {
+                node.end
+            };
+            self.map_token_after(search_start, search_end, b')');
+        }
         self.write(")");
 
         // No return type for JavaScript
@@ -1588,8 +1617,32 @@ impl<'a> Printer<'a> {
         if !method.name.is_none() && !has_recovery_missing_name {
             self.emit(method.name);
         }
+        // Map opening `(` to its source position
+        {
+            let search_start = if !method.name.is_none() {
+                self.arena.get(method.name).map_or(node.pos, |n| n.end)
+            } else {
+                node.pos
+            };
+            self.map_token_after(search_start, node.end, b'(');
+        }
         self.write("(");
         self.emit_function_parameters_js(&method.parameters.nodes);
+        // Map closing `)` to its source position
+        {
+            let search_start = method
+                .parameters
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.end);
+            let search_end = if !method.body.is_none() {
+                self.arena.get(method.body).map_or(node.end, |n| n.pos)
+            } else {
+                node.end
+            };
+            self.map_token_after(search_start, search_end, b')');
+        }
         self.write(")");
 
         // Skip return type for JavaScript emit
@@ -1695,8 +1748,26 @@ impl<'a> Printer<'a> {
         let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
         let field_inits = std::mem::take(&mut self.pending_class_field_inits);
 
-        self.write("constructor(");
+        self.write("constructor");
+        // Map opening `(` to its source position
+        self.map_token_after(node.pos, node.end, b'(');
+        self.write("(");
         self.emit_function_parameters_js(&ctor.parameters.nodes);
+        // Map closing `)` to its source position
+        {
+            let search_start = ctor
+                .parameters
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(node.pos, |n| n.end);
+            let search_end = if !ctor.body.is_none() {
+                self.arena.get(ctor.body).map_or(node.end, |n| n.pos)
+            } else {
+                node.end
+            };
+            self.map_token_after(search_start, search_end, b')');
+        }
         self.write(")");
         self.write(" ");
 
