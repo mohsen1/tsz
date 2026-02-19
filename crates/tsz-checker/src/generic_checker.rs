@@ -248,7 +248,6 @@ impl<'a> CheckerState<'a> {
                     &[name.as_str()],
                 );
             }
-            return;
         }
     }
 

@@ -348,7 +348,10 @@ fn process_test_file(
         .any(|(name, _)| name.replace('\\', "/").ends_with("tsconfig.json"));
     if !has_tsconfig_file {
         let tsconfig_path = work_dir.join("tsconfig.json");
-        let mut compiler_options = convert_options_to_tsconfig(&options).as_object().map(|m| m.clone()).unwrap_or_default();
+        let mut compiler_options = convert_options_to_tsconfig(&options)
+            .as_object()
+            .map(|m| m.clone())
+            .unwrap_or_default();
         compiler_options.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
         compiler_options.insert("strict".to_string(), serde_json::Value::Bool(true));
 

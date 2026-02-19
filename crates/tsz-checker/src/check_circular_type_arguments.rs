@@ -1,5 +1,4 @@
 use tsz_solver::TypeId;
-use tsz_solver::visitor::contains_type_matching;
 
 use crate::state::CheckerState;
 
