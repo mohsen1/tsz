@@ -41,24 +41,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().literal_string(&result);
         }
 
-        // Pre-compute the total number of combinations to check against the limit
-        // This avoids doing expensive work if we're going to exceed the limit anyway
+        // PERF: Pre-evaluate all type spans once and cache results.
+        // This avoids double evaluation in the size-check loop and expansion loop.
+        let mut evaluated_spans = Vec::with_capacity(span_list.len());
         let mut total_combinations: usize = 1;
+
         for span in span_list.iter() {
-            if let TemplateSpan::Type(type_id) = span {
-                let evaluated = self.evaluate(*type_id);
-                let span_count = self.count_literal_members(evaluated);
-                if span_count == 0 {
-                    // Contains non-literal types, can't fully evaluate
-                    return self.interner().template_literal(span_list.to_vec());
+            match span {
+                TemplateSpan::Text(_atom) => {
+                    evaluated_spans.push(None); // Marker for text span
                 }
-                total_combinations = total_combinations.saturating_mul(span_count);
-                if total_combinations > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                    // Would exceed limit - keep the unexpanded template literal type
-                    // instead of widening to string. This is sound: subtyping uses
-                    // the backtracking matcher to check Literal <: TemplateLiteral
-                    // without expansion, so "z" won't incorrectly satisfy the template.
-                    return self.interner().template_literal(span_list.to_vec());
+                TemplateSpan::Type(type_id) => {
+                    let evaluated = self.evaluate(*type_id);
+                    let strings = self.extract_literal_strings(evaluated);
+
+                    if strings.is_empty() {
+                        // Contains non-literal types, can't fully evaluate
+                        return self.interner().template_literal(span_list.to_vec());
+                    }
+
+                    total_combinations = total_combinations.saturating_mul(strings.len());
+                    if total_combinations > TEMPLATE_LITERAL_EXPANSION_LIMIT {
+                        // Would exceed limit - keep unexpanded
+                        return self.interner().template_literal(span_list.to_vec());
+                    }
+                    evaluated_spans.push(Some(strings));
                 }
             }
         }
@@ -66,52 +73,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Check if we can fully evaluate to a union of literals
         let mut combinations = vec![String::new()];
 
-        for span in span_list.iter() {
+        for (i, span) in span_list.iter().enumerate() {
             match span {
                 TemplateSpan::Text(atom) => {
-                    let text = self.interner().resolve_atom_ref(*atom).to_string();
+                    let text = self.interner().resolve_atom_ref(*atom);
                     for combo in &mut combinations {
-                        combo.push_str(&text);
+                        combo.push_str(text.as_ref());
                     }
                 }
-                TemplateSpan::Type(type_id) => {
-                    let evaluated = self.evaluate(*type_id);
+                TemplateSpan::Type(_) => {
+                    // Safety: index i always matches evaluated_spans length
+                    let string_values = evaluated_spans[i].as_ref().unwrap();
+                    let new_size = combinations.len() * string_values.len();
 
-                    tracing::trace!(
-                        type_id = type_id.0,
-                        "evaluate_template_literal: evaluating type span"
-                    );
-
-                    // Try to extract string representations from the type
-                    let string_values = self.extract_literal_strings(evaluated);
-
-                    tracing::trace!(
-                        string_count = string_values.len(),
-                        strings = ?string_values,
-                        "evaluate_template_literal: extracted strings"
-                    );
-
-                    if string_values.is_empty() {
-                        // Can't evaluate this type - return template literal as-is
-                        tracing::trace!(
-                            "evaluate_template_literal: no strings extracted, returning template literal"
-                        );
-                        return self.interner().template_literal(span_list.to_vec());
-                    }
-
-                    // Check if expansion would exceed limit
-                    let new_size = combinations.len().saturating_mul(string_values.len());
-                    if new_size > TEMPLATE_LITERAL_EXPANSION_LIMIT {
-                        // Would exceed limit - keep the unexpanded template literal type
-                        // for sound subtyping (backtracking matcher handles this)
-                        return self.interner().template_literal(span_list.to_vec());
-                    }
-
-                    // Compute Cartesian product
+                    // Pre-allocate to minimize reallocations during Cartesian product
                     let mut new_combinations = Vec::with_capacity(new_size);
                     for combo in &combinations {
-                        for value in &string_values {
-                            new_combinations.push(format!("{combo}{value}"));
+                        for value in string_values {
+                            // OPTIMIZATION: Reserve exact capacity for the new string
+                            let mut new_combo = String::with_capacity(combo.len() + value.len());
+                            new_combo.push_str(combo);
+                            new_combo.push_str(value);
+                            new_combinations.push(new_combo);
                         }
                     }
                     combinations = new_combinations;
