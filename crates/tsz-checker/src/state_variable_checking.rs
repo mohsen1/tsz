@@ -997,7 +997,10 @@ impl<'a> CheckerState<'a> {
                             | syntax_kind_ext::ENUM_DECLARATION // enum
                             | syntax_kind_ext::CLASS_DECLARATION // class
                             | syntax_kind_ext::INTERFACE_DECLARATION // interface
+                            | syntax_kind_ext::TYPE_ALIAS_DECLARATION // type alias
                             | syntax_kind_ext::FUNCTION_DECLARATION // function
+                            | syntax_kind_ext::IMPORT_DECLARATION // import
+                            | syntax_kind_ext::EXPORT_DECLARATION // export
                     )
                 } else {
                     false
@@ -1025,7 +1028,7 @@ impl<'a> CheckerState<'a> {
                 }
             } else {
                 // If this is the first time we see this variable in the current check run,
-                // check if it has prior declarations (e.g. in lib.d.ts or earlier in the file) 
+                // check if it has prior declarations (e.g. in lib.d.ts or earlier in the file)
                 // that establish its type.
                 let mut type_to_store = final_type;
 
@@ -1033,19 +1036,42 @@ impl<'a> CheckerState<'a> {
                 // 'let' and 'const' shadowing is allowed and handled by binder (TS2451).
                 if !is_block_scoped {
                     let mut prior_type_found = None;
-                    let symbol_name = self.ctx.binder.get_symbol(sym_id).map(|s| s.escaped_name.clone());
+                    let symbol_name = self
+                        .ctx
+                        .binder
+                        .get_symbol(sym_id)
+                        .map(|s| s.escaped_name.clone());
 
                     // 1. Check lib contexts for prior declarations (e.g. 'var symbol' in lib.d.ts)
-                    // Extract data to avoid holding borrow on self during loop
+                    // Only compare against lib globals for TOP-LEVEL declarations.
+                    // Function-local vars shadow globals — they are NOT redeclarations.
+                    let is_top_level = self
+                        .ctx
+                        .arena
+                        .get_extended(decl_idx)
+                        .and_then(|ext| {
+                            // VarDecl → VarDeclList → VarStatement → parent
+                            self.ctx.arena.get_extended(ext.parent).and_then(|ext2| {
+                                self.ctx.arena.get_extended(ext2.parent).and_then(|ext3| {
+                                    self.ctx.arena.get(ext3.parent).map(|p| {
+                                        p.kind == syntax_kind_ext::SOURCE_FILE
+                                            || p.kind == syntax_kind_ext::MODULE_BLOCK
+                                    })
+                                })
+                            })
+                        })
+                        .unwrap_or(false);
+
                     let types = self.ctx.types;
                     let compiler_options = self.ctx.compiler_options.clone();
                     let definition_store = self.ctx.definition_store.clone();
                     let lib_contexts = self.ctx.lib_contexts.clone();
-                    let lib_contexts_data: Vec<_> = lib_contexts.iter()
+                    let lib_contexts_data: Vec<_> = lib_contexts
+                        .iter()
                         .map(|ctx| (ctx.arena.clone(), ctx.binder.clone()))
                         .collect();
 
-                    if let Some(name) = symbol_name {
+                    if is_top_level && let Some(name) = symbol_name {
                         for (arena, binder) in lib_contexts_data {
                             // Lookup by name in lib binder to ensure we find the matching symbol
                             // even if SymbolIds are not perfectly aligned across contexts.
@@ -1054,22 +1080,28 @@ impl<'a> CheckerState<'a> {
                                     for &lib_decl in &lib_sym.declarations {
                                         if !lib_decl.is_none() {
                                             if CheckerState::enter_cross_arena_delegation() {
-                                                let mut lib_checker = CheckerState::new_with_shared_def_store(
-                                                    &arena,
-                                                    &binder,
-                                                    types,
-                                                    "lib.d.ts".to_string(),
-                                                    compiler_options.clone(),
-                                                    definition_store.clone(),
-                                                );
+                                                let mut lib_checker =
+                                                    CheckerState::new_with_shared_def_store(
+                                                        &arena,
+                                                        &binder,
+                                                        types,
+                                                        "lib.d.ts".to_string(),
+                                                        compiler_options.clone(),
+                                                        definition_store.clone(),
+                                                    );
                                                 // Ensure lib checker can resolve types from other lib files
-                                                lib_checker.ctx.set_lib_contexts(lib_contexts.clone());
-                                                
-                                                let lib_type = lib_checker.get_type_of_node(lib_decl);
+                                                lib_checker
+                                                    .ctx
+                                                    .set_lib_contexts(lib_contexts.clone());
+
+                                                let lib_type =
+                                                    lib_checker.get_type_of_node(lib_decl);
                                                 CheckerState::leave_cross_arena_delegation();
 
                                                 // Check compatibility
-                                                if !self.are_var_decl_types_compatible(lib_type, final_type) {
+                                                if !self.are_var_decl_types_compatible(
+                                                    lib_type, final_type,
+                                                ) {
                                                     if let Some(ref name) = var_name {
                                                         self.error_subsequent_variable_declaration(
                                                             name, lib_type, final_type, decl_idx,
@@ -1077,11 +1109,12 @@ impl<'a> CheckerState<'a> {
                                                     }
                                                 }
 
-                                                prior_type_found = Some(if let Some(prev) = prior_type_found {
-                                                    self.refine_var_decl_type(prev, lib_type)
-                                                } else {
-                                                    lib_type
-                                                });
+                                                prior_type_found =
+                                                    Some(if let Some(prev) = prior_type_found {
+                                                        self.refine_var_decl_type(prev, lib_type)
+                                                    } else {
+                                                        lib_type
+                                                    });
                                             }
                                         }
                                     }
@@ -1107,14 +1140,18 @@ impl<'a> CheckerState<'a> {
                                                     | syntax_kind_ext::ENUM_DECLARATION
                                                     | syntax_kind_ext::CLASS_DECLARATION
                                                     | syntax_kind_ext::INTERFACE_DECLARATION
+                                                    | syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                                     | syntax_kind_ext::FUNCTION_DECLARATION
+                                                    | syntax_kind_ext::IMPORT_DECLARATION
+                                                    | syntax_kind_ext::EXPORT_DECLARATION
                                             )
                                         } else {
                                             false
                                         };
 
                                     if !is_other_mergeable
-                                        && !self.are_var_decl_types_compatible(other_type, final_type)
+                                        && !self
+                                            .are_var_decl_types_compatible(other_type, final_type)
                                     {
                                         if let Some(ref name) = var_name {
                                             self.error_subsequent_variable_declaration(
