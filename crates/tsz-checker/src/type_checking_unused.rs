@@ -398,15 +398,13 @@ impl<'a> CheckerState<'a> {
                         };
                         let start = decl_node.pos;
                         let length = decl_node.end.saturating_sub(decl_node.pos);
-                        self.ctx.push_diagnostic(Diagnostic {
-                            file: file_name.clone(),
+                        self.ctx.push_diagnostic(Diagnostic::error(
+                            file_name.clone(),
                             start,
                             length,
-                            message_text: msg,
-                            category: crate::diagnostics::DiagnosticCategory::Error,
+                            msg,
                             code,
-                            related_information: Vec::new(),
-                        });
+                        ));
                     }
                 }
             }
@@ -431,15 +429,13 @@ impl<'a> CheckerState<'a> {
                     let msg = format!("'{name}' is declared but its value is never read.");
                     let start = decl_node.pos;
                     let length = decl_node.end.saturating_sub(decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6133,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6133,
+                    ));
                 }
             }
         }
@@ -457,15 +453,13 @@ impl<'a> CheckerState<'a> {
                     let msg = "All imports in import declaration are unused.".to_string();
                     let start = import_decl_node.pos;
                     let length = import_decl_node.end.saturating_sub(import_decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6192,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6192,
+                    ));
                 }
             }
 
@@ -481,15 +475,13 @@ impl<'a> CheckerState<'a> {
                     let msg = "All variables are unused.".to_string();
                     let start = var_decl_node.pos;
                     let length = var_decl_node.end.saturating_sub(var_decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6199,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6199,
+                    ));
                 }
             }
 
@@ -505,15 +497,13 @@ impl<'a> CheckerState<'a> {
                     let msg = "All destructured elements are unused.".to_string();
                     let start = pattern_node.pos;
                     let length = pattern_node.end.saturating_sub(pattern_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6198,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6198,
+                    ));
                 }
             }
         }

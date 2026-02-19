@@ -48,15 +48,13 @@ fn plain_mode_formats_diagnostic_with_location() {
     let file_path = temp.path.join("src/main.ts");
     write_file(&file_path, "let x = 1;\nlet y = 2;\n");
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: 11,
-        length: 1,
-        message_text: "Cannot find name 'y'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2304,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        11,
+        1,
+        "Cannot find name 'y'.".to_string(),
+        2304,
+    );
 
     let mut reporter = Reporter::new(false);
     let output = reporter.render(std::slice::from_ref(&diagnostic));
@@ -71,15 +69,8 @@ fn plain_mode_formats_diagnostic_with_location() {
 
 #[test]
 fn plain_mode_omits_code_when_zero() {
-    let diagnostic = Diagnostic {
-        file: "missing.ts".to_string(),
-        start: 0,
-        length: 0,
-        message_text: "Parse error".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 0,
-        related_information: Vec::new(),
-    };
+    let diagnostic =
+        Diagnostic::error("missing.ts".to_string(), 0, 0, "Parse error".to_string(), 0);
 
     let mut reporter = Reporter::new(false);
     let output = reporter.render(&[diagnostic]);
@@ -93,15 +84,13 @@ fn plain_mode_no_source_snippets() {
     let file_path = temp.path.join("test.ts");
     write_file(&file_path, "let x: number = \"string\";\n");
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: 16,
-        length: 8,
-        message_text: "Type 'string' is not assignable to type 'number'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2322,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        16,
+        8,
+        "Type 'string' is not assignable to type 'number'.".to_string(),
+        2322,
+    );
 
     let mut reporter = Reporter::new(false);
     let output = reporter.render(&[diagnostic]);
@@ -133,24 +122,20 @@ fn plain_mode_multiple_diagnostics() {
     );
 
     let diagnostics = vec![
-        Diagnostic {
-            file: file_path.to_string_lossy().into_owned(),
-            start: 4,
-            length: 1,
-            message_text: "Type 'string' is not assignable to type 'number'.".to_string(),
-            category: DiagnosticCategory::Error,
-            code: 2322,
-            related_information: Vec::new(),
-        },
-        Diagnostic {
-            file: file_path.to_string_lossy().into_owned(),
-            start: 30,
-            length: 1,
-            message_text: "Type 'number' is not assignable to type 'string'.".to_string(),
-            category: DiagnosticCategory::Error,
-            code: 2322,
-            related_information: Vec::new(),
-        },
+        Diagnostic::error(
+            file_path.to_string_lossy().into_owned(),
+            4,
+            1,
+            "Type 'string' is not assignable to type 'number'.".to_string(),
+            2322,
+        ),
+        Diagnostic::error(
+            file_path.to_string_lossy().into_owned(),
+            30,
+            1,
+            "Type 'number' is not assignable to type 'string'.".to_string(),
+            2322,
+        ),
     ];
 
     let mut reporter = Reporter::new(false);
@@ -174,15 +159,13 @@ fn pretty_mode_uses_colon_separated_location() {
     let file_path = temp.path.join("test.ts");
     write_file(&file_path, "let x = 1;\nlet y = 2;\n");
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: 11,
-        length: 1,
-        message_text: "Cannot find name 'y'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2304,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        11,
+        1,
+        "Cannot find name 'y'.".to_string(),
+        2304,
+    );
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);
@@ -201,15 +184,13 @@ fn pretty_mode_includes_source_snippet() {
     let file_path = temp.path.join("test.ts");
     write_file(&file_path, "let x: number = \"string\";\n");
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: 16,
-        length: 8,
-        message_text: "Type 'string' is not assignable to type 'number'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2322,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        16,
+        8,
+        "Type 'string' is not assignable to type 'number'.".to_string(),
+        2322,
+    );
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);
@@ -236,15 +217,13 @@ fn pretty_mode_snippet_line_number_alignment() {
     source.push_str("let a10: number = \"string\";\n");
     write_file(&file_path, &source);
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: source.find("\"string\"").unwrap() as u32,
-        length: 8,
-        message_text: "Type 'string' is not assignable to type 'number'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2322,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        source.find("\"string\"").unwrap() as u32,
+        8,
+        "Type 'string' is not assignable to type 'number'.".to_string(),
+        2322,
+    );
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);
@@ -263,15 +242,13 @@ fn pretty_mode_summary_single_error_single_file() {
     let file_path = temp.path.join("test.ts");
     write_file(&file_path, "let x = unknownVar;\n");
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: 8,
-        length: 10,
-        message_text: "Cannot find name 'unknownVar'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2304,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        8,
+        10,
+        "Cannot find name 'unknownVar'.".to_string(),
+        2304,
+    );
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);
@@ -291,24 +268,20 @@ fn pretty_mode_summary_multiple_errors_same_file() {
     write_file(&file_path, "let x = a;\nlet y = b;\n");
 
     let diagnostics = vec![
-        Diagnostic {
-            file: file_path.to_string_lossy().into_owned(),
-            start: 8,
-            length: 1,
-            message_text: "Cannot find name 'a'.".to_string(),
-            category: DiagnosticCategory::Error,
-            code: 2304,
-            related_information: Vec::new(),
-        },
-        Diagnostic {
-            file: file_path.to_string_lossy().into_owned(),
-            start: 19,
-            length: 1,
-            message_text: "Cannot find name 'b'.".to_string(),
-            category: DiagnosticCategory::Error,
-            code: 2304,
-            related_information: Vec::new(),
-        },
+        Diagnostic::error(
+            file_path.to_string_lossy().into_owned(),
+            8,
+            1,
+            "Cannot find name 'a'.".to_string(),
+            2304,
+        ),
+        Diagnostic::error(
+            file_path.to_string_lossy().into_owned(),
+            19,
+            1,
+            "Cannot find name 'b'.".to_string(),
+            2304,
+        ),
     ];
 
     let mut reporter = Reporter::new(false);
@@ -328,15 +301,13 @@ fn pretty_mode_has_blank_line_between_header_and_snippet() {
     let file_path = temp.path.join("test.ts");
     write_file(&file_path, "let x = unknownVar;\n");
 
-    let diagnostic = Diagnostic {
-        file: file_path.to_string_lossy().into_owned(),
-        start: 8,
-        length: 10,
-        message_text: "Cannot find name 'unknownVar'.".to_string(),
-        category: DiagnosticCategory::Error,
-        code: 2304,
-        related_information: Vec::new(),
-    };
+    let diagnostic = Diagnostic::error(
+        file_path.to_string_lossy().into_owned(),
+        8,
+        10,
+        "Cannot find name 'unknownVar'.".to_string(),
+        2304,
+    );
 
     let mut reporter = Reporter::new(false);
     reporter.set_pretty(true);

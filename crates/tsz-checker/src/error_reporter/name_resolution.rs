@@ -728,15 +728,13 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.push_diagnostic(Diagnostic {
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
                 code,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            ));
         }
     }
 
@@ -751,15 +749,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB));
         }
     }
 
@@ -773,15 +763,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2));
         }
     }
 
@@ -795,15 +777,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2));
         }
     }
 
@@ -814,15 +788,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N));
         }
     }
 
@@ -908,15 +874,13 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
+            ));
         }
     }
 
@@ -931,15 +895,13 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
+            ));
         }
     }
 }

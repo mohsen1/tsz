@@ -41,15 +41,7 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Subsequent variable declarations must have the same type. Variable '{name}' must be of type '{prev_type_str}', but here has type '{current_type_str}'."
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP));
         }
     }
 
@@ -60,15 +52,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED,
+            ));
         }
     }
 
@@ -87,15 +77,13 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Abstract property '{prop_name}' in class '{class_name}' cannot be accessed in the constructor."
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::ABSTRACT_PROPERTY_IN_CLASS_CANNOT_BE_ACCESSED_IN_THE_CONSTRUCTOR,
+            ));
         }
     }
 
@@ -113,15 +101,13 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             let message =
                 format!("Namespace '{namespace_name}' has no exported member '{member_name}'.");
-            self.ctx.diagnostics.push(Diagnostic {
-                code: 2694,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                2694,
+            ));
         }
     }
 
@@ -233,15 +219,13 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.diagnostics.push(Diagnostic {
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
                 code,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            ));
         }
     }
 
@@ -339,15 +323,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::REFERS_TO_A_VALUE_BUT_IS_BEING_USED_AS_A_TYPE_HERE_DID_YOU_MEAN_TYPEOF));
         }
     }
 
@@ -356,15 +332,13 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             let message =
                 format_message(diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_TYPE, &[name]);
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_TYPE,
+            ));
         }
     }
 
@@ -375,15 +349,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_VALUE,
                 &[name],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::CANNOT_USE_NAMESPACE_AS_A_VALUE,
+            ));
         }
     }
 
@@ -393,15 +365,13 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             let message =
                 format_message(diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE, &[name]);
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+            ));
         }
     }
 }

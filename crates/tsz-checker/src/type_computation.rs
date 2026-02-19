@@ -11,7 +11,7 @@
 //! This module extends `CheckerState` with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 
-use crate::diagnostics::{Diagnostic, DiagnosticCategory};
+use crate::diagnostics::Diagnostic;
 use crate::query_boundaries::type_computation::{is_type_parameter_type, union_members};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -557,16 +557,7 @@ impl<'a> CheckerState<'a> {
                         // Emit TS2356 for invalid increment/decrement operand type
                         if let Some(loc) = self.get_source_location(unary.operand) {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.ctx.diagnostics.push(Diagnostic {
-                                code: diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE,
-                                category: DiagnosticCategory::Error,
-                                message_text: diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE
-                                    .to_string(),
-                                file: self.ctx.file_name.clone(),
-                                start: loc.start,
-                                length: loc.length(),
-                                related_information: Vec::new(),
-                            });
+                            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), diagnostic_messages::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE.to_string(), diagnostic_codes::AN_ARITHMETIC_OPERAND_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT_OR_AN_ENUM_TYPE));
                         }
                     }
                 }
@@ -1327,21 +1318,10 @@ impl<'a> CheckerState<'a> {
                             };
                             if let Some(loc) = self.get_source_location(left_idx) {
                                 use crate::diagnostics::{
-                                    Diagnostic, DiagnosticCategory, diagnostic_codes,
-                                    diagnostic_messages, format_message,
+                                    Diagnostic, diagnostic_codes, diagnostic_messages,
+                                    format_message,
                                 };
-                                self.ctx.diagnostics.push(Diagnostic {
-                                    code: diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
-                                    category: DiagnosticCategory::Error,
-                                    message_text: format_message(
-                                        diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
-                                        &[left_op_str, right_op_str],
-                                    ),
-                                    file: self.ctx.file_name.clone(),
-                                    start: loc.start,
-                                    length: loc.length(),
-                                    related_information: Vec::new(),
-                                });
+                                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), format_message(diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, &[left_op_str, right_op_str]), diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES));
                             }
                         }
                     }
@@ -1375,21 +1355,10 @@ impl<'a> CheckerState<'a> {
                             };
                             if let Some(loc) = self.get_source_location(right_idx) {
                                 use crate::diagnostics::{
-                                    Diagnostic, DiagnosticCategory, diagnostic_codes,
-                                    diagnostic_messages, format_message,
+                                    Diagnostic, diagnostic_codes, diagnostic_messages,
+                                    format_message,
                                 };
-                                self.ctx.diagnostics.push(Diagnostic {
-                                    code: diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
-                                    category: DiagnosticCategory::Error,
-                                    message_text: format_message(
-                                        diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES,
-                                        &[inner_op_str, outer_op_str],
-                                    ),
-                                    file: self.ctx.file_name.clone(),
-                                    start: loc.start,
-                                    length: loc.length(),
-                                    related_information: Vec::new(),
-                                });
+                                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), format_message(diagnostic_messages::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES, &[inner_op_str, outer_op_str]), diagnostic_codes::AND_OPERATIONS_CANNOT_BE_MIXED_WITHOUT_PARENTHESES));
                             }
                         }
                     }

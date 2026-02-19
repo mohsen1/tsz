@@ -3,9 +3,7 @@
 //! This module provides cycle detection for class inheritance using the `InheritanceGraph`.
 //! It detects circular inheritance BEFORE type resolution to prevent stack overflow.
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use rustc_hash::FxHashSet;
 use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
@@ -266,15 +264,13 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
             let length = end.saturating_sub(start);
             let message =
                 format_message(diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION, &[&class_name]);
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                related_information: Vec::new(),
-            });
+                message,
+                diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+            ));
         }
     }
 

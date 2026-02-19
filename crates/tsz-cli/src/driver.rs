@@ -3354,15 +3354,13 @@ const fn export_type_prefix(is_type_only: bool) -> &'static str {
 }
 
 fn parse_diagnostic_to_checker(file_name: &str, diagnostic: &ParseDiagnostic) -> Diagnostic {
-    Diagnostic {
-        file: file_name.to_string(),
-        start: diagnostic.start,
-        length: diagnostic.length,
-        message_text: diagnostic.message.clone(),
-        category: DiagnosticCategory::Error,
-        code: diagnostic.code,
-        related_information: Vec::new(),
-    }
+    Diagnostic::error(
+        file_name.to_string(),
+        diagnostic.start,
+        diagnostic.length,
+        diagnostic.message.clone(),
+        diagnostic.code,
+    )
 }
 
 fn create_binder_from_bound_file(

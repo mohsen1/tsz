@@ -1,8 +1,6 @@
 //! Core error emission helpers and type formatting utilities.
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -888,15 +886,13 @@ impl<'a> CheckerState<'a> {
 
     /// Report an error at a specific position.
     pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        self.ctx.diagnostics.push(Diagnostic {
-            file: self.ctx.file_name.clone(),
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
             start,
             length,
-            message_text: message.to_string(),
-            category: DiagnosticCategory::Error,
+            message.to_string(),
             code,
-            related_information: Vec::new(),
-        });
+        ));
     }
 
     /// Report an error at the current node being processed (from resolution stack).

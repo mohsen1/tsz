@@ -418,15 +418,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 (message, code)
             };
-            self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
-                code,
-                category: crate::diagnostics::DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: spec_start,
-                length: spec_length,
-                related_information: Vec::new(),
-            });
+            self.ctx
+                .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    spec_start,
+                    spec_length,
+                    message,
+                    code,
+                ));
             return;
         }
 

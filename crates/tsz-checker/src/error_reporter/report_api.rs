@@ -1,8 +1,6 @@
 //! Higher-level report_* wrapper methods for error reporting.
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -19,15 +17,13 @@ impl<'a> CheckerState<'a> {
     pub fn report_error(&mut self, node_idx: NodeIndex, message: &str, code: u32) {
         if let Some((start, end)) = self.get_node_span(node_idx) {
             let length = end.saturating_sub(start);
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                message_text: message.to_string(),
-                category: DiagnosticCategory::Error,
+                message.to_string(),
                 code,
-                related_information: Vec::new(),
-            });
+            ));
         }
     }
 
@@ -36,15 +32,13 @@ impl<'a> CheckerState<'a> {
     /// This is a convenience wrapper that creates a diagnostic and adds it
     /// to the checker's diagnostics list.
     pub fn report_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        self.ctx.diagnostics.push(Diagnostic {
-            file: self.ctx.file_name.clone(),
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
             start,
             length,
-            message_text: message.to_string(),
-            category: DiagnosticCategory::Error,
+            message.to_string(),
             code,
-            related_information: Vec::new(),
-        });
+        ));
     }
 
     // =========================================================================
@@ -101,15 +95,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[&type_str, &constraint_str],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code: diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-                related_information: Vec::new(),
-            });
+                message,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            ));
         }
     }
 
@@ -160,15 +152,13 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
                 start,
                 length,
-                message_text: message,
-                category: DiagnosticCategory::Error,
+                message,
                 code,
-                related_information: Vec::new(),
-            });
+            ));
         }
     }
 
@@ -291,15 +281,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
                 &[prop_name],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                file: self.ctx.file_name.clone(),
-                start,
-                length,
-                message_text: message,
-                category: DiagnosticCategory::Error,
-                code: diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), start, length, message, diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR));
         }
     }
 
