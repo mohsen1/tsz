@@ -1563,6 +1563,13 @@ impl<'a> CheckerState<'a> {
         resolved_type: TypeId,
         type_node: NodeIndex,
     ) -> bool {
+        // If resolved type is error, it might be due to infinite recursion during resolution
+        if resolved_type == TypeId::ERROR {
+            // Only report if we can confirm it's a structural cycle via AST inspection?
+            // Or assume ERROR means cycle?
+            // Let's trust AST inspection + resolved type structure.
+        }
+
         // Check if resolved_type is Lazy(DefId) pointing back to sym_id
         if let Some(def_id) =
             tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
@@ -1594,6 +1601,38 @@ impl<'a> CheckerState<'a> {
                     return true;
                 }
             }
+        }
+
+        // Handle indexed access `T[K]` where T resolves to self
+        // This is crucial for `type M3 = M2[keyof M2]` if M2 somehow resolves to M3 via M.
+        // If we are checking M3, and it resolves to... M3?
+        // In the failing test:
+        // type M3 = M2[keyof M2];
+        // If M2 extends M<M3>, and M<T> = { value: T }, then M2 has 'value' of type M3.
+        // So M2['value'] is M3.
+        // keyof M2 is 'value'.
+        // So M3 = M2['value'] = M3.
+        // This is M3 = M3.
+        // It's a direct circular reference.
+        // The resolved type of M3 is Lazy(M3).
+        // `is_simple_type_reference` returns false for INDEXED_ACCESS_TYPE.
+        // But for indexed access, if it resolves to self, it IS direct (unless it's mapped type etc).
+        // We should treat INDEXED_ACCESS_TYPE as potentially simple/direct if it evaluates to self.
+
+        if let Some(node) = self.ctx.arena.get(type_node)
+            && node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+        {
+            // If we reached here, resolved_type might be Lazy(sym_id) or contain it.
+            // If resolved_type IS Lazy(sym_id), then M3 = M3.
+            // We should allow this as a cycle.
+            // The check `is_simple_type_reference` blocked it.
+            if let Some(def_id) =
+                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
+                && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
+                    && target_sym_id == sym_id
+                {
+                    return true;
+                }
         }
 
         false
