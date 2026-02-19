@@ -437,16 +437,14 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Now get the property type from the object
-                if let Some(shape) = query::object_shape(self.ctx.types, obj_type) {
-                    // Look for the property by name (key_name is already an Atom)
-                    if let Some(prop) = shape.properties.iter().find(|p| p.name == key_name) {
-                        prop.type_id
-                    } else {
-                        // Property not found, fall back to evaluate_type_with_env
-                        self.evaluate_type_with_env(property_type)
-                    }
+                if let Some(prop) = tsz_solver::type_queries::find_property_in_object(
+                    self.ctx.types,
+                    obj_type,
+                    key_name,
+                ) {
+                    prop.type_id
                 } else {
-                    // Not an object type, fall back to evaluate_type_with_env
+                    // Property not found or not an object type, fall back
                     self.evaluate_type_with_env(property_type)
                 }
             } else {

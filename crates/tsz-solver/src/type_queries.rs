@@ -1054,6 +1054,38 @@ pub fn get_object_shape(
     }
 }
 
+/// Find a named property in an object type by its atom name.
+///
+/// Returns `Some(PropertyInfo)` if the object has a property with the given name,
+/// or `None` if the type is not an object or the property is not found.
+/// This encapsulates the common checker pattern of getting an object shape
+/// and iterating its properties to find a match.
+pub fn find_property_in_object(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: Atom,
+) -> Option<crate::types::PropertyInfo> {
+    let shape = get_object_shape(db, type_id)?;
+    shape.properties.iter().find(|p| p.name == name).cloned()
+}
+
+/// Find a named property in an object type by string name.
+///
+/// Like [`find_property_in_object`] but resolves the atom to compare by string value.
+/// Useful when the caller has a `&str` rather than an `Atom`.
+pub fn find_property_in_object_by_str(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: &str,
+) -> Option<crate::types::PropertyInfo> {
+    let shape = get_object_shape(db, type_id)?;
+    shape
+        .properties
+        .iter()
+        .find(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+        .cloned()
+}
+
 /// Unwrap readonly type wrappers.
 ///
 /// Returns the inner type if this is a `ReadonlyType`, otherwise returns the original type.
