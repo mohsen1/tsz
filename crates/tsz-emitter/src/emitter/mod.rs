@@ -834,6 +834,9 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
+                if let Some(text) = self.source_text {
+                    enum_emitter.set_source_text(text);
+                }
                 let mut output = enum_emitter.emit_enum(enum_node);
                 if let Some(enum_decl) = self.arena.get_enum_at(enum_node) {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
@@ -1159,6 +1162,9 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
+                if let Some(text) = self.source_text {
+                    enum_emitter.set_source_text(text);
+                }
                 let mut output = enum_emitter.emit_enum(*enum_node);
                 if let Some(enum_decl) = self.arena.get_enum_at(*enum_node) {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);
@@ -1319,6 +1325,9 @@ impl<'a> Printer<'a> {
             EmitDirective::ES5Enum { enum_node } => {
                 let mut enum_emitter = EnumES5Emitter::new(self.arena);
                 enum_emitter.set_indent_level(self.writer.indent_level());
+                if let Some(text) = self.source_text {
+                    enum_emitter.set_source_text(text);
+                }
                 let mut output = enum_emitter.emit_enum(*enum_node);
                 if let Some(enum_decl) = self.arena.get_enum_at(*enum_node) {
                     let enum_name = self.get_identifier_text_idx(enum_decl.name);

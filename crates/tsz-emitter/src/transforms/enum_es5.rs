@@ -47,6 +47,8 @@ pub struct EnumES5Transformer<'a> {
     arena: &'a NodeArena,
     /// Track last numeric value for auto-incrementing
     last_value: Option<i64>,
+    /// Source text for extracting raw expressions
+    source_text: Option<&'a str>,
 }
 
 impl<'a> EnumES5Transformer<'a> {
@@ -54,7 +56,13 @@ impl<'a> EnumES5Transformer<'a> {
         EnumES5Transformer {
             arena,
             last_value: None,
+            source_text: None,
         }
+    }
+
+    /// Set source text for raw expression extraction
+    pub fn set_source_text(&mut self, text: &'a str) {
+        self.source_text = Some(text);
     }
 
     /// Transform an enum declaration to IR
@@ -314,8 +322,70 @@ impl<'a> EnumES5Transformer<'a> {
                     IRNode::NumericLiteral("0".to_string())
                 }
             }
+            // `this` keyword
+            k if k == SyntaxKind::ThisKeyword as u16 => IRNode::This { captured: false },
+
+            // Call expression: fn(args)
+            k if k == syntax_kind_ext::CALL_EXPRESSION => {
+                if let Some(call) = self.arena.get_call_expr(node) {
+                    let callee = self.transform_expression(call.expression);
+                    let args: Vec<_> = call
+                        .arguments
+                        .as_ref()
+                        .map_or(&[][..], |nl| &nl.nodes)
+                        .iter()
+                        .map(|&arg| self.transform_expression(arg))
+                        .collect();
+                    IRNode::CallExpr {
+                        callee: Box::new(callee),
+                        arguments: args,
+                    }
+                } else {
+                    IRNode::NumericLiteral("0".to_string())
+                }
+            }
+
+            // Arrow function / function expression: use raw source text
+            k if k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
+            {
+                if let Some(text) = self.source_text {
+                    let start = node.pos as usize;
+                    // Use body end as a tighter bound - node.end may extend
+                    // past closing delimiters of parent expressions
+                    let body_end = self
+                        .arena
+                        .get_function(node)
+                        .map(|f| self.arena.get(f.body).map_or(node.end, |b| b.end))
+                        .unwrap_or(node.end);
+                    let end = body_end as usize;
+                    if start < end && end <= text.len() {
+                        let raw = text[start..end].trim();
+                        // Trim trailing comma (element separator that bleeds into
+                        // the node's span)
+                        let raw = raw.trim_end_matches(',').trim_end();
+                        if !raw.is_empty() {
+                            return IRNode::Raw(raw.to_string());
+                        }
+                    }
+                }
+                IRNode::NumericLiteral("0".to_string())
+            }
+
             _ => {
-                // Fallback - return 0
+                // Fallback: emit the source text verbatim for other unrecognized
+                // expressions (template expressions, tagged templates, etc.)
+                if let Some(text) = self.source_text {
+                    let start = node.pos as usize;
+                    let end = node.end as usize;
+                    if start < end && end <= text.len() {
+                        let raw = text[start..end].trim();
+                        let raw = raw.trim_end_matches(',').trim_end();
+                        if !raw.is_empty() {
+                            return IRNode::Raw(raw.to_string());
+                        }
+                    }
+                }
                 IRNode::NumericLiteral("0".to_string())
             }
         }
@@ -457,6 +527,11 @@ impl<'a> EnumES5Emitter<'a> {
 
     pub const fn set_indent_level(&mut self, level: u32) {
         self.indent_level = level;
+    }
+
+    /// Set source text for raw expression extraction
+    pub fn set_source_text(&mut self, text: &'a str) {
+        self.transformer.set_source_text(text);
     }
 
     /// Emit an enum declaration
