@@ -546,6 +546,9 @@ pub mod codes {
     pub use dc::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_RETURN_TYPE as IMPLICIT_ANY_RETURN;
 
     // Type instantiation errors
+
+    #[allow(dead_code)]
+    pub const IMPORT_EXPECTS_FROM_CLAUSE: u32 = 2882;
 }
 
 /// Map well-known names to their specialized "cannot find name" diagnostic codes.
