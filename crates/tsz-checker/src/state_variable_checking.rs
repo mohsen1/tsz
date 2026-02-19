@@ -808,6 +808,24 @@ impl<'a> CheckerState<'a> {
             // causing the node-level cycle detection to return ERROR.
             let sym_cached_as_error =
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
+
+            // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
+            if !var_decl.type_annotation.is_none()
+                && tsz_solver::type_queries::has_type_query_for_symbol(
+                    self.ctx.types,
+                    final_type,
+                    sym_id.0,
+                    |ty| self.resolve_lazy_type(ty),
+                )
+                && let Some(ref name) = var_name
+            {
+                let message = format!(
+                    "'{name}' is referenced directly or indirectly in its own type annotation."
+                );
+                self.error_at_node(var_decl.name, &message, 2502);
+                final_type = TypeId::ANY;
+            }
+
             if !self.ctx.compiler_options.sound_mode {
                 final_type = tsz_solver::freshness::widen_freshness(self.ctx.types, final_type);
             }

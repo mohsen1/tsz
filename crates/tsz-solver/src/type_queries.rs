@@ -3317,3 +3317,82 @@ fn types_have_common_properties(
         })
     })
 }
+
+/// Check if a type contains a `TypeQuery` referencing a specific symbol.
+///
+/// Used for TS2502 detection (circular reference in type annotation).
+/// Traverses the type structure, expanding top-level lazy aliases via the provided callback.
+/// Stops recursion at Function, Object, and Mapped types which break the "direct" reference cycle.
+#[allow(clippy::match_same_arms)]
+pub fn has_type_query_for_symbol(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    target_sym_id: u32,
+    mut resolve_lazy: impl FnMut(TypeId) -> TypeId,
+) -> bool {
+    use crate::TypeData;
+    use rustc_hash::FxHashSet;
+
+    let mut worklist = vec![type_id];
+    let mut visited = FxHashSet::default();
+
+    while let Some(ty) = worklist.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+
+        let resolved = resolve_lazy(ty);
+        if resolved != ty {
+            worklist.push(resolved);
+            continue;
+        }
+
+        let Some(key) = db.lookup(ty) else { continue };
+        match key {
+            TypeData::TypeQuery(sym_ref) => {
+                if sym_ref.0 == target_sym_id {
+                    return true;
+                }
+            }
+            TypeData::Array(elem) => worklist.push(elem),
+            TypeData::Union(list) | TypeData::Intersection(list) => {
+                let members = db.type_list(list);
+                worklist.extend(members.iter().copied());
+            }
+            TypeData::Tuple(list) => {
+                let elements = db.tuple_list(list);
+                for elem in elements.iter() {
+                    worklist.push(elem.type_id);
+                }
+            }
+            TypeData::Conditional(id) => {
+                let cond = db.conditional_type(id);
+                worklist.push(cond.check_type);
+                worklist.push(cond.extends_type);
+                worklist.push(cond.true_type);
+                worklist.push(cond.false_type);
+            }
+            TypeData::Application(id) => {
+                let app = db.type_application(id);
+                worklist.push(app.base);
+                worklist.extend(&app.args);
+            }
+            TypeData::IndexAccess(obj, idx) => {
+                worklist.push(obj);
+                worklist.push(idx);
+            }
+            TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
+                worklist.push(inner);
+            }
+            TypeData::Function(_)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Mapped(_) => {
+                // These types break the "direct" reference cycle logic for TS2502.
+                // Recursive types via function return/params or object properties are allowed.
+            }
+            _ => {}
+        }
+    }
+    false
+}
