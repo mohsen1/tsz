@@ -367,7 +367,7 @@ impl<'a> Printer<'a> {
         // Name (if any)
         if !func.name.is_none() {
             self.write_space();
-            self.emit(func.name);
+            self.emit_decl_name(func.name);
         } else {
             // Space before ( only for anonymous functions: function (x) vs function name(x)
             self.write(" ");
@@ -575,7 +575,7 @@ impl<'a> Printer<'a> {
             || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
 
         if is_normal_binding_name {
-            self.emit(name_idx);
+            self.emit_decl_name(name_idx);
             return;
         }
 

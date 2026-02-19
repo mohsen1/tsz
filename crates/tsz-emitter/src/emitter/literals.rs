@@ -28,6 +28,19 @@ impl<'a> Printer<'a> {
                 } else {
                     self.write_identifier(original_text);
                 }
+            } else if self.in_namespace_iife
+                && !self.suppress_ns_qualification
+                && self
+                    .namespace_exported_names
+                    .contains(original_text.as_str())
+                && let Some(ref ns_name) = self.current_namespace_name
+            {
+                // Inside namespace IIFE, qualify exported variable references:
+                // `foo` → `ns.foo`
+                let ns_name = ns_name.clone();
+                self.write(&ns_name);
+                self.write(".");
+                self.write_identifier(original_text);
             } else {
                 self.write_identifier(original_text);
             }

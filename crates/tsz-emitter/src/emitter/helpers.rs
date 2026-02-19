@@ -33,6 +33,14 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Emit a node as a declaration name (suppress namespace qualification).
+    pub(super) fn emit_decl_name(&mut self, idx: NodeIndex) {
+        let prev = self.suppress_ns_qualification;
+        self.suppress_ns_qualification = true;
+        self.emit(idx);
+        self.suppress_ns_qualification = prev;
+    }
+
     /// Write a single character.
     pub(super) fn write_char(&mut self, ch: char) {
         if let Some(source_pos) = self.take_pending_source_pos() {

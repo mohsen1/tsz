@@ -302,6 +302,13 @@ pub struct Printer<'a> {
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(super) declared_namespace_names: FxHashSet<String>,
 
+    /// Exported variable/function/class names in the current namespace IIFE.
+    /// Used to qualify identifier references: `foo` → `ns.foo`.
+    pub(super) namespace_exported_names: FxHashSet<String>,
+
+    /// When true, suppress namespace identifier qualification (emitting a declaration name).
+    pub(super) suppress_ns_qualification: bool,
+
     /// Pending class field initializers to inject into constructor body.
     /// Each entry is (`field_name`, `initializer_node_index`).
     pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
@@ -392,6 +399,8 @@ impl<'a> Printer<'a> {
             emitting_function_body_block: false,
             current_namespace_name: None,
             declared_namespace_names: FxHashSet::default(),
+            namespace_exported_names: FxHashSet::default(),
+            suppress_ns_qualification: false,
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_value_temps: Vec::new(),
             preallocated_logical_assignment_value_temps: VecDeque::new(),
