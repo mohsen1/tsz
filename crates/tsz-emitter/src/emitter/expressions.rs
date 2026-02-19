@@ -1952,8 +1952,8 @@ impl<'a> Printer<'a> {
             self.write(": ");
             self.emit(shorthand.name);
             if shorthand.equals_token {
-                // Object assignment pattern default value would go here
-                // For now, this is handled by the destructuring transform
+                self.write(" = ");
+                self.emit(shorthand.object_assignment_initializer);
             }
             return;
         }
@@ -1962,7 +1962,7 @@ impl<'a> Printer<'a> {
         self.emit(shorthand.name);
         if shorthand.equals_token {
             self.write(" = ");
-            // Object assignment pattern default value would go here
+            self.emit(shorthand.object_assignment_initializer);
         }
     }
 

@@ -287,6 +287,11 @@ pub struct Printer<'a> {
     /// E.g., `(Color = A.Color || (A.Color = {}))` instead of `(Color || (Color = {}))`.
     pub(super) enum_namespace_export: Option<String>,
 
+    /// Set to true when the next `MODULE_DECLARATION` emit should use parent namespace
+    /// assignment in its IIFE closing. This is set by `emit_namespace_body_statements`
+    /// when the module is wrapped in an `EXPORT_DECLARATION`.
+    pub(super) namespace_export_inner: bool,
+
     /// Marker that the next block emission is a function body.
     pub(super) emitting_function_body_block: bool,
 
@@ -383,6 +388,7 @@ impl<'a> Printer<'a> {
             first_for_of_emitted: false,
             in_namespace_iife: false,
             enum_namespace_export: None,
+            namespace_export_inner: false,
             emitting_function_body_block: false,
             current_namespace_name: None,
             declared_namespace_names: FxHashSet::default(),

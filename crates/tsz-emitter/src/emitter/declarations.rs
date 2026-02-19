@@ -971,7 +971,16 @@ impl<'a> Printer<'a> {
 
         // ES6+: Emit namespace as IIFE, preserving ES6+ syntax inside
         let module = module.clone();
-        let parent_name = self.current_namespace_name.clone();
+        // Only pass parent_name when the inner namespace is exported.
+        // Non-exported namespaces get a standalone IIFE without parent assignment.
+        // The export status is tracked via `namespace_export_inner` flag, set by
+        // `emit_namespace_body_statements` when processing EXPORT_DECLARATION wrappers.
+        let parent_name = if self.namespace_export_inner {
+            self.namespace_export_inner = false;
+            self.current_namespace_name.clone()
+        } else {
+            None
+        };
         self.emit_namespace_iife(&module, parent_name.as_deref());
     }
 
@@ -1211,6 +1220,13 @@ impl<'a> Printer<'a> {
                             let is_enum = inner_kind == syntax_kind_ext::ENUM_DECLARATION;
                             if is_enum {
                                 self.enum_namespace_export = Some(ns_name.clone());
+                            }
+
+                            // For exported namespaces, signal that the IIFE should
+                            // use parent assignment (e.g., `m3.m4 || (m3.m4 = {})`).
+                            let is_ns = inner_kind == syntax_kind_ext::MODULE_DECLARATION;
+                            if is_ns {
+                                self.namespace_export_inner = true;
                             }
 
                             let before_len = self.writer.len();

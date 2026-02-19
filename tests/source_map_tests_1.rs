@@ -16490,3 +16490,72 @@ fn test_static_member_comment_preserved_after_class() {
         output
     );
 }
+
+#[test]
+fn test_shorthand_property_default_value_emitted() {
+    // Object destructuring assignment with default value: { name = "noName" }
+    let source = r#"let robots: { name: string }[] = [];
+for ({ name = "noName" } of robots) {
+    console.log(name);
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    assert!(
+        output.contains(r#"name = "noName""#),
+        "Shorthand property default value should be emitted.\nOutput:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_non_exported_inner_namespace_no_parent_assignment() {
+    // Non-exported inner namespace should not be assigned to parent
+    let source = r#"namespace M {
+    export namespace Exported {
+        export let x = 1;
+    }
+    namespace NotExported {
+        export let y = 2;
+    }
+}"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // Exported namespace should have parent assignment
+    assert!(
+        output.contains("M.Exported"),
+        "Exported namespace should be assigned to parent.\nOutput:\n{}",
+        output
+    );
+    // Non-exported namespace should NOT have parent assignment
+    assert!(
+        !output.contains("M.NotExported"),
+        "Non-exported namespace should NOT be assigned to parent.\nOutput:\n{}",
+        output
+    );
+}

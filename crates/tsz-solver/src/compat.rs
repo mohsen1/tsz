@@ -1759,12 +1759,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        // 2. Error/any propagation — suppress cascading errors from ERROR types,
-        // and treat `any` as compatible with everything for redeclaration.
-        // In tsc, `var x: any; var x: string;` does NOT produce TS2403.
+        // 2. Error propagation — suppress cascading errors from ERROR types.
         if a == TypeId::ERROR || b == TypeId::ERROR {
             return true;
         }
+
+        // In tsc, `any` is compatible with everything for redeclaration.
+        // `var x: any; var x: string;` does NOT produce TS2403.
         if a == TypeId::ANY || b == TypeId::ANY {
             return true;
         }
