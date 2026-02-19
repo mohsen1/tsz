@@ -362,6 +362,13 @@ impl<'a> CheckerState<'a> {
         use rustc_hash::FxHashMap;
 
         let has_libs = self.ctx.has_lib_loaded();
+        let is_external_module = self
+            .ctx
+            .is_external_module_by_file
+            .as_ref()
+            .and_then(|m| m.get(&self.ctx.file_name))
+            .copied()
+            .unwrap_or_else(|| self.ctx.binder.is_external_module());
 
         let mut symbol_ids = FxHashSet::default();
         if !self.ctx.binder.scopes.is_empty() {
@@ -416,7 +423,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let mut declarations = Vec::new();
+            let mut declarations = Vec::<(NodeIndex, u32, bool, bool)>::new();
             for &decl_idx in &symbol.declarations {
                 let arena_opt = self
                     .ctx
@@ -551,7 +558,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
                 }
-            }
+                }
 
             let interface_decls: Vec<NodeIndex> = declarations
                 .iter()
@@ -624,6 +631,25 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
+                    let decl_is_module_scoped_local = is_external_module
+                        && decl_is_local
+                        && self.get_enclosing_namespace(decl_idx).is_none();
+                    let other_is_module_scoped_local = is_external_module
+                        && other_is_local
+                        && self.get_enclosing_namespace(other_idx).is_none();
+
+                    // In external modules, top-level module-scope declarations do not
+                    // participate in global namespace duplicate checking against lib
+                    // declarations. This preserves TypeScript semantics where external
+                    // module declarations are isolated from global symbol conflicts.
+                    if is_external_module
+                        && ((decl_is_module_scoped_local && !other_is_local)
+                            || (other_is_module_scoped_local && !decl_is_local))
+                    {
+                        continue;
+                    }
+
+                    // Check for function overloads
                     let both_functions = (decl_flags & symbol_flags::FUNCTION) != 0
                         && (other_flags & symbol_flags::FUNCTION) != 0;
                     if both_functions {
