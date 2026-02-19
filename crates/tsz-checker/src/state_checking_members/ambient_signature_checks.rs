@@ -784,6 +784,112 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn is_accessor_circular_reference(
+        &self,
+        type_node_idx: NodeIndex,
+        accessor_name_idx: NodeIndex,
+        _accessor_decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(type_node) = self.ctx.arena.get(type_node_idx) else {
+            return false;
+        };
+
+        // Check for `typeof this.prop` or `typeof ClassName.prop`
+        if type_node.kind == syntax_kind_ext::TYPE_QUERY {
+            let Some(query) = self.ctx.arena.get_type_query(type_node) else {
+                return false;
+            };
+            let Some(expr_node) = self.ctx.arena.get(query.expr_name) else {
+                return false;
+            };
+
+            // Case 1: `typeof this.prop` (PropertyAccessExpression)
+            if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                let Some(access) = self.ctx.arena.get_access_expr(expr_node) else {
+                    return false;
+                };
+
+                // Check left side is `this`
+                let is_this = self
+                    .ctx
+                    .arena
+                    .get(access.expression)
+                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16);
+
+                // Check left side is the class name (for static members)
+                let is_class_name = !is_this
+                    && self.ctx.enclosing_class.as_ref().is_some_and(|c| {
+                        if let Some(id_node) = self.ctx.arena.get(access.expression)
+                            && let Some(ident) = self.ctx.arena.get_identifier(id_node)
+                        {
+                            ident.escaped_text == c.name
+                        } else {
+                            false
+                        }
+                    });
+
+                if is_this || is_class_name {
+                    // Check property name matches accessor name
+                    let prop_name = self
+                        .ctx
+                        .arena
+                        .get_identifier_at(access.name_or_argument)
+                        .map(|id| id.escaped_text.as_str());
+                    let accessor_name = self.get_property_name(accessor_name_idx);
+
+                    if let (Some(prop), Some(acc)) = (prop_name, accessor_name) {
+                        return prop == acc;
+                    }
+                }
+            }
+            // Case 2: `typeof this.prop` where parser produces QualifiedName
+            else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                let Some(qn) = self.ctx.arena.get_qualified_name(expr_node) else {
+                    return false;
+                };
+
+                // Check if left is `this`
+                let is_this = self.ctx.arena.get(qn.left).is_some_and(|n| {
+                    if n.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16 {
+                        return true;
+                    }
+                    if let Some(ident) = self.ctx.arena.get_identifier(n) {
+                        return ident.escaped_text == "this";
+                    }
+                    false
+                });
+
+                // Check left side is the class name (for static members)
+                let is_class_name = !is_this
+                    && self.ctx.enclosing_class.as_ref().is_some_and(|c| {
+                        if let Some(id_node) = self.ctx.arena.get(qn.left)
+                            && let Some(ident) = self.ctx.arena.get_identifier(id_node)
+                        {
+                            ident.escaped_text == c.name
+                        } else {
+                            false
+                        }
+                    });
+
+                if is_this || is_class_name {
+                    // Check property name matches accessor name
+                    let prop_name = self
+                        .ctx
+                        .arena
+                        .get_identifier_at(qn.right)
+                        .map(|id| id.escaped_text.as_str());
+                    let accessor_name = self.get_property_name(accessor_name_idx);
+
+                    if let (Some(prop), Some(acc)) = (prop_name, accessor_name) {
+                        return prop == acc;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
     /// Check an accessor declaration (getter/setter).
     pub(crate) fn check_accessor_declaration(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
@@ -823,7 +929,24 @@ impl<'a> CheckerState<'a> {
         let has_type_annotation = is_getter && !accessor.type_annotation.is_none();
         let mut return_type = if is_getter {
             if has_type_annotation {
-                self.get_type_from_type_node(accessor.type_annotation)
+                // Check for TS2502 using AST inspection first
+                if self.is_accessor_circular_reference(
+                    accessor.type_annotation,
+                    accessor.name,
+                    member_idx,
+                ) {
+                    let name = self
+                        .get_property_name(accessor.name)
+                        .unwrap_or_else(|| "unknown".to_string());
+                    let message = format!(
+                        "'{name}' is referenced directly or indirectly in its own type annotation."
+                    );
+                    self.error_at_node(accessor.name, &message, 2502);
+                    // Use ANY to prevent further errors
+                    TypeId::ANY
+                } else {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                }
             } else {
                 TypeId::VOID // Default to void for getters without type annotation
             }
