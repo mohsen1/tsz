@@ -5,6 +5,8 @@
 // Module Resolution Tests
 // =============================================================================
 
+use crate::module_resolution_tests::{check_with_module_sources, has_error_code};
+
 #[test]
 fn test_es6_import_default_binding_followed_with_named_import1() {
     let source = r#"
