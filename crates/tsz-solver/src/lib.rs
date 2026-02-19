@@ -37,6 +37,7 @@ mod intern;
 pub mod judge;
 mod lawyer;
 mod narrowing;
+mod narrowing_discriminants;
 mod object_literal;
 pub mod objects;
 pub mod operations;
