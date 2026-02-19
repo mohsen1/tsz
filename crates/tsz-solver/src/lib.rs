@@ -221,5 +221,8 @@ mod type_queries_property_names_tests;
 #[path = "tests/typedata_contract_tests.rs"]
 mod typedata_contract_tests;
 #[cfg(test)]
+#[path = "../tests/union_intersection_comprehensive_tests.rs"]
+mod union_intersection_comprehensive_tests;
+#[cfg(test)]
 #[path = "tests/visitor_tests.rs"]
 mod visitor_tests;
