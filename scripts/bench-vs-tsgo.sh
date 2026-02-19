@@ -871,6 +871,150 @@ EOF
     done
 }
 
+generate_deeppartial_optional_chain_file() {
+    local func_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// DeepPartial + optional-chain hotspot benchmark.
+// This isolates recursive mapped-type expansion on repeated property access.
+/// <reference lib="es2015.promise" />
+
+type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
+type Normalize<T> = T extends object ? { [P in keyof T]: Normalize<T[P]> } : T;
+type DeepInput<T> = DeepPartial<Normalize<T>>;
+
+interface RetryOptions {
+    timeout: number;
+    retries: number;
+    nested: {
+        transport: {
+            backoff: {
+                base: number;
+                max: number;
+                jitter: number;
+            };
+        };
+        flags: {
+            fast: boolean;
+            safe: boolean;
+        };
+    };
+}
+
+interface Result<T, E = Error> {
+    ok: boolean;
+    value?: T;
+    error?: E;
+}
+
+HEADER
+
+    for ((i=0; i<func_count; i++)); do
+        cat >> "$output" << EOF
+async function deepPartialHotspot$i<T extends Record<string, unknown>>(
+    input: T,
+    options?: DeepInput<RetryOptions>
+): Promise<Result<T>> {
+    const timeout = options?.timeout ?? 1000;
+    const base = options?.nested?.transport?.backoff?.base ?? 10;
+    const max = options?.nested?.transport?.backoff?.max ?? 100;
+    const jitter = options?.nested?.transport?.backoff?.jitter ?? 1;
+    const safe = options?.nested?.flags?.safe ?? true;
+    const fast = options?.nested?.flags?.fast ?? false;
+    const retries = options?.retries ?? (safe ? 3 : 1);
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const result = await Promise.resolve(input);
+            const budget = timeout + base + max + jitter + (fast ? 1 : 0);
+            if (budget < 0) {
+                throw new Error('timeout');
+            }
+            return { ok: true, value: result };
+        } catch (e) {
+            if (attempt === retries - 1) {
+                return { ok: false, error: e as Error };
+            }
+        }
+    }
+    return { ok: false, error: new Error('exhausted') };
+}
+
+EOF
+    done
+}
+
+generate_shallow_optional_chain_file() {
+    local func_count="$1"
+    local output="$2"
+
+    cat > "$output" << 'HEADER'
+// Shallow optional-chain control benchmark.
+// Same structure as DeepPartial hotspot but without recursive mapped types.
+/// <reference lib="es2015.promise" />
+
+interface RetryOptionsShallow {
+    timeout?: number;
+    retries?: number;
+    nested?: {
+        transport?: {
+            backoff?: {
+                base?: number;
+                max?: number;
+                jitter?: number;
+            };
+        };
+        flags?: {
+            fast?: boolean;
+            safe?: boolean;
+        };
+    };
+}
+
+interface Result<T, E = Error> {
+    ok: boolean;
+    value?: T;
+    error?: E;
+}
+
+HEADER
+
+    for ((i=0; i<func_count; i++)); do
+        cat >> "$output" << EOF
+async function shallowOptionalControl$i<T extends Record<string, unknown>>(
+    input: T,
+    options?: RetryOptionsShallow
+): Promise<Result<T>> {
+    const timeout = options?.timeout ?? 1000;
+    const base = options?.nested?.transport?.backoff?.base ?? 10;
+    const max = options?.nested?.transport?.backoff?.max ?? 100;
+    const jitter = options?.nested?.transport?.backoff?.jitter ?? 1;
+    const safe = options?.nested?.flags?.safe ?? true;
+    const fast = options?.nested?.flags?.fast ?? false;
+    const retries = options?.retries ?? (safe ? 3 : 1);
+
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const result = await Promise.resolve(input);
+            const budget = timeout + base + max + jitter + (fast ? 1 : 0);
+            if (budget < 0) {
+                throw new Error('timeout');
+            }
+            return { ok: true, value: result };
+        } catch (e) {
+            if (attempt === retries - 1) {
+                return { ok: false, error: e as Error };
+            }
+        }
+    }
+    return { ok: false, error: new Error('exhausted') };
+}
+
+EOF
+    done
+}
+
 generate_typed_arrays_file() {
     local output="$1"
 
@@ -1844,6 +1988,16 @@ main() {
         generate_complex_file 50 "$file"
         run_benchmark "50 generic functions" "$file"
         echo
+
+        file="$TEMP_DIR/deeppartial_optional_50.ts"
+        generate_deeppartial_optional_chain_file 50 "$file"
+        run_benchmark "DeepPartial optional-chain N=50" "$file"
+        echo
+
+        file="$TEMP_DIR/shallow_optional_50.ts"
+        generate_shallow_optional_chain_file 50 "$file"
+        run_benchmark "Shallow optional-chain N=50" "$file"
+        echo
     else
         # Generate synthetic files of increasing size
         print_subheader "Class-heavy files (interfaces + classes)"
@@ -1863,6 +2017,18 @@ main() {
             run_benchmark "${count} generic functions" "$file"
             echo
         done
+
+        print_subheader "DeepPartial mapped access hotspot (bottleneck probe)"
+
+        local file="$TEMP_DIR/deeppartial_optional_400.ts"
+        generate_deeppartial_optional_chain_file 400 "$file"
+        run_benchmark "DeepPartial optional-chain N=400" "$file"
+        echo
+
+        file="$TEMP_DIR/shallow_optional_400.ts"
+        generate_shallow_optional_chain_file 400 "$file"
+        run_benchmark "Shallow optional-chain N=400" "$file"
+        echo
         
         print_subheader "Union type stress test"
         
