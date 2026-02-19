@@ -1004,6 +1004,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        // Check if this accessor is private
+        let is_private = self.has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword as u16);
+
         self.write_indent();
 
         // Modifiers
@@ -1018,16 +1021,17 @@ impl<'a> DeclarationEmitter<'a> {
         // Name
         self.emit_node(accessor.name);
 
-        // Parameters
+        // Parameters - omit types for private accessors
         self.write("(");
-        self.emit_parameters(&accessor.parameters);
+        self.emit_parameters_without_types(&accessor.parameters, is_private);
         self.write(")");
 
-        // Return type (for getters)
-        if is_getter && !accessor.type_annotation.is_none() {
+        // Return type (for getters) - omit for private accessors
+        if is_getter && !is_private && !accessor.type_annotation.is_none() {
             self.write(": ");
             self.emit_type(accessor.type_annotation);
         } else if is_getter
+            && !is_private
             && let Some(type_id) = self.get_node_type_or_names(&[accessor_idx, accessor.name])
         {
             self.write(": ");
@@ -2689,7 +2693,10 @@ impl<'a> DeclarationEmitter<'a> {
         let is_exported = self.has_export_modifier(&import_eq.modifiers);
         let is_public_exported = is_exported && !already_exported;
 
-        self.write_indent();
+        // Only write indent if not already exported (caller handles indent for exported case)
+        if !already_exported {
+            self.write_indent();
+        }
         if is_public_exported {
             self.write("export ");
         }
@@ -2774,6 +2781,39 @@ impl<'a> DeclarationEmitter<'a> {
                 if !param.type_annotation.is_none() {
                     self.write(": ");
                     self.emit_type(param.type_annotation);
+                }
+            }
+        }
+    }
+
+    /// Emit parameters without type annotations (used for private accessors)
+    fn emit_parameters_without_types(&mut self, params: &NodeList, omit_types: bool) {
+        if !omit_types {
+            self.emit_parameters(params);
+            return;
+        }
+
+        let mut first = true;
+        for &param_idx in &params.nodes {
+            if !first {
+                self.write(", ");
+            }
+            first = false;
+
+            if let Some(param_node) = self.arena.get(param_idx)
+                && let Some(param) = self.arena.get_parameter(param_node)
+            {
+                // Rest parameter
+                if param.dot_dot_dot_token {
+                    self.write("...");
+                }
+
+                // Name only (no type)
+                self.emit_node(param.name);
+
+                // Optional marker still included
+                if param.question_token {
+                    self.write("?");
                 }
             }
         }
