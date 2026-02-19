@@ -16559,3 +16559,82 @@ fn test_non_exported_inner_namespace_no_parent_assignment() {
         output
     );
 }
+
+#[test]
+fn test_detached_block_comment_preserved_before_erased_declaration() {
+    // tsc preserves file-level block comments (copyright/license headers)
+    // even when the first statement is an erased declaration (declare var,
+    // interface, type alias). Comments separated by a blank line from the
+    // first declaration are "detached" and always preserved.
+    let source = r#"/*
+ * Copyright notice
+ */
+
+declare var process: any;
+declare var console: any;
+
+var x = 1;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // Block comment (detached by blank line) should be preserved
+    assert!(
+        output.contains("Copyright notice"),
+        "Detached block comment should be preserved:\n{}",
+        output
+    );
+    // The actual code should still be emitted
+    assert!(
+        output.contains("var x = 1;"),
+        "Code after erased declarations should be emitted:\n{}",
+        output
+    );
+}
+
+#[test]
+fn test_attached_comment_erased_with_first_declaration() {
+    // Comments directly attached (no blank line) to an erased first
+    // declaration should be erased with it.
+    let source = r#"// Ambient variable
+declare var n;
+
+var x = 1;"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ESNext,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.take_output();
+
+    // Comment attached to erased declaration should be erased
+    assert!(
+        !output.contains("// Ambient variable"),
+        "Attached comment should be erased with declaration:\n{}",
+        output
+    );
+    assert!(
+        output.contains("var x = 1;"),
+        "Code after erased declarations should be emitted:\n{}",
+        output
+    );
+}

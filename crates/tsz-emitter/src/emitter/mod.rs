@@ -2269,6 +2269,8 @@ impl<'a> Printer<'a> {
         // file-level comments before any declarations are preserved.
         // We use prev_end to track the previous statement's end position;
         // for the first statement, we use node.pos to preserve file-level comments.
+        // Track position of first erased statement for header comment filtering.
+        let mut first_erased_stmt_pos: Option<u32> = None;
         if !self.ctx.flags.in_declaration_emit && !self.all_comments.is_empty() {
             let mut erased_ranges: Vec<(u32, u32)> = Vec::new();
             let mut prev_end: Option<u32> = None;
@@ -2289,30 +2291,15 @@ impl<'a> Printer<'a> {
                     }
 
                     if is_erased {
-                        // For subsequent statements, use prev_end to strip leading trivia
-                        // (comments between the previous statement and this erased declaration).
-                        // For the first statement (prev_end=None), scan backwards to find
-                        // leading comments that belong to this erased declaration, so they
-                        // get stripped along with it (e.g. `// Interface\ninterface Foo {}`).
                         let range_start = if let Some(pe) = prev_end {
                             pe
                         } else {
-                            // Find the earliest leading comment that belongs to this declaration
-                            let mut earliest = stmt_node.pos;
-                            for c in self.all_comments.iter().rev() {
-                                if c.end <= stmt_node.pos {
-                                    // Check if only whitespace separates this comment from the node
-                                    if let Some(text) = self.source_text {
-                                        let between = &text[c.end as usize..stmt_node.pos as usize];
-                                        if between.chars().all(|ch| ch.is_whitespace()) {
-                                            earliest = c.pos;
-                                            continue;
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                            earliest
+                            // For the first erased statement, preserve file-level
+                            // comments by starting the erased range at the statement
+                            // itself. The header comment loop will filter out
+                            // attached comments separately.
+                            first_erased_stmt_pos = Some(stmt_node.pos);
+                            stmt_node.pos
                         };
                         erased_ranges.push((range_start, stmt_token_end));
                     }
@@ -2442,6 +2429,20 @@ impl<'a> Printer<'a> {
                 if c_end <= first_stmt_pos {
                     let c_pos = self.all_comments[self.comment_emit_idx].pos;
                     let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
+
+                    // Skip comments that are directly attached to an erased first
+                    // statement (no blank line between comment and declaration).
+                    // Detached comments (separated by blank line) are preserved.
+                    if let Some(erased_pos) = first_erased_stmt_pos {
+                        let between = &text[c_end as usize..erased_pos as usize];
+                        let has_blank_line =
+                            between.contains("\n\n") || between.contains("\r\n\r\n");
+                        if !has_blank_line {
+                            self.comment_emit_idx += 1;
+                            continue;
+                        }
+                    }
+
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     // In CommonJS mode, defer single-line (//) comments to after the
