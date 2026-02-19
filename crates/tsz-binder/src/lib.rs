@@ -93,8 +93,7 @@ pub mod symbol_flags {
     // Function can merge with: namespace/module (VALUE_MODULE) and class
     pub const FUNCTION_EXCLUDES: u32 = (VALUE | ALIAS) & !FUNCTION & !VALUE_MODULE & !CLASS;
     // Class can merge with: interface, function, and namespace/module
-    pub const CLASS_EXCLUDES: u32 =
-        (VALUE | TYPE | ALIAS) & !VALUE_MODULE & !INTERFACE & !FUNCTION;
+    pub const CLASS_EXCLUDES: u32 = (VALUE | TYPE | ALIAS) & !VALUE_MODULE & !INTERFACE & !FUNCTION;
     // Interface can merge with: interface, class
     pub const INTERFACE_EXCLUDES: u32 = (TYPE | ALIAS) & !INTERFACE & !CLASS;
     // Enum can merge with: namespace/module and same-kind enum
