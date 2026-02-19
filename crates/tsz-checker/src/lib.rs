@@ -98,6 +98,7 @@ pub mod tuple_type;
 pub mod type_api;
 pub mod type_checking;
 mod type_checking_declarations;
+mod type_checking_declarations_utils;
 mod type_checking_global;
 mod type_checking_queries;
 mod type_checking_queries_class;
