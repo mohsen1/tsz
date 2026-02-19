@@ -89,6 +89,7 @@ mod state_type_analysis_computed;
 mod state_type_analysis_computed_helpers;
 mod state_type_analysis_cross_file;
 pub mod state_type_environment;
+mod state_type_environment_lazy;
 pub mod state_type_resolution;
 mod state_type_resolution_module;
 mod state_variable_checking;

@@ -342,8 +342,13 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "assignability_checker infer-shape cacheability checks should call solver visitors directly, not checker-local wrappers"
     );
 
-    let state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
+    let mut state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
         .expect("failed to read src/state_type_environment.rs for architecture guard");
+    // Include split-off module that is part of the state_type_environment logical module
+    state_type_environment_src.push_str(
+        &fs::read_to_string("src/state_type_environment_lazy.rs")
+            .expect("failed to read src/state_type_environment_lazy.rs for architecture guard"),
+    );
     assert!(
         !state_type_environment_src.contains("intern(TypeData::Enum("),
         "state_type_environment should use solver enum_type constructor API, not TypeData::Enum"
