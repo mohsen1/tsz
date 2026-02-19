@@ -1264,12 +1264,67 @@ impl<'a> Printer<'a> {
                 self.emit(paren.expression);
                 return;
             }
+            // Type assertion wraps an object literal. Check if the unwrapped
+            // expression is already parenthesized (e.g., `(<Error>({...}))` →
+            // stripping type assertion yields `({...})` which already has parens).
+            // In that case, our parens are redundant.
+            if self.type_assertion_result_is_parenthesized(paren.expression) {
+                self.emit(paren.expression);
+                return;
+            }
             // Fall through to emit with parens preserved
+        }
+
+        // If the inner expression is another ParenExpr, avoid double-parenthesization
+        // when the inner already handles object literal protection.
+        if let Some(inner) = self.arena.get(paren.expression)
+            && inner.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        {
+            if let Some(inner_paren) = self.arena.get_parenthesized(inner) {
+                if let Some(inner_inner) = self.arena.get(inner_paren.expression)
+                    && (inner_inner.kind == syntax_kind_ext::TYPE_ASSERTION
+                        || inner_inner.kind == syntax_kind_ext::AS_EXPRESSION
+                        || inner_inner.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+                    && self.type_assertion_wraps_object_literal(inner_paren.expression)
+                {
+                    // The inner ParenExpr already preserves parens for the object literal.
+                    // Our outer parens are redundant.
+                    self.emit(paren.expression);
+                    return;
+                }
+            }
         }
 
         self.write("(");
         self.emit(paren.expression);
         self.write(")");
+    }
+
+    /// Check if unwrapping a type assertion chain yields a parenthesized expression.
+    /// Used to detect redundant outer parens: `((<Error>({...})))` → the type
+    /// assertion wraps `({...})` which is already parenthesized, so outer parens
+    /// are redundant.
+    fn type_assertion_result_is_parenthesized(&self, mut idx: NodeIndex) -> bool {
+        // Unwrap type assertions to find the underlying expression
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return false;
+            };
+            match node.kind {
+                k if k == syntax_kind_ext::TYPE_ASSERTION
+                    || k == syntax_kind_ext::AS_EXPRESSION
+                    || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+                {
+                    if let Some(ta) = self.arena.get_type_assertion(node) {
+                        idx = ta.expression;
+                    } else {
+                        return false;
+                    }
+                }
+                k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => return true,
+                _ => return false,
+            }
+        }
     }
 
     /// Check if a type assertion/as/satisfies chain ultimately wraps an object literal.
