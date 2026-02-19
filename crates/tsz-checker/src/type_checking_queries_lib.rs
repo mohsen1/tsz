@@ -847,18 +847,14 @@ impl<'a> CheckerState<'a> {
             // Handle Callable types from merged class+namespace or function+namespace symbols
             // When a class/function merges with a namespace, the type is a Callable with
             // properties containing the namespace exports
-            NamespaceMemberKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-
+            NamespaceMemberKind::Callable(_) => {
                 // Check if the callable has the property as a member (from namespace merge)
-                for prop in &shape.properties {
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == property_name {
-                        return Some(prop.type_id);
-                    }
-                }
-
-                None
+                tsz_solver::type_queries::find_property_in_type_by_str(
+                    self.ctx.types,
+                    object_type,
+                    property_name,
+                )
+                .map(|prop| prop.type_id)
             }
 
             // TSZ-4: Handle Enum types for enum member property access (E.A)
@@ -1223,20 +1219,15 @@ impl<'a> CheckerState<'a> {
 
             // Handle Callable types from merged class+namespace or function+namespace symbols
             // For merged symbols, the namespace exports are stored as properties on the Callable
-            NamespaceMemberKind::Callable(shape_id) => {
-                let shape = self.ctx.types.callable_shape(shape_id);
-
+            NamespaceMemberKind::Callable(_) => {
                 // Check if the property exists in the callable's properties
-                for prop in &shape.properties {
-                    let prop_name = self.ctx.types.resolve_atom_ref(prop.name);
-                    if prop_name.as_ref() == property_name {
-                        // Found the property - now check if it's type-only
-                        // For merged symbols, properties from namespace exports should have value members
-                        // We need to look at the type to determine if it's type-only
-                        return self.is_type_only_type(prop.type_id);
-                    }
+                if let Some(prop) = tsz_solver::type_queries::find_property_in_type_by_str(
+                    self.ctx.types,
+                    object_type,
+                    property_name,
+                ) {
+                    return self.is_type_only_type(prop.type_id);
                 }
-
                 false
             }
 

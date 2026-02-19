@@ -519,6 +519,37 @@ pub fn find_property_in_object_by_str(
         .cloned()
 }
 
+/// Find a named property in any type shape (object or callable) by string name.
+///
+/// Like [`find_property_in_object_by_str`] but also searches callable shapes.
+/// This handles types where properties may be attached to function/class types
+/// (e.g., namespace-merged functions or classes with static properties).
+pub fn find_property_in_type_by_str(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    name: &str,
+) -> Option<crate::types::PropertyInfo> {
+    match db.lookup(type_id)? {
+        TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
+            let shape = db.object_shape(shape_id);
+            shape
+                .properties
+                .iter()
+                .find(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+                .cloned()
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = db.callable_shape(shape_id);
+            shape
+                .properties
+                .iter()
+                .find(|p| db.resolve_atom_ref(p.name).as_ref() == name)
+                .cloned()
+        }
+        _ => None,
+    }
+}
+
 /// Unwrap readonly type wrappers.
 ///
 /// Returns the inner type if this is a `ReadonlyType`, otherwise returns the original type.
