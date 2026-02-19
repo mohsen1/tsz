@@ -631,6 +631,7 @@ impl<'a> CheckerState<'a> {
             self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
 
             let mut conflicts = FxHashSet::default();
+            let mut exported_conflicts = FxHashSet::default();
             let mut namespace_order_errors = FxHashSet::default();
 
             for i in 0..declarations.len() {
@@ -772,7 +773,8 @@ impl<'a> CheckerState<'a> {
                     let decl_is_class = (decl_flags & symbol_flags::CLASS) != 0;
                     let other_is_class = (other_flags & symbol_flags::CLASS) != 0;
 
-                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class) {
+                    if (decl_is_class && other_is_function) || (decl_is_function && other_is_class)
+                    {
                         let (class_idx, func_idx, func_is_local) = if decl_is_class {
                             (decl_idx, other_idx, other_is_local)
                         } else {
@@ -802,14 +804,15 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT
                                 };
                                 self.error_at_node_msg(
-                                    self.get_declaration_name_node(other_idx).unwrap_or(other_idx),
+                                    self.get_declaration_name_node(other_idx)
+                                        .unwrap_or(other_idx),
                                     code,
                                     &[&symbol.escaped_name],
                                 );
                             }
                             continue;
                         }
-                        
+
                         // If it's a valid merge (ambient class + function with body),
                         // or if the function has NO body (overload), it's not an error.
                         if func_has_body && class_is_ambient {
@@ -818,9 +821,10 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // TS2567: Enum declarations can only merge with namespace or other enum declarations.
-                    let is_enum_merge_error = (decl_is_enum && !other_is_enum && !other_is_namespace)
-                        || (other_is_enum && !decl_is_enum && !decl_is_namespace);
-                    
+                    let is_enum_merge_error =
+                        (decl_is_enum && !other_is_enum && !other_is_namespace)
+                            || (other_is_enum && !decl_is_enum && !decl_is_namespace);
+
                     if is_enum_merge_error {
                         if decl_is_local {
                             self.error_at_node(
@@ -865,13 +869,29 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    // General conflict check for other combinations
+                    // General conflict check for other combinations.
                     if Self::declarations_conflict(decl_flags, other_flags) {
-                        if decl_is_local {
-                            conflicts.insert(decl_idx);
-                        }
-                        if other_is_local {
-                            conflicts.insert(other_idx);
+                        // TS2323: When both conflicting declarations are exported
+                        // *variables*, emit "Cannot redeclare exported variable"
+                        // instead of the generic TS2300 "Duplicate identifier".
+                        // Non-variable exports (classes, etc.) still get TS2300.
+                        let both_variables = (decl_flags & symbol_flags::VARIABLE) != 0
+                            && (other_flags & symbol_flags::VARIABLE) != 0;
+                        let both_exported = both_variables
+                            && decl_is_local
+                            && other_is_local
+                            && self.is_declaration_exported(decl_idx)
+                            && self.is_declaration_exported(other_idx);
+                        if both_exported {
+                            exported_conflicts.insert(decl_idx);
+                            exported_conflicts.insert(other_idx);
+                        } else {
+                            if decl_is_local {
+                                conflicts.insert(decl_idx);
+                            }
+                            if other_is_local {
+                                conflicts.insert(other_idx);
+                            }
                         }
                     }
                 }
@@ -886,6 +906,21 @@ impl<'a> CheckerState<'a> {
                     &[&symbol.escaped_name],
                 );
                 self.error_at_node(error_node, &message, diagnostic_codes::DUPLICATE_IDENTIFIER);
+            }
+
+            for conflict_idx in exported_conflicts {
+                let error_node = self
+                    .get_declaration_name_node(conflict_idx)
+                    .unwrap_or(conflict_idx);
+                let message = format_message(
+                    diagnostic_messages::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                    &[&symbol.escaped_name],
+                );
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::CANNOT_REDECLARE_EXPORTED_VARIABLE,
+                );
             }
 
             for idx in namespace_order_errors {
