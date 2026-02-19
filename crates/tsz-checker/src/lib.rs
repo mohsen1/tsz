@@ -37,6 +37,7 @@ mod control_flow_assignment;
 mod control_flow_narrowing;
 mod control_flow_type_guards;
 pub mod declarations;
+mod declarations_module;
 mod declarations_module_helpers;
 pub mod decorators;
 pub mod dispatch;
