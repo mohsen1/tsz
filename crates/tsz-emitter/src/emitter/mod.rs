@@ -2682,6 +2682,7 @@ impl<'a> Printer<'a> {
         let mut last_erased_stmt_end: Option<u32> = None;
         let mut deferred_commonjs_export_equals: Vec<NodeIndex> = Vec::new();
         let mut has_runtime_module_syntax = false;
+        let mut has_deferred_empty_export = false;
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
                 if self.ctx.is_commonjs()
@@ -2692,6 +2693,24 @@ impl<'a> Printer<'a> {
                         .is_some_and(|ea| ea.is_export_equals)
                 {
                     deferred_commonjs_export_equals.push(stmt_idx);
+                    last_erased_stmt_end = None;
+                    continue;
+                }
+
+                // Defer `export {}` (empty named exports, no module specifier) to end
+                // of file. TSC places these at the end as ESM markers.
+                if is_es_module_output
+                    && stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export) = self.arena.get_export_decl(stmt_node)
+                    && export.module_specifier.is_none()
+                    && let Some(clause_node) = self.arena.get(export.export_clause)
+                    && clause_node.kind == syntax_kind_ext::NAMED_EXPORTS
+                    && let Some(named_exports) = self.arena.get_named_imports(clause_node)
+                    && named_exports.elements.nodes.is_empty()
+                {
+                    has_deferred_empty_export = true;
+                    has_runtime_module_syntax = true;
+                    self.skip_comments_for_erased_node(stmt_node);
                     last_erased_stmt_end = None;
                     continue;
                 }
@@ -2831,6 +2850,12 @@ impl<'a> Printer<'a> {
             if self.writer.len() > before_len && !self.writer.is_at_line_start() {
                 self.write_line();
             }
+        }
+
+        // Emit deferred `export {}` at end of file (moved from its source position).
+        if has_deferred_empty_export {
+            self.write("export {};");
+            self.write_line();
         }
 
         // When a file is an ES module but all import/export statements were erased
