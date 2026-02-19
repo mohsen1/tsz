@@ -2425,7 +2425,10 @@ impl<'a> InferenceContext<'a> {
 
         // STRICT_ANY matches itself or unknown/any (only at top level)
         if source == TypeId::STRICT_ANY || target == TypeId::STRICT_ANY {
-            return source == target || target == TypeId::UNKNOWN || target == TypeId::ANY || source == TypeId::ANY;
+            return source == target
+                || target == TypeId::UNKNOWN
+                || target == TypeId::ANY
+                || source == TypeId::ANY;
         }
 
         // object keyword accepts any non-primitive type

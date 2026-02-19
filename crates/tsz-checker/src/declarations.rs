@@ -673,15 +673,15 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 && ident.escaped_text.is_empty()
             {
-                self.ctx.error(
-                        node.pos,
-                        6, // length of "module"
-                        format_message(
-                            diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
-                            &["module"],
-                        ),
-                        diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE,
-                    );
+                // Detailed node types error (TS2591) is preferred in recent TS versions.
+                let code =
+                    diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2;
+                let message = format_message(
+                    diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
+                    &["module"],
+                );
+
+                self.ctx.error(node.pos, 6, message, code);
             }
 
             // TS2668: 'export' modifier cannot be applied to ambient modules
@@ -1940,15 +1940,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         }
 
         if node.kind == syntax_kind_ext::WITH_STATEMENT {
-            use crate::diagnostics::diagnostic_codes;
-            if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
-                self.ctx.error(
-                    pos,
-                    end - pos,
-                    "The 'with' statement is not supported. All symbols in a 'with' block will have type 'any'.".to_string(),
-                    diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
-                );
-            }
+            self.check_with_statement(stmt_idx);
         }
 
         // Ambient declarations still need index-signature parameter validation (TS1268).
@@ -1960,6 +1952,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         if node.kind == syntax_kind_ext::LABELED_STATEMENT
             && let Some(labeled) = self.ctx.arena.get_labeled_statement(node)
         {
+            self.check_label_on_declaration(labeled.label, labeled.statement);
             self.check_statement_in_ambient_context(labeled.statement);
         }
     }
@@ -2038,6 +2031,162 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                         );
                     }
                 }
+            }
+        }
+    }
+
+    fn is_strict_mode_for_node(&self, idx: NodeIndex) -> bool {
+        if self.ctx.compiler_options.always_strict {
+            return true;
+        }
+
+        // is_external_module check
+        if self.is_external_module() {
+            return true;
+        }
+
+        let statement_is_use_strict = |stmt_idx: NodeIndex| -> bool {
+            self.ctx
+                .arena
+                .get(stmt_idx)
+                .filter(|stmt| stmt.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+                .and_then(|stmt| self.ctx.arena.get_expression_statement(stmt))
+                .and_then(|expr_stmt| self.ctx.arena.get(expr_stmt.expression))
+                .filter(|expr_node| expr_node.kind == SyntaxKind::StringLiteral as u16)
+                .and_then(|expr_node| self.ctx.arena.get_literal(expr_node))
+                .is_some_and(|lit| lit.text == "use strict")
+        };
+
+        let block_has_use_strict = |block_idx: NodeIndex| -> bool {
+            let Some(block_node) = self.ctx.arena.get(block_idx) else {
+                return false;
+            };
+            let Some(block) = self.ctx.arena.get_block(block_node) else {
+                return false;
+            };
+            for &stmt_idx in &block.statements.nodes {
+                if statement_is_use_strict(stmt_idx) {
+                    return true;
+                }
+                let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                    return false;
+                };
+                if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    break;
+                }
+            }
+            false
+        };
+
+        let mut current = idx;
+        loop {
+            let Some(node) = self.ctx.arena.get(current) else {
+                return false;
+            };
+
+            if node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                return true;
+            }
+
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent) else {
+                return false;
+            };
+
+            match parent_node.kind {
+                k if k == syntax_kind_ext::SOURCE_FILE => {
+                    if let Some(sf) = self.ctx.arena.get_source_file(parent_node)
+                        && sf
+                            .statements
+                            .nodes
+                            .iter()
+                            .any(|&stmt_idx| statement_is_use_strict(stmt_idx))
+                    {
+                        return true;
+                    }
+                    return false;
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || k == syntax_kind_ext::ARROW_FUNCTION =>
+                {
+                    if let Some(func) = self.ctx.arena.get_function(parent_node)
+                        && !func.body.is_none()
+                        && block_has_use_strict(func.body)
+                    {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+
+            current = parent;
+        }
+    }
+
+    fn check_with_statement(&mut self, stmt_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if let Some((pos, end)) = self.ctx.get_node_span(stmt_idx) {
+            self.ctx.error(
+                pos,
+                end - pos,
+                diagnostic_messages::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A.to_string(),
+                diagnostic_codes::THE_WITH_STATEMENT_IS_NOT_SUPPORTED_ALL_SYMBOLS_IN_A_WITH_BLOCK_WILL_HAVE_TYPE_A,
+            );
+
+            if self.is_strict_mode_for_node(stmt_idx) {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    diagnostic_messages::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE.to_string(),
+                    diagnostic_codes::WITH_STATEMENTS_ARE_NOT_ALLOWED_IN_STRICT_MODE,
+                );
+            }
+        }
+    }
+
+    fn check_label_on_declaration(&mut self, label_idx: NodeIndex, statement_idx: NodeIndex) {
+        if !self.ctx.compiler_options.target.supports_es2015() {
+            return;
+        }
+        if !self.is_strict_mode_for_node(label_idx) {
+            return;
+        }
+
+        let Some(stmt_node) = self.ctx.arena.get(statement_idx) else {
+            return;
+        };
+
+        let is_declaration_or_variable = matches!(
+            stmt_node.kind,
+            syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::INTERFACE_DECLARATION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::ENUM_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::VARIABLE_STATEMENT
+        );
+
+        if is_declaration_or_variable {
+            if let Some((pos, end)) = self.ctx.get_node_span(label_idx) {
+                self.ctx.error(
+                    pos,
+                    end - pos,
+                    "'A label is not allowed here.".to_string(),
+                    1344, // TS1344
+                );
             }
         }
     }
