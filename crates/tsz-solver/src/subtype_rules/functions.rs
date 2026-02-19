@@ -796,7 +796,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // Check parameter types
-        let param_check_result = (|| -> SubtypeResult {
+        (|| -> SubtypeResult {
             // Compare fixed parameters (using unpacked params)
             let fixed_compare_count = std::cmp::min(source_fixed_count, target_fixed_count);
             for i in 0..fixed_compare_count {
@@ -901,9 +901,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
 
             SubtypeResult::True
-        })();
-
-        param_check_result
+        })()
     }
 
     /// Check if a single function type is a subtype of a callable type with overloads.
