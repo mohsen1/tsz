@@ -992,6 +992,10 @@ impl<'a> CheckerState<'a> {
         // This allows get_class_decl_from_type to correctly identify the class
         // for derived classes that have no private/protected members (and thus no brand).
         self.ctx
+            .class_decl_miss_cache
+            .borrow_mut()
+            .remove(&instance_type);
+        self.ctx
             .class_instance_type_to_decl
             .insert(instance_type, class_idx);
 
