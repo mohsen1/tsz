@@ -1523,17 +1523,27 @@ let foo = 2;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // tsc emits TS2300 (Duplicate identifier) for both var and let declarations
-    // tsz currently emits TS2300 for var and TS2451 for let
-    let error_count = checker
+    // tsc emits TS2300 for the var declaration and TS2451 for the let (block-scoped) declaration
+    let ts2300_count = checker
         .ctx
         .diagnostics
         .iter()
-        .filter(|d| d.code == 2300 || d.code == 2451)
+        .filter(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER)
+        .count();
+    let ts2451_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE)
         .count();
     assert_eq!(
-        error_count, 2,
-        "Expected 2 errors for var+let duplicate, got: {:?}",
+        ts2300_count, 1,
+        "Expected 1 TS2300 for var declaration, got: {:?}",
+        checker.ctx.diagnostics
+    );
+    assert_eq!(
+        ts2451_count, 1,
+        "Expected 1 TS2451 for let declaration, got: {:?}",
         checker.ctx.diagnostics
     );
 }
@@ -12647,7 +12657,6 @@ let s2: S2 = s1;
 }
 
 #[test]
-#[ignore] // TODO: Fix this test
 fn test_nested_namespace_member_resolution() {
     use crate::parser::ParserState;
 
