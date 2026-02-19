@@ -694,7 +694,7 @@ impl<'a> CheckerState<'a> {
                 );
                 return_type
             }
-            CallResult::NoOverloadMatch { failures, .. } => {
+            CallResult::NoOverloadMatch { func_type, failures, .. } => {
                 // Compatibility fallback: built-in toLocaleString supports
                 // (locales?, options?) in modern lib typings. Some merged
                 // declaration paths can miss those overloads and incorrectly
@@ -705,7 +705,25 @@ impl<'a> CheckerState<'a> {
                 if !self.should_suppress_weak_key_no_overload(callee_expr, args) {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
-                TypeId::ERROR
+
+                // Fallback: use return type of the first overload if available.
+                // This improves error recovery for chained calls (e.g. [].concat().map())
+                // by allowing subsequent calls to see a typed object rather than ERROR.
+                // For Array.concat, this returns T[] (e.g. never[]) matching TSC behavior.
+                use tsz_solver::type_queries;
+                if let Some(shape) = type_queries::get_function_shape(self.ctx.types, func_type) {
+                    shape.return_type
+                } else if let Some(shape) =
+                    type_queries::get_callable_shape(self.ctx.types, func_type)
+                {
+                    shape
+                        .call_signatures
+                        .first()
+                        .map(|s| s.return_type)
+                        .unwrap_or(TypeId::ERROR)
+                } else {
+                    TypeId::ERROR
+                }
             }
         }
     }

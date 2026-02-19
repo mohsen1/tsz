@@ -212,16 +212,15 @@ impl<'a> CheckerState<'a> {
         };
 
         if array.elements.nodes.is_empty() {
-            // Empty array literal: infer from context or use any[]
+            // Empty array literal: infer from context or use never[]
             // TypeScript uses "evolving array types" where [] starts as never[] and widens
-            // via control flow. Since we don't yet support evolving arrays, use any[] to
-            // avoid false TS2322 errors on subsequent element assignments.
+            // via control flow.
             if let Some(contextual) = self.ctx.contextual_type {
                 // Resolve lazy types (type aliases) before using the contextual type
                 let resolved = self.resolve_type_for_property_access(contextual);
                 return self.resolve_lazy_type(resolved);
             }
-            return factory.array(TypeId::ANY);
+            return factory.array(TypeId::NEVER);
         }
 
         // Resolve lazy type aliases once and reuse for both tuple_context and ctx_helper
