@@ -323,8 +323,17 @@ impl ParserState {
     pub fn parse_statement(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::OpenBraceToken => self.parse_block(),
-            SyntaxKind::VarKeyword | SyntaxKind::LetKeyword | SyntaxKind::UsingKeyword => {
-                self.parse_variable_statement()
+            SyntaxKind::VarKeyword | SyntaxKind::UsingKeyword => self.parse_variable_statement(),
+            SyntaxKind::LetKeyword => {
+                // In strict mode (modules, classes, etc.), `let` is a reserved word and
+                // cannot be used as an identifier. But `let;` or `let` followed by a
+                // non-declaration-start token should NOT be parsed as a variable declaration.
+                // tsc checks `isLetDeclaration()`: next token must be identifier, `{`, or `[`.
+                if self.look_ahead_is_let_declaration() {
+                    self.parse_variable_statement()
+                } else {
+                    self.parse_expression_statement()
+                }
             }
             SyntaxKind::ConstKeyword => {
                 // const enum or const variable
@@ -721,6 +730,18 @@ impl ParserState {
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         is_decl
+    }
+
+    /// Look ahead to see if `let` starts a variable declaration.
+    /// In tsc, `let` is only treated as a declaration keyword when followed by
+    /// an identifier, `{` (object destructuring), or `[` (array destructuring).
+    /// Otherwise (e.g. `let;`), `let` is treated as an identifier expression.
+    pub(crate) fn look_ahead_is_let_declaration(&mut self) -> bool {
+        look_ahead_is(&mut self.scanner, self.current_token, |token| {
+            is_identifier_or_keyword(token)
+                || token == SyntaxKind::OpenBraceToken
+                || token == SyntaxKind::OpenBracketToken
+        })
     }
 
     /// Look ahead to see if we have "await using"
