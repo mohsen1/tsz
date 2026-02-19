@@ -129,7 +129,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // UNLESS disable_method_bivariance is set.
         // NOTE: North Star V1.2 prioritizes soundness. Bivariance is disabled by default
         // to match modern TypeScript strictFunctionTypes behavior for all callables.
-        let method_should_be_bivariant = is_method && !self.disable_method_bivariance && !self.strict_function_types;
+        let method_should_be_bivariant =
+            is_method && !self.disable_method_bivariance && !self.strict_function_types;
         let use_bivariance = method_should_be_bivariant || !self.strict_function_types;
 
         if !use_bivariance {
