@@ -5,7 +5,7 @@
 // Module Resolution Tests
 // =============================================================================
 
-use crate::module_resolution_tests::{check_with_module_sources, has_error_code};
+use crate::module_resolution_tests::check_with_module_sources;
 
 #[test]
 fn test_es6_import_default_binding_followed_with_named_import1() {
@@ -18,8 +18,8 @@ export const b = 1;
 "#;
     let diags = check_with_module_sources(source, "main.ts", vec![("./module", module_source)]);
     assert!(
-        has_error_code(&diags, 2305),
-        "Should emit TS2305 for default import followed by named import, got: {:?}",
+        diags.is_empty(),
+        "Default import with named import from module with both exports should produce no errors, got: {:?}",
         diags
     );
 }
@@ -648,7 +648,29 @@ fn test_await_yield_missing_value_ts1109() {
     println!("Yield* TS1109 count: {}", yield_star_ts1109);
 }
 
-/// Debug await semicolon specifically
+#[test]
+fn test_duplicate_namespace_declaration() {
+    let source = r#"
+namespace Foo {
+    let x = 1;
+}
+namespace Foo {
+    let y = 2;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let has_duplicate_identifier = diagnostics
+        .iter()
+        .any(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER);
+
+    assert!(
+        has_duplicate_identifier,
+        "Should emit TS2397 for duplicate namespace declaration"
+    );
+}
 #[test]
 fn debug_await_semicolon() {
     let source = r#"async function f() {

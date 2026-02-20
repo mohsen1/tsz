@@ -81,7 +81,7 @@ impl BinderState {
                     .unwrap_or(false);
 
             if is_global_augmentation {
-                if !module.body.is_none() {
+                if module.body.is_some() {
                     self.node_scope_ids
                         .insert(module.body.0, self.current_scope_id);
                     // Set flag so interface declarations inside are tracked as augmentations
@@ -198,7 +198,7 @@ impl BinderState {
             self.bind_node(arena, module.body);
 
             // Populate exports for the module symbol
-            if !module_symbol_id.is_none() && !module.body.is_none() {
+            if module_symbol_id.is_some() && module.body.is_some() {
                 let mut is_ambient_module = !is_augmentation
                     && (declared_module_specifier.is_some()
                         || Self::has_declare_modifier(arena, module.modifiers.as_ref()));
@@ -414,7 +414,7 @@ impl BinderState {
                                         target_sym.value_declaration
                                     };
 
-                                    if !decl_idx.is_none()
+                                    if decl_idx.is_some()
                                         && let Some(decl_node) = arena.get(decl_idx)
                                         && decl_node.kind
                                             == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
@@ -495,7 +495,7 @@ impl BinderState {
                         }
                         syntax_kind_ext::EXPORT_DECLARATION => {
                             if let Some(export_decl) = arena.get_export_decl(stmt_node)
-                                && !export_decl.export_clause.is_none()
+                                && export_decl.export_clause.is_some()
                                 && let Some(clause_node) = arena.get(export_decl.export_clause)
                             {
                                 match clause_node.kind {

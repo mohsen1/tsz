@@ -16,7 +16,7 @@ impl<'a> CheckerState<'a> {
 
         let mut current = idx;
         let mut guard = 0;
-        while !current.is_none() {
+        while current.is_some() {
             guard += 1;
             if guard > 256 {
                 break;
@@ -120,7 +120,7 @@ impl<'a> CheckerState<'a> {
 
         let mut current = idx;
         let mut guard = 0;
-        while !current.is_none() {
+        while current.is_some() {
             guard += 1;
             if guard > 256 {
                 break;
@@ -169,7 +169,7 @@ impl<'a> CheckerState<'a> {
         // Walk up the AST to find if we're inside a type annotation
         let mut current = idx;
         let mut guard = 0;
-        while !current.is_none() {
+        while current.is_some() {
             guard += 1;
             if guard > 64 {
                 break;
@@ -236,7 +236,7 @@ impl<'a> CheckerState<'a> {
                 let mut cur = idx;
                 let mut found = false;
                 let mut g = 0;
-                while !cur.is_none() {
+                while cur.is_some() {
                     g += 1;
                     if g > 256 {
                         break;
@@ -498,7 +498,7 @@ impl<'a> CheckerState<'a> {
                 let mut guard = 0;
                 let mut in_class = false;
                 let mut in_class_member_body = false;
-                while !current.is_none() {
+                while current.is_some() {
                     guard += 1;
                     if guard > 256 {
                         break;
@@ -555,7 +555,7 @@ impl<'a> CheckerState<'a> {
             // error is in the `<>` type-argument span, not in the expression child,
             // so the identifier (e.g. `List`) should still be name-resolved.
             if let Some(ext) = self.ctx.arena.get_extended(idx)
-                && !ext.parent.is_none()
+                && ext.parent.is_some()
                 && let Some(parent_node) = self.ctx.arena.get(ext.parent)
                 && parent_node.kind != syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
             {
@@ -578,7 +578,7 @@ impl<'a> CheckerState<'a> {
         if self.has_syntax_parse_errors() && self.node_span_contains_parse_error(idx) {
             let mut current = idx;
             let mut guard = 0;
-            while !current.is_none() {
+            while current.is_some() {
                 guard += 1;
                 if guard > 256 {
                     break;
@@ -644,7 +644,7 @@ impl<'a> CheckerState<'a> {
         let mut is_in_spread_element = false;
         let mut current = idx;
         let mut guard = 0;
-        while !current.is_none() {
+        while current.is_some() {
             guard += 1;
             if guard > 256 {
                 break;
@@ -728,15 +728,13 @@ impl<'a> CheckerState<'a> {
                 )
             };
 
-            self.ctx.push_diagnostic(Diagnostic {
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
                 code,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            ));
         }
     }
 
@@ -751,15 +749,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB));
         }
     }
 
@@ -773,15 +763,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2));
         }
     }
 
@@ -795,15 +777,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_NODE_TRY_NPM_I_SAVE_2));
         }
     }
 
@@ -814,15 +788,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
                 &[name],
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_INSTALL_TYPE_DEFINITIONS_FOR_A_TEST_RUNNER_TRY_N));
         }
     }
 
@@ -908,15 +874,13 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format!("Cannot find name '{name}'. Did you mean '{suggestion}'?");
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN,
+            ));
         }
     }
 
@@ -931,15 +895,13 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Cannot find name '{name}'. Did you mean the static member '{class_name}.{name}'?"
             );
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN_THE_STATIC_MEMBER,
+            ));
         }
     }
 }

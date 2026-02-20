@@ -5,7 +5,9 @@
 
 use crate::instantiate::{TypeSubstitution, instantiate_type_with_infer};
 use crate::subtype::{SubtypeChecker, TypeResolver};
-use crate::types::{ConditionalType, ObjectShapeId, TupleElement, TypeData, TypeId, TypeParamInfo};
+use crate::types::{
+    ConditionalType, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::trace;
 
@@ -781,7 +783,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                             let shape = self.interner().object_shape(shape_id);
                             if let Some(prop) =
-                                shape.properties.iter().find(|prop| prop.name == prop_name)
+                                PropertyInfo::find_in_slice(&shape.properties, prop_name)
                             {
                                 inferred_members.push(if prop_optional {
                                     self.optional_property_type(prop)
@@ -906,7 +908,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate(cond.false_type);
                     };
                     let shape = self.interner().object_shape(shape_id);
-                    let Some(prop) = shape.properties.iter().find(|prop| prop.name == outer_name)
+                    let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, outer_name)
                     else {
                         return self.evaluate(cond.false_type);
                     };

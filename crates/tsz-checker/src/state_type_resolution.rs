@@ -726,7 +726,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
@@ -819,7 +819,7 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
@@ -933,7 +933,7 @@ impl<'a> CheckerState<'a> {
                             .first()
                             .copied()
                             .unwrap_or(NodeIndex::NONE);
-                        if !first_decl.is_none()
+                        if first_decl.is_some()
                             && let Some(node) = self.ctx.arena.get(first_decl)
                             && let Some(iface) = self.ctx.arena.get_interface(node)
                             && let Some(ref type_params_list) = iface.type_parameters
@@ -966,7 +966,7 @@ impl<'a> CheckerState<'a> {
                     self.ctx.leave_recursion();
                     return lazy_type;
                 }
-                if !symbol.value_declaration.is_none() {
+                if symbol.value_declaration.is_some() {
                     let result = self.get_type_of_interface(symbol.value_declaration);
                     self.ctx.leave_recursion();
                     return result;
@@ -994,7 +994,7 @@ impl<'a> CheckerState<'a> {
                             }
                         })
                         .unwrap_or(false)
-                }) || !symbol.value_declaration.is_none()
+                }) || symbol.value_declaration.is_some()
                     || !symbol.declarations.is_empty();
                 if has_type_alias_decl {
                     // Get the correct arena for the symbol (lib arena or current arena)
@@ -1044,7 +1044,7 @@ impl<'a> CheckerState<'a> {
         let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
         let mut params = Vec::new();
         let mut updates = Vec::new();
-        if !first_decl.is_none()
+        if first_decl.is_some()
             && let Some(node) = self.ctx.arena.get(first_decl)
             && let Some(interface) = self.ctx.arena.get_interface(node)
         {
@@ -1096,7 +1096,7 @@ impl<'a> CheckerState<'a> {
                 name = %symbol.escaped_name,
                 flags = symbol.flags,
                 num_decls = symbol.declarations.len(),
-                has_value_decl = !symbol.value_declaration.is_none(),
+                has_value_decl = symbol.value_declaration.is_some(),
                 "type_reference_symbol_type_with_params: ENTRY"
             );
         }
@@ -1319,7 +1319,7 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(false)
                     })
                     .unwrap_or_else(|| {
-                        if !symbol.value_declaration.is_none() {
+                        if symbol.value_declaration.is_some() {
                             symbol.value_declaration
                         } else {
                             symbol
@@ -1330,7 +1330,7 @@ impl<'a> CheckerState<'a> {
                         }
                     });
 
-                if !decl_idx.is_none() {
+                if decl_idx.is_some() {
                     // Try user arena first (fast path for user-defined type aliases)
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && let Some(type_alias) = self.ctx.arena.get_type_alias(node)

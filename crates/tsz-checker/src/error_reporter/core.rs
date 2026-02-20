@@ -1,8 +1,6 @@
 //! Core error emission helpers and type formatting utilities.
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
@@ -19,7 +17,7 @@ impl<'a> CheckerState<'a> {
         let mut current = idx;
         let mut guard = 0;
 
-        while !current.is_none() {
+        while current.is_some() {
             guard += 1;
             if guard > 256 {
                 break;
@@ -73,7 +71,7 @@ impl<'a> CheckerState<'a> {
 
             if node.kind == syntax_kind_ext::BINDING_ELEMENT
                 && let Some(binding) = self.ctx.arena.get_binding_element(node)
-                && !binding.property_name.is_none()
+                && binding.property_name.is_some()
                 && binding.name.is_some()
                 && self.ctx.arena.get_identifier_text(binding.name) == Some(name)
             {
@@ -823,7 +821,7 @@ impl<'a> CheckerState<'a> {
         let mut saw_assignment_binary = false;
         let mut var_decl: Option<NodeIndex> = None;
 
-        while !current.is_none() {
+        while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
             };
@@ -888,15 +886,13 @@ impl<'a> CheckerState<'a> {
 
     /// Report an error at a specific position.
     pub(crate) fn error_at_position(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        self.ctx.diagnostics.push(Diagnostic {
-            file: self.ctx.file_name.clone(),
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
             start,
             length,
-            message_text: message.to_string(),
-            category: DiagnosticCategory::Error,
+            message.to_string(),
             code,
-            related_information: Vec::new(),
-        });
+        ));
     }
 
     /// Report an error at the current node being processed (from resolution stack).

@@ -378,7 +378,7 @@ impl<'a> SignatureHelpProvider<'a> {
 
         // Safety limit to prevent infinite loops
         let mut depth = 0;
-        while !current.is_none() && depth < 100 {
+        while current.is_some() && depth < 100 {
             if let Some(node) = self.arena.get(current) {
                 if (node.kind == syntax_kind_ext::CALL_EXPRESSION
                     || node.kind == syntax_kind_ext::NEW_EXPRESSION)
@@ -1020,7 +1020,7 @@ impl<'a> SignatureHelpProvider<'a> {
     ) -> Option<SignatureDocs> {
         let symbol = self.binder.get_symbol(symbol_id)?;
         let mut decls = symbol.declarations.clone();
-        if !symbol.value_declaration.is_none() && !decls.contains(&symbol.value_declaration) {
+        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
             decls.insert(0, symbol.value_declaration);
         }
 
@@ -1293,7 +1293,7 @@ impl<'a> SignatureHelpProvider<'a> {
             return Vec::new();
         };
         let mut decls = symbol.declarations.clone();
-        if !symbol.value_declaration.is_none() && !decls.contains(&symbol.value_declaration) {
+        if symbol.value_declaration.is_some() && !decls.contains(&symbol.value_declaration) {
             decls.push(symbol.value_declaration);
         }
 
@@ -1324,7 +1324,7 @@ impl<'a> SignatureHelpProvider<'a> {
         let Some(var_decl) = self.arena.get_variable_declaration(node) else {
             return decls;
         };
-        if !var_decl.initializer.is_none() {
+        if var_decl.initializer.is_some() {
             decls.extend(self.class_decls_from_new_expression(var_decl.initializer));
         }
         decls

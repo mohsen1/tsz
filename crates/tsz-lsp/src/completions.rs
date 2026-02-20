@@ -878,7 +878,7 @@ impl<'a> Completions<'a> {
                     || prev_byte == b'b'
                 {
                     let node_idx_check = find_node_at_offset(self.arena, offset.saturating_sub(1));
-                    if !node_idx_check.is_none()
+                    if node_idx_check.is_some()
                         && let Some(node) = self.arena.get(node_idx_check)
                         && (node.kind == SyntaxKind::NumericLiteral as u16
                             || node.kind == SyntaxKind::BigIntLiteral as u16)
@@ -892,7 +892,7 @@ impl<'a> Completions<'a> {
 
         // Check if we're inside a string literal using the AST
         let node_idx = find_node_at_offset(self.arena, offset);
-        if !node_idx.is_none()
+        if node_idx.is_some()
             && let Some(node) = self.arena.get(node_idx)
         {
             let kind = node.kind;
@@ -1314,7 +1314,7 @@ impl<'a> Completions<'a> {
         let mut current = start;
         let mut in_binding_pattern = false;
         let mut depth = 0;
-        while !current.is_none() && depth < 50 {
+        while current.is_some() && depth < 50 {
             if let Some(node) = self.arena.get(current) {
                 if node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
@@ -1352,7 +1352,7 @@ impl<'a> Completions<'a> {
         };
         let mut current = start;
         let mut depth = 0;
-        while !current.is_none() && depth < 50 {
+        while current.is_some() && depth < 50 {
             if let Some(node) = self.arena.get(current)
                 && (node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                     || node.kind == syntax_kind_ext::VARIABLE_STATEMENT)
@@ -1382,7 +1382,7 @@ impl<'a> Completions<'a> {
         };
         let mut current = start;
         let mut depth = 0;
-        while !current.is_none() && depth < 50 {
+        while current.is_some() && depth < 50 {
             if let Some(node) = self.arena.get(current) {
                 if node.kind == syntax_kind_ext::PARAMETER {
                     return true;
@@ -1420,7 +1420,7 @@ impl<'a> Completions<'a> {
         };
         let mut current = start;
         let mut depth = 0;
-        while !current.is_none() && depth < 50 {
+        while current.is_some() && depth < 50 {
             if let Some(node) = self.arena.get(current)
                 && node.kind == syntax_kind_ext::TYPE_PARAMETER
             {
@@ -1449,7 +1449,7 @@ impl<'a> Completions<'a> {
         };
         let mut current = start;
         let mut depth = 0;
-        while !current.is_none() && depth < 50 {
+        while current.is_some() && depth < 50 {
             if let Some(node) = self.arena.get(current) {
                 if node.kind == syntax_kind_ext::ENUM_MEMBER {
                     return true;
@@ -1647,7 +1647,7 @@ impl<'a> Completions<'a> {
             node_idx
         };
         let mut current = start;
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(node) = self.arena.get(current) {
                 let k = node.kind;
                 if k == syntax_kind_ext::FUNCTION_DECLARATION
@@ -1678,13 +1678,13 @@ impl<'a> Completions<'a> {
     fn find_completions_node(&self, root: NodeIndex, offset: u32) -> NodeIndex {
         // Try exact offset first
         let mut node_idx = find_node_at_offset(self.arena, offset);
-        if !node_idx.is_none() {
+        if node_idx.is_some() {
             return node_idx;
         }
         // Try offset-1 (common when cursor is right after a token boundary)
         if offset > 0 {
             node_idx = find_node_at_offset(self.arena, offset - 1);
-            if !node_idx.is_none() {
+            if node_idx.is_some() {
                 return node_idx;
             }
         }
@@ -1776,7 +1776,7 @@ impl<'a> Completions<'a> {
                         item.is_snippet = true;
                     }
 
-                    let decl_node = if !symbol.value_declaration.is_none() {
+                    let decl_node = if symbol.value_declaration.is_some() {
                         symbol.value_declaration
                     } else {
                         symbol
@@ -1785,7 +1785,7 @@ impl<'a> Completions<'a> {
                             .copied()
                             .unwrap_or(NodeIndex::NONE)
                     };
-                    if !decl_node.is_none() {
+                    if decl_node.is_some() {
                         let doc = jsdoc_for_node(self.arena, root, decl_node, self.source_text);
                         if !doc.is_empty() {
                             item = item.with_documentation(doc);
@@ -1965,7 +1965,7 @@ impl<'a> Completions<'a> {
     fn member_completion_target(&self, node_idx: NodeIndex, offset: u32) -> Option<NodeIndex> {
         let mut current = node_idx;
 
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
                 let access = self.arena.get_access_expr(node)?;
@@ -2375,7 +2375,7 @@ impl<'a> Completions<'a> {
             // const x: Type = { ... }
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 let decl = self.arena.get_variable_declaration(parent)?;
-                if decl.initializer == node_idx && !decl.type_annotation.is_none() {
+                if decl.initializer == node_idx && decl.type_annotation.is_some() {
                     return Some(checker.get_type_of_node(decl.type_annotation));
                 }
             }
@@ -2401,7 +2401,7 @@ impl<'a> Completions<'a> {
 
                 // Check return type annotation
                 if let Some(func) = self.arena.get_function(func_node)
-                    && !func.type_annotation.is_none()
+                    && func.type_annotation.is_some()
                 {
                     return Some(checker.get_type_of_node(func.type_annotation));
                 }
@@ -2444,7 +2444,7 @@ impl<'a> Completions<'a> {
     /// Find the enclosing function for a node (for return type lookup).
     fn find_enclosing_function(&self, start_idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = start_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let node = self.arena.get(current)?;
             if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 || node.kind == syntax_kind_ext::ARROW_FUNCTION

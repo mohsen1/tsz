@@ -335,7 +335,7 @@ pub(crate) fn collect_module_specifiers(
                     export_decl.module_specifier,
                     ImportKind::EsmReExport,
                 ));
-            } else if !export_decl.export_clause.is_none()
+            } else if export_decl.export_clause.is_some()
                 && let Some(import_decl) = arena.get_import_decl_at(export_decl.export_clause)
                 && let Some(text) = arena.get_literal_text(import_decl.module_specifier)
             {
@@ -530,7 +530,7 @@ pub(crate) fn collect_export_binding_nodes(
             nodes.push(clause_idx);
         } else if let Some(named) = arena.get_named_imports(clause_node) {
             for &spec_idx in &named.elements.nodes {
-                if !spec_idx.is_none() {
+                if spec_idx.is_some() {
                     nodes.push(spec_idx);
                 }
             }
@@ -562,7 +562,7 @@ pub(crate) fn collect_star_export_specifiers(
         let Some(export_decl) = arena.get_export_decl_at(stmt_idx) else {
             continue;
         };
-        if !export_decl.export_clause.is_none() {
+        if export_decl.export_clause.is_some() {
             continue;
         }
         if let Some(text) = arena.get_literal_text(export_decl.module_specifier) {
@@ -585,13 +585,13 @@ fn collect_import_local_names(
     let clause_idx = import_decl.import_clause;
     if let Some(clause_node) = arena.get(clause_idx) {
         if let Some(clause) = arena.get_import_clause(clause_node) {
-            if !clause.name.is_none()
+            if clause.name.is_some()
                 && let Some(name) = arena.get_identifier_text(clause.name)
             {
                 names.push(name.to_string());
             }
 
-            if !clause.named_bindings.is_none()
+            if clause.named_bindings.is_some()
                 && let Some(bindings_node) = arena.get(clause.named_bindings)
             {
                 if bindings_node.kind == SyntaxKind::Identifier as u16 {
@@ -599,7 +599,7 @@ fn collect_import_local_names(
                         names.push(name.to_string());
                     }
                 } else if let Some(named) = arena.get_named_imports(bindings_node) {
-                    if !named.name.is_none()
+                    if named.name.is_some()
                         && let Some(name) = arena.get_identifier_text(named.name)
                     {
                         names.push(name.to_string());
@@ -608,7 +608,7 @@ fn collect_import_local_names(
                         let Some(spec) = arena.get_specifier_at(spec_idx) else {
                             continue;
                         };
-                        let local_ident = if !spec.name.is_none() {
+                        let local_ident = if spec.name.is_some() {
                             spec.name
                         } else {
                             spec.property_name

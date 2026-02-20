@@ -208,7 +208,7 @@ impl<'a> CheckerState<'a> {
                         self.collect_infer_type_parameters_inner(param_idx, params);
                     }
                     // Check return type
-                    if !func_type.type_annotation.is_none() {
+                    if func_type.type_annotation.is_some() {
                         self.collect_infer_type_parameters_inner(func_type.type_annotation, params);
                     }
                 }
@@ -252,10 +252,10 @@ impl<'a> CheckerState<'a> {
             k if k == syntax_kind_ext::MAPPED_TYPE => {
                 if let Some(mapped) = self.ctx.arena.get_mapped_type(node) {
                     self.collect_infer_type_parameters_inner(mapped.type_parameter, params);
-                    if !mapped.type_node.is_none() {
+                    if mapped.type_node.is_some() {
                         self.collect_infer_type_parameters_inner(mapped.type_node, params);
                     }
-                    if !mapped.name_type.is_none() {
+                    if mapped.name_type.is_some() {
                         self.collect_infer_type_parameters_inner(mapped.name_type, params);
                     }
                 }
@@ -328,7 +328,7 @@ impl<'a> CheckerState<'a> {
                             self.collect_infer_type_parameters_inner(param_idx, params);
                         }
                     }
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.collect_infer_type_parameters_inner(sig.type_annotation, params);
                     }
                 } else if let Some(index_sig) = self.ctx.arena.get_index_signature(node) {
@@ -336,7 +336,7 @@ impl<'a> CheckerState<'a> {
                     for &param_idx in &index_sig.parameters.nodes {
                         self.collect_infer_type_parameters_inner(param_idx, params);
                     }
-                    if !index_sig.type_annotation.is_none() {
+                    if index_sig.type_annotation.is_some() {
                         self.collect_infer_type_parameters_inner(index_sig.type_annotation, params);
                     }
                 } else if let Some(param) = self.ctx.arena.get_parameter(node) {
@@ -528,7 +528,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
                     && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
                     && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                    && !ret.expression.is_none()
+                    && ret.expression.is_some()
                 {
                     return self.get_type_of_node(ret.expression);
                 }
@@ -580,7 +580,7 @@ impl<'a> CheckerState<'a> {
                 let is_async = func.is_async;
                 // TSC reports TS2389/TS2391 at the function name, not the declaration.
                 let name_node = func.name;
-                let error_node = if !name_node.is_none() {
+                let error_node = if name_node.is_some() {
                     name_node
                 } else {
                     stmt_idx
@@ -642,7 +642,7 @@ impl<'a> CheckerState<'a> {
                                 .get(impl_idx)
                                 .and_then(|n| self.ctx.arena.get_function(n))
                                 .map(|f| f.name)
-                                .filter(|n| !n.is_none())
+                                .filter(|n| n.is_some())
                                 .unwrap_or(impl_idx);
                             self.error_at_node(
                                 impl_error_node,
@@ -826,7 +826,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Explicit `this` parameter must have a type annotation
-        (is_this && !param.type_annotation.is_none()).then_some(param.type_annotation)
+        (is_this && param.type_annotation.is_some()).then_some(param.type_annotation)
     }
 
     /// Get the this type for a class member.
@@ -956,7 +956,7 @@ impl<'a> CheckerState<'a> {
 
             // Recursively check the function body for more nested functions
             if let Some(func) = self.ctx.arena.get_function(node)
-                && !func.body.is_none()
+                && func.body.is_some()
             {
                 self.check_for_nested_function_ts7006(func.body);
             }
@@ -975,7 +975,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
                         self.check_for_nested_function_ts7006(cond.condition);
                         self.check_for_nested_function_ts7006(cond.when_true);
-                        if !cond.when_false.is_none() {
+                        if cond.when_false.is_some() {
                             self.check_for_nested_function_ts7006(cond.when_false);
                         }
                     }

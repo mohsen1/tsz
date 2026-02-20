@@ -80,8 +80,8 @@ if ! command -v cargo >/dev/null 2>&1; then
     exit 1
 fi
 
-# Get changed files
-CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACM)
+# Get changed files (include deletions/renames so removed Rust files still trigger checks)
+CHANGED_FILES=$(git diff --cached --name-only --diff-filter=ACMRD)
 CHANGED_RS=$(echo "$CHANGED_FILES" | grep '\.rs$' || true)
 
 # Nothing to do if no Rust files changed

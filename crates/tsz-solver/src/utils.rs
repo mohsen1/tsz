@@ -4,7 +4,7 @@
 //! to avoid code duplication.
 
 use crate::db::TypeDatabase;
-use crate::types::TypeId;
+use crate::types::{ObjectShapeId, PropertyInfo, PropertyLookup, TypeId};
 use tsz_common::interner::Atom;
 
 /// Checks if a property name is numeric by resolving the atom and checking its string representation.
@@ -174,6 +174,29 @@ impl TypeIdExt for TypeId {
     fn non_never(self) -> Option<Self> {
         (self != Self::NEVER).then_some(self)
     }
+}
+
+/// Look up a property by name, using the cached property index if available.
+///
+/// This consolidates the duplicated `lookup_property` implementations from
+/// `subtype_rules/objects.rs` and `infer_bct.rs`.
+pub fn lookup_property<'props>(
+    db: &dyn TypeDatabase,
+    props: &'props [PropertyInfo],
+    shape_id: Option<ObjectShapeId>,
+    name: Atom,
+) -> Option<&'props PropertyInfo> {
+    if let Some(shape_id) = shape_id {
+        match db.object_property_index(shape_id, name) {
+            PropertyLookup::Found(idx) => return props.get(idx),
+            PropertyLookup::NotFound => return None,
+            PropertyLookup::Uncached => {}
+        }
+    }
+    props
+        .binary_search_by_key(&name, |p| p.name)
+        .ok()
+        .map(|idx| &props[idx])
 }
 
 #[cfg(test)]

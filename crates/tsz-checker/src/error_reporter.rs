@@ -24,7 +24,6 @@ mod generics;
 mod name_resolution;
 mod operator_errors;
 mod properties;
-mod report_api;
 mod suggestions;
 mod type_value;
 

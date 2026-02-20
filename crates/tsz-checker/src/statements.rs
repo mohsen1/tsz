@@ -247,6 +247,7 @@ impl StatementChecker {
             let Some(node) = arena.get(stmt_idx) else {
                 return;
             };
+            println!("Statement kind: {:?}", node.kind);
             (node.kind, node)
         };
         let kind = node_data.0;
@@ -292,7 +293,7 @@ impl StatementChecker {
                     state.check_declaration_in_statement_position(then_stmt);
                     state.check_statement(then_stmt);
                     // Check else branch if present
-                    if !else_stmt.is_none() {
+                    if else_stmt.is_some() {
                         state.check_declaration_in_statement_position(else_stmt);
                         state.check_statement(else_stmt);
                     }
@@ -348,7 +349,7 @@ impl StatementChecker {
                         .map(|l| (l.initializer, l.condition, l.incrementor, l.statement))
                 };
                 if let Some((initializer, condition, incrementor, statement)) = loop_data {
-                    if !initializer.is_none() {
+                    if initializer.is_some() {
                         // Check if initializer is a variable declaration list
                         let is_var_decl_list = {
                             let arena = state.arena();
@@ -362,10 +363,10 @@ impl StatementChecker {
                             state.get_type_of_node(initializer);
                         }
                     }
-                    if !condition.is_none() {
+                    if condition.is_some() {
                         state.get_type_of_node(condition);
                     }
-                    if !incrementor.is_none() {
+                    if incrementor.is_some() {
                         state.get_type_of_node(incrementor);
                     }
                     state.enter_iteration_statement();
@@ -409,7 +410,7 @@ impl StatementChecker {
                                                 arena.get(d).is_some_and(|dn| {
                                                     arena
                                                         .get_variable_declaration(dn)
-                                                        .is_some_and(|vd| !vd.initializer.is_none())
+                                                        .is_some_and(|vd| vd.initializer.is_some())
                                                 })
                                             }))
                                 });
@@ -580,7 +581,7 @@ impl StatementChecker {
                 if let Some((try_block, catch_clause, finally_block)) = try_data {
                     state.check_statement(try_block);
 
-                    if !catch_clause.is_none() {
+                    if catch_clause.is_some() {
                         // Extract catch clause data
                         let catch_data = {
                             let arena = state.arena();
@@ -594,13 +595,13 @@ impl StatementChecker {
                         };
 
                         if let Some((var_decl, block)) = catch_data {
-                            if !var_decl.is_none() {
+                            if var_decl.is_some() {
                                 state.check_variable_declaration(var_decl);
                             }
                             state.check_statement(block);
                         }
                     }
-                    if !finally_block.is_none() {
+                    if finally_block.is_some() {
                         state.check_statement(finally_block);
                     }
                 }

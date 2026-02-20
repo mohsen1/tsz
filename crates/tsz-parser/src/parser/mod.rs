@@ -24,9 +24,14 @@ pub mod parse_rules;
 pub(crate) mod spelling;
 pub mod state;
 mod state_declarations;
+mod state_declarations_exports;
 mod state_expressions;
+mod state_expressions_literals;
 mod state_statements;
+mod state_statements_class;
+mod state_statements_class_members;
 mod state_types;
+mod state_types_jsx;
 
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_tests.rs"]

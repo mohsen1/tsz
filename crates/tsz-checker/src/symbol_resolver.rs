@@ -1169,18 +1169,18 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
                 .declarations
                 .iter()
                 .copied()
-                .find(|idx| !idx.is_none())
+                .find(|idx| idx.is_some())
                 .unwrap_or(NodeIndex::NONE)
         };
 
-        if !decl_idx.is_none()
+        if decl_idx.is_some()
             && let Some(decl_node) = self.ctx.arena.get(decl_idx)
             && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             && let Some(import) = self.ctx.arena.get_import_decl(decl_node)

@@ -294,6 +294,10 @@ pub struct CheckerContext<'a> {
     /// Avoids recomputing the full class instance type on every member check.
     pub class_instance_type_cache: FxHashMap<NodeIndex, TypeId>,
 
+    /// Cache of non-class `TypeId`s for `get_class_decl_from_type`.
+    /// Avoids repeating private-brand scans on hot miss paths.
+    pub class_decl_miss_cache: RefCell<FxHashSet<TypeId>>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 

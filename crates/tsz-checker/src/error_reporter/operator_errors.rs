@@ -1,8 +1,6 @@
 //! Binary operator error reporting (TS2362, TS2363, TS2365, TS2469).
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -39,15 +37,13 @@ impl<'a> CheckerState<'a> {
             &[&name],
         );
 
-        self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
-            category: DiagnosticCategory::Error,
-            message_text: message,
-            file: self.ctx.file_name.clone(),
-            start: loc.start,
-            length: loc.length(),
-            related_information: Vec::new(),
-        });
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            message,
+            diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+        ));
     }
 
     /// Report TS2507: "Type 'X' is not a constructor function type"
@@ -68,15 +64,13 @@ impl<'a> CheckerState<'a> {
         let message =
             diagnostic_messages::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE.replace("{0}", &type_str);
 
-        self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
-            category: DiagnosticCategory::Error,
-            message_text: message,
-            file: self.ctx.file_name.clone(),
-            start: loc.start,
-            length: loc.length(),
-            related_information: Vec::new(),
-        });
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            message,
+            diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
+        ));
     }
 
     /// Report TS2351: "This expression is not constructable. Type 'X' has no construct signatures."
@@ -96,15 +90,13 @@ impl<'a> CheckerState<'a> {
         let message =
             diagnostic_messages::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE.replace("{0}", &type_str);
 
-        self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
-            category: DiagnosticCategory::Error,
-            message_text: message,
-            file: self.ctx.file_name.clone(),
-            start: loc.start,
-            length: loc.length(),
-            related_information: Vec::new(),
-        });
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            message,
+            diagnostic_codes::THIS_EXPRESSION_IS_NOT_CONSTRUCTABLE,
+        ));
     }
 
     // =========================================================================
@@ -176,15 +168,13 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
                     &[value_name],
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                ));
                 emitted_nullish_error = true;
             }
         }
@@ -200,15 +190,13 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::THE_VALUE_CANNOT_BE_USED_HERE,
                     &[value_name],
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::THE_VALUE_CANNOT_BE_USED_HERE,
+                ));
                 emitted_nullish_error = true;
             }
         }
@@ -238,15 +226,13 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                     &[op, type_str],
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                ));
             }
 
             if let (Some(loc), Some(type_str)) = (
@@ -257,15 +243,13 @@ impl<'a> CheckerState<'a> {
                     diagnostic_messages::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
                     &[op, type_str],
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPE,
+                ));
             }
 
             // If both are symbols, we're done (no need for TS2365)
@@ -308,15 +292,7 @@ impl<'a> CheckerState<'a> {
                     let message = format!(
                         "The '{op}' operator is not allowed for boolean types. Consider using '{suggestion}' instead."
                     );
-                    self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
+                    self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_OPERATOR_IS_NOT_ALLOWED_FOR_BOOLEAN_TYPES_CONSIDER_USING_INSTEAD));
                 }
                 return;
             }
@@ -349,15 +325,13 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                ));
             }
             return;
         }
@@ -371,30 +345,14 @@ impl<'a> CheckerState<'a> {
                 && let Some(loc) = self.get_source_location(left_idx)
             {
                 let message = "The left-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
+                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
                 emitted_specific_error = true;
             }
             if !(right_is_valid_arithmetic || right_is_nullish && should_emit_nullish_error)
                 && let Some(loc) = self.get_source_location(right_idx)
             {
                 let message = "The right-hand side of an arithmetic operation must be of type 'any', 'number', 'bigint' or an enum type.".to_string();
-                self.ctx.diagnostics.push(Diagnostic {
-                        code: diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT,
-                        category: DiagnosticCategory::Error,
-                        message_text: message,
-                        file: self.ctx.file_name.clone(),
-                        start: loc.start,
-                        length: loc.length(),
-                        related_information: Vec::new(),
-                    });
+                self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_ARITHMETIC_OPERATION_MUST_BE_OF_TYPE_ANY_NUMBER_BIGINT));
                 emitted_specific_error = true;
             }
             // If both operands are valid arithmetic types but the operation still failed
@@ -403,15 +361,13 @@ impl<'a> CheckerState<'a> {
                 let message = format!(
                     "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
                 );
-                self.ctx.diagnostics.push(Diagnostic {
-                    code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                    category: DiagnosticCategory::Error,
-                    message_text: message,
-                    file: self.ctx.file_name.clone(),
-                    start: loc.start,
-                    length: loc.length(),
-                    related_information: Vec::new(),
-                });
+                self.ctx.diagnostics.push(Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+                ));
             }
             return;
         }
@@ -427,15 +383,13 @@ impl<'a> CheckerState<'a> {
             let message = format!(
                 "Operator '{op}' cannot be applied to types '{left_str}' and '{right_str}'."
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::OPERATOR_CANNOT_BE_APPLIED_TO_TYPES_AND,
+            ));
         }
     }
 }

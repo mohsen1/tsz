@@ -164,9 +164,4 @@ function beastFoo(beast: Object) {
     if relevant.iter().any(|(code, _)| *code == 2322) {
         panic!("Found TS2322 error (Narrowing failed): {relevant:?}");
     }
-
-    // Also check if we found TS2345 (just to confirm weak type check is working)
-    // We expect TS2345 in beastFoo if tsz implements strict weak type checks
-    // let found_2345 = diagnostics.iter().any(|(code, _)| *code == 2345);
-    // println!("Found TS2345: {}", found_2345);
 }

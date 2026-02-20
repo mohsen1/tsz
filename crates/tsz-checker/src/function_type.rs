@@ -300,7 +300,7 @@ impl<'a> CheckerState<'a> {
                     || (param.dot_dot_dot_token && ctx_helper.is_some());
 
                 // Use type annotation if present, otherwise infer from context
-                let type_id = if !param.type_annotation.is_none() {
+                let type_id = if param.type_annotation.is_some() {
                     // Check parameter type for parameter properties in function types
                     self.check_type_for_parameter_properties(param.type_annotation);
                     // Check for undefined type names in parameter type
@@ -391,7 +391,7 @@ impl<'a> CheckerState<'a> {
                     || self.ctx.file_name.ends_with(".mjs")
                     || self.ctx.file_name.ends_with(".cjs");
                 let optional = param.question_token
-                    || !param.initializer.is_none()
+                    || param.initializer.is_some()
                     || (is_js_file && param.type_annotation.is_none());
                 let rest = param.dot_dot_dot_token;
 
@@ -428,7 +428,7 @@ impl<'a> CheckerState<'a> {
         self.check_parameter_properties(&parameters.nodes);
 
         // Get return type from annotation or infer
-        let has_type_annotation = !type_annotation.is_none();
+        let has_type_annotation = type_annotation.is_some();
         let (mut return_type, type_predicate) = if has_type_annotation {
             // Check return type for parameter properties in function types
             self.check_type_for_parameter_properties(type_annotation);
@@ -465,8 +465,8 @@ impl<'a> CheckerState<'a> {
             pushed_this_type_early = true;
         }
 
-        self.check_non_impl_parameter_initializers(&parameters.nodes, false, !body.is_none());
-        if !body.is_none() {
+        self.check_non_impl_parameter_initializers(&parameters.nodes, false, body.is_some());
+        if body.is_some() {
             // Track that we're inside a nested function for abstract property access checks.
             // This must happen before infer_return_type_from_body which evaluates body expressions.
             self.ctx.function_depth += 1;
@@ -535,7 +535,7 @@ impl<'a> CheckerState<'a> {
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
-                let inferred = self.infer_return_type_from_body(body, return_context);
+                let inferred = self.infer_return_type_from_body(idx, body, return_context);
                 return_type = jsdoc_return_context.unwrap_or(inferred);
             }
 
@@ -704,7 +704,7 @@ impl<'a> CheckerState<'a> {
 
             // TS2366 (not all code paths return value) for function expressions and arrow functions
             // Check if all code paths return a value when return type requires it
-            if !is_function_declaration && !body.is_none() {
+            if !is_function_declaration && body.is_some() {
                 let check_return_type = return_type;
                 let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(body);

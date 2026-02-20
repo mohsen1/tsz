@@ -53,7 +53,7 @@ impl<'a> CheckerState<'a> {
 
             // TS1189/TS1190: The variable declaration of a for-in/for-of statement cannot have an initializer
             // Only check when there's a single declaration (TSC suppresses when TS1188 is reported)
-            if single_declaration && !var_decl.initializer.is_none() {
+            if single_declaration && var_decl.initializer.is_some() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 if is_for_in {
                     self.error_at_node(
@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // If there's a type annotation, check that the element type is assignable to it
-            if !var_decl.type_annotation.is_none() {
+            if var_decl.type_annotation.is_some() {
                 // TS2404: The left-hand side of a 'for...in' statement cannot use a type annotation
                 // TSC emits TS2404 and skips the assignability check for for-in loops.
                 // TS2483: The left-hand side of a 'for...of' statement cannot use a type annotation
@@ -511,7 +511,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR
         ) {
             if let Some(accessor) = self.ctx.arena.get_accessor(node)
-                && !accessor.type_annotation.is_none()
+                && accessor.type_annotation.is_some()
                 && let Some(found) = self.find_circular_reference_in_type_node(
                     accessor.type_annotation,
                     target_sym,
@@ -524,7 +524,7 @@ impl<'a> CheckerState<'a> {
             node.kind,
             syntax_kind_ext::PROPERTY_SIGNATURE | syntax_kind_ext::PROPERTY_DECLARATION
         ) && let Some(prop) = self.ctx.arena.get_property_decl(node)
-            && !prop.type_annotation.is_none()
+            && prop.type_annotation.is_some()
             && let Some(found) = self.find_circular_reference_in_type_node(
                 prop.type_annotation,
                 target_sym,
@@ -615,7 +615,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS1263: ! with initializer is contradictory
-            if !var_decl.initializer.is_none() {
+            if var_decl.initializer.is_some() {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.error_at_node(
                     var_decl.name,
@@ -739,7 +739,7 @@ impl<'a> CheckerState<'a> {
         let is_catch_variable = self.is_catch_clause_variable_declaration(decl_idx);
 
         // TS1039/TS1254: Check initializers in ambient contexts
-        if !var_decl.initializer.is_none() && self.is_ambient_declaration(decl_idx) {
+        if var_decl.initializer.is_some() && self.is_ambient_declaration(decl_idx) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
             let is_const = self.is_const_variable_declaration(decl_idx);
             if is_const && var_decl.type_annotation.is_none() {
@@ -762,7 +762,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let compute_final_type = |checker: &mut CheckerState| -> TypeId {
-            let mut has_type_annotation = !var_decl.type_annotation.is_none();
+            let mut has_type_annotation = var_decl.type_annotation.is_some();
             let mut declared_type = if has_type_annotation {
                 // Check for undefined type names in nested types (e.g., function type parameters)
                 // Skip top-level TYPE_REFERENCE to avoid duplicates with get_type_from_type_node
@@ -799,7 +799,7 @@ impl<'a> CheckerState<'a> {
 
             // If there's a type annotation, that determines the type (even for 'any')
             if has_type_annotation {
-                if !var_decl.initializer.is_none() {
+                if var_decl.initializer.is_some() {
                     // Evaluate the declared type to resolve conditionals before using as context.
                     // This ensures types like `type C = string extends string ? "yes" : "no"`
                     // provide proper contextual typing for literals, preventing them from widening to string.
@@ -878,7 +878,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // No type annotation - infer from initializer
-            if !var_decl.initializer.is_none() {
+            if var_decl.initializer.is_some() {
                 // Clear cache for closure initializers so TS7006 is properly emitted.
                 // During build_type_environment, closures are typed without contextual info
                 // and TS7006 is deferred. Now that we're in the checking phase, re-evaluate
@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
                 !sym_already_cached && self.ctx.symbol_types.get(&sym_id) == Some(&TypeId::ERROR);
 
             // TS2502: 'x' is referenced directly or indirectly in its own type annotation.
-            if !var_decl.type_annotation.is_none() {
+            if var_decl.type_annotation.is_some() {
                 // Try AST-based check first (catches complex circularities that confuse the solver)
                 let ast_circular = self
                     .find_circular_reference_in_type_node(var_decl.type_annotation, sym_id, false)
@@ -1055,7 +1055,7 @@ impl<'a> CheckerState<'a> {
 
             // FIX: Update node_types cache with the widened type
             self.ctx.node_types.insert(decl_idx.0, final_type);
-            if !var_decl.name.is_none() {
+            if var_decl.name.is_some() {
                 self.ctx.node_types.insert(var_decl.name.0, final_type);
             }
 
@@ -1140,7 +1140,7 @@ impl<'a> CheckerState<'a> {
             //         `var f = function() { return f(); }`.
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
-                && !var_decl.initializer.is_none()
+                && var_decl.initializer.is_some()
                 && sym_cached_as_error
                 && self.type_contains_error(final_type)
             {
@@ -1204,9 +1204,12 @@ impl<'a> CheckerState<'a> {
 
                     // Use raw_declared_type (before contextual override) for TS2403.
                     // A bare `var y;` has declared type `any`.
-                    // We skip the check if the current declaration is an implicit `any` (no annotation),
-                    // because `var x: string; var x;` is valid in TypeScript.
-                    let is_implicit_any = var_decl.type_annotation.is_none();
+                    // We skip the check if the current declaration is an implicit `any` (no annotation
+                    // AND no initializer), because `var x: string; var x;` is valid in TypeScript.
+                    // But `var x: string; var x = 42;` should still error since the initializer
+                    // infers a concrete type.
+                    let is_implicit_any =
+                        var_decl.type_annotation.is_none() && var_decl.initializer.is_none();
 
                     if !is_mergeable_declaration
                         && !is_implicit_any
@@ -1256,7 +1259,7 @@ impl<'a> CheckerState<'a> {
                                 && let Some(lib_sym) = binder.get_symbol(lib_sym_id)
                             {
                                 for &lib_decl in &lib_sym.declarations {
-                                    if !lib_decl.is_none()
+                                    if lib_decl.is_some()
                                         && CheckerState::enter_cross_arena_delegation()
                                     {
                                         let mut lib_checker =
@@ -1275,8 +1278,9 @@ impl<'a> CheckerState<'a> {
                                         CheckerState::leave_cross_arena_delegation();
 
                                         // Check compatibility
-                                        // Skip if current is implicit any
-                                        let is_implicit_any = var_decl.type_annotation.is_none();
+                                        // Skip if current is implicit any (bare `var x;`)
+                                        let is_implicit_any = var_decl.type_annotation.is_none()
+                                            && var_decl.initializer.is_none();
                                         if !is_implicit_any
                                             && !self
                                                 .are_var_decl_types_compatible(lib_type, final_type)
@@ -1305,7 +1309,7 @@ impl<'a> CheckerState<'a> {
                             if other_decl == decl_idx {
                                 break;
                             }
-                            if !other_decl.is_none() {
+                            if other_decl.is_some() {
                                 let other_type = self.get_type_of_node(other_decl);
 
                                 // Check if other declaration is mergeable (namespace, etc.)
@@ -1323,7 +1327,8 @@ impl<'a> CheckerState<'a> {
                                         false
                                     };
 
-                                let is_implicit_any = var_decl.type_annotation.is_none();
+                                let is_implicit_any = var_decl.type_annotation.is_none()
+                                    && var_decl.initializer.is_none();
                                 if !is_other_mergeable
                                     && !is_implicit_any
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
@@ -1363,9 +1368,9 @@ impl<'a> CheckerState<'a> {
             // Prefer explicit type annotation; otherwise infer from initializer (matching tsc).
             // This type is used for both default-value checking and for assigning types to
             // binding element symbols created by the binder.
-            let pattern_type = if !var_decl.type_annotation.is_none() {
+            let pattern_type = if var_decl.type_annotation.is_some() {
                 self.get_type_from_type_node(var_decl.type_annotation)
-            } else if !var_decl.initializer.is_none() {
+            } else if var_decl.initializer.is_some() {
                 self.get_type_of_node(var_decl.initializer)
             } else if is_catch_variable && self.ctx.use_unknown_in_catch_variables() {
                 TypeId::UNKNOWN
@@ -1424,527 +1429,8 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn report_empty_array_destructuring_bounds(
-        &mut self,
-        pattern_idx: NodeIndex,
-        initializer_idx: NodeIndex,
-    ) {
-        let Some(init_node) = self.ctx.arena.get(initializer_idx) else {
-            return;
-        };
-        if init_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
-            return;
-        }
-        let Some(init_lit) = self.ctx.arena.get_literal_expr(init_node) else {
-            return;
-        };
-        if !init_lit.elements.nodes.is_empty() {
-            return;
-        }
-
-        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return;
-        };
-        let Some(pattern) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return;
-        };
-
-        for (index, &element_idx) in pattern.elements.nodes.iter().enumerate() {
-            if element_idx.is_none() {
-                continue;
-            }
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                continue;
-            };
-            if element_data.dot_dot_dot_token {
-                break;
-            }
-            // TS doesn't report tuple out-of-bounds for empty array destructuring
-            // when the element has a default value.
-            if !element_data.initializer.is_none() {
-                continue;
-            }
-
-            self.error_at_node(
-                element_data.name,
-                &format!("Tuple type '[]' of length '0' has no element at index '{index}'."),
-                crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
-            );
-        }
-    }
-
-    /// Check binding pattern elements and their default values for type correctness.
-    ///
-    /// This function traverses a binding pattern (object or array destructuring) and verifies
-    /// that any default values provided in binding elements are assignable to their expected types.
-    /// Assign inferred types to binding element symbols (destructuring).
-    ///
-    /// The binder creates symbols for identifiers inside binding patterns (e.g., `const [x] = arr;`),
-    /// but their `value_declaration` is the identifier node, not the enclosing variable declaration.
-    /// We infer the binding element type from the destructured value type and cache it on the symbol.
-    pub(crate) fn assign_binding_pattern_symbol_types(
-        &mut self,
-        pattern_idx: NodeIndex,
-        parent_type: TypeId,
-    ) {
-        let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
-            return;
-        };
-        let Some(pattern_data) = self.ctx.arena.get_binding_pattern(pattern_node) else {
-            return;
-        };
-
-        let pattern_kind = pattern_node.kind;
-        for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
-            if element_idx.is_none() {
-                continue;
-            }
-
-            let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                continue;
-            };
-            if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                continue;
-            }
-
-            let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                continue;
-            };
-
-            let element_type = if parent_type == TypeId::ANY {
-                TypeId::ANY
-            } else {
-                self.get_binding_element_type(pattern_kind, i, parent_type, element_data)
-            };
-
-            let Some(name_node) = self.ctx.arena.get(element_data.name) else {
-                continue;
-            };
-
-            // Identifier binding: cache the inferred type on the symbol.
-            if name_node.kind == SyntaxKind::Identifier as u16
-                && let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name)
-            {
-                // When strictNullChecks is off, undefined and null widen to any
-                // for mutable destructured bindings (var/let).
-                // This includes unions like `undefined | null`.
-                let final_type = if !self.ctx.strict_null_checks()
-                    && self.is_only_undefined_or_null(element_type)
-                {
-                    TypeId::ANY
-                } else {
-                    element_type
-                };
-                self.cache_symbol_type(sym_id, final_type);
-            }
-
-            // Nested binding patterns: check iterability for array patterns, then recurse
-            if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-                // Check iterability for nested array destructuring
-                self.check_destructuring_iterability(
-                    element_data.name,
-                    element_type,
-                    NodeIndex::NONE,
-                );
-                self.assign_binding_pattern_symbol_types(element_data.name, element_type);
-            } else if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
-                self.assign_binding_pattern_symbol_types(element_data.name, element_type);
-            }
-        }
-    }
-
-    /// Record destructured binding group information for correlated narrowing.
-    /// When `const { data, isSuccess } = useQuery()`, this records that both `data` and
-    /// `isSuccess` come from the same union source and can be used for correlated narrowing.
-    pub(crate) fn record_destructured_binding_group(
-        &mut self,
-        pattern_idx: NodeIndex,
-        source_type: TypeId,
-        is_const: bool,
-        pattern_kind: u16,
-    ) {
-        use crate::context::DestructuredBindingInfo;
-
-        let group_id = self.ctx.next_binding_group_id;
-        self.ctx.next_binding_group_id += 1;
-
-        let mut stack: Vec<(NodeIndex, TypeId, u16, String)> =
-            vec![(pattern_idx, source_type, pattern_kind, String::new())];
-
-        while let Some((curr_pattern_idx, curr_source_type, curr_kind, base_path)) = stack.pop() {
-            let Some(curr_pattern_node) = self.ctx.arena.get(curr_pattern_idx) else {
-                continue;
-            };
-            let Some(curr_pattern_data) = self.ctx.arena.get_binding_pattern(curr_pattern_node)
-            else {
-                continue;
-            };
-
-            let curr_is_object = curr_kind == syntax_kind_ext::OBJECT_BINDING_PATTERN;
-
-            for (i, &element_idx) in curr_pattern_data.elements.nodes.iter().enumerate() {
-                if element_idx.is_none() {
-                    continue;
-                }
-                let Some(element_node) = self.ctx.arena.get(element_idx) else {
-                    continue;
-                };
-                if element_node.kind == syntax_kind_ext::OMITTED_EXPRESSION {
-                    continue;
-                }
-                let Some(element_data) = self.ctx.arena.get_binding_element(element_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(element_data.name) else {
-                    continue;
-                };
-
-                let path_segment = if curr_is_object {
-                    if !element_data.property_name.is_none() {
-                        if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                            self.ctx
-                                .arena
-                                .get_identifier(prop_node)
-                                .map(|ident| ident.escaped_text.clone())
-                                .unwrap_or_default()
-                        } else {
-                            String::new()
-                        }
-                    } else {
-                        self.ctx
-                            .arena
-                            .get_identifier(name_node)
-                            .map(|ident| ident.escaped_text.clone())
-                            .unwrap_or_default()
-                    }
-                } else {
-                    String::new()
-                };
-
-                let property_name = if curr_is_object {
-                    if base_path.is_empty() {
-                        path_segment
-                    } else if path_segment.is_empty() {
-                        base_path.clone()
-                    } else {
-                        format!("{base_path}.{path_segment}")
-                    }
-                } else {
-                    String::new()
-                };
-
-                if name_node.kind == SyntaxKind::Identifier as u16 {
-                    if let Some(sym_id) = self.ctx.binder.get_node_symbol(element_data.name) {
-                        self.ctx.destructured_bindings.insert(
-                            sym_id,
-                            DestructuredBindingInfo {
-                                source_type,
-                                property_name: property_name.clone(),
-                                element_index: i as u32,
-                                group_id,
-                                is_const,
-                            },
-                        );
-                    }
-                    continue;
-                }
-
-                if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                {
-                    let nested_source_type =
-                        self.get_binding_element_type(curr_kind, i, curr_source_type, element_data);
-                    stack.push((
-                        element_data.name,
-                        nested_source_type,
-                        name_node.kind,
-                        property_name,
-                    ));
-                }
-            }
-        }
-    }
-
-    /// Get the expected type for a binding element from its parent type.
-    pub(crate) fn get_binding_element_type(
-        &mut self,
-        pattern_kind: u16,
-        element_index: usize,
-        parent_type: TypeId,
-        element_data: &tsz_parser::parser::node::BindingElementData,
-    ) -> TypeId {
-        // Resolve Application/Lazy types to their concrete form so that
-        // union members, object shapes, and tuple elements are accessible.
-        let parent_type = self.evaluate_type_for_assignability(parent_type);
-
-        // Array binding patterns use the element position.
-        if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
-            if parent_type == TypeId::UNKNOWN || parent_type == TypeId::ERROR {
-                return parent_type;
-            }
-
-            // For union types of tuples/arrays, resolve element type from each member
-            if let Some(members) = query::union_members(self.ctx.types, parent_type) {
-                let mut elem_types = Vec::new();
-                let factory = self.ctx.types.factory();
-                for member in members {
-                    let member = query::unwrap_readonly_deep(self.ctx.types, member);
-                    if element_data.dot_dot_dot_token {
-                        let elem_type = if let Some(elem) =
-                            query::array_element_type(self.ctx.types, member)
-                        {
-                            factory.array(elem)
-                        } else if let Some(elems) = query::tuple_elements(self.ctx.types, member) {
-                            let rest_elem = elems
-                                .iter()
-                                .find(|e| e.rest)
-                                .or_else(|| elems.last())
-                                .map_or(TypeId::ANY, |e| e.type_id);
-                            self.rest_binding_array_type(rest_elem)
-                        } else {
-                            continue;
-                        };
-                        elem_types.push(elem_type);
-                    } else if let Some(elem) = query::array_element_type(self.ctx.types, member) {
-                        elem_types.push(elem);
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, member)
-                        && let Some(e) = elems.get(element_index)
-                    {
-                        elem_types.push(e.type_id);
-                    }
-                }
-                return if elem_types.is_empty() {
-                    TypeId::ANY
-                } else if elem_types.len() == 1 {
-                    elem_types[0]
-                } else {
-                    factory.union(elem_types)
-                };
-            }
-
-            // Unwrap readonly wrappers for destructuring element access
-            let array_like = query::unwrap_readonly_deep(self.ctx.types, parent_type);
-
-            // Rest element: ...rest
-            if element_data.dot_dot_dot_token {
-                let elem_type =
-                    if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
-                        elem
-                    } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                        // Best-effort: if the tuple has a rest element, use it; otherwise, fall back to last.
-                        elems
-                            .iter()
-                            .find(|e| e.rest)
-                            .or_else(|| elems.last())
-                            .map_or(TypeId::ANY, |e| e.type_id)
-                    } else {
-                        TypeId::ANY
-                    };
-                return self.rest_binding_array_type(elem_type);
-            }
-
-            return if let Some(elem) = query::array_element_type(self.ctx.types, array_like) {
-                elem
-            } else if let Some(elems) = query::tuple_elements(self.ctx.types, array_like) {
-                if let Some(e) = elems.get(element_index) {
-                    e.type_id
-                } else {
-                    let has_rest_tail = elems.last().is_some_and(|element| element.rest);
-                    if !has_rest_tail {
-                        self.error_at_node(
-                            element_data.name,
-                            &format!(
-                                "Tuple type of length '{}' has no element at index '{}'.",
-                                elems.len(),
-                                element_index
-                            ),
-                            crate::diagnostics::diagnostic_codes::TUPLE_TYPE_OF_LENGTH_HAS_NO_ELEMENT_AT_INDEX,
-                        );
-                    }
-                    TypeId::ANY
-                }
-            } else {
-                TypeId::ANY
-            };
-        }
-
-        let property_optional_type = |property_type: TypeId, optional: bool| {
-            if optional {
-                self.ctx
-                    .types
-                    .factory()
-                    .union(vec![property_type, TypeId::UNDEFINED])
-            } else {
-                property_type
-            }
-        };
-
-        // Get the property name or index
-        if !element_data.property_name.is_none() {
-            // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
-            // check index signatures when the key is not a simple identifier key.
-            // This aligns with TS2537 behavior for destructuring from `{}`.
-            let computed_expr = self
-                .ctx
-                .arena
-                .get(element_data.property_name)
-                .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
-                .map(|computed| computed.expression);
-            let computed_is_identifier = computed_expr
-                .and_then(|expr_idx| {
-                    self.ctx
-                        .arena
-                        .get(expr_idx)
-                        .and_then(|expr_node| self.ctx.arena.get_identifier(expr_node))
-                })
-                .is_some();
-
-            if !computed_is_identifier {
-                let key_type =
-                    computed_expr.map_or(TypeId::ANY, |expr_idx| self.get_type_of_node(expr_idx));
-                let key_is_string = key_type == TypeId::STRING;
-                let key_is_number = key_type == TypeId::NUMBER;
-
-                if key_is_string || key_is_number {
-                    let has_matching_index = |ty: TypeId| {
-                        query::object_shape(self.ctx.types, ty).is_some_and(|shape| {
-                            if key_is_string {
-                                shape.string_index.is_some()
-                            } else {
-                                shape.number_index.is_some() || shape.string_index.is_some()
-                            }
-                        })
-                    };
-
-                    let has_index_signature =
-                        if let Some(members) = query::union_members(self.ctx.types, parent_type) {
-                            members.into_iter().all(has_matching_index)
-                        } else {
-                            has_matching_index(parent_type)
-                        };
-
-                    if !has_index_signature
-                        && parent_type != TypeId::ANY
-                        && parent_type != TypeId::ERROR
-                        && parent_type != TypeId::UNKNOWN
-                    {
-                        let mut formatter = self.ctx.create_type_formatter();
-                        let object_str = formatter.format(parent_type);
-                        let index_str = formatter.format(key_type);
-                        let message = crate::diagnostics::format_message(
-                            crate::diagnostics::diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
-                            &[&object_str, &index_str],
-                        );
-                        self.error_at_node(
-                            element_data.property_name,
-                            &message,
-                            crate::diagnostics::diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
-                        );
-                    }
-                }
-            }
-        }
-
-        let property_name = if !element_data.property_name.is_none() {
-            // { x: a } - property_name is "x"
-            if let Some(prop_node) = self.ctx.arena.get(element_data.property_name) {
-                self.ctx
-                    .arena
-                    .get_identifier(prop_node)
-                    .map(|ident| ident.escaped_text.clone())
-            } else {
-                None
-            }
-        } else {
-            // { x } - the name itself is the property name
-            if let Some(name_node) = self.ctx.arena.get(element_data.name) {
-                self.ctx
-                    .arena
-                    .get_identifier(name_node)
-                    .map(|ident| ident.escaped_text.clone())
-            } else {
-                None
-            }
-        };
-
-        if parent_type == TypeId::UNKNOWN {
-            if let Some(prop_name_str) = property_name.as_deref() {
-                let error_node = if !element_data.property_name.is_none() {
-                    element_data.property_name
-                } else if !element_data.name.is_none() {
-                    element_data.name
-                } else {
-                    NodeIndex::NONE
-                };
-                self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
-            }
-            return TypeId::UNKNOWN;
-        }
-
-        if let Some(ref prop_name_str) = property_name {
-            // Look up the property type in the parent type.
-            // For union types, resolve the property in each member and union the results.
-            if let Some(members) = query::union_members(self.ctx.types, parent_type) {
-                let mut prop_types = Vec::new();
-                for member in members {
-                    if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
-                        self.ctx.types,
-                        member,
-                        prop_name_str,
-                    ) {
-                        prop_types.push(property_optional_type(prop.type_id, prop.optional));
-                    }
-                }
-                if prop_types.is_empty() {
-                    TypeId::ANY
-                } else {
-                    tsz_solver::utils::union_or_single(self.ctx.types, prop_types)
-                }
-            } else if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
-                self.ctx.types,
-                parent_type,
-                prop_name_str,
-            ) {
-                property_optional_type(prop.type_id, prop.optional)
-            } else {
-                TypeId::ANY
-            }
-        } else {
-            TypeId::ANY
-        }
-    }
-
-    /// Rest bindings from tuple members should produce an array type.
-    /// Variadic tuple members can already carry array types (`...T[]`), so avoid
-    /// wrapping those into nested arrays.
-    fn rest_binding_array_type(&self, tuple_member_type: TypeId) -> TypeId {
-        let tuple_member_type = query::unwrap_readonly_deep(self.ctx.types, tuple_member_type);
-        if query::array_element_type(self.ctx.types, tuple_member_type).is_some() {
-            tuple_member_type
-        } else {
-            self.ctx.types.factory().array(tuple_member_type)
-        }
-    }
-
-    /// Check if a type consists only of `undefined` and/or `null`.
-    /// Used for widening to `any` under `strict: false`.
-    /// Returns true for: `undefined`, `null`, `undefined | null`
-    fn is_only_undefined_or_null(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::UNDEFINED || type_id == TypeId::NULL {
-            return true;
-        }
-        // Check for union of undefined/null
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            return members
-                .iter()
-                .all(|&m| m == TypeId::UNDEFINED || m == TypeId::NULL || m == type_id);
-        }
-        false
-    }
+    // Destructuring pattern methods (report_empty_array_destructuring_bounds,
+    // assign_binding_pattern_symbol_types, record_destructured_binding_group,
+    // get_binding_element_type, rest_binding_array_type, is_only_undefined_or_null)
+    // are in `state_variable_checking_destructuring.rs`.
 }

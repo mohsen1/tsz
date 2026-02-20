@@ -61,7 +61,7 @@ fn get_if_branch_expression(
     } else {
         if_data.else_statement
     };
-    assert!(!branch_idx.is_none(), "missing branch statement");
+    assert!(branch_idx.is_some(), "missing branch statement");
     extract_expression_from_statement(arena, branch_idx)
 }
 
@@ -1444,7 +1444,7 @@ x = "assigned";
     let _iife_stmt = arena.get(iife_stmt_idx).expect("IIFE statement node");
 
     // Verify the IIFE statement exists and has flow recorded
-    assert!(!iife_stmt_idx.is_none(), "IIFE statement should exist");
+    assert!(iife_stmt_idx.is_some(), "IIFE statement should exist");
 }
 
 /// Test variable capture with array forEach callback.

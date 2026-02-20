@@ -398,15 +398,13 @@ impl<'a> CheckerState<'a> {
                         };
                         let start = decl_node.pos;
                         let length = decl_node.end.saturating_sub(decl_node.pos);
-                        self.ctx.push_diagnostic(Diagnostic {
-                            file: file_name.clone(),
+                        self.ctx.push_diagnostic(Diagnostic::error(
+                            file_name.clone(),
                             start,
                             length,
-                            message_text: msg,
-                            category: crate::diagnostics::DiagnosticCategory::Error,
+                            msg,
                             code,
-                            related_information: Vec::new(),
-                        });
+                        ));
                     }
                 }
             }
@@ -431,15 +429,13 @@ impl<'a> CheckerState<'a> {
                     let msg = format!("'{name}' is declared but its value is never read.");
                     let start = decl_node.pos;
                     let length = decl_node.end.saturating_sub(decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6133,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6133,
+                    ));
                 }
             }
         }
@@ -457,15 +453,13 @@ impl<'a> CheckerState<'a> {
                     let msg = "All imports in import declaration are unused.".to_string();
                     let start = import_decl_node.pos;
                     let length = import_decl_node.end.saturating_sub(import_decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6192,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6192,
+                    ));
                 }
             }
 
@@ -481,15 +475,13 @@ impl<'a> CheckerState<'a> {
                     let msg = "All variables are unused.".to_string();
                     let start = var_decl_node.pos;
                     let length = var_decl_node.end.saturating_sub(var_decl_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6199,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6199,
+                    ));
                 }
             }
 
@@ -505,135 +497,69 @@ impl<'a> CheckerState<'a> {
                     let msg = "All destructured elements are unused.".to_string();
                     let start = pattern_node.pos;
                     let length = pattern_node.end.saturating_sub(pattern_node.pos);
-                    self.ctx.push_diagnostic(Diagnostic {
-                        file: file_name.clone(),
+                    self.ctx.push_diagnostic(Diagnostic::error(
+                        file_name.clone(),
                         start,
                         length,
-                        message_text: msg,
-                        category: crate::diagnostics::DiagnosticCategory::Error,
-                        code: 6198,
-                        related_information: Vec::new(),
-                    });
+                        msg,
+                        6198,
+                    ));
                 }
             }
         }
     }
 
-    /// Find the parent `IMPORT_DECLARATION` node for an import symbol's declaration.
-    fn find_parent_import_declaration(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        // Walk up the parent chain to find IMPORT_DECLARATION
+    /// Walk up the parent chain (up to 10 levels) to find an ancestor matching `predicate`.
+    fn find_ancestor(
+        &self,
+        mut idx: NodeIndex,
+        predicate: impl Fn(u16) -> bool,
+    ) -> Option<NodeIndex> {
         for _ in 0..10 {
-            // Limit iterations to prevent infinite loops
             if idx.is_none() {
                 return None;
             }
-
             if let Some(node) = self.ctx.arena.get(idx)
-                && node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                && predicate(node.kind)
             {
                 return Some(idx);
             }
-
-            // Move to parent
             idx = self
                 .ctx
                 .arena
                 .get_extended(idx)
                 .map_or(NodeIndex::NONE, |ext| ext.parent);
         }
-
         None
+    }
+
+    /// Find the parent `IMPORT_DECLARATION` node for an import symbol's declaration.
+    fn find_parent_import_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+        self.find_ancestor(idx, |kind| kind == syntax_kind_ext::IMPORT_DECLARATION)
     }
 
     /// Find the parent `VARIABLE_DECLARATION` node for a variable symbol's declaration.
-    /// This returns the `VARIABLE_DECLARATION` node itself, not the `VARIABLE_DECLARATION_LIST`.
-    fn find_parent_variable_decl_node(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+    fn find_parent_variable_decl_node(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
-
-        // Walk up the parent chain to find VARIABLE_DECLARATION
-        for _ in 0..10 {
-            // Limit iterations to prevent infinite loops
-            if idx.is_none() {
-                return None;
-            }
-
-            if let Some(node) = self.ctx.arena.get(idx)
-                && node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-            {
-                return Some(idx);
-            }
-
-            // Move to parent
-            idx = self
-                .ctx
-                .arena
-                .get_extended(idx)
-                .map_or(NodeIndex::NONE, |ext| ext.parent);
-        }
-
-        None
+        self.find_ancestor(idx, |kind| kind == syntax_kind_ext::VARIABLE_DECLARATION)
     }
 
     /// Find the parent `VARIABLE_DECLARATION_LIST` node for a variable symbol's declaration.
-    /// This allows us to track all variables declared in a single statement (e.g., `var x, y;`).
-    fn find_parent_variable_declaration(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+    fn find_parent_variable_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
-
-        // Walk up the parent chain to find VARIABLE_DECLARATION_LIST
-        for _ in 0..10 {
-            // Limit iterations to prevent infinite loops
-            if idx.is_none() {
-                return None;
-            }
-
-            if let Some(node) = self.ctx.arena.get(idx)
-                && node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            {
-                return Some(idx);
-            }
-
-            // Move to parent
-            idx = self
-                .ctx
-                .arena
-                .get_extended(idx)
-                .map_or(NodeIndex::NONE, |ext| ext.parent);
-        }
-
-        None
+        self.find_ancestor(idx, |kind| {
+            kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        })
     }
 
-    /// Find the parent `BINDING_PATTERN` (`OBJECT_BINDING_PATTERN` or `ARRAY_BINDING_PATTERN`)
-    /// for a binding element declaration. This is used to track TS6198 (all destructured
-    /// elements are unused).
-    fn find_parent_binding_pattern(&self, mut idx: NodeIndex) -> Option<NodeIndex> {
+    /// Find the parent binding pattern for a binding element declaration.
+    fn find_parent_binding_pattern(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
-
-        // Walk up the parent chain to find OBJECT_BINDING_PATTERN or ARRAY_BINDING_PATTERN
-        for _ in 0..10 {
-            // Limit iterations to prevent infinite loops
-            if idx.is_none() {
-                return None;
-            }
-
-            if let Some(node) = self.ctx.arena.get(idx)
-                && (node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                    || node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
-            {
-                return Some(idx);
-            }
-
-            // Move to parent
-            idx = self
-                .ctx
-                .arena
-                .get_extended(idx)
-                .map_or(NodeIndex::NONE, |ext| ext.parent);
-        }
-
-        None
+        self.find_ancestor(idx, |kind| {
+            kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+        })
     }
 
     /// Check if a declaration node is a parameter declaration.

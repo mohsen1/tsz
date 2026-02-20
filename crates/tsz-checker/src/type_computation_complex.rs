@@ -1039,6 +1039,9 @@ impl<'a> CheckerState<'a> {
         if let Some(&class_idx) = self.ctx.class_instance_type_to_decl.get(&type_id) {
             return Some(class_idx);
         }
+        if self.ctx.class_decl_miss_cache.borrow().contains(&type_id) {
+            return None;
+        }
 
         use tsz_binder::SymbolId;
 
@@ -1091,20 +1094,29 @@ impl<'a> CheckerState<'a> {
         let mut candidates = Vec::new();
         collect_candidates(self, type_id, &mut candidates);
         if candidates.is_empty() {
+            self.ctx.class_decl_miss_cache.borrow_mut().insert(type_id);
             return None;
         }
         if candidates.len() == 1 {
-            return Some(candidates[0]);
+            let class_idx = candidates[0];
+            self.ctx.class_decl_miss_cache.borrow_mut().remove(&type_id);
+            return Some(class_idx);
         }
 
-        candidates
+        let resolved = candidates
             .iter()
             .find(|&&candidate| {
                 candidates.iter().all(|&other| {
                     candidate == other || self.is_class_derived_from(candidate, other)
                 })
             })
-            .copied()
+            .copied();
+        if resolved.is_none() {
+            self.ctx.class_decl_miss_cache.borrow_mut().insert(type_id);
+        } else {
+            self.ctx.class_decl_miss_cache.borrow_mut().remove(&type_id);
+        }
+        resolved
     }
 
     /// Get the class name from a `TypeId` if it represents a class instance.

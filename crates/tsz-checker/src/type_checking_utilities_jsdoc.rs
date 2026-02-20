@@ -409,7 +409,7 @@ impl<'a> CheckerState<'a> {
     fn function_scope_ancestors(&self, anchor_idx: NodeIndex) -> Vec<NodeIndex> {
         let mut scopes = Vec::new();
         let mut current = anchor_idx;
-        while !current.is_none() {
+        while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
@@ -1106,7 +1106,7 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
 
-                    if !self.has_static_modifier(&prop.modifiers) && !prop.initializer.is_none() {
+                    if !self.has_static_modifier(&prop.modifiers) && prop.initializer.is_some() {
                         return true;
                     }
                 }
@@ -1168,7 +1168,7 @@ impl<'a> CheckerState<'a> {
             let Some(ctor) = self.ctx.arena.get_constructor(node) else {
                 continue;
             };
-            if !ctor.body.is_none() {
+            if ctor.body.is_some() {
                 return Some(ctor.body);
             }
         }

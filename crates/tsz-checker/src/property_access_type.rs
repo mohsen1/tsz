@@ -80,7 +80,13 @@ impl<'a> CheckerState<'a> {
         // type environment classification, etc.) for a very common hot path.
         if let Some(name_ident) = self.ctx.arena.get_identifier(name_node) {
             let property_name = &name_ident.escaped_text;
-            if let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
+            let is_identifier_base = self
+                .ctx
+                .arena
+                .get(access.expression)
+                .is_some_and(|expr_node| expr_node.kind == SyntaxKind::Identifier as u16);
+            if is_identifier_base
+                && let Some(base_sym_id) = self.resolve_identifier_symbol(access.expression)
                 && let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym_id)
                 && base_symbol.flags & symbol_flags::ENUM != 0
                 && let Some(exports) = base_symbol.exports.as_ref()

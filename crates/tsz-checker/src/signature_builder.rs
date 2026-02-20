@@ -61,8 +61,9 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn call_signature_from_method(
         &mut self,
         method: &tsz_parser::parser::node::MethodDeclData,
+        method_idx: NodeIndex,
     ) -> tsz_solver::CallSignature {
-        self.call_signature_from_method_with_this(method, None)
+        self.call_signature_from_method_with_this(method, None, method_idx)
     }
 
     /// Build a `CallSignature` from a method declaration with an explicit `this` type.
@@ -71,6 +72,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         method: &tsz_parser::parser::node::MethodDeclData,
         explicit_this_type: Option<TypeId>,
+        method_idx: NodeIndex,
     ) -> tsz_solver::CallSignature {
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
@@ -84,7 +86,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     false
                 };
-                let inferred = self.infer_return_type_from_body(method.body, None);
+                let inferred = self.infer_return_type_from_body(method_idx, method.body, None);
                 if pushed_this {
                     self.ctx.this_type_stack.pop();
                 }

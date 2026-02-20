@@ -3,18 +3,11 @@
 
 use crate::query_boundaries::state_type_environment;
 use crate::state::CheckerState;
-use rustc_hash::FxHashSet;
-use tracing::debug;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 use tsz_solver::Visibility;
-use tsz_solver::type_queries_extended::{
-    ContextualLiteralAllowKind, classify_for_contextual_literal,
-};
-
 impl<'a> CheckerState<'a> {
     /// Compute the type of a class symbol.
     ///
@@ -31,7 +24,7 @@ impl<'a> CheckerState<'a> {
         // Find the class declaration. When a symbol has both CLASS and FUNCTION flags
         // (function-class merging), value_decl may point to the function, not the class.
         // Search all declarations to find the class node.
-        let decl_idx = if !value_decl.is_none()
+        let decl_idx = if value_decl.is_some()
             && self
                 .ctx
                 .arena
@@ -45,7 +38,7 @@ impl<'a> CheckerState<'a> {
             declarations
                 .iter()
                 .find(|&&d| {
-                    !d.is_none()
+                    d.is_some()
                         && self
                             .ctx
                             .arena
@@ -57,7 +50,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or(NodeIndex::NONE)
         };
 
-        if !decl_idx.is_none()
+        if decl_idx.is_some()
             && let Some(node) = self.ctx.arena.get(decl_idx)
             && let Some(class) = self.ctx.arena.get_class(node)
         {
@@ -339,7 +332,7 @@ impl<'a> CheckerState<'a> {
             let def_id = self.ctx.get_or_create_def_id(sym_id);
 
             // Find the enum declaration node
-            let decl_idx = if !value_decl.is_none() {
+            let decl_idx = if value_decl.is_some() {
                 value_decl
             } else {
                 declarations.first().copied().unwrap_or(NodeIndex::NONE)
@@ -350,7 +343,7 @@ impl<'a> CheckerState<'a> {
             // can hit `ctx.symbol_types` directly instead of running full symbol
             // resolution for each distinct member.
             let mut member_types = Vec::new();
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(enum_decl) = self.ctx.arena.get_enum_at(decl_idx)
             {
                 let mut maybe_env = self.ctx.type_env.try_borrow_mut().ok();
@@ -499,9 +492,9 @@ impl<'a> CheckerState<'a> {
                     symbol: None,
                 };
                 factory.callable(shape)
-            } else if !value_decl.is_none() {
+            } else if value_decl.is_some() {
                 self.get_type_of_function(value_decl)
-            } else if !implementation_decl.is_none() {
+            } else if implementation_decl.is_some() {
                 self.get_type_of_function(implementation_decl)
             } else {
                 TypeId::UNKNOWN
@@ -596,21 +589,10 @@ impl<'a> CheckerState<'a> {
 
                 // Try to get type parameters from the interface declaration
                 let first_decl = declarations.first().copied().unwrap_or(NodeIndex::NONE);
-                if !first_decl.is_none() {
-                    if let Some(node) = self.ctx.arena.get(first_decl) {
-                        if let Some(interface) = self.ctx.arena.get_interface(node) {
-                            (params, updates) =
-                                self.push_type_parameters(&interface.type_parameters);
-                        }
-                    } else if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                        debug!(
-                            name = %escaped_name,
-                            sym_id = sym_id.0,
-                            first_decl = ?first_decl,
-                            arena_len = self.ctx.arena.len(),
-                            "[DEBUG] Interface first_decl NOT FOUND in arena"
-                        );
-                    }
+                if let Some(node) = self.ctx.arena.get(first_decl)
+                    && let Some(interface) = self.ctx.arena.get_interface(node)
+                {
+                    (params, updates) = self.push_type_parameters(&interface.type_parameters);
                 }
 
                 let type_param_bindings = self.get_type_param_bindings();
@@ -655,7 +637,7 @@ impl<'a> CheckerState<'a> {
                 // Return the interface type along with the type parameters that were used
                 return (interface_type, params);
             }
-            if !value_decl.is_none() {
+            if value_decl.is_some() {
                 return (self.get_type_of_interface(value_decl), Vec::new());
             }
             return (TypeId::UNKNOWN, Vec::new());
@@ -689,13 +671,13 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(false)
                 })
                 .unwrap_or_else(|| {
-                    if !value_decl.is_none() {
+                    if value_decl.is_some() {
                         value_decl
                     } else {
                         declarations.first().copied().unwrap_or(NodeIndex::NONE)
                     }
                 });
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(node) = self.ctx.arena.get(decl_idx)
                 && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
             {
@@ -750,11 +732,11 @@ impl<'a> CheckerState<'a> {
 
             // Symbols can point at wrappers (export declarations, variable statements, or
             // declaration lists). Normalize to the concrete VariableDeclaration node.
-            if !resolved_value_decl.is_none() {
+            if resolved_value_decl.is_some() {
                 if let Some(node) = self.ctx.arena.get(resolved_value_decl)
                     && node.kind == syntax_kind_ext::EXPORT_DECLARATION
                     && let Some(export_decl) = self.ctx.arena.get_export_decl(node)
-                    && !export_decl.export_clause.is_none()
+                    && export_decl.export_clause.is_some()
                 {
                     resolved_value_decl = export_decl.export_clause;
                 }
@@ -818,13 +800,13 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !resolved_value_decl.is_none()
+            if resolved_value_decl.is_some()
                 && let Some(node) = self.ctx.arena.get(resolved_value_decl)
             {
                 // Check if this is a variable declaration
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
                     // First try type annotation using type-node lowering (resolves through binder).
-                    if !var_decl.type_annotation.is_none() {
+                    if var_decl.type_annotation.is_some() {
                         return (
                             self.get_type_from_type_node(var_decl.type_annotation),
                             Vec::new(),
@@ -835,7 +817,7 @@ impl<'a> CheckerState<'a> {
                     {
                         return (jsdoc_type, Vec::new());
                     }
-                    if !var_decl.initializer.is_none()
+                    if var_decl.initializer.is_some()
                         && self.is_const_variable_declaration(resolved_value_decl)
                         && let Some(literal_type) =
                             self.literal_type_from_initializer(var_decl.initializer)
@@ -843,7 +825,7 @@ impl<'a> CheckerState<'a> {
                         return (literal_type, Vec::new());
                     }
                     // Fall back to inferring from initializer
-                    if !var_decl.initializer.is_none() {
+                    if var_decl.initializer.is_some() {
                         let mut inferred_type = self.get_type_of_node(var_decl.initializer);
                         let init_is_direct_empty_array = self
                             .ctx
@@ -895,7 +877,7 @@ impl<'a> CheckerState<'a> {
                 // Check if this is a function parameter
                 else if let Some(param) = self.ctx.arena.get_parameter(node) {
                     // Get type from annotation
-                    if !param.type_annotation.is_none() {
+                    if param.type_annotation.is_some() {
                         let mut type_id = self.get_type_from_type_node(param.type_annotation);
                         // Under strictNullChecks, optional parameters (?) include undefined
                         // in their type. E.g., `n?: number` has type `number | undefined`.
@@ -916,7 +898,7 @@ impl<'a> CheckerState<'a> {
                         return (jsdoc_type, Vec::new());
                     }
                     // Fall back to inferring from initializer (default value)
-                    if !param.initializer.is_none() {
+                    if param.initializer.is_some() {
                         return (self.get_type_of_node(param.initializer), Vec::new());
                     }
                 }
@@ -928,7 +910,7 @@ impl<'a> CheckerState<'a> {
 
         // Alias - resolve the aliased type (import x = ns.member or ES6 imports)
         if flags & symbol_flags::ALIAS != 0 {
-            if !value_decl.is_none()
+            if value_decl.is_some()
                 && let Some(node) = self.ctx.arena.get(value_decl)
                 && node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import) = self.ctx.arena.get_import_decl(node)
@@ -1202,15 +1184,6 @@ impl<'a> CheckerState<'a> {
                     // it gets the augmented type with all merged members
                     self.ctx.symbol_types.insert(export_sym_id, result);
 
-                    if std::env::var("TSZ_DEBUG_IMPORTS").is_ok() {
-                        debug!(
-                            export_name = %export_name,
-                            module_name = %module_name,
-                            export_sym_id = export_sym_id.0,
-                            result_type_id = result.0,
-                            "[DEBUG] ALIAS"
-                        );
-                    }
                     return (result, Vec::new());
                 }
 
@@ -1254,7 +1227,7 @@ impl<'a> CheckerState<'a> {
                         // so missing `default` should be TS2305 (not TS1192).
                         // Use declarations list as fallback when value_decl is NONE
                         // (ES6 named imports don't set value_declaration).
-                        let binding_node = if !value_decl.is_none() {
+                        let binding_node = if value_decl.is_some() {
                             tracing::debug!(value_decl = %value_decl.0, "using value_decl as binding_node");
                             value_decl
                         } else {
@@ -1264,7 +1237,7 @@ impl<'a> CheckerState<'a> {
                         };
 
                         tracing::debug!(binding_node = %binding_node.0, module_name, export_name, "checking if this is a true default import");
-                        let is_true_default = self.is_true_default_import_binding(binding_node);
+                        let is_true_default = false;
                         tracing::debug!(is_true_default, allow_synthetic = %self.ctx.allow_synthetic_default_imports(), "result of is_true_default_import_binding");
 
                         if !is_true_default {
@@ -1337,638 +1310,5 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
-    }
-
-    #[tracing::instrument(level = "debug", skip(self), fields(decl_idx = %decl_idx.0))]
-    fn is_true_default_import_binding(&self, decl_idx: NodeIndex) -> bool {
-        if decl_idx.is_none() {
-            tracing::debug!("decl_idx is none, returning true (treat as default import)");
-            return true;
-        }
-
-        // If this declaration is (or is nested under) `import { default as X }`,
-        // it's a named import lookup, not a default import binding.
-        let mut probe = decl_idx;
-        for i in 0..8 {
-            let Some(node) = self.ctx.arena.get(probe) else {
-                tracing::trace!(iteration = i, "no node found, breaking");
-                break;
-            };
-            tracing::trace!(iteration = i, probe = %probe.0, kind = ?node.kind, "checking node");
-            if node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-                && let Some(specifier) = self.ctx.arena.get_specifier(node)
-            {
-                tracing::debug!("found IMPORT_SPECIFIER node");
-                let imported_name_idx = if specifier.property_name.is_none() {
-                    specifier.name
-                } else {
-                    specifier.property_name
-                };
-                if let Some(imported_name_node) = self.ctx.arena.get(imported_name_idx)
-                    && let Some(imported_ident) = self.ctx.arena.get_identifier(imported_name_node)
-                    && imported_ident.escaped_text.as_str() == "default"
-                {
-                    tracing::debug!(imported_name = %imported_ident.escaped_text, "found 'default' specifier, this is a NAMED import, returning false");
-                    return false;
-                }
-            }
-            let Some(ext) = self.ctx.arena.get_extended(probe) else {
-                break;
-            };
-            if ext.parent.is_none() {
-                break;
-            }
-            probe = ext.parent;
-        }
-
-        let mut current = decl_idx;
-        let mut import_decl_idx = NodeIndex::NONE;
-        for _ in 0..8 {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                break;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                break;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                break;
-            };
-            if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                import_decl_idx = parent;
-                break;
-            }
-            current = parent;
-        }
-
-        if import_decl_idx.is_none() {
-            // Unknown shape: prefer default-import semantics to avoid false TS2305.
-            tracing::debug!("import_decl_idx is none, returning true (treat as default import)");
-            return true;
-        }
-
-        let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) else {
-            tracing::debug!("no import_decl_node found, returning false");
-            return false;
-        };
-        let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node) else {
-            tracing::debug!("no import_decl found, returning false");
-            return false;
-        };
-        let Some(clause_node) = self.ctx.arena.get(import_decl.import_clause) else {
-            tracing::debug!("no clause_node found, returning false");
-            return false;
-        };
-        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
-            tracing::debug!("no clause found, returning false");
-            return false;
-        };
-
-        let result = !clause.name.is_none();
-        tracing::debug!(
-            has_clause_name = !clause.name.is_none(),
-            result,
-            "checked clause.name, returning"
-        );
-        result
-    }
-
-    pub(crate) fn contextual_literal_type(&mut self, literal_type: TypeId) -> Option<TypeId> {
-        let ctx_type = self.ctx.contextual_type?;
-        self.contextual_type_allows_literal(ctx_type, literal_type)
-            .then_some(literal_type)
-    }
-
-    pub(crate) fn contextual_type_allows_literal(
-        &mut self,
-        ctx_type: TypeId,
-        literal_type: TypeId,
-    ) -> bool {
-        let mut visited = FxHashSet::default();
-        self.contextual_type_allows_literal_inner(ctx_type, literal_type, &mut visited)
-    }
-
-    pub(crate) fn contextual_type_allows_literal_inner(
-        &mut self,
-        ctx_type: TypeId,
-        literal_type: TypeId,
-        visited: &mut FxHashSet<TypeId>,
-    ) -> bool {
-        if ctx_type == literal_type {
-            return true;
-        }
-        if !visited.insert(ctx_type) {
-            return false;
-        }
-
-        // Resolve Lazy(DefId) types before classification. Type aliases like
-        // `type Direction = "north" | "south"` are Lazy until resolved.
-        if let Some(def_id) = tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, ctx_type) {
-            // Try type_env first
-            let resolved = {
-                let env = self.ctx.type_env.borrow();
-                env.get_def(def_id)
-            };
-            if let Some(resolved) = resolved
-                && resolved != ctx_type
-            {
-                return self.contextual_type_allows_literal_inner(resolved, literal_type, visited);
-            }
-            // If not resolved, use centralized relation precondition setup to populate type_env.
-            self.ensure_relation_input_ready(ctx_type);
-            let resolved = {
-                let env = self.ctx.type_env.borrow();
-                env.get_def(def_id)
-            };
-            if let Some(resolved) = resolved
-                && resolved != ctx_type
-            {
-                return self.contextual_type_allows_literal_inner(resolved, literal_type, visited);
-            }
-            return false;
-        }
-
-        // Evaluate KeyOf and IndexAccess types to their concrete form before
-        // classification. E.g., keyof Person → "name" | "age".
-        if tsz_solver::type_queries::is_keyof_type(self.ctx.types, ctx_type)
-            || tsz_solver::type_queries::is_index_access_type(self.ctx.types, ctx_type)
-        {
-            let evaluated = self.evaluate_type_with_env(ctx_type);
-            if evaluated != ctx_type && evaluated != TypeId::ERROR {
-                return self.contextual_type_allows_literal_inner(evaluated, literal_type, visited);
-            }
-        }
-
-        match classify_for_contextual_literal(self.ctx.types, ctx_type) {
-            ContextualLiteralAllowKind::Members(members) => members.iter().any(|&member| {
-                self.contextual_type_allows_literal_inner(member, literal_type, visited)
-            }),
-            // Type parameters always allow literal types. In TypeScript, when the
-            // expected type is a type parameter (e.g., K extends keyof T), the literal
-            // is preserved and the constraint is checked later during generic inference.
-            ContextualLiteralAllowKind::TypeParameter { .. }
-            | ContextualLiteralAllowKind::TemplateLiteral => true,
-            ContextualLiteralAllowKind::Application => {
-                let expanded = self.evaluate_application_type(ctx_type);
-                if expanded != ctx_type {
-                    return self.contextual_type_allows_literal_inner(
-                        expanded,
-                        literal_type,
-                        visited,
-                    );
-                }
-                false
-            }
-            ContextualLiteralAllowKind::Mapped => {
-                let expanded = self.evaluate_mapped_type_with_resolution(ctx_type);
-                if expanded != ctx_type {
-                    return self.contextual_type_allows_literal_inner(
-                        expanded,
-                        literal_type,
-                        visited,
-                    );
-                }
-                false
-            }
-            ContextualLiteralAllowKind::NotAllowed => false,
-        }
-    }
-
-    /// Check if a type node is a simple type reference without structural wrapping.
-    ///
-    /// Returns true for bare type references like `type A = B`, false for wrapped
-    /// references like `type A = { x: B }` or `type A = B | null`.
-    fn is_simple_type_reference(&self, type_node: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_node) else {
-            return false;
-        };
-
-        // Type reference or identifier without structural wrapping
-        matches!(
-            node.kind,
-            k if k == syntax_kind_ext::TYPE_REFERENCE || k == SyntaxKind::Identifier as u16
-        )
-    }
-
-    /// Check if a type alias directly circularly references itself.
-    ///
-    /// Returns true when a type alias resolves to itself without structural wrapping,
-    /// which is invalid: `type A = B; type B = A;`
-    ///
-    /// Returns false for valid recursive types that use structural wrapping:
-    /// `type List = { value: number; next: List | null };`
-    fn is_direct_circular_reference(
-        &self,
-        sym_id: SymbolId,
-        resolved_type: TypeId,
-        type_node: NodeIndex,
-    ) -> bool {
-        // If resolved type is error, it might be due to infinite recursion during resolution
-        if resolved_type == TypeId::ERROR {
-            // Only report if we can confirm it's a structural cycle via AST inspection?
-            // Or assume ERROR means cycle?
-            // Let's trust AST inspection + resolved type structure.
-        }
-
-        // Check if resolved_type is Lazy(DefId) pointing back to sym_id
-        if let Some(def_id) =
-            tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
-        {
-            // Map DefId back to SymbolId
-            if let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
-                && target_sym_id == sym_id
-            {
-                // It's a self-reference - check if it's direct (no structural wrapping)
-                return self.is_simple_type_reference(type_node);
-            }
-        }
-
-        // Also check union/intersection members for circular references.
-        if let Some(members) =
-            tsz_solver::type_queries::get_union_members(self.ctx.types, resolved_type)
-        {
-            for &member in &members {
-                if self.is_direct_circular_reference(sym_id, member, type_node) {
-                    return true;
-                }
-            }
-        }
-        if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_type)
-        {
-            for &member in &members {
-                if self.is_direct_circular_reference(sym_id, member, type_node) {
-                    return true;
-                }
-            }
-        }
-
-        // Handle indexed access `T[K]` where T resolves to self
-        // This is crucial for `type M3 = M2[keyof M2]` if M2 somehow resolves to M3 via M.
-        // If we are checking M3, and it resolves to... M3?
-        // In the failing test:
-        // type M3 = M2[keyof M2];
-        // If M2 extends M<M3>, and M<T> = { value: T }, then M2 has 'value' of type M3.
-        // So M2['value'] is M3.
-        // keyof M2 is 'value'.
-        // So M3 = M2['value'] = M3.
-        // This is M3 = M3.
-        // It's a direct circular reference.
-        // The resolved type of M3 is Lazy(M3).
-        // `is_simple_type_reference` returns false for INDEXED_ACCESS_TYPE.
-        // But for indexed access, if it resolves to self, it IS direct (unless it's mapped type etc).
-        // We should treat INDEXED_ACCESS_TYPE as potentially simple/direct if it evaluates to self.
-
-        if let Some(node) = self.ctx.arena.get(type_node)
-            && node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
-        {
-            // If we reached here, resolved_type might be Lazy(sym_id) or contain it.
-            // If resolved_type IS Lazy(sym_id), then M3 = M3.
-            // We should allow this as a cycle.
-            // The check `is_simple_type_reference` blocked it.
-            if let Some(def_id) =
-                tsz_solver::type_queries::get_lazy_def_id(self.ctx.types, resolved_type)
-                && let Some(&target_sym_id) = self.ctx.def_to_symbol.borrow().get(&def_id)
-                && target_sym_id == sym_id
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn report_private_identifier_outside_class(
-        &mut self,
-        name_idx: NodeIndex,
-        property_name: &str,
-        object_type: TypeId,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let class_name = self
-            .get_class_name_from_type(object_type)
-            .unwrap_or_else(|| "the class".to_string());
-        let message = format_message(
-            diagnostic_messages::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
-            &[property_name, &class_name],
-        );
-        self.error_at_node(
-            name_idx,
-            &message,
-            diagnostic_codes::PROPERTY_IS_NOT_ACCESSIBLE_OUTSIDE_CLASS_BECAUSE_IT_HAS_A_PRIVATE_IDENTIFIER,
-        );
-    }
-
-    fn report_private_identifier_shadowed(
-        &mut self,
-        name_idx: NodeIndex,
-        property_name: &str,
-        object_type: TypeId,
-    ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        let type_string = self
-            .get_class_name_from_type(object_type)
-            .unwrap_or_else(|| "the type".to_string());
-        let message = format_message(
-            diagnostic_messages::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED,
-            &[property_name, &type_string],
-        );
-        self.error_at_node(
-            name_idx,
-            &message,
-            diagnostic_codes::THE_PROPERTY_CANNOT_BE_ACCESSED_ON_TYPE_WITHIN_THIS_CLASS_BECAUSE_IT_IS_SHADOWED,
-        );
-    }
-
-    // Resolve a typeof type reference to its structural type.
-    //
-    // This function resolves `typeof X` type queries to the actual type of `X`.
-    // This is useful for type operations where we need the structural type rather
-    // than the type query itself.
-    // **TypeQuery Resolution:**
-    // - **TypeQuery**: `typeof X` → get the type of symbol X
-    // - **Other types**: Return unchanged (not a typeof query)
-    //
-    // **Use Cases:**
-    // - Assignability checking (need actual type, not typeof reference)
-    // - Type comparison (typeof X should be compared to X's type)
-    // - Generic constraint evaluation
-    // NOTE: refine_mixin_call_return_type, mixin_base_param_index, instance_type_from_constructor_type,
-    // instance_type_from_constructor_type_inner, merge_base_instance_into_constructor_return,
-    // merge_base_constructor_properties_into_constructor_return moved to constructor_checker.rs
-
-    pub(crate) fn get_type_of_private_property_access(
-        &mut self,
-        idx: NodeIndex,
-        access: &tsz_parser::parser::node::AccessExprData,
-        name_idx: NodeIndex,
-        object_type: TypeId,
-    ) -> TypeId {
-        let factory = self.ctx.types.factory();
-        use tsz_solver::operations_property::PropertyAccessResult;
-
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return TypeId::ERROR; // Missing node - propagate error
-        };
-        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
-            return TypeId::ERROR; // Missing identifier data - propagate error
-        };
-        let property_name = ident.escaped_text.clone();
-
-        let (symbols, saw_class_scope) = self.resolve_private_identifier_symbols(name_idx);
-
-        // NOTE: Do NOT emit TS18016 here for property access expressions.
-        // `obj.#prop` is always valid syntax — the private identifier in a property
-        // access position is grammatically correct. TSC only emits TS18016 for truly
-        // invalid positions (object literals, standalone expressions). For property
-        // access, the error is always semantic (TS18013: can't access private member),
-        // which is handled below based on the object's type.
-
-        // Evaluate for type checking but preserve original for error messages
-        // This preserves nominal identity (e.g., D<string>) in error messages
-        let original_object_type = object_type;
-        let object_type = self.evaluate_application_type(object_type);
-
-        // Property access on `never` returns `never` (bottom type propagation).
-        // TSC does not emit TS18050 for property access on `never` — the result is
-        // simply `never`, which allows exhaustive narrowing patterns to work correctly.
-        if object_type == TypeId::NEVER {
-            return TypeId::NEVER;
-        }
-
-        let (object_type_for_check, nullish_cause) = self.split_nullish_type(object_type);
-        let Some(object_type_for_check) = object_type_for_check else {
-            if access.question_dot_token {
-                return TypeId::UNDEFINED;
-            }
-            if let Some(cause) = nullish_cause {
-                // Type is entirely nullish - emit TS18050 "The value X cannot be used here"
-                self.report_nullish_object(access.expression, cause, true);
-            }
-            return TypeId::ERROR;
-        };
-
-        // When symbols are empty but we're inside a class scope, check if the object type
-        // itself has private properties matching the name. This handles cases like:
-        //   let a: A2 = this;
-        //   a.#prop;  // Should work if A2 has #prop
-        if symbols.is_empty() {
-            // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
-            let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
-
-            // Try to find the property directly in the resolved object type
-            use tsz_solver::operations_property::PropertyAccessResult;
-            match self
-                .ctx
-                .types
-                .property_access_type(resolved_type, &property_name)
-            {
-                PropertyAccessResult::Success { .. } => {
-                    // Property exists in the type, but if we're outside a class, it's TS18013
-                    if !saw_class_scope {
-                        self.report_private_identifier_outside_class(
-                            name_idx,
-                            &property_name,
-                            original_object_type,
-                        );
-                        return TypeId::ERROR;
-                    }
-                    // Property exists in the type and we're in a class scope, proceed with the access
-                    return self.get_type_of_property_access_by_name(
-                        idx,
-                        access,
-                        resolved_type,
-                        &property_name,
-                    );
-                }
-                _ => {
-                    // FALLBACK: Manually check if the property exists in the callable type
-                    // This fixes cases where property_access_type fails due to atom comparison issues
-                    // The property IS in the type (as shown by error messages), but the lookup fails
-                    if let Some(shape) =
-                        crate::query_boundaries::state_type_analysis::callable_shape_for_type(
-                            self.ctx.types,
-                            resolved_type,
-                        )
-                    {
-                        let prop_atom = self.ctx.types.intern_string(&property_name);
-                        for prop in &shape.properties {
-                            if prop.name == prop_atom {
-                                // Property found in the callable's properties list!
-                                // But if we're outside a class, it's TS18013
-                                if !saw_class_scope {
-                                    self.report_private_identifier_outside_class(
-                                        name_idx,
-                                        &property_name,
-                                        original_object_type,
-                                    );
-                                    return TypeId::ERROR;
-                                }
-                                // Return the property type (handle optional and write_type)
-                                let prop_type = if prop.optional {
-                                    factory.union(vec![prop.type_id, TypeId::UNDEFINED])
-                                } else {
-                                    prop.type_id
-                                };
-                                return self.apply_flow_narrowing(idx, prop_type);
-                            }
-                        }
-                    }
-
-                    // Property not found, emit error if appropriate
-                    if saw_class_scope {
-                        // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                        self.error_property_not_exist_at(
-                            &property_name,
-                            original_object_type,
-                            name_idx,
-                        );
-                    } else {
-                        self.report_private_identifier_outside_class(
-                            name_idx,
-                            &property_name,
-                            original_object_type,
-                        );
-                    }
-                    return TypeId::ERROR;
-                }
-            }
-        }
-
-        let declaring_type = match self.private_member_declaring_type(symbols[0]) {
-            Some(ty) => ty,
-            None => {
-                if saw_class_scope {
-                    // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                    self.error_property_not_exist_at(
-                        &property_name,
-                        original_object_type,
-                        name_idx,
-                    );
-                } else {
-                    self.report_private_identifier_outside_class(
-                        name_idx,
-                        &property_name,
-                        original_object_type,
-                    );
-                }
-                return TypeId::ERROR;
-            }
-        };
-
-        if object_type_for_check == TypeId::ANY {
-            return TypeId::ANY;
-        }
-        if object_type_for_check == TypeId::ERROR {
-            return TypeId::ERROR; // Return ERROR instead of ANY to expose type errors
-        }
-        if object_type_for_check == TypeId::UNKNOWN {
-            return TypeId::ANY; // UNKNOWN remains ANY for now (could be stricter)
-        }
-
-        // For private member access, use nominal typing based on private brand.
-        // If both types have the same private brand, they're from the same class
-        // declaration and the access should be allowed.
-        let types_compatible =
-            if self.types_have_same_private_brand(object_type_for_check, declaring_type) {
-                true
-            } else {
-                self.is_assignable_to(object_type_for_check, declaring_type)
-            };
-
-        if !types_compatible {
-            let shadowed = symbols.iter().skip(1).any(|sym_id| {
-                self.private_member_declaring_type(*sym_id)
-                    .is_some_and(|ty| {
-                        if self.types_have_same_private_brand(object_type_for_check, ty) {
-                            true
-                        } else {
-                            self.is_assignable_to(object_type_for_check, ty)
-                        }
-                    })
-            });
-            if shadowed {
-                self.report_private_identifier_shadowed(
-                    name_idx,
-                    &property_name,
-                    original_object_type,
-                );
-                return TypeId::ERROR;
-            }
-
-            // Use original_object_type to preserve nominal identity (e.g., D<string>)
-            self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
-            return TypeId::ERROR;
-        }
-
-        let declaring_type = self.resolve_type_for_property_access(declaring_type);
-        let mut result_type = match self
-            .ctx
-            .types
-            .property_access_type(declaring_type, &property_name)
-        {
-            PropertyAccessResult::Success {
-                type_id,
-                from_index_signature,
-                ..
-            } => {
-                if from_index_signature {
-                    // Private fields can't come from index signatures
-                    // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                    self.error_property_not_exist_at(
-                        &property_name,
-                        original_object_type,
-                        name_idx,
-                    );
-                    return TypeId::ERROR;
-                }
-                type_id
-            }
-            PropertyAccessResult::PropertyNotFound { .. } => {
-                // If we got here, we already resolved the symbol, so the private field exists.
-                // The solver might not find it due to type encoding issues.
-                // FALLBACK: Try to manually find the property in the callable type
-                if let Some(shape) =
-                    crate::query_boundaries::state_type_analysis::callable_shape_for_type(
-                        self.ctx.types,
-                        declaring_type,
-                    )
-                {
-                    let prop_atom = self.ctx.types.intern_string(&property_name);
-                    for prop in &shape.properties {
-                        if prop.name == prop_atom {
-                            // Property found! Return its type
-                            return if prop.optional {
-                                factory.union(vec![prop.type_id, TypeId::UNDEFINED])
-                            } else {
-                                prop.type_id
-                            };
-                        }
-                    }
-                }
-                // Property not found even in fallback, return ANY for type recovery
-                TypeId::ANY
-            }
-            PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
-                property_type.unwrap_or(TypeId::UNKNOWN)
-            }
-            PropertyAccessResult::IsUnknown => {
-                // TS2339: Property does not exist on type 'unknown'
-                // Use the same error as TypeScript for property access on unknown
-                // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
-                TypeId::ERROR
-            }
-        };
-
-        if let Some(cause) = nullish_cause {
-            if access.question_dot_token {
-                result_type = factory.union(vec![result_type, TypeId::UNDEFINED]);
-            } else {
-                self.report_possibly_nullish_object(access.expression, cause);
-            }
-        }
-
-        self.apply_flow_narrowing(idx, result_type)
     }
 }

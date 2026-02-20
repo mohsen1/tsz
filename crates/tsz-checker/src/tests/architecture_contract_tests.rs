@@ -49,6 +49,22 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     (animal, dog)
 }
 
+fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|_| panic!("failed to read checker source directory {}", dir.display()));
+    for entry in entries {
+        let entry = entry.expect("failed to read checker source directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_checker_rs_files_recursive(&path, files);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
 #[test]
 fn test_pack_relation_flags_tracks_checker_strict_options() {
     let arena = NodeArena::new();
@@ -186,11 +202,27 @@ fn test_no_implicit_any_scope_inference_for_js_files() {
 
 #[test]
 fn test_array_helpers_avoid_direct_typekey_interning() {
-    let array_type_src = fs::read_to_string("src/array_type.rs")
-        .expect("failed to read src/array_type.rs for architecture guard");
+    let mut checker_rs_files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut checker_rs_files);
+
+    let mut array_type_violations = Vec::new();
+    for path in checker_rs_files {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        if source.contains("TypeData::Array") {
+            array_type_violations.push(path.display().to_string());
+        }
+    }
     assert!(
-        !array_type_src.contains("TypeData::Array"),
-        "array_type helper should use solver array constructor APIs, not TypeData::Array"
+        array_type_violations.is_empty(),
+        "checker helpers should use solver array constructor APIs, not TypeData::Array; violations: {}",
+        array_type_violations.join(", ")
     );
 
     let type_literal_src = fs::read_to_string("src/type_literal_checker.rs")
@@ -281,10 +313,15 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 
     let mut state_type_analysis_src = fs::read_to_string("src/state_type_analysis.rs")
         .expect("failed to read src/state_type_analysis.rs for architecture guard");
-    // Include split-off module that is part of the state_type_analysis logical module
+    // Include split-off modules that are part of the state_type_analysis logical module
     state_type_analysis_src.push_str(
         &fs::read_to_string("src/state_type_analysis_computed.rs")
             .expect("failed to read src/state_type_analysis_computed.rs for architecture guard"),
+    );
+    state_type_analysis_src.push_str(
+        &fs::read_to_string("src/state_type_analysis_computed_helpers.rs").expect(
+            "failed to read src/state_type_analysis_computed_helpers.rs for architecture guard",
+        ),
     );
     assert!(
         !state_type_analysis_src.contains("intern(TypeData::TypeQuery("),
@@ -337,8 +374,13 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "assignability_checker infer-shape cacheability checks should call solver visitors directly, not checker-local wrappers"
     );
 
-    let state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
+    let mut state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
         .expect("failed to read src/state_type_environment.rs for architecture guard");
+    // Include split-off module that is part of the state_type_environment logical module
+    state_type_environment_src.push_str(
+        &fs::read_to_string("src/state_type_environment_lazy.rs")
+            .expect("failed to read src/state_type_environment_lazy.rs for architecture guard"),
+    );
     assert!(
         !state_type_environment_src.contains("intern(TypeData::Enum("),
         "state_type_environment should use solver enum_type constructor API, not TypeData::Enum"

@@ -6,7 +6,7 @@
 
 use crate::TypeDatabase;
 use crate::operations_property::PropertyAccessEvaluator;
-use crate::types::{TypeData, TypeId};
+use crate::types::{PropertyInfo, TypeData, TypeId};
 
 /// Information about an iterator type extracted from a type.
 ///
@@ -176,7 +176,7 @@ fn extract_promise_inner_type(
         Some(TypeData::Object(shape_id)) => {
             let shape = db.object_shape(shape_id);
             let then_atom = db.intern_string("then");
-            let then_prop = shape.properties.iter().find(|p| p.name == then_atom)?;
+            let then_prop = PropertyInfo::find_in_slice(&shape.properties, then_atom)?;
             // then is a function: (onfulfilled: (value: T) => any) => any
             // Extract T from the first parameter of the first parameter
             match db.lookup(then_prop.type_id) {
