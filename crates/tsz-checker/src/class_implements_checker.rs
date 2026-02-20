@@ -456,7 +456,7 @@ impl<'a> CheckerState<'a> {
                                     {
                                         has_private_members = true;
                                     }
-                                    
+
                                     if interface_type_params.is_none() {
                                         interface_type_params =
                                             base_class_data.type_parameters.clone();
@@ -479,7 +479,7 @@ impl<'a> CheckerState<'a> {
                                         early_exit = true;
                                         break;
                                     }
-                                    
+
                                     if interface_type_params.is_none() {
                                         interface_type_params =
                                             interface_decl.type_parameters.clone();
@@ -504,9 +504,14 @@ impl<'a> CheckerState<'a> {
                     if !is_class && !is_interface {
                         continue;
                     }
-                    
+
                     let mut visited = rustc_hash::FxHashSet::default();
-                    collect_interface_members(self, sym_id, &mut all_interface_members, &mut visited);
+                    collect_interface_members(
+                        self,
+                        sym_id,
+                        &mut all_interface_members,
+                        &mut visited,
+                    );
 
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
