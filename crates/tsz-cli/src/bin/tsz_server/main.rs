@@ -372,6 +372,8 @@ struct CheckOptions {
     #[serde(default)]
     resolve_json_module: bool,
     #[serde(default)]
+    no_unchecked_side_effect_imports: bool,
+    #[serde(default)]
     no_implicit_override: bool,
 }
 

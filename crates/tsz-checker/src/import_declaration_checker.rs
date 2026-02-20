@@ -712,6 +712,9 @@ impl<'a> CheckerState<'a> {
         let module_name = &literal.text;
         let has_import_clause = self.ctx.arena.get(import_clause_idx).is_some();
         let is_side_effect_import = !has_import_clause;
+        if is_side_effect_import && !self.ctx.compiler_options.no_unchecked_side_effect_imports {
+            return;
+        }
         let is_type_only_import = self
             .ctx
             .arena
