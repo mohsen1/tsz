@@ -313,10 +313,10 @@ impl<'a> CheckerState<'a> {
             for _ in 0..10 {
                 if let Some(info) = self.ctx.arena.node_info(current) {
                     let parent = info.parent;
-                    if let Some(parent_node) = self.ctx.arena.get(parent) {
-                        if parent_node.kind == syntax_kind_ext::PARAMETER {
-                            return false;
-                        }
+                    if let Some(parent_node) = self.ctx.arena.get(parent)
+                        && parent_node.kind == syntax_kind_ext::PARAMETER
+                    {
+                        return false;
                     }
                     current = parent;
                 } else {
