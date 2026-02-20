@@ -1,14 +1,4 @@
-//! Super Expression Checking Module
-//!
-//! This module contains methods for validating super expression usage.
-//! It handles:
-//! - `super()` call validation (must be in constructors)
-//! - super property access validation (must be in valid contexts)
-//! - Derived class requirements
-//! - Static property initializer restrictions
-//!
-//! This module extends `CheckerState` with super-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Super expression validation (calls, property access, derived class requirements).
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

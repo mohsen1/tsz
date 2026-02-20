@@ -1,14 +1,4 @@
-//! Class and Interface Checking Module
-//!
-//! This module contains methods for checking class and interface declarations.
-//! It handles:
-//! - Property inheritance compatibility (TS2416)
-//! - Interface extension compatibility (TS2430)
-//! - Abstract member implementations (TS2654)
-//! - Implements clause validation (TS2420)
-//!
-//! This module extends `CheckerState` with class/interface-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Class/interface declaration checking (inheritance, implements, abstract members).
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 use crate::query_boundaries::class::{

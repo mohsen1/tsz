@@ -1,15 +1,4 @@
-//! Call Checking Module
-//!
-//! This module contains methods for checking function and method calls.
-//! It handles:
-//! - Argument type collection with contextual typing
-//! - Overload resolution
-//! - Type argument validation (TS2344)
-//! - Call signature instantiation
-//! - This-type substitution in call returns
-//!
-//! This module extends `CheckerState` with call-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Call expression checking (overload resolution, contextual typing, signature instantiation).
 
 use crate::query_boundaries::call_checker::{
     array_element_type_for_type, is_type_parameter_type, lazy_def_id_for_type, resolve_call,

@@ -1,13 +1,4 @@
-//! Type Literal Checking Module
-//!
-//! This module contains type literal type checking methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Type resolution within type literals
-//! - Type reference resolution in type literals
-//! - Parameter extraction from type literal signatures
-//! - Full type literal node type computation
+//! Type literal checking (type resolution, references, and signatures within type literals).
 //!
 //! Type literals represent inline object types like `{ x: string; y: number }` or
 //! callable types with call/construct signatures.

@@ -1,13 +1,4 @@
-//! Interface Type Resolution Module
-//!
-//! This module contains interface type resolution methods for `CheckerState`
-//! as part of the Phase 2 architecture refactoring (god object decomposition).
-//!
-//! # Extracted Functions (~565 lines from state.rs)
-//!
-//! - `get_type_of_interface` - Entry point for interface type resolution
-//! - `merge_interface_heritage_types` - Merge interface heritage (extends) types
-//! - `merge_interface_types` - Structural merge of derived and base interface types
+//! Interface type resolution (heritage merging, structural merge).
 //! - `merge_properties` - Merge derived and base interface properties
 //!
 //! # Responsibilities

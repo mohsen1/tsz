@@ -1,13 +1,4 @@
-//! Module and Import Checking Module
-//!
-//! This module contains methods for validating module imports and exports.
-//! It handles:
-//! - Dynamic import module specifier resolution (TS2307)
-//! - Export declaration module specifier resolution
-//! - Circular re-export detection
-//!
-//! This module extends `CheckerState` with module-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Module import/export validation and circular re-export detection.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;

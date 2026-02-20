@@ -1,16 +1,4 @@
-//! Private Field Checking Module
-//!
-//! This module contains methods for validating private field access and brands.
-//! It handles:
-//! - Private brand extraction and comparison
-//! - Private field name extraction
-//! - Brand mismatch error generation
-//!
-//! Private members in TypeScript classes use a "brand" property for nominal typing.
-//! This ensures private members can only be accessed from instances of the same class.
-//!
-//! This module extends `CheckerState` with private field methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Private field access and brand checking for nominal class typing.
 
 use crate::state::CheckerState;
 use tsz_solver::TypeId;

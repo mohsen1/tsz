@@ -1,16 +1,4 @@
-//! Iterable/Iterator Type Checking Module
-//!
-//! This module contains iterable and iterator type checking methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Checking if a type is iterable (has Symbol.iterator protocol)
-//! - Checking if a type is async iterable (has Symbol.asyncIterator protocol)
-//! - Computing element types for for-of loops
-//! - Emitting appropriate errors for non-iterable types
-//!
-//! This module extends `CheckerState` with methods for iterable/iterator protocol
-//! checking, providing cleaner APIs for iteration-related type operations.
+//! Iterable/iterator protocol checking and for-of element type computation.
 
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::iterable_checker::{

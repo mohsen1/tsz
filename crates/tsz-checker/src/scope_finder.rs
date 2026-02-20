@@ -1,15 +1,4 @@
-//! Scope Finding Module
-//!
-//! This module contains methods for finding enclosing scopes and contexts.
-//! It handles:
-//! - Finding enclosing functions (regular and non-arrow)
-//! - Finding enclosing variable statements and declarations
-//! - Finding enclosing source files
-//! - Finding enclosing static blocks, computed properties, and heritage clauses
-//! - Finding class contexts for various member types
-//!
-//! This module extends `CheckerState` with scope-finding methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Enclosing scope and context traversal (functions, classes, static blocks).
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_parser::parser::NodeIndex;

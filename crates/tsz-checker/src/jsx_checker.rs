@@ -1,13 +1,4 @@
-//! JSX Type Checking Module
-//!
-//! This module contains JSX type checking methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - JSX opening element type resolution
-//! - JSX namespace type lookup
-//! - JSX intrinsic elements type lookup
-//! - JSX element type for fragments
+//! JSX type checking (element types, intrinsic elements, namespace types).
 //! - JSX attribute type checking (TS2322 for type mismatches)
 //!
 //! This implements Rule #36: JSX type checking with case-sensitive tag lookup.

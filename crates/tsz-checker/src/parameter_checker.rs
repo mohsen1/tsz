@@ -1,14 +1,4 @@
-//! Parameter Checking Module
-//!
-//! This module contains methods for validating function parameters.
-//! It handles:
-//! - Duplicate parameter names (TS2300)
-//! - Parameter ordering (required after optional, TS1016)
-//! - Parameter properties (TS2374)
-//! - Parameter initializers and self-references (TS2322, TS2372)
-//!
-//! This module extends `CheckerState` with parameter-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Function parameter validation (duplicates, ordering, initializers).
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

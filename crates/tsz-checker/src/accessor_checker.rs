@@ -1,12 +1,4 @@
-//! Accessor Checking Module
-//!
-//! This module contains methods for validating accessor declarations.
-//! It handles:
-//! - Accessor abstract consistency (TS1044)
-//! - Setter parameter validation (TS1052, TS1053, TS7006)
-//!
-//! This module extends `CheckerState` with accessor-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Accessor declaration validation (abstract consistency, setter parameters).
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;

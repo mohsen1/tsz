@@ -10,20 +10,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    // Check a variable statement (var/let/const declarations).
-    // Iterable/Iterator Type Checking Methods
-    // ============================================================================
-    // The following methods have been extracted to src/checker/iterable_checker.rs:
-    // - is_iterable_type
-    // - is_async_iterable_type
-    // - for_of_element_type
-    // - check_for_of_iterability
-    // - check_spread_iterability
-    //
-    // These methods are now provided via a separate impl block in iterable_checker.rs
-    // as part of Phase 2 architecture refactoring to break up the state.rs god object.
-    // ============================================================================
-
     /// Assign the inferred loop-variable type for `for-in` / `for-of` initializers.
     ///
     /// The initializer is a `VariableDeclarationList` in the Thin AST.
