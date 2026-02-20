@@ -824,6 +824,63 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 return SubtypeResult::True;
             }
 
+            // Distributive intersection factoring:
+            // S <: (A & S) | (B & S) is equivalent to S <: A | B
+            let s_arc;
+            let source_members: &[TypeId] =
+                if let Some(s_list) = intersection_list_id(self.interner, source) {
+                    s_arc = self.interner.type_list(s_list);
+                    &s_arc
+                } else {
+                    std::slice::from_ref(&source)
+                };
+
+            let mut factored_members = Vec::new();
+            let mut all_contain_source = true;
+            for &member in member_list.iter() {
+                let i_arc;
+                let i_list: &[TypeId] =
+                    if let Some(i_members) = intersection_list_id(self.interner, member) {
+                        i_arc = self.interner.type_list(i_members);
+                        &i_arc
+                    } else {
+                        std::slice::from_ref(&member)
+                    };
+
+                let mut contains_all = true;
+                for &s_m in source_members.iter() {
+                    if !i_list.contains(&s_m) {
+                        contains_all = false;
+                        break;
+                    }
+                }
+
+                // DEBUG LOGGING
+                // println!("source: {:?}, target member: {:?}, source_members: {:?}, i_list: {:?}, contains: {}",
+                //          self.interner.lookup(source), self.interner.lookup(member), source_members, i_list, contains_all);
+
+                if contains_all {
+                    let mut rem = Vec::new();
+                    for &i_m in i_list.iter() {
+                        if !source_members.contains(&i_m) {
+                            rem.push(i_m);
+                        }
+                    }
+                    factored_members.push(self.interner.intersection(rem));
+                } else {
+                    all_contain_source = false;
+                    break;
+                }
+            }
+
+            if all_contain_source && !factored_members.is_empty() {
+                let factored_target = self.interner.union(factored_members);
+                // println!("ALL CONTAIN SOURCE! checking subtype against factored target: {:?}", self.interner.lookup(factored_target));
+                if self.check_subtype(source, factored_target).is_true() {
+                    return SubtypeResult::True;
+                }
+            }
+
             // Discriminated union check: if the source has discriminant properties
             // that distinguish between target union members, check each discriminant
             // value against the matching target members with a narrowed source.
@@ -833,6 +890,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .is_true()
             {
                 return SubtypeResult::True;
+            }
+
+            // Intersection source check: if source is an intersection, check if any
+            // member is assignable to the target union as a whole.
+            // e.g., (A & B) <: C | D if A <: C | D
+            if let Some(s_list) = intersection_list_id(self.interner, source) {
+                let s_member_list = self.interner.type_list(s_list);
+                for &s_member in s_member_list.iter() {
+                    if self.check_subtype(s_member, target).is_true() {
+                        return SubtypeResult::True;
+                    }
+                }
             }
 
             // Trace: Source is not a subtype of any union member
