@@ -1180,11 +1180,9 @@ impl<'a> CheckerState<'a> {
             class_instance_type,
             stmt_idx,
         );
-        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
 
         self.check_class_declaration(stmt_idx);
 
-        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
         self.check_inherited_properties_against_index_signatures(
             class_instance_type,
             &class.members.nodes,
