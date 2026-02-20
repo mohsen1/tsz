@@ -889,10 +889,11 @@ impl<'a> CheckerState<'a> {
 
         // Check callable shape for prototype property
         if let Some(symbol_id) = self.ctx.resolve_type_to_symbol_id(type_id)
-            && self.is_class_symbol(symbol_id) {
-                // Function types typically have prototype
-                return query::has_function_shape(self.ctx.types, type_id);
-            }
+            && self.is_class_symbol(symbol_id)
+        {
+            // Function types typically have prototype
+            return query::has_function_shape(self.ctx.types, type_id);
+        }
         false
     }
 
