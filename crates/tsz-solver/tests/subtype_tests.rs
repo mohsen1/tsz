@@ -6382,8 +6382,8 @@ fn test_generic_function_constraint_directionality() {
         is_method: false,
     });
 
-    assert!(checker.is_subtype_of(fn_t, fn_t1));
-    assert!(checker.is_subtype_of(fn_t1, fn_t));
+    assert!(checker.is_subtype_of(fn_t, fn_t1)); // fn_t is more general, can be assigned to fn_t1
+    assert!(!checker.is_subtype_of(fn_t1, fn_t)); // fn_t1 is less general, cannot be assigned to fn_t
 }
 
 #[test]
