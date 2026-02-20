@@ -369,25 +369,23 @@ impl<'a> CheckerState<'a> {
                                 }
                             } else if node.kind
                                 == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                                && let Some(interface_decl) = self.ctx.arena.get_interface(node)
                             {
-                                if let Some(interface_decl) = self.ctx.arena.get_interface(node) {
-                                    if self.interface_extends_class_with_inaccessible_members(
-                                        decl_idx,
-                                        interface_decl,
-                                        class_idx,
-                                        class_data,
-                                    ) {
-                                        self.error_at_node(
+                                if self.interface_extends_class_with_inaccessible_members(
+                                    decl_idx,
+                                    interface_decl,
+                                    class_idx,
+                                    class_data,
+                                ) {
+                                    self.error_at_node(
                                             type_idx,
                                             &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
                                             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                         );
-                                        // continue manually handled below if we break
-                                    }
-                                    if interface_type_params.is_none() {
-                                        interface_type_params =
-                                            interface_decl.type_parameters.clone();
-                                    }
+                                    // continue manually handled below if we break
+                                }
+                                if interface_type_params.is_none() {
+                                    interface_type_params = interface_decl.type_parameters.clone();
                                 }
                             }
                         }

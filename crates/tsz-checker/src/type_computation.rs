@@ -1730,6 +1730,11 @@ impl<'a> CheckerState<'a> {
                         }
                         _ => "?",
                     };
+
+                    let emitted_nullish_error = self.check_and_emit_nullish_binary_operands(
+                        left_idx, right_idx, left_type, right_type, op_str,
+                    );
+
                     // Evaluate types to resolve unevaluated conditional/mapped types
                     let eval_left = self.evaluate_type_for_binary_ops(left_type);
                     let eval_right = self.evaluate_type_for_binary_ops(right_type);
@@ -1741,7 +1746,13 @@ impl<'a> CheckerState<'a> {
                             if left_type != TypeId::ERROR && right_type != TypeId::ERROR {
                                 // Emit appropriate error for arithmetic type mismatch
                                 self.emit_binary_operator_error(
-                                    node_idx, left_idx, right_idx, left_type, right_type, op_str,
+                                    node_idx,
+                                    left_idx,
+                                    right_idx,
+                                    left_type,
+                                    right_type,
+                                    op_str,
+                                    emitted_nullish_error,
                                 );
                             }
                             TypeId::UNKNOWN
@@ -1762,6 +1773,12 @@ impl<'a> CheckerState<'a> {
             // evaluate_type_for_binary_ops because that function converts boxed types
             // to primitives (Number → number), which would make our check fail.
             let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
+
+            // TS18050: Emit errors for null/undefined operands BEFORE returning results or evaluating further
+            let emitted_nullish_error = self.check_and_emit_nullish_binary_operands(
+                left_idx, right_idx, left_type, right_type, op_str,
+            );
+
             if is_arithmetic_op {
                 let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
                 let right_is_nullish =
@@ -1871,7 +1888,13 @@ impl<'a> CheckerState<'a> {
                             if left != TypeId::ERROR && right != TypeId::ERROR {
                                 // Use original types for error messages (more informative)
                                 self.emit_binary_operator_error(
-                                    node_idx, left_idx, right_idx, left_type, right_type, op,
+                                    node_idx,
+                                    left_idx,
+                                    right_idx,
+                                    left_type,
+                                    right_type,
+                                    op,
+                                    emitted_nullish_error,
                                 );
                             }
                             TypeId::UNKNOWN

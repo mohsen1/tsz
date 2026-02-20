@@ -932,6 +932,28 @@ impl<'a> CheckerState<'a> {
         // TSC doesn't emit TS2322 when there's already an operator error (TS2447/TS2362/TS2363).
         let mut emitted_operator_error = is_const || is_readonly || is_function_assignment;
 
+        let op_str = match operator {
+            k if k == SyntaxKind::PlusEqualsToken as u16 => "+",
+            k if k == SyntaxKind::MinusEqualsToken as u16 => "-",
+            k if k == SyntaxKind::AsteriskEqualsToken as u16 => "*",
+            k if k == SyntaxKind::SlashEqualsToken as u16 => "/",
+            k if k == SyntaxKind::PercentEqualsToken as u16 => "%",
+            k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => "**",
+            k if k == SyntaxKind::AmpersandEqualsToken as u16 => "&",
+            k if k == SyntaxKind::BarEqualsToken as u16 => "|",
+            k if k == SyntaxKind::CaretEqualsToken as u16 => "^",
+            k if k == SyntaxKind::LessThanLessThanEqualsToken as u16 => "<<",
+            k if k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => ">>",
+            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => ">>>",
+            _ => "",
+        };
+
+        if !op_str.is_empty() {
+            emitted_operator_error |= self.check_and_emit_nullish_binary_operands(
+                left_idx, right_idx, left_type, right_type, op_str,
+            );
+        }
+
         // Check arithmetic operands for compound arithmetic assignments
         // Emit TS2362/TS2363 for -=, *=, /=, %=, **=
         let is_arithmetic_compound = matches!(
