@@ -151,7 +151,7 @@ impl<'a> CheckerState<'a> {
 
         // Report error if there are missing implementations
         let is_ambient = self.has_declare_modifier(&class_data.modifiers);
-                    if !is_ambient && !missing_members.is_empty() {
+        if !is_ambient && !missing_members.is_empty() {
             let derived_class_name = if !class_data.name.is_none() {
                 if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                     if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
@@ -268,7 +268,6 @@ impl<'a> CheckerState<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
         println!("check_implements_clauses called");
-        
 
         let Some(ref heritage_clauses) = class_data.heritage_clauses else {
             return;
@@ -359,14 +358,18 @@ impl<'a> CheckerState<'a> {
                         if let Some(node) = self.ctx.arena.get(decl_idx) {
                             if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
                                 if let Some(base_class_data) = self.ctx.arena.get_class(node) {
-                                    if self.class_has_private_or_protected_members(base_class_data) {
+                                    if self.class_has_private_or_protected_members(base_class_data)
+                                    {
                                         has_private_members = true;
                                     }
                                     if interface_type_params.is_none() {
-                                        interface_type_params = base_class_data.type_parameters.clone();
+                                        interface_type_params =
+                                            base_class_data.type_parameters.clone();
                                     }
                                 }
-                            } else if node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+                            } else if node.kind
+                                == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                            {
                                 if let Some(interface_decl) = self.ctx.arena.get_interface(node) {
                                     if self.interface_extends_class_with_inaccessible_members(
                                         decl_idx,
@@ -382,7 +385,8 @@ impl<'a> CheckerState<'a> {
                                         // continue manually handled below if we break
                                     }
                                     if interface_type_params.is_none() {
-                                        interface_type_params = interface_decl.type_parameters.clone();
+                                        interface_type_params =
+                                            interface_decl.type_parameters.clone();
                                     }
                                 }
                             }
@@ -445,7 +449,9 @@ impl<'a> CheckerState<'a> {
                     );
                     let interface_type = self.evaluate_type_for_assignability(interface_type);
 
-                    if let Some(shape) = tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type) {
+                    if let Some(shape) =
+                        tsz_solver::type_queries::get_object_shape(self.ctx.types, interface_type)
+                    {
                         if shape.string_index.is_some() || shape.number_index.is_some() {
                             interface_has_index_signature = true;
                         }
@@ -461,14 +467,15 @@ impl<'a> CheckerState<'a> {
 
                             // Check if class has this member
                             if let Some(&class_member_idx) = class_members.get(&member_name) {
-                                let class_member_type =
-                                    if let Some(&cached) = class_member_types.get(&class_member_idx) {
-                                        cached
-                                    } else {
-                                        let computed = self.get_type_of_class_member(class_member_idx);
-                                        class_member_types.insert(class_member_idx, computed);
-                                        computed
-                                    };
+                                let class_member_type = if let Some(&cached) =
+                                    class_member_types.get(&class_member_idx)
+                                {
+                                    cached
+                                } else {
+                                    let computed = self.get_type_of_class_member(class_member_idx);
+                                    class_member_types.insert(class_member_idx, computed);
+                                    computed
+                                };
 
                                 // Check type compatibility
                                 if interface_member_type != tsz_solver::TypeId::ANY
@@ -502,7 +509,8 @@ impl<'a> CheckerState<'a> {
                         let class_has_index_signature =
                             class_data.members.nodes.iter().any(|&member_idx| {
                                 if let Some(member_node) = self.ctx.arena.get(member_idx) {
-                                    member_node.kind == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE
+                                    member_node.kind
+                                        == tsz_parser::parser::syntax_kind_ext::INDEX_SIGNATURE
                                 } else {
                                     false
                                 }
@@ -547,11 +555,13 @@ impl<'a> CheckerState<'a> {
 
                     // Report error for incompatible member types
                     for (class_member_idx, member_name, expected, actual) in incompatible_members {
-                        let error_node_idx = if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
-                            self.get_member_name_node(member_node).unwrap_or(class_member_idx)
-                        } else {
-                            class_member_idx
-                        };
+                        let error_node_idx =
+                            if let Some(member_node) = self.ctx.arena.get(class_member_idx) {
+                                self.get_member_name_node(member_node)
+                                    .unwrap_or(class_member_idx)
+                            } else {
+                                class_member_idx
+                            };
                         self.error_at_node(
                             error_node_idx,
                             &format!(
