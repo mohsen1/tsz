@@ -354,7 +354,15 @@ impl<'a> CheckerState<'a> {
                 _ => None,
             };
 
-            let Some(prop_name) = prop_name else {
+            let prop_name = if let Some(pn) = prop_name {
+                pn
+            } else if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                && let Some(prop) = self.ctx.arena.get_property_assignment(elem_node)
+                && let Some(name_node) = self.ctx.arena.get(prop.name)
+                && name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            {
+                "[computed property]".to_string()
+            } else {
                 continue;
             };
 
@@ -362,10 +370,8 @@ impl<'a> CheckerState<'a> {
 
             // Check if the property exists in the target type
             let target_prop = target_props.iter().find(|p| p.name == prop_atom);
-            if target_prop.is_none()
-                && let Some(ext) = self.ctx.arena.get_extended(elem_idx)
-            {
-                self.error_excess_property_at(&prop_name, target_type, ext.parent);
+            if target_prop.is_none() {
+                self.error_excess_property_at(&prop_name, target_type, elem_idx);
             }
         }
     }
