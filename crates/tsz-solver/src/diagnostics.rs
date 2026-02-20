@@ -534,6 +534,7 @@ pub mod codes {
     pub use dc::EXPECTED_ARGUMENTS_BUT_GOT as ARG_COUNT_MISMATCH;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE as PROPERTY_NOT_EXIST;
     pub use dc::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN as PROPERTY_NOT_EXIST_DID_YOU_MEAN;
+    pub use dc::THE_THIS_CONTEXT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_METHODS_THIS_OF_TYPE as THIS_TYPE_MISMATCH;
     pub use dc::THIS_EXPRESSION_IS_NOT_CALLABLE as NOT_CALLABLE;
 
     // Null/undefined errors
@@ -746,6 +747,21 @@ impl<'a> DiagnosticBuilder<'a> {
         TypeDiagnostic::error(
             format!("Type '{type_str}' has no call signatures."),
             codes::NOT_CALLABLE,
+        )
+    }
+
+    pub fn this_type_mismatch(
+        &mut self,
+        expected_this: TypeId,
+        actual_this: TypeId,
+    ) -> TypeDiagnostic {
+        let expected_str = self.formatter.format(expected_this);
+        let actual_str = self.formatter.format(actual_this);
+        TypeDiagnostic::error(
+            format!(
+                "The 'this' context of type '{actual_str}' is not assignable to method's 'this' of type '{expected_str}'."
+            ),
+            codes::THIS_TYPE_MISMATCH,
         )
     }
 
@@ -1248,6 +1264,13 @@ impl PendingDiagnosticBuilder {
         PendingDiagnostic::error(codes::NOT_CALLABLE, vec![type_id.into()])
     }
 
+    pub fn this_type_mismatch(expected_this: TypeId, actual_this: TypeId) -> PendingDiagnostic {
+        PendingDiagnostic::error(
+            codes::THIS_TYPE_MISMATCH,
+            vec![actual_this.into(), expected_this.into()],
+        )
+    }
+
     /// Create a "Cannot assign to readonly property" pending diagnostic.
     pub fn readonly_property(prop_name: &str) -> PendingDiagnostic {
         PendingDiagnostic::error(codes::READONLY_PROPERTY, vec![prop_name.into()])
@@ -1403,6 +1426,18 @@ impl<'a> SpannedDiagnosticBuilder<'a> {
     pub fn not_callable(&mut self, type_id: TypeId, start: u32, length: u32) -> TypeDiagnostic {
         self.builder
             .not_callable(type_id)
+            .with_span(self.span(start, length))
+    }
+
+    pub fn this_type_mismatch(
+        &mut self,
+        expected_this: TypeId,
+        actual_this: TypeId,
+        start: u32,
+        length: u32,
+    ) -> TypeDiagnostic {
+        self.builder
+            .this_type_mismatch(expected_this, actual_this)
             .with_span(self.span(start, length))
     }
 
