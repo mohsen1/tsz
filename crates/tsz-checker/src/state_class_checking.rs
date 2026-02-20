@@ -1182,6 +1182,7 @@ impl<'a> CheckerState<'a> {
         );
 
         self.check_class_declaration(stmt_idx);
+
         self.check_inherited_properties_against_index_signatures(
             class_instance_type,
             &class.members.nodes,
