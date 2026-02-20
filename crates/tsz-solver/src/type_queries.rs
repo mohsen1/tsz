@@ -1886,3 +1886,18 @@ pub fn collect_property_name_atoms_for_diagnostics(
     atoms.dedup();
     atoms
 }
+
+/// Checks if a type is exclusively `null`, `undefined`, or a union of both.
+pub fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Intrinsic(IntrinsicKind::Null | IntrinsicKind::Undefined)) => true,
+        Some(TypeData::Union(list_id)) => {
+            let members = db.type_list(list_id);
+            members.iter().all(|&m| is_only_null_or_undefined(db, m))
+        }
+        _ => false,
+    }
+}

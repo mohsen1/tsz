@@ -119,8 +119,10 @@ impl<'a> CheckerState<'a> {
                 // for mutable destructured bindings (var/let).
                 // This includes unions like `undefined | null`.
                 let final_type = if !self.ctx.strict_null_checks()
-                    && self.is_only_undefined_or_null(element_type)
-                {
+                    && tsz_solver::type_queries::is_only_null_or_undefined(
+                        self.ctx.types,
+                        element_type,
+                    ) {
                     TypeId::ANY
                 } else {
                     element_type
@@ -514,21 +516,5 @@ impl<'a> CheckerState<'a> {
         } else {
             self.ctx.types.factory().array(tuple_member_type)
         }
-    }
-
-    /// Check if a type consists only of `undefined` and/or `null`.
-    /// Used for widening to `any` under `strict: false`.
-    /// Returns true for: `undefined`, `null`, `undefined | null`
-    fn is_only_undefined_or_null(&self, type_id: TypeId) -> bool {
-        if type_id == TypeId::UNDEFINED || type_id == TypeId::NULL {
-            return true;
-        }
-        // Check for union of undefined/null
-        if let Some(members) = query::union_members(self.ctx.types, type_id) {
-            return members
-                .iter()
-                .all(|&m| m == TypeId::UNDEFINED || m == TypeId::NULL || m == type_id);
-        }
-        false
     }
 }

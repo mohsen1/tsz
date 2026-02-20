@@ -853,7 +853,7 @@ impl<'a> CheckerState<'a> {
                 // When strictNullChecks is off, undefined and null widen to any
                 // (always, regardless of freshness)
                 if !self.ctx.strict_null_checks()
-                    && (widened == TypeId::UNDEFINED || widened == TypeId::NULL)
+                    && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
                 {
                     return TypeId::ANY;
                 }
