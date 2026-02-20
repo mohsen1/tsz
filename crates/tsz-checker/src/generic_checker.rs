@@ -288,14 +288,13 @@ impl<'a> CheckerState<'a> {
 
                 let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
-                if !is_satisfied
-                    && let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                        self.error_type_constraint_not_satisfied(
-                            type_arg,
-                            instantiated_constraint,
-                            arg_idx,
-                        );
-                    }
+                if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                    self.error_type_constraint_not_satisfied(
+                        type_arg,
+                        instantiated_constraint,
+                        arg_idx,
+                    );
+                }
             }
         }
     }

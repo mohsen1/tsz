@@ -1099,6 +1099,9 @@ impl<'a> CheckerState<'a> {
         // Check static/instance consistency for method overloads (TS2387, TS2388)
         self.check_static_instance_overload_consistency(&class.members.nodes);
 
+        // Check abstract consistency for method overloads (TS2512)
+        self.check_abstract_overload_consistency(&class.members.nodes);
+
         // Check for accessor abstract consistency (error 2676)
         // Getter and setter must both be abstract or both non-abstract
         self.check_accessor_abstract_consistency(&class.members.nodes);

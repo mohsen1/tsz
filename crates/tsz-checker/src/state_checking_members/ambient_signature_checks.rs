@@ -332,6 +332,8 @@ impl<'a> CheckerState<'a> {
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
         let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
 
+        self.check_modifier_combinations(&method.modifiers);
+
         // Check for unused type parameters (TS6133)
         self.check_unused_type_params(&method.type_parameters, member_idx);
 
@@ -926,6 +928,8 @@ impl<'a> CheckerState<'a> {
         let Some(accessor) = self.ctx.arena.get_accessor(node) else {
             return;
         };
+
+        self.check_modifier_combinations(&accessor.modifiers);
 
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the accessor has a body
@@ -1660,32 +1664,50 @@ impl<'a> CheckerState<'a> {
         let Some(mods) = modifiers else {
             return;
         };
-        let mut has_private = false;
-        let mut has_abstract = false;
-        let mut private_node = None;
+
+        let mut abstract_node = None;
+        let mut conflicting_nodes = Vec::new();
 
         for &m_idx in &mods.nodes {
             if let Some(m_node) = self.ctx.arena.get(m_idx) {
-                if m_node.kind == tsz_scanner::SyntaxKind::PrivateKeyword as u16 {
-                    has_private = true;
-                    private_node = Some(m_idx);
-                } else if m_node.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16 {
-                    has_abstract = true;
+                let kind = m_node.kind;
+                use tsz_scanner::SyntaxKind;
+                if kind == SyntaxKind::AbstractKeyword as u16 {
+                    abstract_node = Some(m_idx);
+                } else if kind == SyntaxKind::PrivateKeyword as u16 {
+                    conflicting_nodes.push((m_idx, "private"));
+                } else if kind == SyntaxKind::StaticKeyword as u16 {
+                    conflicting_nodes.push((m_idx, "static"));
+                } else if kind == SyntaxKind::AsyncKeyword as u16 {
+                    conflicting_nodes.push((m_idx, "async"));
                 }
             }
         }
 
-        if has_private && has_abstract {
+        if let Some(abs_node) = abstract_node {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let message = format_message(
-                diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
-                &["private", "abstract"],
-            );
-            self.error_at_node(
-                private_node.unwrap_or(mods.nodes[0]),
-                &message,
-                diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
-            );
+            for (conflict_idx, name) in conflicting_nodes {
+                let message = format_message(
+                    diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                    &[name, "abstract"],
+                );
+
+                // Point to whichever modifier comes second
+                let (abs_start, _) = self.get_node_span(abs_node).unwrap_or((0, 0));
+                let (con_start, _) = self.get_node_span(conflict_idx).unwrap_or((0, 0));
+
+                let error_node = if con_start > abs_start {
+                    conflict_idx
+                } else {
+                    abs_node
+                };
+
+                self.error_at_node(
+                    error_node,
+                    &message,
+                    diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                );
+            }
         }
     }
 }
