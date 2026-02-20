@@ -64,6 +64,7 @@ REPEAT_THRESHOLD="${GEMINI_FLEET_REPEAT_THRESHOLD:-90}"
 RUN_CLEANUP=true
 RUN_RUNAWAY_GUARD=true
 REPO_GLOB="${GEMINI_FLEET_REPO_GLOB:-tsz*}"
+REPOS=()
 
 if [[ $# -gt 0 ]]; then
   case "$1" in
@@ -173,6 +174,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PARENT_DIR="$(dirname "$REPO_ROOT")"
 FLEET_LOG_DIR="$REPO_ROOT/logs/gemini-fleet"
 GEMINI_CONTROL_DIR="${GEMINI_FLEET_CONTROL_DIR:-$HOME/.gemini/tmp/fleet-manager}"
+MANAGER_MARKER_NAME="${GEMINI_FLEET_MANAGER_MARKER_NAME:-.gemini-fleet-manager}"
 mkdir -p "$FLEET_LOG_DIR"
 mkdir -p "$GEMINI_CONTROL_DIR"
 SUPERVISOR_LOG="$FLEET_LOG_DIR/supervisor.$(date +%Y%m%d-%H%M%S).log"
@@ -369,6 +371,69 @@ discover_repos() {
   fi
 }
 
+marker_path_for_repo() {
+  local repo="$1"
+  printf '%s/%s' "$repo" "$MANAGER_MARKER_NAME"
+}
+
+write_manager_markers() {
+  local repo
+  local marker_file
+  local now_utc
+  now_utc="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  for repo in "${REPOS[@]}"; do
+    marker_file="$(marker_path_for_repo "$repo")"
+    {
+      echo "session=$SESSION_NAME"
+      echo "manager_pid=$$"
+      echo "mode=$MODE"
+      echo "started_at=$now_utc"
+    } > "$marker_file"
+  done
+
+  log "Wrote manager markers ($MANAGER_MARKER_NAME) in ${#REPOS[@]} repos"
+}
+
+clear_manager_markers() {
+  local repo
+  local marker_file
+  local removed=0
+
+  if [[ ${#REPOS[@]} -eq 0 ]]; then
+    local use_version_sort=false
+    local d
+    if sort -V </dev/null >/dev/null 2>&1; then
+      use_version_sort=true
+    fi
+    if [[ "$use_version_sort" == true ]]; then
+      while IFS= read -r d; do
+        [[ -n "$d" ]] || continue
+        [[ -f "$d/Cargo.toml" ]] || continue
+        REPOS+=("$d")
+      done < <(find "$PARENT_DIR" -maxdepth 1 -type d -name "$REPO_GLOB" | sort -V)
+    else
+      while IFS= read -r d; do
+        [[ -n "$d" ]] || continue
+        [[ -f "$d/Cargo.toml" ]] || continue
+        REPOS+=("$d")
+      done < <(find "$PARENT_DIR" -maxdepth 1 -type d -name "$REPO_GLOB" | sort)
+    fi
+  fi
+
+  for repo in "${REPOS[@]}"; do
+    marker_file="$(marker_path_for_repo "$repo")"
+    if [[ -f "$marker_file" ]]; then
+      rm -f "$marker_file" || true
+      removed=$((removed + 1))
+    fi
+  done
+
+  if (( removed > 0 )); then
+    log "Removed manager markers from $removed repos"
+  fi
+}
+
 hard_reset_repo_to_main() {
   local repo="$1"
   local name
@@ -433,6 +498,7 @@ attach_action() {
 
 if [[ "$ACTION" == "stop" ]]; then
   stop_session
+  clear_manager_markers
   exit 0
 fi
 if [[ "$ACTION" == "status" ]]; then
@@ -469,6 +535,9 @@ log "Supervisor log: $SUPERVISOR_LOG"
 for repo in "${REPOS[@]}"; do
   hard_reset_repo_to_main "$repo"
 done
+
+write_manager_markers
+trap clear_manager_markers EXIT
 
 WINDOW_NAMES=()
 WORKER_CMDS=()
@@ -507,6 +576,7 @@ done
 cleanup_and_exit() {
   log "Stopping fleet due to signal"
   stop_session
+  clear_manager_markers
   exit 0
 }
 trap cleanup_and_exit INT TERM
