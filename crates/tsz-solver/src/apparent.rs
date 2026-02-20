@@ -86,7 +86,7 @@ fn is_member(name: &str, list: &[&str]) -> bool {
 
 fn object_member_kind(name: &str, include_to_locale: bool) -> Option<ApparentMemberKind> {
     if name == "constructor" {
-        return Some(ApparentMemberKind::Value(TypeId::ANY));
+        return Some(ApparentMemberKind::Value(TypeId::FUNCTION));
     }
     if name == "toString" {
         return Some(ApparentMemberKind::Method(TypeId::STRING));
