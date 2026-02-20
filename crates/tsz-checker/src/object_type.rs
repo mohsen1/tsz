@@ -2,7 +2,7 @@
 //!
 //! Thin wrappers for object type queries, delegating to solver via `query_boundaries`.
 
-use crate::query_boundaries::object_type::object_shape_for_type;
+use crate::query_boundaries::class_type::object_shape_for_type;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
