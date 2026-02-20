@@ -212,11 +212,13 @@ impl<'a> CheckerState<'a> {
                 use tsz_solver::types::TypeData;
                 if let Some(TypeData::Tuple(..)) = self.ctx.types.lookup(resolved) {
                     return factory.tuple(vec![]);
-                } else if let Some(t_elem) = tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved) {
+                } else if let Some(t_elem) =
+                    tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
+                {
                     return factory.array(t_elem);
                 }
             }
-            
+
             // When noImplicitAny is off, empty array literals without contextual type
             // are typed as any[] (matching tsc behavior). With noImplicitAny on, use never[]
             // which is the "evolving array type" starting point.
