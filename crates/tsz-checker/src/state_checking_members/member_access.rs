@@ -997,7 +997,7 @@ impl<'a> CheckerState<'a> {
     /// ```
     /// The AST-based `check_index_signature_compatibility` only sees own members;
     /// inherited properties live in the solver's resolved object shape.
-    fn check_inherited_properties_against_index_signatures(
+    pub(crate) fn check_inherited_properties_against_index_signatures(
         &mut self,
         iface_type: TypeId,
         own_members: &[NodeIndex],
@@ -1015,12 +1015,8 @@ impl<'a> CheckerState<'a> {
             if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
                 continue;
             }
-            if (member_node.kind == syntax_kind_ext::PROPERTY_SIGNATURE
-                || member_node.kind == syntax_kind_ext::METHOD_SIGNATURE)
-                && let Some(sig) = self.ctx.arena.get_signature(member_node)
-                && let Some(name) = self.get_member_name_text(sig.name)
-            {
-                own_names.insert(name);
+            if let Some(name_text) = self.get_member_name(member_idx) {
+                own_names.insert(name_text);
             }
         }
 
@@ -1033,8 +1029,9 @@ impl<'a> CheckerState<'a> {
 
         // Get the object shape from the resolved type to find all properties.
         // Interfaces with index sigs use ObjectWithIndex, so check both variants.
-        let shape_id = tsz_solver::object_shape_id(self.ctx.types, iface_type)
-            .or_else(|| tsz_solver::object_with_index_shape_id(self.ctx.types, iface_type));
+        let evaluated_type = self.evaluate_type_for_assignability(iface_type);
+        let shape_id = tsz_solver::object_shape_id(self.ctx.types, evaluated_type)
+            .or_else(|| tsz_solver::object_with_index_shape_id(self.ctx.types, evaluated_type));
         let Some(shape_id) = shape_id else {
             return;
         };
