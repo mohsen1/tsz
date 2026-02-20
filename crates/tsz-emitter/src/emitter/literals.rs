@@ -53,6 +53,70 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(super) fn emit_bigint_literal(&mut self, node: &Node) {
+        if let Some(lit) = self.arena.get_literal(node) {
+            // Strip numeric separators: 1_000_000n → 1000000n
+            let text = if lit.text.contains('_') {
+                lit.text.chars().filter(|&c| c != '_').collect::<String>()
+            } else {
+                lit.text.clone()
+            };
+
+            // TSC converts binary/octal BigInt literals to decimal form,
+            // and lowercases hex BigInt literals.
+            if let Some(converted) = Self::convert_bigint_literal(&text) {
+                self.write(&converted);
+            } else {
+                self.write(&text);
+            }
+        }
+    }
+
+    /// Convert `BigInt` literals with non-decimal bases:
+    /// - Binary (0b101n) → decimal (5n)
+    /// - Octal (0o567n) → decimal (375n)
+    /// - Hex (0xC0Bn) → lowercase hex (0xc0bn)
+    fn convert_bigint_literal(text: &str) -> Option<String> {
+        // Must end with 'n' and start with '0'
+        if text.len() < 3 || !text.ends_with('n') || !text.starts_with('0') {
+            return None;
+        }
+        let without_n = &text[..text.len() - 1]; // Strip trailing 'n'
+        let bytes = without_n.as_bytes();
+        if bytes.len() < 2 {
+            return None;
+        }
+        match bytes[1] {
+            b'b' | b'B' => {
+                // Binary → decimal
+                let digits = &without_n[2..];
+                if digits.is_empty() {
+                    return None;
+                }
+                let value = u128::from_str_radix(digits, 2).ok()?;
+                Some(format!("{value}n"))
+            }
+            b'o' | b'O' => {
+                // Octal → decimal
+                let digits = &without_n[2..];
+                if digits.is_empty() {
+                    return None;
+                }
+                let value = u128::from_str_radix(digits, 8).ok()?;
+                Some(format!("{value}n"))
+            }
+            b'x' | b'X' => {
+                // Hex → lowercase hex
+                let lowered = without_n.to_lowercase();
+                if lowered == *without_n {
+                    return None;
+                }
+                Some(format!("{lowered}n"))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000

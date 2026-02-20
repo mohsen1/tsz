@@ -189,21 +189,22 @@ impl<'a> CheckerState<'a> {
                             .contains(&sym_to_check);
 
                         if is_being_resolved
-                            && let Some(symbol) = self.get_cross_file_symbol(sym_to_check) {
-                                use crate::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages, format_message,
-                                };
-                                let name = symbol.escaped_name.clone();
-                                let message = format_message(
+                            && let Some(symbol) = self.get_cross_file_symbol(sym_to_check)
+                        {
+                            use crate::diagnostics::{
+                                diagnostic_codes, diagnostic_messages, format_message,
+                            };
+                            let name = symbol.escaped_name.clone();
+                            let message = format_message(
                                     diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
                                     &[&name],
                                 );
-                                self.error_at_node(
+                            self.error_at_node(
                                     expr_idx,
                                     &message,
                                     diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
                                 );
-                            }
+                        }
 
                         let symbol_type = if is_being_resolved {
                             // Skip type resolution for symbols already being resolved to prevent infinite recursion

@@ -709,6 +709,9 @@ impl<'a> Printer<'a> {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 self.emit_numeric_literal(node);
             }
+            k if k == SyntaxKind::BigIntLiteral as u16 => {
+                self.emit_bigint_literal(node);
+            }
             k if k == SyntaxKind::StringLiteral as u16 => {
                 self.emit_string_literal(node);
             }
