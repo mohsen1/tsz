@@ -17,6 +17,34 @@ use tsz_solver::{ContextualTypeContext, TupleElement, TypeId, expression_ops};
 
 impl<'a> CheckerState<'a> {
     // =========================================================================
+    fn is_identifier_reference_to_global_nan(&self, node_idx: NodeIndex) -> bool {
+        let mut current_idx = node_idx;
+        while let Some(node) = self.ctx.arena.get(current_idx) {
+            if node.kind == tsz_parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(expr) = self.ctx.arena.get_parenthesized(node) {
+                    current_idx = expr.expression;
+                    continue;
+                }
+            break;
+        }
+
+        if let Some(node) = self.ctx.arena.get(current_idx)
+            && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(ident) = self.ctx.arena.get_identifier(node)
+                    && ident.escaped_text == "NaN" {
+                        if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
+                            let is_global = self
+                                .ctx
+                                .binder
+                                .get_symbol(sym_id)
+                                .is_none_or(|s| s.parent.is_none());
+                            return self.ctx.symbol_is_from_lib(sym_id) || is_global;
+                        }
+                        return true; // Unresolved NaN treated as global
+                    }
+        false
+    }
+
     // Core Type Computation
     // =========================================================================
 
@@ -1675,7 +1703,29 @@ impl<'a> CheckerState<'a> {
                 .literal_type_from_initializer(right_idx)
                 .unwrap_or(right_type);
 
-            if is_equality_op
+            let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
+            let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
+
+            if is_equality_op && (is_left_nan || is_right_nan) {
+                let condition_result = match op_kind {
+                    k if k == SyntaxKind::EqualsEqualsToken as u16
+                        || k == SyntaxKind::EqualsEqualsEqualsToken as u16 =>
+                    {
+                        "false"
+                    }
+                    _ => "true",
+                };
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let message = format_message(
+                    diagnostic_messages::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                    &[condition_result],
+                );
+                self.error_at_node(
+                    node_idx,
+                    &message,
+                    diagnostic_codes::THIS_CONDITION_WILL_ALWAYS_RETURN,
+                );
+            } else if is_equality_op
                 && left_narrow != TypeId::ERROR
                 && right_narrow != TypeId::ERROR
                 && self.types_have_no_overlap(left_narrow, right_narrow)
@@ -1916,8 +1966,14 @@ impl<'a> CheckerState<'a> {
             );
 
             if is_equality_op || is_inequality_op {
-                // Check if the types have any overlap
-                if !self.are_types_overlapping(left_type, right_type) {
+                let is_left_nan = self.is_identifier_reference_to_global_nan(left_idx);
+                let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
+
+                // Check if the types have any overlap (skip if NaN, handled above)
+                if !is_left_nan
+                    && !is_right_nan
+                    && !self.are_types_overlapping(left_type, right_type)
+                {
                     // TS2367: This condition will always return 'false'/'true'
                     self.error_comparison_no_overlap(
                         left_type,
