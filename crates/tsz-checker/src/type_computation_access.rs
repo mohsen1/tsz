@@ -752,6 +752,8 @@ impl<'a> CheckerState<'a> {
         // Track getter/setter names to allow getter+setter pairs with the same name
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
         let mut setter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
+        let mut explicit_property_names: rustc_hash::FxHashSet<Atom> =
+            rustc_hash::FxHashSet::default();
         // Track which named properties came from explicit assignments (not spreads)
         // so we can emit TS2783 when a later spread overwrites them.
         // Maps property name atom -> (node_idx for error, property display name)
@@ -859,8 +861,8 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117: tsc emits this for all targets.
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117: duplicate properties are an error in object literals.
+                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -871,6 +873,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
+                    explicit_property_names.insert(name_atom);
 
                     // Track this named property for TS2783 spread-overwrite checking
                     named_property_nodes.insert(name_atom, (prop.name, name.clone()));
@@ -1042,8 +1045,8 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117: tsc emits this for all targets.
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117: duplicate properties are an error in object literals.
+                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1054,6 +1057,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
+                    explicit_property_names.insert(name_atom);
 
                     // Track this shorthand property for TS2783 spread-overwrite checking
                     named_property_nodes.insert(name_atom, (elem_idx, name.clone()));
@@ -1110,8 +1114,8 @@ impl<'a> CheckerState<'a> {
                     let name_atom = self.ctx.types.intern_string(&name);
 
                     // Check for duplicate property (skip in destructuring targets)
-                    // TS1117: tsc emits this for all targets.
-                    if !skip_duplicate_check && properties.contains_key(&name_atom) {
+                    // TS1117: duplicate properties are an error in object literals.
+                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1122,6 +1126,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
+                    explicit_property_names.insert(name_atom);
 
                     properties.insert(
                         name_atom,
@@ -1331,9 +1336,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         getter_names.contains(&name_atom) && !setter_names.contains(&name_atom)
                     };
-                    // TS1117: tsc emits this for all targets.
+                    // TS1117: duplicate properties are an error in object literals.
                     if !skip_duplicate_check
-                        && properties.contains_key(&name_atom)
+                        && explicit_property_names.contains(&name_atom)
                         && !is_complementary_pair
                     {
                         let message = format_message(
@@ -1346,6 +1351,7 @@ impl<'a> CheckerState<'a> {
                             diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                         );
                     }
+                    explicit_property_names.insert(name_atom);
 
                     if is_getter {
                         getter_names.insert(name_atom);

@@ -650,7 +650,20 @@ impl<'a> CheckerState<'a> {
         // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
         // here to avoid duplicate TS2488 errors.
 
+        let elements_len = pattern_data.elements.nodes.len();
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
+            if i < elements_len - 1
+                && let Some(element_node) = self.ctx.arena.get(element_idx)
+                    && let Some(element_data) = self.ctx.arena.get_binding_element(element_node)
+                        && element_data.dot_dot_dot_token {
+                            use tsz_common::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                element_idx,
+                                diagnostic_codes::A_REST_ELEMENT_MUST_BE_LAST_IN_A_DESTRUCTURING_PATTERN,
+                                &[],
+                            );
+                        }
+
             self.check_binding_element(
                 element_idx,
                 pattern_kind,
