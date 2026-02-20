@@ -14,6 +14,17 @@ impl<'a> Printer<'a> {
     /// duplicate emission when the leading comment scanner has already advanced
     /// `comment_emit_idx` past a comment.
     pub(super) fn emit_trailing_comments(&mut self, end_pos: u32) {
+        self.emit_trailing_comments_impl(end_pos, u32::MAX);
+    }
+
+    /// Like `emit_trailing_comments` but only emit comments whose start position
+    /// is before `max_pos`. Used to prevent a statement inside a block from
+    /// consuming comments that belong on the block's closing line.
+    pub(super) fn emit_trailing_comments_before(&mut self, end_pos: u32, max_pos: u32) {
+        self.emit_trailing_comments_impl(end_pos, max_pos);
+    }
+
+    fn emit_trailing_comments_impl(&mut self, end_pos: u32, max_pos: u32) {
         if self.ctx.options.remove_comments {
             return;
         }
@@ -46,6 +57,11 @@ impl<'a> Printer<'a> {
                 // Same line — skip to avoid double emission.
                 self.comment_emit_idx += 1;
                 continue;
+            }
+
+            // Don't consume comments past the max position boundary
+            if c_pos >= max_pos {
+                break;
             }
 
             // Check if there's a line break between end_pos and the comment.
