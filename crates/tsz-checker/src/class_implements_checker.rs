@@ -355,6 +355,98 @@ impl<'a> CheckerState<'a> {
                     let mut is_interface = false;
                     let mut early_exit = false;
 
+                    // Helper to recursively collect members from an interface and its bases
+                    fn collect_interface_members(
+                        checker: &mut crate::state::CheckerState,
+                        sym_id: tsz_binder::SymbolId,
+                        all_members: &mut Vec<NodeIndex>,
+                        visited: &mut rustc_hash::FxHashSet<tsz_binder::SymbolId>,
+                    ) {
+                        if !visited.insert(sym_id) {
+                            return;
+                        }
+
+                        if let Some(symbol) = checker.ctx.binder.get_symbol(sym_id) {
+                            for &decl_idx in &symbol.declarations {
+                                if let Some(node) = checker.ctx.arena.get(decl_idx) {
+                                    if node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+                                        if let Some(interface_decl) = checker.ctx.arena.get_interface(node) {
+                                            all_members.extend(&interface_decl.members.nodes);
+
+                                            // Recurse into base interfaces
+                                            if let Some(ref heritage_clauses) = interface_decl.heritage_clauses {
+                                                for &clause_idx in &heritage_clauses.nodes {
+                                                    if let Some(clause_node) = checker.ctx.arena.get(clause_idx) {
+                                                        if let Some(heritage) = checker.ctx.arena.get_heritage_clause(clause_node) {
+                                                            if heritage.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                                                                for &base_type_idx in &heritage.types.nodes {
+                                                                    if let Some(base_type_node) = checker.ctx.arena.get(base_type_idx) {
+                                                                        let expr_idx = if let Some(expr_type_args) = checker.ctx.arena.get_expr_type_args(base_type_node) {
+                                                                            expr_type_args.expression
+                                                                        } else {
+                                                                            base_type_idx
+                                                                        };
+                                                                        if let Some(base_sym_id) = checker.resolve_heritage_symbol(expr_idx) {
+                                                                            collect_interface_members(checker, base_sym_id, all_members, visited);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
+                                        if let Some(class_decl) = checker.ctx.arena.get_class(node) {
+                                            for &member_idx in &class_decl.members.nodes {
+                                                if checker.ctx.arena.get(member_idx).is_none() {
+                                                    continue;
+                                                }
+                                                let is_static = checker
+                                                    .ctx
+                                                    .binder
+                                                    .get_node_symbol(member_idx)
+                                                    .and_then(|member_sym_id| {
+                                                        checker.ctx.binder.get_symbol(member_sym_id)
+                                                    })
+                                                    .is_some_and(|member_sym| {
+                                                        member_sym.flags & tsz_binder::symbol_flags::STATIC != 0
+                                                    });
+                                                if !is_static {
+                                                    all_members.push(member_idx);
+                                                }
+                                            }
+                                            // Recurse into base classes
+                                            if let Some(ref heritage_clauses) = class_decl.heritage_clauses {
+                                                for &clause_idx in &heritage_clauses.nodes {
+                                                    if let Some(clause_node) = checker.ctx.arena.get(clause_idx) {
+                                                        if let Some(heritage) = checker.ctx.arena.get_heritage_clause(clause_node) {
+                                                            if heritage.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                                                                for &base_type_idx in &heritage.types.nodes {
+                                                                    if let Some(base_type_node) = checker.ctx.arena.get(base_type_idx) {
+                                                                        let expr_idx = if let Some(expr_type_args) = checker.ctx.arena.get_expr_type_args(base_type_node) {
+                                                                            expr_type_args.expression
+                                                                        } else {
+                                                                            base_type_idx
+                                                                        };
+                                                                        if let Some(base_sym_id) = checker.resolve_heritage_symbol(expr_idx) {
+                                                                            collect_interface_members(checker, base_sym_id, all_members, visited);
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     for &decl_idx in &symbol.declarations {
                         if let Some(node) = self.ctx.arena.get(decl_idx) {
                             if node.kind == syntax_kind_ext::CLASS_DECLARATION {
@@ -364,25 +456,7 @@ impl<'a> CheckerState<'a> {
                                     {
                                         has_private_members = true;
                                     }
-                                    for &member_idx in &base_class_data.members.nodes {
-                                        if self.ctx.arena.get(member_idx).is_none() {
-                                            continue;
-                                        }
-                                        let is_static = self
-                                            .ctx
-                                            .binder
-                                            .get_node_symbol(member_idx)
-                                            .and_then(|member_sym_id| {
-                                                self.ctx.binder.get_symbol(member_sym_id)
-                                            })
-                                            .is_some_and(|member_sym| {
-                                                member_sym.flags & tsz_binder::symbol_flags::STATIC
-                                                    != 0
-                                            });
-                                        if !is_static {
-                                            all_interface_members.push(member_idx);
-                                        }
-                                    }
+                                    
                                     if interface_type_params.is_none() {
                                         interface_type_params =
                                             base_class_data.type_parameters.clone();
@@ -405,7 +479,7 @@ impl<'a> CheckerState<'a> {
                                         early_exit = true;
                                         break;
                                     }
-                                    all_interface_members.extend(&interface_decl.members.nodes);
+                                    
                                     if interface_type_params.is_none() {
                                         interface_type_params =
                                             interface_decl.type_parameters.clone();
@@ -430,6 +504,9 @@ impl<'a> CheckerState<'a> {
                     if !is_class && !is_interface {
                         continue;
                     }
+                    
+                    let mut visited = rustc_hash::FxHashSet::default();
+                    collect_interface_members(self, sym_id, &mut all_interface_members, &mut visited);
 
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
