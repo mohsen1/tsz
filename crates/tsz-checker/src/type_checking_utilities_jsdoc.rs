@@ -1033,6 +1033,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    #[allow(dead_code)]
     pub(crate) fn get_jsdoc_param_type(&mut self, jsdoc: &str, param_name: &str) -> Option<TypeId> {
         let mut in_param = false;
         let mut param_text = String::new();
