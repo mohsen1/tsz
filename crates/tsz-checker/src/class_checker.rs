@@ -376,7 +376,7 @@ impl<'a> CheckerState<'a> {
                 let is_static = self.has_static_modifier(&method.modifiers);
                 let factory = self.ctx.types.factory();
                 use tsz_solver::FunctionShape;
-                let signature = self.call_signature_from_method(method);
+                let signature = self.call_signature_from_method(method, member_idx);
                 let method_type = factory.function(FunctionShape {
                     type_params: signature.type_params,
                     params: signature.params,

@@ -535,7 +535,7 @@ impl<'a> CheckerState<'a> {
                 // TS7010/TS7011: Only count as contextual return if it's not UNKNOWN
                 // UNKNOWN is a "no type" value and shouldn't prevent implicit any errors
                 has_contextual_return = return_context.is_some_and(|t| t != TypeId::UNKNOWN);
-                let inferred = self.infer_return_type_from_body(body, return_context);
+                let inferred = self.infer_return_type_from_body(idx, body, return_context);
                 return_type = jsdoc_return_context.unwrap_or(inferred);
             }
 

@@ -1318,6 +1318,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn infer_return_type_from_body(
         &mut self,
+        _function_idx: NodeIndex,
         body_idx: NodeIndex,
         return_context: Option<TypeId>,
     ) -> TypeId {
@@ -1396,6 +1397,29 @@ impl<'a> CheckerState<'a> {
             // could plausibly be non-falling-through, i.e. it contains throw statements.
             // This avoids triggering unnecessary type evaluation in simple function bodies.
             let may_not_fall_through = self.body_contains_throw_or_never_call(body_idx);
+
+            // Check if function has a return type annotation
+            let has_return_type_annotation = if let Some(func_node) = self.ctx.arena.get(body_idx)
+                && let Some(func) = self.ctx.arena.get_function(func_node)
+            {
+                !func.type_annotation.is_none()
+            } else {
+                false
+            };
+
+            if has_return_type_annotation
+                && may_not_fall_through
+                && !self.function_body_falls_through(body_idx)
+            {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    body_idx,
+                    "Function lacks ending return statement and return type does not include undefined",
+                    diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
+                );
+                return TypeId::ERROR; // Return error to avoid further issues
+            }
+
             return if !may_not_fall_through || self.function_body_falls_through(body_idx) {
                 TypeId::VOID
             } else {
