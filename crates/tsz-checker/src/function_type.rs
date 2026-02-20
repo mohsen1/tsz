@@ -732,13 +732,24 @@ impl<'a> CheckerState<'a> {
                     }
                 } else if self.ctx.no_implicit_returns() && has_return && falls_through {
                     // TS7030: noImplicitReturns - not all code paths return a value
-                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                    let error_node = if let Some(nn) = name_node { nn } else { body };
-                    self.error_at_node(
-                        error_node,
-                        diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
-                        diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                    // TSC skips TS7030 for functions returning void, any, or unions containing void/any
+                    let ts7030_check_type = self.return_type_for_implicit_return_check(
+                        return_type,
+                        is_async,
+                        function_is_generator,
                     );
+                    if !self.should_skip_no_implicit_return_check(
+                        ts7030_check_type,
+                        has_type_annotation,
+                    ) {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        let error_node = if let Some(nn) = name_node { nn } else { body };
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                            diagnostic_codes::NOT_ALL_CODE_PATHS_RETURN_A_VALUE,
+                        );
+                    }
                 }
             }
 

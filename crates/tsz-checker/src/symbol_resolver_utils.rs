@@ -734,8 +734,12 @@ impl<'a> CheckerState<'a> {
             defaults.strict_function_types,
         );
         // Options without @strict fallback
-        opts.no_implicit_returns =
-            Self::resolve_bool_option(text, "@noimplicitreturns", false, false);
+        opts.no_implicit_returns = Self::resolve_bool_option(
+            text,
+            "@noimplicitreturns",
+            false,
+            defaults.no_implicit_returns,
+        );
         opts.no_implicit_override = Self::resolve_bool_option(
             text,
             "@noimplicitoverride",
