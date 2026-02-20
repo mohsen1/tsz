@@ -1,8 +1,46 @@
 //! Literal Type Utilities Module
+//!
+//! Thin wrappers for literal type queries, delegating to solver.
 
 use crate::state::CheckerState;
+use tsz_solver::TypeId;
+use tsz_solver::type_queries_extended::{
+    get_number_literal_value as solver_get_number_literal_value, get_string_literal_atom,
+    is_number_literal, is_string_literal,
+};
 
 impl<'a> CheckerState<'a> {
+    /// Check if a type is a string literal type.
+    ///
+    /// Returns true for types like `"hello"`, `"world"`, etc.
+    pub fn is_string_literal_type(&self, type_id: TypeId) -> bool {
+        is_string_literal(self.ctx.types, type_id)
+    }
+
+    /// Check if a type is a number literal type.
+    ///
+    /// Returns true for types like `0`, `1`, `42`, `3.14`, etc.
+    pub fn is_number_literal_type(&self, type_id: TypeId) -> bool {
+        is_number_literal(self.ctx.types, type_id)
+    }
+
+    /// Get the string value from a string literal type.
+    ///
+    /// Returns the string value if the type is a string literal,
+    /// or None otherwise.
+    pub fn get_string_literal_value(&self, type_id: TypeId) -> Option<String> {
+        get_string_literal_atom(self.ctx.types, type_id)
+            .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
+    }
+
+    /// Get the numeric value from a number literal type.
+    ///
+    /// Returns the number value if the type is a number literal,
+    /// or None otherwise.
+    pub fn get_number_literal_value(&self, type_id: TypeId) -> Option<f64> {
+        solver_get_number_literal_value(self.ctx.types, type_id)
+    }
+
     /// Validate regex literal flags against the compilation target.
     ///
     /// Emits TS1501 if a regex flag is used that requires a newer target than specified.
