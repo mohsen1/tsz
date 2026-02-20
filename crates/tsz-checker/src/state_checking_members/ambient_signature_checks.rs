@@ -23,6 +23,7 @@ impl<'a> CheckerState<'a> {
         // (i.e., not a simple identifier or property access chain like a.b.c).
         // Entity name expressions are always allowed regardless of their type.
         self.check_class_computed_property_name(prop.name);
+        self.check_modifier_combinations(&prop.modifiers);
 
         // TS8009/TS8010: Check for TypeScript-only features in JavaScript files
         let is_js_file = self.ctx.file_name.ends_with(".js")
@@ -1638,5 +1639,38 @@ impl<'a> CheckerState<'a> {
             is_constructor: shape.is_constructor,
             is_method: shape.is_method,
         })
+    }
+
+    fn check_modifier_combinations(&mut self, modifiers: &Option<tsz_parser::parser::NodeList>) {
+        let Some(mods) = modifiers else {
+            return;
+        };
+        let mut has_private = false;
+        let mut has_abstract = false;
+        let mut private_node = None;
+
+        for &m_idx in &mods.nodes {
+            if let Some(m_node) = self.ctx.arena.get(m_idx) {
+                if m_node.kind == tsz_scanner::SyntaxKind::PrivateKeyword as u16 {
+                    has_private = true;
+                    private_node = Some(m_idx);
+                } else if m_node.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16 {
+                    has_abstract = true;
+                }
+            }
+        }
+
+        if has_private && has_abstract {
+            use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+            let message = format_message(
+                diagnostic_messages::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+                &["private", "abstract"],
+            );
+            self.error_at_node(
+                private_node.unwrap_or(mods.nodes[0]),
+                &message,
+                diagnostic_codes::MODIFIER_CANNOT_BE_USED_WITH_MODIFIER,
+            );
+        }
     }
 }
