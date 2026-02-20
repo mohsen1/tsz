@@ -1,11 +1,11 @@
-You are working in the tsz-10 repository.
+You are working in one of the ~/code/tsz-* repositories. The number in your directory name (e.g., tsz-3) out of the total number of available tsz-* directories dictates your chunk (e.g., 3 out of 12). Calculate your chunk's `--offset` and `--max` (assuming ~12584 total tests) and use them in your `scripts/conformance.sh` runs to focus exclusively on your partition.
 Goal: improve TypeScript conformance parity with small, safe, incremental commits.
 
 Hard requirements for this run:
 1) Pick one high-signal failing conformance case.
 2) Implement a minimal targeted fix.
 3) Run targeted conformance for that case.
-4) Run a broader safety slice (offset 0 max 500) to catch regressions.
+4) Run a broader safety slice (using your chunk's --offset and --max) to catch regressions.
 5) If improved or fixed without regression, create ONE small commit.
 6) Sync with main using: git pull --rebase origin main, then git push origin main.
 7) Do not ask user questions. Keep going until this run is complete.

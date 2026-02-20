@@ -31,7 +31,7 @@ WORKDIR="$(pwd)"
 TIMEOUT_SECONDS="${GEMINI_LOOP_TIMEOUT:-300}"
 SLEEP_SECONDS="${GEMINI_LOOP_SLEEP:-5}"
 CONF_CHUNKS="${GEMINI_LOOP_CONFORMANCE_CHUNKS:-}"
-CONF_TOTAL_FAILURES="${GEMINI_LOOP_CONFORMANCE_TOTAL_FAILURES:-3101}"
+CONF_TOTAL_TESTS="${GEMINI_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -184,14 +184,14 @@ build_prompt() {
     local shard_index shard_label shard_size shard_offset remaining shard_max
     shard_index=$(( (SESSION_ID - 1) % CONF_CHUNKS ))
     shard_label=$(( shard_index + 1 ))
-    shard_size=$(( (CONF_TOTAL_FAILURES + CONF_CHUNKS - 1) / CONF_CHUNKS ))
+    shard_size=$(( (CONF_TOTAL_TESTS + CONF_CHUNKS - 1) / CONF_CHUNKS ))
     shard_offset=$(( shard_index * shard_size ))
-    remaining=$(( CONF_TOTAL_FAILURES - shard_offset ))
+    remaining=$(( CONF_TOTAL_TESTS - shard_offset ))
     shard_max="$shard_size"
     if (( remaining < shard_max )); then
       shard_max=$remaining
     fi
-    prompt="${prompt} Parallel conformance sharding: you own chunk ${shard_label}/${CONF_CHUNKS}. Focus failures with scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max}."
+    prompt="${prompt} Parallel conformance sharding: you own chunk ${shard_label}/${CONF_CHUNKS}. Focus your test slice with scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max}."
   fi
 
   printf '%s
