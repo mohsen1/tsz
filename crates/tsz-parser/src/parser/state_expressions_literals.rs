@@ -137,15 +137,19 @@ impl ParserState {
             }
 
             let has_comma = self.parse_optional(SyntaxKind::CommaToken);
-            if dot_dot_dot && has_comma {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    self.token_pos() - 1, // approximate comma position
-                    1,
-                    "A rest parameter or binding pattern may not have a trailing comma.",
-                    diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
-                );
-            }
+            if dot_dot_dot && has_comma
+                && (self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::CloseBracketToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken))
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        self.token_pos() - 1, // approximate comma position
+                        1,
+                        "A rest parameter or binding pattern may not have a trailing comma.",
+                        diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+                    );
+                }
 
             if !has_comma {
                 if self.is_token(SyntaxKind::CloseBraceToken)
@@ -260,15 +264,19 @@ impl ParserState {
             ));
 
             let has_comma = self.parse_optional(SyntaxKind::CommaToken);
-            if dot_dot_dot && has_comma {
-                use tsz_common::diagnostics::diagnostic_codes;
-                self.parse_error_at(
-                    self.token_pos() - 1, // approximate comma position
-                    1,
-                    "A rest parameter or binding pattern may not have a trailing comma.",
-                    diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
-                );
-            }
+            if dot_dot_dot && has_comma
+                && (self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::CloseBracketToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken))
+                {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        self.token_pos() - 1, // approximate comma position
+                        1,
+                        "A rest parameter or binding pattern may not have a trailing comma.",
+                        diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+                    );
+                }
 
             if !has_comma {
                 break;
