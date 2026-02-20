@@ -623,7 +623,10 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = binder.file_locals.get(import_name) {
                 if let Some(sym) = self.get_symbol_globally(sym_id) {
                     if let Some(augs) = self.ctx.binder.global_augmentations.get(import_name) {
-                        let all_are_global = sym.declarations.iter().all(|d| augs.iter().any(|a| a.node == *d));
+                        let all_are_global = sym
+                            .declarations
+                            .iter()
+                            .all(|d| augs.iter().any(|a| a.node == *d));
                         if all_are_global {
                             symbol_exists = false;
                         }
