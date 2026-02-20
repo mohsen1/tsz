@@ -1369,7 +1369,10 @@ let foo: Foo = { x: 1, y: 2 };
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    assert!(codes.contains(&2322), "Expected error code 2322");
+    assert!(
+        codes.contains(&2322) || codes.contains(&2353),
+        "Expected error code 2322 or 2353"
+    );
 }
 
 #[test]

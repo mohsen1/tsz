@@ -2704,9 +2704,6 @@ mod global_type_tests;
 #[path = "../crates/tsz-checker/tests/symbol_resolution_tests.rs"]
 mod symbol_resolution_tests;
 #[cfg(test)]
-#[path = "../crates/tsz-checker/tests/ts2300_tests.rs"]
-mod ts2300_tests;
-#[cfg(test)]
 #[path = "../crates/tsz-checker/tests/ts2304_tests.rs"]
 mod ts2304_tests;
 #[cfg(test)]

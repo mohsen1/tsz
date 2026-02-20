@@ -637,6 +637,29 @@ impl BinderState {
                     }
                 }
             }
+            k if k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
+                if let Some(export) = arena.get_export_decl(node) {
+                    // export as namespace Name;
+                    if let Some(name) = Self::get_identifier_name(arena, export.export_clause) {
+                        let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
+                        if let Some(sym) = self.symbols.get_mut(sym_id) {
+                            sym.is_exported = true;
+                            sym.declarations.push(idx);
+                            sym.value_declaration = idx;
+                        }
+
+                        // Add to current scope
+                        self.current_scope.set(name.to_string(), sym_id);
+                        self.node_symbols.insert(export.export_clause.0, sym_id);
+
+                        // Add to global (root) scope for UMD visibility
+                        if let Some(root_scope) = self.scopes.first_mut()
+                            && !root_scope.table.has(name) {
+                                root_scope.table.set(name.to_string(), sym_id);
+                            }
+                    }
+                }
+            }
             _ => {
                 self.bind_node_by_node_kind_tail(arena, node, idx);
             }
