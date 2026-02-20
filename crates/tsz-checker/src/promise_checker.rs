@@ -504,13 +504,14 @@ impl<'a> CheckerState<'a> {
         // our inferred return type includes `void` from implicit fall-through,
         // which would incorrectly trigger the skip.
         if has_type_annotation
-            && let Some(members) = query::union_members(self.ctx.types, return_type) {
-                for member in &members {
-                    if *member == TypeId::VOID || *member == TypeId::ANY {
-                        return true;
-                    }
+            && let Some(members) = query::union_members(self.ctx.types, return_type)
+        {
+            for member in &members {
+                if *member == TypeId::VOID || *member == TypeId::ANY {
+                    return true;
                 }
             }
+        }
 
         false
     }
