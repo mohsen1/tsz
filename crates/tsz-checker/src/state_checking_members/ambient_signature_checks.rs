@@ -329,6 +329,34 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TS1221 / TS1222
+        if method.asterisk_token {
+            let in_declared_class = self
+                .ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| c.is_declared);
+            let method_has_declare = self.has_declare_modifier(&method.modifiers);
+            let is_ambient = in_declared_class
+                || method_has_declare
+                || self.ctx.file_name.ends_with(".d.ts")
+                || self.is_ambient_declaration(member_idx);
+
+            if is_ambient {
+                self.error_at_node(
+                    member_idx,
+                    "Generators are not allowed in an ambient context.",
+                    diagnostic_codes::GENERATORS_ARE_NOT_ALLOWED_IN_AN_AMBIENT_CONTEXT,
+                );
+            } else if method.body.is_none() {
+                self.error_at_node(
+                    member_idx,
+                    "An overload signature cannot be declared as a generator.",
+                    diagnostic_codes::AN_OVERLOAD_SIGNATURE_CANNOT_BE_DECLARED_AS_A_GENERATOR,
+                );
+            }
+        }
+
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
         let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
 

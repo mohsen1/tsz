@@ -261,6 +261,23 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             let expression_type = self.checker.get_type_of_node(yield_expr.expression);
             self.checker.ctx.contextual_type = prev_contextual;
             if yield_expr.asterisk_token {
+                let is_iterable = self.checker.is_iterable_type(expression_type);
+                if !is_iterable {
+                    use crate::diagnostics::{
+                        diagnostic_codes, diagnostic_messages, format_message,
+                    };
+                    let type_str = self.checker.format_type(expression_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
+                        &[&type_str],
+                    );
+                    self.checker.error_at_node(
+                        yield_expr.expression,
+                        &message,
+                        diagnostic_codes::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
+                    );
+                }
+
                 let is_async_generator = self
                     .checker
                     .find_enclosing_function(idx)
