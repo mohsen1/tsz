@@ -491,6 +491,9 @@ impl<'a> CheckerState<'a> {
                 "The left-hand side of an assignment expression must be a variable or a property access.",
                 diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MUST_BE_A_VARIABLE_OR_A_PROPERTY,
             );
+            self.get_type_of_node(left_idx);
+            self.get_type_of_node(right_idx);
+            return TypeId::ANY;
         }
 
         // TS2588: Cannot assign to 'x' because it is a constant.
@@ -866,6 +869,9 @@ impl<'a> CheckerState<'a> {
                 "The left-hand side of an assignment expression must be a variable or a property access.",
                 diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_ASSIGNMENT_EXPRESSION_MUST_BE_A_VARIABLE_OR_A_PROPERTY,
             );
+            self.get_type_of_node(left_idx);
+            self.get_type_of_node(right_idx);
+            return TypeId::ANY;
         }
 
         // TS2588: Cannot assign to 'x' because it is a constant.
