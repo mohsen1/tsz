@@ -114,3 +114,6 @@ artifacts/
 session.sh
 
 /.tsz_productivity_log.md
+
+# Gemini fleet manager marker
+/.gemini-fleet-manager
