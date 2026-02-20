@@ -106,12 +106,33 @@ impl<'a> Printer<'a> {
         }
         self.emit_function_parameters_js(&func.parameters.nodes);
         if needs_parens {
+            // Map closing `)` — scan backward from body start since parser
+            // may include `)` in the parameter node's range.
+            if let Some(body_node) = self.arena.get(func.body) {
+                let search_start = func
+                    .parameters
+                    .nodes
+                    .first()
+                    .and_then(|&idx| self.arena.get(idx))
+                    .map_or(0, |n| n.pos);
+                self.map_closing_paren_backward(search_start, body_node.pos);
+            }
             self.write(")");
         }
 
-        // Skip return type for JavaScript
-
-        self.write(" => ");
+        // Map `=>` arrow to source position (split space from token to get correct mapping column)
+        self.write_space();
+        {
+            let search_start = func
+                .parameters
+                .nodes
+                .last()
+                .and_then(|&idx| self.arena.get(idx))
+                .map_or(0, |n| n.end);
+            let search_end = self.arena.get(func.body).map_or(u32::MAX, |n| n.pos);
+            self.map_token_after(search_start, search_end, b'=');
+        }
+        self.write("=> ");
 
         // Body - wrap in parens if it resolves to an object literal
         // (e.g., `a => <any>{}` → `a => ({})` to avoid block ambiguity)
@@ -136,18 +157,11 @@ impl<'a> Printer<'a> {
     fn emit_arrow_function_async_lowered(&mut self, func: &tsz_parser::parser::node::FunctionData) {
         // Don't emit `async` - it's lowered away
 
-        // Parameters (same paren logic as native)
-        let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
-        let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
-        let needs_parens = source_had_parens || !is_simple;
-
-        if needs_parens {
-            self.write("(");
-        }
+        // TSC always wraps parameters in parens when lowering async arrows,
+        // even if the original source had `async x => ...` without parens.
+        self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
-        if needs_parens {
-            self.write(")");
-        }
+        self.write(")");
 
         // For arrow functions on ES2015+, TSC passes `this` to __awaiter if the
         // body references `this`, since the arrow lexically captures `this` from
@@ -430,20 +444,21 @@ impl<'a> Printer<'a> {
         }
         self.write("(");
         self.emit_function_parameters_js(&func.parameters.nodes);
-        // Map closing `)` to its source position
+        // Map closing `)` — scan backward from body start since parser may
+        // include `)` in the last parameter node's range.
         {
             let search_start = func
                 .parameters
                 .nodes
-                .last()
+                .first()
                 .and_then(|&idx| self.arena.get(idx))
-                .map_or(node.pos, |n| n.end);
+                .map_or(node.pos, |n| n.pos);
             let search_end = if !func.body.is_none() {
                 self.arena.get(func.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
             };
-            self.map_token_after(search_start, search_end, b')');
+            self.map_closing_paren_backward(search_start, search_end);
         }
         self.write(") ");
 

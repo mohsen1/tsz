@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
                     for &param_idx in &func_type.parameters.nodes {
                         self.check_parameter_type_for_missing_names(param_idx);
                     }
-                    if !func_type.type_annotation.is_none() {
+                    if func_type.type_annotation.is_some() {
                         self.check_type_for_missing_names(func_type.type_annotation);
                     }
                     self.pop_type_parameters(updates);
@@ -481,10 +481,10 @@ impl<'a> CheckerState<'a> {
                         let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
                         param_binding = Some((name, previous));
                     }
-                    if !mapped.name_type.is_none() {
+                    if mapped.name_type.is_some() {
                         self.check_type_for_missing_names(mapped.name_type);
                     }
-                    if !mapped.type_node.is_none() {
+                    if mapped.type_node.is_some() {
                         self.check_type_for_missing_names(mapped.type_node);
                     } else if self.ctx.no_implicit_any() {
                         // TS7039: Mapped object type implicitly has an 'any' template type
@@ -511,7 +511,7 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::TYPE_PREDICATE => {
                 if let Some(pred) = self.ctx.arena.get_type_predicate(node)
-                    && !pred.type_node.is_none()
+                    && pred.type_node.is_some()
                 {
                     self.check_type_for_missing_names(pred.type_node);
                 }
@@ -589,7 +589,7 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_type_for_missing_names(param_idx);
                 }
             }
-            if !sig.type_annotation.is_none() {
+            if sig.type_annotation.is_some() {
                 self.check_type_for_missing_names(sig.type_annotation);
             }
             self.pop_type_parameters(updates);
@@ -600,7 +600,7 @@ impl<'a> CheckerState<'a> {
             for &param_idx in &index_sig.parameters.nodes {
                 self.check_parameter_type_for_missing_names(param_idx);
             }
-            if !index_sig.type_annotation.is_none() {
+            if index_sig.type_annotation.is_some() {
                 self.check_type_for_missing_names(index_sig.type_annotation);
             }
         }
@@ -630,7 +630,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
-                            if !param.type_annotation.is_none() {
+                            if param.type_annotation.is_some() {
                                 self.check_type_for_parameter_properties(param.type_annotation);
                             }
                             self.maybe_report_implicit_any_parameter(param, false);
@@ -675,7 +675,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
-                            if !param.type_annotation.is_none() {
+                            if param.type_annotation.is_some() {
                                 self.check_type_for_parameter_properties(param.type_annotation);
                             }
                             self.maybe_report_implicit_any_parameter(param, false);
@@ -699,7 +699,7 @@ impl<'a> CheckerState<'a> {
         // Check property signatures for implicit any (error 7008)
         else if node.kind == syntax_kind_ext::PROPERTY_SIGNATURE {
             if let Some(sig) = self.ctx.arena.get_signature(node) {
-                if !sig.type_annotation.is_none() {
+                if sig.type_annotation.is_some() {
                     self.check_type_for_parameter_properties(sig.type_annotation);
                 }
                 // Property signature without type annotation implicitly has 'any' type
@@ -723,7 +723,7 @@ impl<'a> CheckerState<'a> {
             && let Some(accessor) = self.ctx.arena.get_accessor(node)
         {
             // Accessors in type literals and interfaces cannot have implementations
-            if !accessor.body.is_none() {
+            if accessor.body.is_some() {
                 use crate::diagnostics::diagnostic_codes;
                 // Report error on the body
                 self.error_at_node(
@@ -792,7 +792,7 @@ impl<'a> CheckerState<'a> {
                             // Method overload signature - check for implementation
                             let method_name = self.get_method_name_from_node(member_idx);
                             // TSC reports at the method name node, not the declaration
-                            let error_node = if !method.name.is_none() {
+                            let error_node = if method.name.is_some() {
                                 method.name
                             } else {
                                 member_idx
@@ -824,7 +824,7 @@ impl<'a> CheckerState<'a> {
                                             .get(impl_node_idx)
                                             .and_then(|n| self.ctx.arena.get_method_decl(n))
                                             .map(|m| m.name)
-                                            .filter(|n| !n.is_none())
+                                            .filter(|n| n.is_some())
                                             .unwrap_or(impl_node_idx);
                                         self.error_at_node(
                                             impl_error_node,
@@ -893,7 +893,7 @@ impl<'a> CheckerState<'a> {
                 && prev == cur
                 && cur_is_static != prev_is_static
             {
-                let error_node = if !method.name.is_none() {
+                let error_node = if method.name.is_some() {
                     method.name
                 } else {
                     member_idx
@@ -930,11 +930,11 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Skip parameters that have explicit type annotations
-        if !param.type_annotation.is_none() {
+        if param.type_annotation.is_some() {
             return;
         }
         // Check if parameter has an initializer
-        if !param.initializer.is_none() {
+        if param.initializer.is_some() {
             // TypeScript infers type from initializer, EXCEPT for null and undefined
             // Parameters initialized with null/undefined still trigger TS7006
             use tsz_scanner::SyntaxKind;
@@ -1066,12 +1066,12 @@ impl<'a> CheckerState<'a> {
                         if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node)
                         {
                             // Check if this binding element has an initializer
-                            let has_initializer = !binding_elem.initializer.is_none();
+                            let has_initializer = binding_elem.initializer.is_some();
 
                             // If no initializer, report error for implicit any
                             if !has_initializer {
                                 // Get the property name (could be identifier or string literal)
-                                let binding_name = if !binding_elem.property_name.is_none() {
+                                let binding_name = if binding_elem.property_name.is_some() {
                                     self.parameter_name_for_error(binding_elem.property_name)
                                 } else {
                                     self.parameter_name_for_error(binding_elem.name)
@@ -1117,7 +1117,7 @@ impl<'a> CheckerState<'a> {
 
                     // Check if this element is a binding element with initializer
                     if let Some(binding_elem) = self.ctx.arena.get_binding_element(element_node) {
-                        let has_initializer = !binding_elem.initializer.is_none();
+                        let has_initializer = binding_elem.initializer.is_some();
 
                         if !has_initializer {
                             let binding_name = self.parameter_name_for_error(binding_elem.name);

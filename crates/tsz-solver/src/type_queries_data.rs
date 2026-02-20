@@ -5,7 +5,7 @@
 //! a stable API for querying type properties without matching on `TypeData` directly.
 
 use crate::TypeDatabase;
-use crate::types::{TypeData, TypeId};
+use crate::types::{PropertyInfo, TypeData, TypeId};
 use tsz_common::Atom;
 
 // =============================================================================
@@ -371,6 +371,7 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     let key_types: Vec<TypeId> = shape
         .properties
         .iter()
+        .filter(|p| p.visibility == crate::Visibility::Public)
         .map(|p| db.literal_string_atom(p.name))
         .collect();
     Some(crate::utils::union_or_single(db, key_types))
@@ -499,7 +500,7 @@ pub fn find_property_in_object(
     name: Atom,
 ) -> Option<crate::types::PropertyInfo> {
     let shape = get_object_shape(db, type_id)?;
-    shape.properties.iter().find(|p| p.name == name).cloned()
+    PropertyInfo::find_in_slice(&shape.properties, name).cloned()
 }
 
 /// Find a named property in an object type by string name.

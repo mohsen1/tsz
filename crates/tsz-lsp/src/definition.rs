@@ -457,7 +457,7 @@ impl<'a> GoToDefinition<'a> {
                 && let Some(var_data) = self.arena.get_variable_declaration(decl_node)
             {
                 // Check if the initializer is `new ClassName()`
-                if !var_data.initializer.is_none()
+                if var_data.initializer.is_some()
                     && let Some(init_node) = self.arena.get(var_data.initializer)
                     && init_node.kind == syntax_kind_ext::NEW_EXPRESSION
                 {
@@ -687,15 +687,15 @@ impl<'a> GoToDefinition<'a> {
                     syntax_kind_ext::FUNCTION_DECLARATION => self
                         .arena
                         .get_function(node)
-                        .is_some_and(|f| !f.body.is_none()),
+                        .is_some_and(|f| f.body.is_some()),
                     syntax_kind_ext::METHOD_DECLARATION => self
                         .arena
                         .get_method_decl(node)
-                        .is_some_and(|m| !m.body.is_none()),
+                        .is_some_and(|m| m.body.is_some()),
                     syntax_kind_ext::CONSTRUCTOR => self
                         .arena
                         .get_constructor(node)
-                        .is_some_and(|c| !c.body.is_none()),
+                        .is_some_and(|c| c.body.is_some()),
                     _ => false,
                 };
                 if has_body && let Some(info) = infos.get(i) {
@@ -746,7 +746,7 @@ impl<'a> GoToDefinition<'a> {
 
         // Try to find the identifier name node within the declaration
         if let Some(name_idx) = self.get_declaration_name_idx(decl_idx)
-            && !name_idx.is_none()
+            && name_idx.is_some()
             && let Some(name_node) = self.arena.get(name_idx)
         {
             let name_start = self
@@ -852,7 +852,7 @@ impl<'a> GoToDefinition<'a> {
                 // Walk up: VariableDeclaration -> VariableDeclarationList -> VariableStatement
                 if let Some(ext) = self.arena.get_extended(decl_idx) {
                     let parent_idx = ext.parent;
-                    if !parent_idx.is_none() {
+                    if parent_idx.is_some() {
                         // Check if parent is a CatchClause - no contextSpan for catch vars
                         if let Some(parent_node) = self.arena.get(parent_idx)
                             && parent_node.kind == syntax_kind_ext::CATCH_CLAUSE
@@ -861,7 +861,7 @@ impl<'a> GoToDefinition<'a> {
                         }
                         if let Some(parent_ext) = self.arena.get_extended(parent_idx) {
                             let grandparent_idx = parent_ext.parent;
-                            if !grandparent_idx.is_none()
+                            if grandparent_idx.is_some()
                                 && let Some(gp_node) = self.arena.get(grandparent_idx)
                                 && gp_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                             {
@@ -1066,7 +1066,7 @@ impl<'a> GoToDefinition<'a> {
             // Walk up to VariableDeclarationList to check CONST flag
             if let Some(ext) = self.arena.get_extended(decl_idx) {
                 let parent_idx = ext.parent; // VariableDeclarationList
-                if !parent_idx.is_none()
+                if parent_idx.is_some()
                     && let Some(parent_node) = self.arena.get(parent_idx)
                     && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
                     && parent_node.flags as u32 & node_flags::CONST != 0
@@ -1152,7 +1152,7 @@ impl<'a> GoToDefinition<'a> {
         };
 
         // First try symbol.parent (set by binder for enums, lib types)
-        if !symbol.parent.is_none()
+        if symbol.parent.is_some()
             && let Some(parent_symbol) = self.binder.symbols.get(symbol.parent)
         {
             let parent_kind = self.symbol_flags_to_kind_string(parent_symbol.flags);
@@ -1355,7 +1355,7 @@ impl<'a> GoToDefinition<'a> {
 
         // Get the name from the target
         let name = if let Some(name_idx) = self.get_declaration_name_idx(target_idx) {
-            if !name_idx.is_none() {
+            if name_idx.is_some() {
                 self.get_node_text(name_idx)
             } else {
                 String::new()
@@ -1466,7 +1466,7 @@ impl<'a> GoToDefinition<'a> {
     fn is_class_or_interface_member(&self, decl_idx: NodeIndex) -> bool {
         if let Some(ext) = self.arena.get_extended(decl_idx) {
             let parent = ext.parent;
-            if !parent.is_none()
+            if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
             {
                 let k = parent_node.kind;

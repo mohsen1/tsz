@@ -180,6 +180,7 @@ impl<'a> Printer<'a> {
         let mut namespace_name = None;
         let mut value_specs = Vec::new();
         let mut raw_named_bindings = None;
+        let mut trailing_comma = false;
 
         if !clause.name.is_none() {
             has_default = true;
@@ -193,6 +194,8 @@ impl<'a> Printer<'a> {
                     namespace_name = Some(named_imports.name);
                 } else {
                     value_specs = self.collect_value_specifiers(&named_imports.elements);
+                    trailing_comma = self
+                        .has_trailing_comma_in_source(bindings_node, &named_imports.elements.nodes);
                 }
             } else {
                 raw_named_bindings = Some(clause.named_bindings);
@@ -220,6 +223,9 @@ impl<'a> Printer<'a> {
             } else if !value_specs.is_empty() {
                 self.write("{ ");
                 self.emit_comma_separated(&value_specs);
+                if trailing_comma {
+                    self.write(",");
+                }
                 self.write(" }");
             } else if let Some(raw_node) = raw_named_bindings {
                 self.emit(raw_node);
@@ -588,6 +594,9 @@ impl<'a> Printer<'a> {
             } else {
                 self.write("export { ");
                 self.emit_comma_separated(&value_specs);
+                if self.has_trailing_comma_in_source(clause_node, &named_exports.elements.nodes) {
+                    self.write(",");
+                }
                 self.write(" }");
             }
             if !export.module_specifier.is_none() {

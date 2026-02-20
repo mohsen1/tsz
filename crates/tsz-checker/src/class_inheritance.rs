@@ -291,7 +291,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
         exports.get(&name)
     }
 
-    /// Emit TS2506/TS2310 for a symbol
+    /// Emit TS2506 for a class symbol, using the class name node as error span when available.
     fn error_circular_class_inheritance_for_symbol(&mut self, sym_id: SymbolId) {
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
             return;

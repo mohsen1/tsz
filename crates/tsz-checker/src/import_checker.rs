@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
         // For `export = alias` where `alias` comes from `import alias = Namespace`,
         // resolve the namespace target explicitly so named imports can see members.
         if (target_symbol.flags & symbol_flags::ALIAS) != 0 {
-            let decl_idx = if !target_symbol.value_declaration.is_none() {
+            let decl_idx = if target_symbol.value_declaration.is_some() {
                 target_symbol.value_declaration
             } else if let Some(&first_decl) = target_symbol.declarations.first() {
                 first_decl
@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
                 NodeIndex::NONE
             };
 
-            if !decl_idx.is_none()
+            if decl_idx.is_some()
                 && let Some(decl_node) = self.ctx.arena.get(decl_idx)
                 && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
@@ -244,7 +244,7 @@ impl<'a> CheckerState<'a> {
             None => return,
         };
 
-        let has_default_import = !clause.name.is_none();
+        let has_default_import = clause.name.is_some();
         let bindings_node = self.ctx.arena.get(clause.named_bindings);
         let has_named_imports = bindings_node
             .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::NAMED_IMPORTS);
@@ -939,7 +939,7 @@ impl<'a> CheckerState<'a> {
                                 });
                             if is_ambient
                                 && !is_declaration
-                                && !export_data.export_clause.is_none()
+                                && export_data.export_clause.is_some()
                                 && !self.is_identifier_or_qualified_name(export_data.export_clause)
                             {
                                 self.error_at_node(
@@ -1109,7 +1109,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_inside_namespace_declaration(&self, node_idx: NodeIndex) -> bool {
         let mut current = node_idx;
 
-        while !current.is_none() {
+        while current.is_some() {
             let Some(ext) = self.ctx.arena.get_extended(current) else {
                 break;
             };

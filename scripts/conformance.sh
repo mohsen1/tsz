@@ -272,16 +272,20 @@ ensure_cache() {
         return
     fi
 
-    local pinned_version
-    pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"
+    local pinned_version=""
+    if ! pinned_version="$(node -e "const fs = require('fs'); const cfg = JSON.parse(fs.readFileSync('$REPO_ROOT/scripts/typescript-versions.json', 'utf8')); const current = cfg.current; const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm; const fallback = cfg.default && cfg.default.npm; process.stdout.write(mapping || fallback || '');")"; then
+        echo -e "${YELLOW}Failed to read pinned TypeScript version from scripts/typescript-versions.json${NC}"
+        echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
+        return
+    fi
     if [ -z "$pinned_version" ]; then
         echo -e "${YELLOW}Could not resolve pinned TypeScript version from scripts/typescript-versions.json${NC}"
         echo -e "${YELLOW}Proceeding without cache-version validation${NC}"
         return
     fi
 
-    local cache_report
-    cache_report="$(node - "$CACHE_FILE" "$pinned_version" <<'EOF'
+    local cache_report=""
+    if ! cache_report="$(node - "$CACHE_FILE" "$pinned_version" <<'EOF'
 const fs = require('fs');
 const cachePath = process.argv[2];
 const pinnedVersion = process.argv[3];
@@ -326,7 +330,11 @@ if (missing > 0 || mismatch > 0) {
 console.log('ok');
 process.exit(0);
 EOF
-)"
+)"; then
+        # Non-zero exit here means cache metadata is missing/mismatched or cache is invalid.
+        # Preserve cache_report for actionable diagnostics below.
+        :
+    fi
 
     if [ "$cache_report" != "ok" ]; then
         echo -e "${YELLOW}TypeScript cache was generated with a different TypeScript version than pinned:${NC}"

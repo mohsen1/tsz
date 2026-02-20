@@ -230,58 +230,23 @@ impl<'a> CheckerState<'a> {
             .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
             .collect();
 
-        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
-            if let Some(constraint) = param.constraint {
-                // Skip constraint checking when the type argument is an error type
-                // (avoids cascading errors from unresolved references)
-                if type_arg == TypeId::ERROR {
-                    continue;
-                }
+        let symbol_type = self.get_type_of_symbol(sym_id);
 
-                // Skip validation when type arguments contain unresolved type parameters
-                // or infer types. TypeScript defers constraint checking when args aren't
-                // fully concrete (e.g., indexed access `T[K]`, conditional types, etc.)
-                if query::contains_type_parameters(self.ctx.types, type_arg) {
-                    continue;
-                }
+        if self.check_circular_type_arguments(symbol_type, &type_args) {
+            // Report TS4109 at the specific type argument node
+            if let Some(&arg_idx) = type_args_list.nodes.first() {
+                let lib_binders = self.get_lib_binders();
+                let name = self
+                    .ctx
+                    .binder
+                    .get_symbol_with_libs(sym_id, &lib_binders)
+                    .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
 
-                // Resolve the constraint in case it's a Lazy type
-                let constraint = self.resolve_lazy_type(constraint);
-
-                // Instantiate the constraint with type arguments up to and including the
-                // current parameter so self-referential constraints are validated.
-                let mut subst = tsz_solver::TypeSubstitution::new();
-                for (j, p) in type_params.iter().take(i + 1).enumerate() {
-                    if let Some(&arg) = type_args.get(j) {
-                        subst.insert(p.name, arg);
-                    }
-                }
-                let instantiated_constraint = if subst.is_empty() {
-                    constraint
-                } else {
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
-                };
-
-                // Also skip if the instantiated constraint contains type parameters.
-                // This can happen when the constraint references other type params
-                // that weren't fully substituted (e.g., `K extends keyof T` where T
-                // is itself a type parameter from a different context).
-                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
-                    continue;
-                }
-
-                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
-
-                if !is_satisfied {
-                    // Report TS2344 at the specific type argument node
-                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                        self.error_type_constraint_not_satisfied(
-                            type_arg,
-                            instantiated_constraint,
-                            arg_idx,
-                        );
-                    }
-                }
+                self.error_at_node_msg(
+                    arg_idx,
+                    crate::diagnostics::diagnostic_codes::TYPE_ARGUMENTS_FOR_CIRCULARLY_REFERENCE_THEMSELVES,
+                    &[name.as_str()],
+                );
             }
         }
     }

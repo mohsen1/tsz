@@ -146,41 +146,7 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(sf) = self.ctx.arena.get_source_file(node) {
-            let perf_enabled = std::env::var_os("TSZ_PERF").is_some();
-            let perf_log = |phase: &'static str, start: Instant| {
-                if perf_enabled {
-                    tracing::info!(
-                        target: "wasm::perf",
-                        phase,
-                        ms = start.elapsed().as_secs_f64() * 1000.0
-                    );
-                }
-            };
-
-            self.ctx.compiler_options.no_implicit_any =
-                self.resolve_no_implicit_any_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_returns =
-                self.resolve_no_implicit_returns_from_source(&sf.text);
-            self.ctx.compiler_options.use_unknown_in_catch_variables =
-                self.resolve_use_unknown_in_catch_variables_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_this =
-                self.resolve_no_implicit_this_from_source(&sf.text);
-            self.ctx.compiler_options.no_implicit_override =
-                self.resolve_no_implicit_override_from_source(&sf.text);
-            self.ctx.compiler_options.strict_property_initialization =
-                self.resolve_strict_property_initialization_from_source(&sf.text);
-            self.ctx.compiler_options.strict_null_checks =
-                self.resolve_strict_null_checks_from_source(&sf.text);
-            self.ctx.compiler_options.strict_function_types =
-                self.resolve_strict_function_types_from_source(&sf.text);
-            self.ctx.compiler_options.allow_unreachable_code =
-                self.resolve_allow_unreachable_code_from_source(&sf.text);
-            self.ctx.compiler_options.no_unused_locals =
-                self.resolve_no_unused_locals_from_source(&sf.text);
-            self.ctx.compiler_options.no_unused_parameters =
-                self.resolve_no_unused_parameters_from_source(&sf.text);
-            self.ctx.compiler_options.always_strict =
-                self.resolve_always_strict_from_source(&sf.text);
+            self.resolve_compiler_options_from_source(&sf.text);
             if self.has_ts_nocheck_pragma(&sf.text) {
                 return;
             }
@@ -194,7 +160,7 @@ impl<'a> CheckerState<'a> {
             // Without this, TypeData::Ref(Error) returns ERROR, causing TS2339 false positives
             let env_start = Instant::now();
             let populated_env = self.build_type_environment();
-            perf_log("build_type_environment", env_start);
+            tracing::trace!(target: "wasm::perf", phase = "build_type_environment", ms = env_start.elapsed().as_secs_f64() * 1000.0);
             *self.ctx.type_env.borrow_mut() = populated_env.clone();
             // CRITICAL: Also populate type_environment (Rc-wrapped) for FlowAnalyzer
             // This ensures type alias narrowing works during control flow analysis
@@ -236,7 +202,7 @@ impl<'a> CheckerState<'a> {
             // Check for unreachable code at the source file level (TS7027)
             // Must run AFTER statement checking so types are resolved (avoids premature TS7006)
             self.check_unreachable_code_in_block(&sf.statements.nodes);
-            perf_log("check_statements", stmt_start);
+            tracing::trace!(target: "wasm::perf", phase = "check_statements", ms = stmt_start.elapsed().as_secs_f64() * 1000.0);
 
             let post_start = Instant::now();
             // Check for function overload implementations (2389, 2391)
@@ -268,10 +234,10 @@ impl<'a> CheckerState<'a> {
             if self.is_js_file() {
                 let js_start = Instant::now();
                 self.check_js_grammar_statements(&sf.statements.nodes);
-                perf_log("check_js_grammar", js_start);
+                tracing::trace!(target: "wasm::perf", phase = "check_js_grammar", ms = js_start.elapsed().as_secs_f64() * 1000.0);
             }
 
-            perf_log("post_checks", post_start);
+            tracing::trace!(target: "wasm::perf", phase = "post_checks", ms = post_start.elapsed().as_secs_f64() * 1000.0);
         }
     }
 
@@ -362,7 +328,7 @@ impl<'a> CheckerState<'a> {
             // Export declarations may wrap other declarations
             syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export_decl) = self.ctx.arena.get_export_decl_at(stmt_idx)
-                    && !export_decl.export_clause.is_none()
+                    && export_decl.export_clause.is_some()
                 {
                     self.check_js_grammar_statement(export_decl.export_clause);
                 }
@@ -389,7 +355,7 @@ impl<'a> CheckerState<'a> {
         }
 
         for child_idx in self.ctx.arena.get_children(expr_idx) {
-            if !child_idx.is_none() {
+            if child_idx.is_some() {
                 self.check_js_grammar_expression(child_idx);
             }
         }
@@ -485,7 +451,7 @@ impl<'a> CheckerState<'a> {
     fn error_if_ts_only_type_annotation(&mut self, type_annotation: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
-        if !type_annotation.is_none() {
+        if type_annotation.is_some() {
             self.error_at_node(
                 type_annotation,
                 diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -664,7 +630,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // TS8010: Type annotation on parameter
-            if !param.type_annotation.is_none() {
+            if param.type_annotation.is_some() {
                 self.error_at_node(
                     param.type_annotation,
                     diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -783,7 +749,7 @@ impl<'a> CheckerState<'a> {
                         && let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
                     {
                         // TS8010: Type annotation on variable
-                        if !var_decl.type_annotation.is_none() {
+                        if var_decl.type_annotation.is_some() {
                             self.error_at_node(
                                         var_decl.type_annotation,
                                         diagnostic_messages::TYPE_ANNOTATIONS_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
@@ -992,7 +958,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let mut candidate_decls = symbol.declarations.clone();
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             candidate_decls.push(symbol.value_declaration);
         }
 

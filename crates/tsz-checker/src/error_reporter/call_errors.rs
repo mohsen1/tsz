@@ -294,15 +294,13 @@ impl<'a> CheckerState<'a> {
             } else if let Some(detail) = self.elaborate_type_mismatch_detail(arg_type, param_type) {
                 message = format!("{message} {detail}");
             }
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
+            ));
         }
     }
 
@@ -332,15 +330,7 @@ impl<'a> CheckerState<'a> {
     /// TS2556: A spread argument must either have a tuple type or be passed to a rest parameter.
     pub fn error_spread_must_be_tuple_or_rest_at(&mut self, idx: NodeIndex) {
         if let Some(loc) = self.get_source_location(idx) {
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER,
-                category: DiagnosticCategory::Error,
-                message_text: diagnostic_messages::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER.to_string(),
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), diagnostic_messages::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER.to_string(), diagnostic_codes::A_SPREAD_ARGUMENT_MUST_EITHER_HAVE_A_TUPLE_TYPE_OR_BE_PASSED_TO_A_REST_PARAMETER));
         }
     }
 
@@ -354,15 +344,13 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(loc) = self.get_source_location(idx) {
             let message = format!("Expected at least {expected_min} arguments, but got {got}.");
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
+            ));
         }
     }
 
@@ -464,15 +452,13 @@ impl<'a> CheckerState<'a> {
             let message =
                 format!("'{name}' only refers to a type, but is being used as a value here.");
 
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: loc.start,
-                length: loc.length(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::ONLY_REFERS_TO_A_TYPE_BUT_IS_BEING_USED_AS_A_VALUE_HERE,
+            ));
         }
     }
 
@@ -533,14 +519,12 @@ impl<'a> CheckerState<'a> {
             diagnostic_messages::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW
                 .replace("{0}", &type_str);
 
-        self.ctx.diagnostics.push(Diagnostic {
-            code: diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW,
-            category: DiagnosticCategory::Error,
-            message_text: message,
-            file: self.ctx.file_name.clone(),
-            start: loc.start,
-            length: loc.length(),
-            related_information: Vec::new(),
-        });
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            message,
+            diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW,
+        ));
     }
 }

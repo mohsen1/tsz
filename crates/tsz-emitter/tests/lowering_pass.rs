@@ -84,7 +84,7 @@ fn test_lowering_pass_commonjs_export_name_indices() {
     } else {
         stmt_idx
     };
-    assert!(!var_stmt_idx.is_none(), "expected variable statement node");
+    assert!(var_stmt_idx.is_some(), "expected variable statement node");
 
     let directive = transforms
         .get(var_stmt_idx)
@@ -178,7 +178,7 @@ fn test_malformed_arrow_recovery_not_lowered_to_es5_function() {
     let arrow_idx = decl.initializer;
 
     assert!(
-        !arrow_idx.is_none(),
+        arrow_idx.is_some(),
         "expected malformed arrow function initializer"
     );
     assert!(

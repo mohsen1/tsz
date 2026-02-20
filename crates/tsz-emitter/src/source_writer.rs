@@ -158,6 +158,38 @@ impl SourceWriter {
         self.raw_write(text);
     }
 
+    /// Write text derived from a source node with an end-of-token mapping.
+    /// Adds both a start mapping (before the text) and an end mapping (after
+    /// the text) pointing to `source_pos.column + text.len()`.  tsc emits these
+    /// end markers for single-character tokens like `;`, `{`, `}`.
+    pub fn write_node_with_end(&mut self, text: &str, source_pos: SourcePosition) {
+        self.ensure_indent();
+
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column,
+            );
+        }
+
+        self.raw_write(text);
+
+        // End-of-token mapping: generated position is now past the token,
+        // source position advances by the same length.
+        if let Some(ref mut sm) = self.source_map {
+            sm.add_simple_mapping(
+                self.line,
+                self.column,
+                self.current_source_index,
+                source_pos.line,
+                source_pos.column + text.len() as u32,
+            );
+        }
+    }
+
     /// Write an unsigned integer derived from a source node (maps to original position).
     pub fn write_node_usize(&mut self, value: usize, source_pos: SourcePosition) {
         self.ensure_indent();

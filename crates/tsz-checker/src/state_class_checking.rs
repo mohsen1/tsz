@@ -609,7 +609,7 @@ impl<'a> CheckerState<'a> {
             }
 
             for child_idx in self.ctx.arena.get_children(current) {
-                if !child_idx.is_none() {
+                if child_idx.is_some() {
                     stack.push(child_idx);
                 }
             }
@@ -756,7 +756,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the declaration position
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl
@@ -884,7 +884,7 @@ impl<'a> CheckerState<'a> {
         self.check_strict_mode_reserved_name_at(class.name, stmt_idx);
 
         // Check for reserved class names (error 2414)
-        if !class.name.is_none()
+        if class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && ident.escaped_text == "any"
@@ -898,7 +898,7 @@ impl<'a> CheckerState<'a> {
 
         // TS2725: Class name cannot be 'Object' when targeting ES5 and above with module X
         // Only applies to non-ES module kinds (CommonJS, AMD, UMD, System) and non-ambient classes
-        if !class.name.is_none()
+        if class.name.is_some()
             && !self.has_declare_modifier(&class.modifiers)
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
@@ -1149,6 +1149,15 @@ impl<'a> CheckerState<'a> {
         let class_instance_type = self.get_class_instance_type(stmt_idx, class);
         self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
 
+        self.check_class_declaration(stmt_idx);
+
+        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+
+        // Check for decorator-related global types (TS2318)
+        // When experimentalDecorators is enabled and a method/accessor has decorators,
+        // TypedPropertyDescriptor must be available
+        self.check_decorator_global_types(&class.members.nodes);
+
         // Check for decorator-related global types (TS2318)
         // When experimentalDecorators is enabled and a method/accessor has decorators,
         // TypedPropertyDescriptor must be available
@@ -1380,7 +1389,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_scanner::SyntaxKind;
 
-        if !prop.initializer.is_none()
+        if prop.initializer.is_some()
             || prop.question_token
             || prop.exclamation_token
             || self.has_static_modifier(&prop.modifiers)
@@ -1404,7 +1413,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let prop_type = if !prop.type_annotation.is_none() {
+        let prop_type = if prop.type_annotation.is_some() {
             self.get_type_from_type_node(prop.type_annotation)
         } else if let Some(sym_id) = self.ctx.binder.get_node_symbol(member_idx) {
             self.get_type_of_symbol(sym_id)
@@ -1537,7 +1546,7 @@ impl<'a> CheckerState<'a> {
                         &mut then_assigned,
                         tracked,
                     );
-                    if !if_stmt.else_statement.is_none() {
+                    if if_stmt.else_statement.is_some() {
                         self.check_statement_for_early_property_access(
                             if_stmt.else_statement,
                             &mut else_assigned,
@@ -1554,7 +1563,7 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret_stmt) = self.ctx.arena.get_return_statement(node)
-                    && !ret_stmt.expression.is_none()
+                    && ret_stmt.expression.is_some()
                 {
                     self.check_expression_for_early_property_access(
                         ret_stmt.expression,
@@ -1591,7 +1600,7 @@ impl<'a> CheckerState<'a> {
                     for &decl_idx in &var_stmt.declarations.nodes {
                         if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                             && let Some(decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                            && !decl.initializer.is_none()
+                            && decl.initializer.is_some()
                         {
                             self.check_expression_for_early_property_access(
                                 decl.initializer,

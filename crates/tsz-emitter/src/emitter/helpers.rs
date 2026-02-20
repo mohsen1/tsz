@@ -24,6 +24,16 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Write a mapped token and also emit an end-of-token mapping.
+    /// tsc emits these for single-character tokens like `;`, `{`, `}`.
+    pub(super) fn write_with_end_marker(&mut self, text: &str) {
+        if let Some(source_pos) = self.take_pending_source_pos() {
+            self.writer.write_node_with_end(text, source_pos);
+        } else {
+            self.writer.write(text);
+        }
+    }
+
     /// Write identifier text to output with name mapping when available.
     pub(super) fn write_identifier(&mut self, text: &str) {
         if let Some(source_pos) = self.take_pending_source_pos() {
@@ -74,7 +84,7 @@ impl<'a> Printer<'a> {
     /// Write a semicolon (respecting options).
     pub(super) fn write_semicolon(&mut self) {
         if !self.ctx.options.omit_trailing_semicolon {
-            self.write(";");
+            self.write_with_end_marker(";");
         }
     }
 
@@ -92,6 +102,13 @@ impl<'a> Printer<'a> {
     // Source Map Helpers
     // =========================================================================
 
+    /// Set `pending_source_pos` to an exact byte offset in the source text.
+    pub(super) fn map_source_offset(&mut self, offset: u32) {
+        if let Some(text) = self.source_text_for_map() {
+            self.pending_source_pos = Some(source_position_from_offset(text, offset));
+        }
+    }
+
     /// Set `pending_source_pos` to the opening `{` position of a block/node.
     /// Scans forward from node.pos to find the `{` in the source text.
     pub(super) fn map_opening_brace(&mut self, node: &Node) {
@@ -108,6 +125,23 @@ impl<'a> Printer<'a> {
 
     /// Set `pending_source_pos` to the first occurrence of `token` byte found
     /// by scanning forward from `from_pos` within the source text.
+    /// Like `map_token_after`, but scans backward from `from_pos` (exclusive)
+    /// down to `limit` (inclusive) looking for `token`. Used when the parser
+    /// includes a separator (like `,`) in the preceding node's range.
+    pub(super) fn map_token_before(&mut self, from_pos: u32, limit: u32, token: u8) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = (limit as usize).min(bytes.len());
+            let end = (from_pos as usize).min(bytes.len());
+            for i in (start..end).rev() {
+                if bytes[i] == token {
+                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    return;
+                }
+            }
+        }
+    }
+
     pub(super) fn map_token_after(&mut self, from_pos: u32, limit: u32, token: u8) {
         if let Some(text) = self.source_text_for_map() {
             let bytes = text.as_bytes();
@@ -207,6 +241,25 @@ impl<'a> Printer<'a> {
             let end = (node.end as usize).min(bytes.len());
             let start = node.pos as usize;
             // Scan backward to find the last `)`
+            let mut i = end;
+            while i > start {
+                i -= 1;
+                if bytes[i] == b')' {
+                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    return;
+                }
+            }
+        }
+    }
+
+    /// Set `pending_source_pos` to the `)` found by scanning backward from
+    /// `search_end` to `search_start`. Use this for control-flow closing parens
+    /// where the parser may include `)` in the expression node's range.
+    pub(super) fn map_closing_paren_backward(&mut self, search_start: u32, search_end: u32) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let end = (search_end as usize).min(bytes.len());
+            let start = search_start as usize;
             let mut i = end;
             while i > start {
                 i -= 1;
@@ -511,6 +564,17 @@ impl<'a> Printer<'a> {
         let mut prev_end: Option<u32> = None;
         for &idx in nodes {
             if !first {
+                // Map the `,` separator to its source position.
+                // Try forward scan first; if not found (parser may include `,`
+                // in the preceding node's range), scan backward from prev_end.
+                if let Some(pe) = prev_end
+                    && let Some(node) = self.arena.get(idx)
+                {
+                    self.map_token_after(pe, node.pos, b',');
+                    if self.pending_source_pos.is_none() {
+                        self.map_token_before(pe, pe.saturating_sub(2), b',');
+                    }
+                }
                 self.write(", ");
             }
             // Emit comments between the previous node/comma and this node.

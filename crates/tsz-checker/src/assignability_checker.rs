@@ -38,19 +38,8 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn skip_parenthesized_for_assignability(&self, mut idx: NodeIndex) -> NodeIndex {
-        loop {
-            let Some(node) = self.ctx.arena.get(idx) else {
-                return idx;
-            };
-            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                return idx;
-            }
-            let Some(paren) = self.ctx.arena.get_parenthesized(node) else {
-                return idx;
-            };
-            idx = paren.expression;
-        }
+    fn skip_parenthesized_for_assignability(&self, idx: NodeIndex) -> NodeIndex {
+        self.skip_parenthesized_expression(idx)
     }
 
     fn typeof_this_comparison_literal(
@@ -247,7 +236,7 @@ impl<'a> CheckerState<'a> {
 
         let mut current = idx;
         let mut walk_guard = 0;
-        while !current.is_none() {
+        while current.is_some() {
             walk_guard += 1;
             if walk_guard > 512 {
                 break;
@@ -468,8 +457,6 @@ impl<'a> CheckerState<'a> {
         );
         result
     }
-
-    /// Check assignability with strict function-parameter variance.
     ///
     /// This keeps the same checker gateway (resolver + overrides + caches) as
     /// `is_assignable_to`, but forces the strict-function-types relation flag.

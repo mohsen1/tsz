@@ -43,7 +43,7 @@ impl<'a> FlowAnalyzer<'a> {
         if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
             // Get the parent (VARIABLE_DECLARATION_LIST) via extended info
             if let Some(ext) = self.arena.get_extended(decl_id)
-                && !ext.parent.is_none()
+                && ext.parent.is_some()
                 && let Some(parent_node) = self.arena.get(ext.parent)
             {
                 let flags = parent_node.flags as u32;
@@ -104,7 +104,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Check if declaration scope is an ancestor of usage scope
         let mut scope_id = usage_scope_id;
         let mut iterations = 0;
-        while !scope_id.is_none() && iterations < MAX_TREE_WALK_ITERATIONS {
+        while scope_id.is_some() && iterations < MAX_TREE_WALK_ITERATIONS {
             if scope_id == decl_scope_id {
                 return true;
             }

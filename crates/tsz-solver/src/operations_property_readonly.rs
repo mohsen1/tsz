@@ -5,7 +5,7 @@
 
 use crate::TypeDatabase;
 use crate::evaluate::evaluate_type;
-use crate::types::{ObjectShapeId, TypeData, TypeId};
+use crate::types::{ObjectShapeId, PropertyInfo, TypeData, TypeId};
 use crate::utils;
 
 pub fn property_is_readonly(interner: &dyn TypeDatabase, type_id: TypeId, prop_name: &str) -> bool {
@@ -91,7 +91,7 @@ fn indexed_object_property_is_readonly(
     let prop_atom = interner.intern_string(prop_name);
 
     // Check named property first
-    if let Some(prop) = shape.properties.iter().find(|prop| prop.name == prop_atom) {
+    if let Some(prop) = PropertyInfo::find_in_slice(&shape.properties, prop_atom) {
         return prop.readonly;
     }
 

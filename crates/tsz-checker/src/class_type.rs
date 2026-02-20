@@ -246,7 +246,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let signature = self.call_signature_from_method(method);
+                    let signature = self.call_signature_from_method(method, member_idx);
                     let visibility = self.get_visibility_from_modifiers(&method.modifiers);
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
@@ -992,6 +992,10 @@ impl<'a> CheckerState<'a> {
         // This allows get_class_decl_from_type to correctly identify the class
         // for derived classes that have no private/protected members (and thus no brand).
         self.ctx
+            .class_decl_miss_cache
+            .borrow_mut()
+            .remove(&instance_type);
+        self.ctx
             .class_instance_type_to_decl
             .insert(instance_type, class_idx);
 
@@ -1165,8 +1169,11 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_node_symbol(class_idx)
                         .map(|sym_id| self.get_type_of_symbol(sym_id));
-                    let signature =
-                        self.call_signature_from_method_with_this(method, static_this_type);
+                    let signature = self.call_signature_from_method_with_this(
+                        method,
+                        static_this_type,
+                        member_idx,
+                    );
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
                         impl_signatures: Vec::new(),

@@ -34,7 +34,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn find_enclosing_function(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return None;
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
         };
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return None;
@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
         };
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return false;
@@ -146,7 +146,7 @@ impl<'a> CheckerState<'a> {
         };
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return false;
@@ -189,7 +189,7 @@ impl<'a> CheckerState<'a> {
         };
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return false;
@@ -652,7 +652,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn find_enclosing_static_block(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return None;
@@ -694,7 +694,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn is_arguments_in_class_initializer_or_static_block(&self, idx: NodeIndex) -> bool {
         let mut current = idx;
         let mut iterations = 0;
-        while !current.is_none() {
+        while current.is_some() {
             iterations += 1;
             if iterations > MAX_TREE_WALK_ITERATIONS {
                 return false;
@@ -751,7 +751,7 @@ impl<'a> CheckerState<'a> {
     /// Returns Some(NodeIndex) if inside a computed property name, None otherwise.
     pub(crate) fn find_enclosing_computed_property(&self, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(node) = self.ctx.arena.get(current) {
                 if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
                     return Some(current);
@@ -978,7 +978,7 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::syntax_kind_ext::HERITAGE_CLAUSE;
 
         let mut current = idx;
-        while !current.is_none() {
+        while current.is_some() {
             if let Some(node) = self.ctx.arena.get(current) {
                 if node.kind == HERITAGE_CLAUSE {
                     return Some(current);
@@ -1019,7 +1019,7 @@ impl<'a> CheckerState<'a> {
         let mut current = idx;
         for _ in 0..20 {
             let ext = match self.ctx.arena.get_extended(current) {
-                Some(ext) if !ext.parent.is_none() => ext,
+                Some(ext) if ext.parent.is_some() => ext,
                 _ => return false,
             };
             let parent_idx = ext.parent;

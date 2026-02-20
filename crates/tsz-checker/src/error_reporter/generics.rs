@@ -1,8 +1,6 @@
 //! Generic type and comparison error reporting (TS2314, TS2344, TS2367, TS2352).
 
-use crate::diagnostics::{
-    Diagnostic, DiagnosticCategory, diagnostic_codes, diagnostic_messages, format_message,
-};
+use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -25,15 +23,13 @@ impl<'a> CheckerState<'a> {
                 &[name, &required_count.to_string()],
             );
             // Use push_diagnostic for deduplication - same type may be resolved multiple times
-            self.ctx.push_diagnostic(Diagnostic {
-                code: diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.push_diagnostic(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::GENERIC_TYPE_REQUIRES_TYPE_ARGUMENT_S,
+            ));
         }
     }
 
@@ -82,15 +78,13 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
                 &[&type_str, &constraint_str],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                loc.start,
+                loc.length(),
+                message,
+                diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_CONSTRAINT,
+            ));
         }
     }
 
@@ -125,15 +119,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
                 &[result, &left_str, &right_str],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::THIS_COMPARISON_APPEARS_TO_BE_UNINTENTIONAL_BECAUSE_THE_TYPES_AND_HAVE_NO_OVERLA));
         }
     }
 
@@ -152,15 +138,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
                 &[&source_str, &target_str],
             );
-            self.ctx.diagnostics.push(Diagnostic {
-                code: diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV,
-                category: DiagnosticCategory::Error,
-                message_text: message,
-                start: loc.start,
-                length: loc.length(),
-                file: self.ctx.file_name.clone(),
-                related_information: Vec::new(),
-            });
+            self.ctx.diagnostics.push(Diagnostic::error(self.ctx.file_name.clone(), loc.start, loc.length(), message, diagnostic_codes::CONVERSION_OF_TYPE_TO_TYPE_MAY_BE_A_MISTAKE_BECAUSE_NEITHER_TYPE_SUFFICIENTLY_OV));
         }
     }
 

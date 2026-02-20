@@ -785,7 +785,6 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     self.checker.is_assignable_to(expr_type, asserted_type);
                                 let target_to_source =
                                     self.checker.is_assignable_to(asserted_type, expr_type);
-
                                 if !source_to_target && !target_to_source {
                                     // TSC uses isTypeComparableTo which decomposes unions
                                     // and checks per-member overlap. For `X as A | B`, it

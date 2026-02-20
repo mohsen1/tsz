@@ -182,7 +182,7 @@ impl SourceMapGenerator {
         let sources_content = self.sources_content.iter().any(Option::is_some).then(|| {
             self.sources_content
                 .iter()
-                .map(|c| c.clone().unwrap_or_default())
+                .map(|c| c.as_deref().unwrap_or_default().to_string())
                 .collect()
         });
 

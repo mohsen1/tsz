@@ -6,7 +6,7 @@
 //! The trait provides a consistent API for error reporting across the codebase,
 //! eliminating code duplication and making error emission more maintainable.
 
-use crate::diagnostics::{Diagnostic, DiagnosticCategory};
+use crate::diagnostics::Diagnostic;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -132,9 +132,6 @@ pub trait ErrorHandler {
     /// Emit a "class constructor without new" error (TS2350).
     fn emit_class_constructor_without_new(&mut self, type_id: TypeId, idx: NodeIndex);
 
-    /// Emit a "cannot instantiate abstract class" error (TS2511).
-    fn emit_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex);
-
     /// Emit an "abstract property in constructor" error (TS2715).
     fn emit_abstract_property_in_constructor(
         &mut self,
@@ -256,15 +253,13 @@ impl<'a> DiagnosticBuilder<'a> {
 
     /// Build the diagnostic.
     pub fn build(self) -> Diagnostic {
-        Diagnostic {
-            file: self.file_name.to_string(),
-            start: self.start,
-            length: self.length,
-            message_text: self.message,
-            category: DiagnosticCategory::Error,
-            code: self.code,
-            related_information: Vec::new(),
-        }
+        Diagnostic::error(
+            self.file_name.to_string(),
+            self.start,
+            self.length,
+            self.message,
+            self.code,
+        )
     }
 }
 
@@ -281,15 +276,13 @@ impl<'a> ErrorHandler for CheckerState<'a> {
     }
 
     fn emit_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
-        self.ctx.diagnostics.push(Diagnostic {
-            file: self.ctx.file_name.clone(),
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
             start,
             length,
-            message_text: message.to_string(),
-            category: DiagnosticCategory::Error,
+            message.to_string(),
             code,
-            related_information: Vec::new(),
-        });
+        ));
     }
 
     fn emit_diagnostic(&mut self, diagnostic: Diagnostic) {
@@ -403,10 +396,6 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         self.error_class_constructor_without_new_at(type_id, idx);
     }
 
-    fn emit_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex) {
-        self.report_cannot_instantiate_abstract_class(class_name, idx);
-    }
-
     fn emit_abstract_property_in_constructor(
         &mut self,
         prop_name: &str,
@@ -491,15 +480,13 @@ impl<'a> ErrorHandler for CheckerState<'a> {
         if let Some((start, end)) = self.get_node_span(idx) {
             let length = end.saturating_sub(start);
             let file = &self.ctx.file_name;
-            self.ctx.diagnostics.push(Diagnostic {
-                file: file.clone(),
+            self.ctx.diagnostics.push(Diagnostic::error(
+                file.clone(),
                 start,
                 length,
-                message_text: diagnostic_messages::A_GET_ACCESSOR_MUST_RETURN_A_VALUE.to_string(),
-                category: crate::diagnostics::DiagnosticCategory::Error,
-                code: diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
-                related_information: Vec::new(),
-            });
+                diagnostic_messages::A_GET_ACCESSOR_MUST_RETURN_A_VALUE.to_string(),
+                diagnostic_codes::A_GET_ACCESSOR_MUST_RETURN_A_VALUE,
+            ));
         }
     }
 
@@ -610,10 +597,6 @@ impl<'a> ErrorHandler for &mut CheckerState<'a> {
 
     fn emit_class_constructor_without_new(&mut self, type_id: TypeId, idx: NodeIndex) {
         (*self).emit_class_constructor_without_new(type_id, idx);
-    }
-
-    fn emit_cannot_instantiate_abstract_class(&mut self, class_name: &str, idx: NodeIndex) {
-        (*self).emit_cannot_instantiate_abstract_class(class_name, idx);
     }
 
     fn emit_abstract_property_in_constructor(

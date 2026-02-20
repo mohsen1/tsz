@@ -1036,7 +1036,6 @@ generate_deeppartial_optional_chain_file() {
     cat > "$output" << 'HEADER'
 // DeepPartial + optional-chain hotspot benchmark.
 // This isolates recursive mapped-type expansion on repeated property access.
-/// <reference lib="es2015.promise" />
 
 type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
 type Normalize<T> = T extends object ? { [P in keyof T]: Normalize<T[P]> } : T;
@@ -1059,44 +1058,22 @@ interface RetryOptions {
         };
     };
 }
-
-interface Result<T, E = Error> {
-    ok: boolean;
-    value?: T;
-    error?: E;
-}
-
 HEADER
+
+    local score_expr='(options?.timeout ?? 1000) + (options?.nested?.transport?.backoff?.base ?? 10) + (options?.nested?.transport?.backoff?.max ?? 100) + (options?.nested?.transport?.backoff?.jitter ?? 1) + (options?.nested?.flags?.safe ? 1 : 0) + (options?.nested?.flags?.fast ? 1 : 0) + (options?.retries ?? 3)'
 
     for ((i=0; i<func_count; i++)); do
         cat >> "$output" << EOF
-async function deepPartialHotspot$i<T extends Record<string, unknown>>(
-    input: T,
+function deepPartialHotspot$i(
     options?: DeepInput<RetryOptions>
-): Promise<Result<T>> {
-    const timeout = options?.timeout ?? 1000;
-    const base = options?.nested?.transport?.backoff?.base ?? 10;
-    const max = options?.nested?.transport?.backoff?.max ?? 100;
-    const jitter = options?.nested?.transport?.backoff?.jitter ?? 1;
-    const safe = options?.nested?.flags?.safe ?? true;
-    const fast = options?.nested?.flags?.fast ?? false;
-    const retries = options?.retries ?? (safe ? 3 : 1);
-
-    for (let attempt = 0; attempt < retries; attempt++) {
-        try {
-            const result = await Promise.resolve(input);
-            const budget = timeout + base + max + jitter + (fast ? 1 : 0);
-            if (budget < 0) {
-                throw new Error('timeout');
-            }
-            return { ok: true, value: result };
-        } catch (e) {
-            if (attempt === retries - 1) {
-                return { ok: false, error: e as Error };
-            }
-        }
-    }
-    return { ok: false, error: new Error('exhausted') };
+): number {
+    let score = 0;
+EOF
+        for ((j=0; j<34; j++)); do
+            printf '    score += %s;\n' "$score_expr" >> "$output"
+        done
+        cat >> "$output" << 'EOF'
+    return score;
 }
 
 EOF
@@ -1110,7 +1087,6 @@ generate_shallow_optional_chain_file() {
     cat > "$output" << 'HEADER'
 // Shallow optional-chain control benchmark.
 // Same structure as DeepPartial hotspot but without recursive mapped types.
-/// <reference lib="es2015.promise" />
 
 interface RetryOptionsShallow {
     timeout?: number;
@@ -1129,50 +1105,27 @@ interface RetryOptionsShallow {
         };
     };
 }
-
-interface Result<T, E = Error> {
-    ok: boolean;
-    value?: T;
-    error?: E;
-}
-
 HEADER
+
+    local score_expr='(options?.timeout ?? 1000) + (options?.nested?.transport?.backoff?.base ?? 10) + (options?.nested?.transport?.backoff?.max ?? 100) + (options?.nested?.transport?.backoff?.jitter ?? 1) + (options?.nested?.flags?.safe ? 1 : 0) + (options?.nested?.flags?.fast ? 1 : 0) + (options?.retries ?? 3)'
 
     for ((i=0; i<func_count; i++)); do
         cat >> "$output" << EOF
-async function shallowOptionalControl$i<T extends Record<string, unknown>>(
-    input: T,
+function shallowOptionalControl$i(
     options?: RetryOptionsShallow
-): Promise<Result<T>> {
-    const timeout = options?.timeout ?? 1000;
-    const base = options?.nested?.transport?.backoff?.base ?? 10;
-    const max = options?.nested?.transport?.backoff?.max ?? 100;
-    const jitter = options?.nested?.transport?.backoff?.jitter ?? 1;
-    const safe = options?.nested?.flags?.safe ?? true;
-    const fast = options?.nested?.flags?.fast ?? false;
-    const retries = options?.retries ?? (safe ? 3 : 1);
-
-    for (let attempt = 0; attempt < retries; attempt++) {
-        try {
-            const result = await Promise.resolve(input);
-            const budget = timeout + base + max + jitter + (fast ? 1 : 0);
-            if (budget < 0) {
-                throw new Error('timeout');
-            }
-            return { ok: true, value: result };
-        } catch (e) {
-            if (attempt === retries - 1) {
-                return { ok: false, error: e as Error };
-            }
-        }
-    }
-    return { ok: false, error: new Error('exhausted') };
+): number {
+    let score = 0;
+EOF
+        for ((j=0; j<34; j++)); do
+            printf '    score += %s;\n' "$score_expr" >> "$output"
+        done
+        cat >> "$output" << 'EOF'
+    return score;
 }
 
 EOF
     done
 }
-
 generate_typed_arrays_file() {
     local output="$1"
 

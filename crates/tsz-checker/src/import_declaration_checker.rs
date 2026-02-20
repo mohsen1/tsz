@@ -7,7 +7,6 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
-use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -109,7 +108,7 @@ impl<'a> CheckerState<'a> {
             let mut namespace_is_exported = false;
             let mut containing_module_name: Option<String> = None;
 
-            while !current.is_none() {
+            while current.is_some() {
                 if let Some(node) = self.ctx.arena.get(current) {
                     if node.kind == syntax_kind_ext::MODULE_DECLARATION {
                         // Check if this is an ambient module (declare module "...") or namespace
@@ -418,15 +417,14 @@ impl<'a> CheckerState<'a> {
             } else {
                 (message, code)
             };
-            self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
-                code,
-                category: crate::diagnostics::DiagnosticCategory::Error,
-                message_text: message,
-                file: self.ctx.file_name.clone(),
-                start: spec_start,
-                length: spec_length,
-                related_information: Vec::new(),
-            });
+            self.ctx
+                .push_diagnostic(crate::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    spec_start,
+                    spec_length,
+                    message,
+                    code,
+                ));
             return;
         }
 
@@ -494,9 +492,8 @@ impl<'a> CheckerState<'a> {
     /// Check a namespace import (import x = Namespace or import x = Namespace.Member).
     /// Emits TS2503 "Cannot find namespace" if the namespace cannot be resolved.
     /// Emits TS2708 "Cannot use namespace as a value" if exporting a type-only member.
-    fn check_namespace_import(&mut self, stmt_idx: NodeIndex, module_ref: NodeIndex) {
+    fn check_namespace_import(&mut self, _stmt_idx: NodeIndex, module_ref: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
-        use tsz_binder::symbol_flags;
 
         let Some(ref_node) = self.ctx.arena.get(module_ref) else {
             return;
@@ -545,82 +542,10 @@ impl<'a> CheckerState<'a> {
                 // Use the existing report_type_query_missing_member which handles this correctly
                 self.report_type_query_missing_member(module_ref);
 
-                // TS2708: Check if export import is used with a namespace member
-                // When you have `export import a = NS.Member`, if NS contains only types,
-                // you cannot export it as a value.
-                // Check if the parent node is an EXPORT_DECLARATION (for `export import`)
-                let mut is_exported = self.has_export_modifier(stmt_idx);
-                if !is_exported
-                    && let Some(ext) = self.ctx.arena.get_extended(stmt_idx)
-                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                    && parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
-                {
-                    is_exported = true;
-                }
-                if is_exported {
-                    if self.is_unresolved_import_symbol(qn.left) {
-                        return;
-                    }
-                    // Check if the left (namespace) is type-only by checking if it has
-                    // any value members. For now, emit TS2708 if we're exporting an import
-                    // from a namespace that contains a type member.
-                    // Try to resolve the qualified name to check if it's type-only
-                    if let Some(resolved_sym) = self.resolve_qualified_symbol(module_ref) {
-                        let lib_binders = self.get_lib_binders();
-                        if let Some(symbol) = self
-                            .ctx
-                            .binder
-                            .get_symbol_with_libs(resolved_sym, &lib_binders)
-                        {
-                            // Check if this is a type-only symbol (interface or type alias)
-                            let is_type_only = (symbol.flags
-                                & (symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS))
-                                != 0;
-                            if is_type_only {
-                                if self.should_suppress_namespace_value_error_for_failed_import(
-                                    qn.left,
-                                ) {
-                                    return;
-                                }
-                                // Emit TS2708: Cannot use namespace as a value
-                                // The error message mentions the namespace, not the member
-                                self.error_namespace_used_as_value_at(&name, qn.left);
-                            }
-                        }
-                    } else {
-                        // Even if we can't resolve the full qualified name (TS2694 case),
-                        // check if the namespace contains only types
-                        if let Some(left_sym) = self.resolve_qualified_symbol(qn.left) {
-                            let lib_binders = self.get_lib_binders();
-                            if let Some(ns_symbol) =
-                                self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders)
-                            {
-                                // Check if namespace exports table contains any value symbols
-                                let has_value_exports = if let Some(exports) = &ns_symbol.exports {
-                                    exports.as_ref().iter().any(|(_, &sym_id)| {
-                                        if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
-                                            (sym.flags & symbol_flags::VALUE) != 0
-                                        } else {
-                                            false
-                                        }
-                                    })
-                                } else {
-                                    false
-                                };
-
-                                // If namespace has no value exports, emit TS2708
-                                if !has_value_exports {
-                                    if self.should_suppress_namespace_value_error_for_failed_import(
-                                        qn.left,
-                                    ) {
-                                        return;
-                                    }
-                                    self.error_namespace_used_as_value_at(&name, qn.left);
-                                }
-                            }
-                        }
-                    }
-                }
+                // Note: TS2708 for namespace-as-value is NOT emitted here for import equals
+                // declarations. `export import X = NS.TypeMember` is valid even when the
+                // member is type-only. TS2708 is emitted at usage sites (property access,
+                // call expressions, extends clauses) when a namespace is used as a value.
             }
         }
     }
@@ -652,95 +577,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    fn should_suppress_namespace_value_error_for_failed_import(&self, left_idx: NodeIndex) -> bool {
-        let Some(left_sym) = self.resolve_leftmost_qualified_name(left_idx) else {
-            return false;
-        };
-
-        let lib_binders = self.get_lib_binders();
-        let Some(symbol) = self.ctx.binder.get_symbol_with_libs(left_sym, &lib_binders) else {
-            return false;
-        };
-
-        if (symbol.flags & symbol_flags::ALIAS) == 0 {
-            return false;
-        }
-
-        let decl_idx = if !symbol.value_declaration.is_none() {
-            symbol.value_declaration
-        } else if let Some(&first) = symbol.declarations.first() {
-            first
-        } else {
-            return false;
-        };
-
-        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
-            return false;
-        };
-
-        let module_name = if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-            let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node) else {
-                return false;
-            };
-            let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
-                return false;
-            };
-            if module_node.kind != SyntaxKind::StringLiteral as u16 {
-                return false;
-            }
-            let Some(literal) = self.ctx.arena.get_literal(module_node) else {
-                return false;
-            };
-            literal.text.as_str()
-        } else if decl_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
-            || decl_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
-            || decl_node.kind == syntax_kind_ext::IMPORT_CLAUSE
-        {
-            let mut current = decl_idx;
-            let mut import_decl_idx = None;
-            for _ in 0..4 {
-                let Some(ext) = self.ctx.arena.get_extended(current) else {
-                    break;
-                };
-                let parent = ext.parent;
-                let Some(parent_node) = self.ctx.arena.get(parent) else {
-                    break;
-                };
-                if parent_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                    import_decl_idx = Some(parent);
-                    break;
-                }
-                current = parent;
-            }
-
-            let Some(import_decl_idx) = import_decl_idx else {
-                return false;
-            };
-            let Some(import_decl_node) = self.ctx.arena.get(import_decl_idx) else {
-                return false;
-            };
-            let Some(import_decl) = self.ctx.arena.get_import_decl(import_decl_node) else {
-                return false;
-            };
-            let Some(module_node) = self.ctx.arena.get(import_decl.module_specifier) else {
-                return false;
-            };
-            if module_node.kind != SyntaxKind::StringLiteral as u16 {
-                return false;
-            }
-            let Some(literal) = self.ctx.arena.get_literal(module_node) else {
-                return false;
-            };
-            literal.text.as_str()
-        } else {
-            return false;
-        };
-
-        self.ctx.modules_with_ts2307_emitted.contains(module_name)
-            || (!self.module_exists_cross_file(module_name)
-                && !self.is_ambient_module_match(module_name))
-    }
-
     // =========================================================================
     // Import Declaration Validation
     // =========================================================================
@@ -760,7 +596,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check default import name: `import package from "./mod"`
-        if !clause.name.is_none()
+        if clause.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(clause.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
             && is_strict_mode_reserved_name(&ident.escaped_text)
@@ -787,7 +623,7 @@ impl<'a> CheckerState<'a> {
         if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
             // `import * as package from "./mod"` — check the alias name
             if let Some(ns_data) = self.ctx.arena.get_named_imports(bindings_node)
-                && !ns_data.name.is_none()
+                && ns_data.name.is_some()
                 && let Some(name_node) = self.ctx.arena.get(ns_data.name)
                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                 && is_strict_mode_reserved_name(&ident.escaped_text)

@@ -451,6 +451,30 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // Explicit duplicate-class guard: class declarations cannot merge
+            // with other class declarations (only with namespaces/interfaces).
+            // Emit TS2300 for duplicate class declarations in the same symbol set.
+            let local_class_decls: Vec<NodeIndex> = declarations
+                .iter()
+                .filter(|(_, flags, is_local, _)| *is_local && (flags & symbol_flags::CLASS) != 0)
+                .map(|(decl_idx, _, _, _)| *decl_idx)
+                .collect();
+            if local_class_decls.len() > 1 {
+                let message = format_message(
+                    diagnostic_messages::DUPLICATE_IDENTIFIER,
+                    &[&symbol.escaped_name],
+                );
+                for decl_idx in local_class_decls {
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    );
+                }
+                continue;
+            }
+
             // TS2395
             let mut has_ts2395 = false;
             {
@@ -863,65 +887,79 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2813 + TS2814
-            let has_class_function_conflict = {
+            // TS2813 + TS2814: Class-function merge conflict.
+            // `declare class` + `function` is a valid merge in TypeScript (ambient class).
+            // Only non-ambient class + function triggers these errors.
+            {
                 let has_class = declarations.iter().any(|(decl_idx, flags, _, _)| {
                     conflicts.contains(decl_idx) && (flags & symbol_flags::CLASS) != 0
                 });
                 let has_function = declarations.iter().any(|(decl_idx, flags, _, _)| {
                     conflicts.contains(decl_idx) && (flags & symbol_flags::FUNCTION) != 0
                 });
-                has_class && has_function
-            };
 
-            if has_class_function_conflict {
-                let name = symbol.escaped_name.clone();
-                for &(decl_idx, flags, is_local, _) in &declarations {
-                    if is_local
-                        && conflicts.contains(&decl_idx)
-                        && (flags & symbol_flags::CLASS) != 0
-                    {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        let message = format_message(
-                            diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
-                            &[&name],
-                        );
-                        self.error_at_node(
-                            error_node,
-                            &message,
-                            diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
-                        );
+                if has_class && has_function {
+                    // Check if ALL class declarations in conflicts are ambient
+                    let all_classes_ambient = declarations.iter().all(|(decl_idx, flags, _, _)| {
+                        !conflicts.contains(decl_idx)
+                            || (flags & symbol_flags::CLASS) == 0
+                            || self.is_ambient_declaration(*decl_idx)
+                    });
+
+                    if !all_classes_ambient {
+                        // Non-ambient class + function: emit TS2813/TS2814
+                        let name = symbol.escaped_name.clone();
+                        for &(decl_idx, flags, is_local, _) in &declarations {
+                            if is_local
+                                && conflicts.contains(&decl_idx)
+                                && (flags & symbol_flags::CLASS) != 0
+                            {
+                                let error_node =
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                                let message = format_message(
+                                    diagnostic_messages::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                                    &[&name],
+                                );
+                                self.error_at_node(
+                                    error_node,
+                                    &message,
+                                    diagnostic_codes::CLASS_DECLARATION_CANNOT_IMPLEMENT_OVERLOAD_LIST_FOR,
+                                );
+                            }
+                        }
+                        for &(decl_idx, flags, is_local, _) in &declarations {
+                            if is_local
+                                && conflicts.contains(&decl_idx)
+                                && (flags & symbol_flags::FUNCTION) != 0
+                            {
+                                let error_node =
+                                    self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                                self.error_at_node(
+                                    error_node,
+                                    diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                                    diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
+                                );
+                            }
+                        }
                     }
-                }
-                for &(decl_idx, flags, is_local, _) in &declarations {
-                    if is_local
-                        && conflicts.contains(&decl_idx)
-                        && (flags & symbol_flags::FUNCTION) != 0
-                    {
-                        let error_node =
-                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                        self.error_at_node(
-                            error_node,
-                            diagnostic_messages::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
-                            diagnostic_codes::FUNCTION_WITH_BODIES_CAN_ONLY_MERGE_WITH_CLASSES_THAT_ARE_AMBIENT,
-                        );
+
+                    // Remove class+function from conflicts in both cases
+                    // (ambient = valid merge, non-ambient = already reported TS2813/2814)
+                    let class_function_indices: Vec<NodeIndex> = declarations
+                        .iter()
+                        .filter(|(decl_idx, flags, _, _)| {
+                            conflicts.contains(decl_idx)
+                                && ((flags & symbol_flags::CLASS) != 0
+                                    || (flags & symbol_flags::FUNCTION) != 0)
+                        })
+                        .map(|(idx, _, _, _)| *idx)
+                        .collect();
+                    for idx in class_function_indices {
+                        conflicts.remove(&idx);
                     }
-                }
-                let class_function_indices: Vec<NodeIndex> = declarations
-                    .iter()
-                    .filter(|(decl_idx, flags, _, _)| {
-                        conflicts.contains(decl_idx)
-                            && ((flags & symbol_flags::CLASS) != 0
-                                || (flags & symbol_flags::FUNCTION) != 0)
-                    })
-                    .map(|(idx, _, _, _)| *idx)
-                    .collect();
-                for idx in class_function_indices {
-                    conflicts.remove(&idx);
-                }
-                if conflicts.is_empty() {
-                    continue;
+                    if conflicts.is_empty() {
+                        continue;
+                    }
                 }
             }
 
