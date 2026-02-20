@@ -549,4 +549,62 @@ impl<'a> CheckerState<'a> {
         // Fallback: use synthetic PROMISE_BASE (works without lib files)
         factory.application(TypeId::PROMISE_BASE, vec![inner_type])
     }
+
+    /// Check `export { x };` (local named exports)
+    /// Emits TS2661 if exporting a non-local declaration.
+    pub(crate) fn check_local_named_exports(
+        &mut self,
+        named_exports_idx: tsz_parser::parser::NodeIndex,
+    ) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(named_exports_idx) else {
+            return;
+        };
+        if clause_node.kind != syntax_kind_ext::NAMED_EXPORTS {
+            return;
+        }
+
+        let Some(named_exports) = self.ctx.arena.get_named_imports(clause_node) else {
+            return;
+        };
+
+        for &specifier_idx in &named_exports.elements.nodes {
+            let Some(spec_node) = self.ctx.arena.get(specifier_idx) else {
+                continue;
+            };
+            let Some(specifier) = self.ctx.arena.get_specifier(spec_node) else {
+                continue;
+            };
+
+            // Skip type-only re-exports since they are not runtime symbols
+            if specifier.is_type_only {
+                continue;
+            }
+
+            let name_idx = if !specifier.property_name.is_none() {
+                specifier.property_name
+            } else {
+                specifier.name
+            };
+            if name_idx.is_none() {
+                continue;
+            }
+
+            let name_str = self
+                .get_identifier_text_from_idx(name_idx)
+                .unwrap_or_else(|| String::from("unknown"));
+
+            if self.ctx.binder.file_locals.get(&name_str).is_none() {
+                // If it resolves to something globally but is not local, emit TS2661
+                if self.resolve_identifier_symbol(name_idx).is_some() {
+                    self.error_at_node_msg(
+                        name_idx,
+                        crate::diagnostics::diagnostic_codes::CANNOT_EXPORT_ONLY_LOCAL_DECLARATIONS_CAN_BE_EXPORTED_FROM_A_MODULE,
+                        &[&name_str],
+                    );
+                }
+            }
+        }
+    }
 }

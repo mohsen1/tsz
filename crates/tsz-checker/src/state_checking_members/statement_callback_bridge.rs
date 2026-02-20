@@ -591,6 +591,16 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 let clause_idx = export_decl.export_clause;
                 self.check_statement(clause_idx);
 
+                if export_decl.module_specifier.is_none()
+                    && self
+                        .ctx
+                        .arena
+                        .get(clause_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
+                    {
+                        self.check_local_named_exports(clause_idx);
+                    }
+
                 let is_inline_object_literal =
                     self.ctx.arena.get(clause_idx).is_some_and(|clause_node| {
                         if clause_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
