@@ -229,7 +229,7 @@ const foo = function() {
 /// as always-reachable and doesn't properly enforce block scoping.
 /// This is unrelated to the var hoisting fix and should be investigated separately.
 #[test]
-#[ignore]
+#[ignore = "CFA treats if(true) as always-reachable, bypasses block scoping"]
 fn test_let_const_not_hoisted() {
     let source = r#"
 function foo() {
