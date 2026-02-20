@@ -295,47 +295,46 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        // Check if it's a variable declaration
-        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return false;
+        let mut decl_node = decl_node;
+        let mut decl_id_to_check = decl_id;
+        if decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(info) = self.ctx.arena.node_info(decl_id)
+            && let Some(parent) = self.ctx.arena.get(info.parent)
+        {
+            decl_node = parent;
+            decl_id_to_check = info.parent;
         }
 
-        // Get the variable declaration data
-        let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) else {
-            return false;
-        };
+        let (has_initializer, has_exclamation) =
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+                let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) else {
+                    return false;
+                };
+                (var_data.initializer.is_some(), var_data.exclamation_token)
+            } else if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+                let Some(_var_data) = self.ctx.arena.get_binding_element(decl_node) else {
+                    return false;
+                };
+                (true, false)
+            } else {
+                return false;
+            };
 
         // If there's an initializer, skip definite assignment check — unless the variable
         // is `var` (function-scoped) and the usage is before the declaration in source
         // order.  `var` hoists the binding but NOT the initializer, so at the usage
         // point the variable is `undefined`.  Block-scoped variables (let/const) don't
         // need this: TDZ checks handle pre-declaration use separately.
-        if var_data.initializer.is_some() {
+        if has_initializer {
             let is_function_scoped =
                 symbol.flags & tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE != 0;
             if !is_function_scoped {
                 return false;
             }
-            // For `var` with initializer, only proceed when usage is before the
-            // declaration in source order (the initializer hasn't executed yet).
-            let usage_before_decl = self
-                .ctx
-                .arena
-                .get(idx)
-                .and_then(|usage_node| {
-                    self.ctx
-                        .arena
-                        .get(decl_id)
-                        .map(|decl_node| usage_node.pos < decl_node.pos)
-                })
-                .unwrap_or(false);
-            if !usage_before_decl {
-                return false;
-            }
         }
 
         // If there's a definite assignment assertion (!), skip check
-        if var_data.exclamation_token {
+        if has_exclamation {
             return false;
         }
 
@@ -343,7 +342,7 @@ impl<'a> CheckerState<'a> {
         // it's assigned by the loop iteration itself - but only when usage is at or after the loop.
         // A usage BEFORE the loop in source order (e.g. `v; for (var v of [0]) {}`) must still
         // be checked for definite assignment.
-        if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id) {
+        if let Some(decl_list_info) = self.ctx.arena.node_info(decl_id_to_check) {
             let decl_list_idx = decl_list_info.parent;
             if let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
                 && decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
@@ -370,7 +369,9 @@ impl<'a> CheckerState<'a> {
 
         // For source-file globals, skip TS2454 when the usage occurs inside a
         // function-like body. The variable may be assigned before invocation.
-        if self.is_source_file_global_var_decl(decl_id) && self.is_inside_function_like(idx) {
+        if self.is_source_file_global_var_decl(decl_id_to_check)
+            && self.is_inside_function_like(idx)
+        {
             return false;
         }
 
@@ -379,14 +380,14 @@ impl<'a> CheckerState<'a> {
         // Flow analysis can't cross namespace boundaries, and the variable may
         // be assigned in the outer namespace before the inner namespace executes.
         // Same-namespace usage still gets TS2454 (flow analysis works within a scope).
-        if self.is_usage_in_nested_namespace_from_decl(decl_id, idx) {
+        if self.is_usage_in_nested_namespace_from_decl(decl_id_to_check, idx) {
             return false;
         }
 
         // Walk up the parent chain to check:
         // 1. Skip definite assignment checks in ambient declarations (declare const/let)
         // 2. Anchor checks to a function-like or source-file container
-        let mut current = decl_id;
+        let mut current = decl_id_to_check;
         let mut found_container_scope = false;
         for _ in 0..50 {
             let Some(info) = self.ctx.arena.node_info(current) else {
