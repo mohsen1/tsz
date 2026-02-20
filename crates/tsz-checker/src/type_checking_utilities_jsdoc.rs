@@ -790,12 +790,21 @@ impl<'a> CheckerState<'a> {
 
     /// Helper to check if a @param text (after "@param") matches a parameter name.
     /// Handles nested braces in type expressions like `{{ x: T, y: T}}`.
+    /// Also handles alternate `@param name {type}` syntax (name before type).
     fn check_param_text(text: &str, param_name: &str) -> bool {
         let rest = text.trim();
-        // Must have a type in braces: @param {type} name
+
+        // Handle alternate syntax: @param `name` {type} or @param name {type}
+        // where the name comes before the type
         if !rest.starts_with('{') {
-            return false;
+            // Could be `name` {type} or name {type}
+            let name_part = rest.split_whitespace().next().unwrap_or("");
+            let name_part = name_part.trim_matches('`');
+            let decoded = Self::decode_unicode_escapes(name_part);
+            return decoded == param_name;
         }
+
+        // Standard syntax: @param {type} name
         // Find matching closing brace, handling nesting
         let mut depth = 0;
         let mut brace_end = None;
@@ -825,10 +834,70 @@ impl<'a> CheckerState<'a> {
         let name = name.trim_end_matches(']');
         // Handle backtick-quoted names like `args`
         let name = name.trim_matches('`');
-        if name == param_name {
-            return true;
+        // Decode unicode escapes in JSDoc param names (e.g. \u0061 -> a)
+        let decoded = Self::decode_unicode_escapes(name);
+        decoded == param_name
+    }
+
+    /// Decode unicode escapes (`\uXXXX` and `\u{XXXX}`) in a string.
+    fn decode_unicode_escapes(s: &str) -> String {
+        if !s.contains("\\u") {
+            return s.to_string();
         }
-        false
+        let mut result = String::with_capacity(s.len());
+        let mut chars = s.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\\' && chars.peek() == Some(&'u') {
+                chars.next(); // consume 'u'
+                if chars.peek() == Some(&'{') {
+                    // \u{XXXX} form
+                    chars.next(); // consume '{'
+                    let mut hex = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c == '}' {
+                            chars.next();
+                            break;
+                        }
+                        hex.push(c);
+                        chars.next();
+                    }
+                    if let Ok(code) = u32::from_str_radix(&hex, 16)
+                        && let Some(decoded) = char::from_u32(code) {
+                            result.push(decoded);
+                            continue;
+                        }
+                    // Fallback: push original
+                    result.push_str("\\u{");
+                    result.push_str(&hex);
+                    result.push('}');
+                } else {
+                    // \uXXXX form (exactly 4 hex digits)
+                    let mut hex = String::new();
+                    for _ in 0..4 {
+                        if let Some(&c) = chars.peek() {
+                            if c.is_ascii_hexdigit() {
+                                hex.push(c);
+                                chars.next();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    if hex.len() == 4
+                        && let Ok(code) = u32::from_str_radix(&hex, 16)
+                            && let Some(decoded) = char::from_u32(code) {
+                                result.push(decoded);
+                                continue;
+                            }
+                    // Fallback: push original
+                    result.push_str("\\u");
+                    result.push_str(&hex);
+                }
+            } else {
+                result.push(ch);
+            }
+        }
+        result
     }
 
     /// Check if a `JSDoc` comment has any type annotations (`@param {type}`, `@returns {type}`,
