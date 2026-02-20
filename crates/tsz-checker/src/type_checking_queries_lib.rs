@@ -1859,6 +1859,42 @@ impl<'a> CheckerState<'a> {
                 };
                 Some(self.ctx.types.literal_number(value))
             }
+            k if k == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.ctx.arena.get_binary_expr(node)?;
+                if binary.operator_token == tsz_scanner::SyntaxKind::CommaToken as u16 {
+                    return self.literal_type_from_initializer(binary.right);
+                }
+                if binary.operator_token == tsz_scanner::SyntaxKind::AmpersandAmpersandToken as u16
+                {
+                    let left_ty = self.literal_type_from_initializer(binary.left);
+                    let right_ty = self.literal_type_from_initializer(binary.right);
+                    if let (Some(l), Some(r)) = (left_ty, right_ty) {
+                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        if let tsz_solver::BinaryOpResult::Success(res) =
+                            evaluator.evaluate(l, r, "&&")
+                        {
+                            return Some(res);
+                        }
+                    }
+                }
+                if binary.operator_token == tsz_scanner::SyntaxKind::BarBarToken as u16 {
+                    let left_ty = self.literal_type_from_initializer(binary.left);
+                    let right_ty = self.literal_type_from_initializer(binary.right);
+                    if let (Some(l), Some(r)) = (left_ty, right_ty) {
+                        let evaluator = tsz_solver::BinaryOpEvaluator::new(self.ctx.types);
+                        if let tsz_solver::BinaryOpResult::Success(res) =
+                            evaluator.evaluate(l, r, "||")
+                        {
+                            return Some(res);
+                        }
+                    }
+                }
+                None
+            }
+            k if k == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.ctx.arena.get_parenthesized(node)?;
+                self.literal_type_from_initializer(paren.expression)
+            }
             _ => None,
         }
     }
