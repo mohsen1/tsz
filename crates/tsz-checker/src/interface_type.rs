@@ -110,8 +110,8 @@ impl<'a> CheckerState<'a> {
                             (self.get_type_from_type_node(sig.type_annotation), None)
                         }
                     } else {
-                        // Return UNKNOWN instead of ANY for missing return type annotation
-                        (TypeId::UNKNOWN, None)
+                        // Return ANY to match TypeScript's implicit 'any' return type
+                        (TypeId::ANY, None)
                     };
                     self.pop_typeof_param_scope(&params);
 
@@ -147,8 +147,8 @@ impl<'a> CheckerState<'a> {
                             (self.get_type_from_type_node(sig.type_annotation), None)
                         }
                     } else {
-                        // Return UNKNOWN instead of ANY for missing return type annotation
-                        (TypeId::UNKNOWN, None)
+                        // Return ANY to match TypeScript's implicit 'any' return type
+                        (TypeId::ANY, None)
                     };
                     self.pop_typeof_param_scope(&params);
 

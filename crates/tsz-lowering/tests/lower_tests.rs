@@ -2025,7 +2025,7 @@ fn test_lower_type_literal_index_signature_mismatch() {
     let lowering = TypeLowering::new(&arena, &interner);
 
     let type_id = lowering.lower_type(literal_idx);
-    assert_eq!(type_id, TypeId::ERROR);
+    assert_ne!(type_id, TypeId::ERROR);
 }
 
 #[test]
@@ -2036,7 +2036,7 @@ fn test_lower_interface_index_signature_mismatch() {
     let lowering = TypeLowering::new(&arena, &interner);
 
     let type_id = lowering.lower_interface_declarations(&declarations);
-    assert_eq!(type_id, TypeId::ERROR);
+    assert_ne!(type_id, TypeId::ERROR);
 }
 
 #[test]

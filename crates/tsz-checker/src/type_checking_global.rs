@@ -450,6 +450,33 @@ impl<'a> CheckerState<'a> {
             if declarations.len() <= 1 {
                 continue;
             }
+            let mut func_decls_for_2384 = Vec::new();
+            let mut has_ambient_func = false;
+            let mut has_non_ambient_func = false;
+            for &(decl_idx, flags, is_local, _) in &declarations {
+                if is_local && (flags & (symbol_flags::FUNCTION | symbol_flags::METHOD)) != 0 {
+                    func_decls_for_2384.push(decl_idx);
+                    if self.is_ambient_declaration(decl_idx) {
+                        has_ambient_func = true;
+                    } else {
+                        has_non_ambient_func = true;
+                    }
+                }
+            }
+            if has_ambient_func && has_non_ambient_func {
+                let first_is_ambient = self.is_ambient_declaration(func_decls_for_2384[0]);
+                for &decl_idx in &func_decls_for_2384[1..] {
+                    if self.is_ambient_declaration(decl_idx) != first_is_ambient {
+                        let error_node =
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                            diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_AMBIENT_OR_NON_AMBIENT,
+                        );
+                    }
+                }
+            }
 
             // Explicit duplicate-class guard: class declarations cannot merge
             // with other class declarations (only with namespaces/interfaces).

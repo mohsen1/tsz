@@ -469,7 +469,7 @@ impl<'a> CheckerState<'a> {
             || index_info.number_index.is_some()
             || has_own_index_sig
         {
-            self.check_index_signature_compatibility(&iface.members.nodes, iface_type);
+            self.check_index_signature_compatibility(&iface.members.nodes, iface_type, stmt_idx);
 
             // Also check inherited members from base interfaces against index
             // signatures. The AST-based check above only sees own members; inherited
@@ -664,12 +664,14 @@ impl<'a> CheckerState<'a> {
         &mut self,
         members: &[NodeIndex],
         iface_type: TypeId,
+        container_node: NodeIndex,
     ) {
         use crate::diagnostics::diagnostic_codes;
         use tsz_parser::parser::syntax_kind_ext;
 
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
+        let _node_kind = self.ctx.arena.get(container_node).map(|n| n.kind);
 
         // Scan members for own index signatures and detect duplicates (TS2374)
         // Static and instance index signatures are tracked separately —
@@ -799,6 +801,44 @@ impl<'a> CheckerState<'a> {
         // If both signatures were invalidated, there is nothing to enforce.
         if index_info.string_index.is_none() && index_info.number_index.is_none() {
             return;
+        }
+
+        // TS2413: 'number' index type '{0}' is not assignable to 'string' index type '{1}'.
+        if let Some(number_idx) = &index_info.number_index
+            && let Some(string_idx) = &index_info.string_index
+        {
+            let is_assignable = self.is_assignable_to(number_idx.value_type, string_idx.value_type);
+            if !is_assignable {
+                let num_value_str = self.format_type(number_idx.value_type);
+                let str_value_str = self.format_type(string_idx.value_type);
+
+                let mut reported = false;
+                for &node_idx in &number_index_nodes {
+                    self.error_at_node_msg(
+                            node_idx,
+                            crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &["number", &num_value_str, "string", &str_value_str],
+                        );
+                    reported = true;
+                }
+                if !reported {
+                    for &node_idx in &string_index_nodes {
+                        self.error_at_node_msg(
+                                node_idx,
+                                crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                                &["number", &num_value_str, "string", &str_value_str],
+                            );
+                        reported = true;
+                    }
+                }
+                if !reported && container_node != NodeIndex::NONE {
+                    self.error_at_node_msg(
+                            container_node,
+                            crate::diagnostics::diagnostic_codes::INDEX_TYPE_IS_NOT_ASSIGNABLE_TO_INDEX_TYPE,
+                            &["number", &num_value_str, "string", &str_value_str],
+                        );
+                }
+            }
         }
 
         // Check each property/method against applicable index signatures
@@ -986,6 +1026,7 @@ impl<'a> CheckerState<'a> {
 
         // Get combined index signatures (includes inherited)
         let index_info = self.ctx.types.get_index_signatures(iface_type);
+
         if index_info.string_index.is_none() && index_info.number_index.is_none() {
             return;
         }

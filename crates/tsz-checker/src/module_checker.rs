@@ -608,10 +608,30 @@ impl<'a> CheckerState<'a> {
 
             if self.ctx.binder.file_locals.get(&name_str).is_none() {
                 // If it resolves to something globally but is not local, emit TS2661
-                if self.resolve_identifier_symbol(name_idx).is_some() {
+                if self.resolve_identifier_symbol(name_idx).is_some()
+                    || matches!(
+                        name_str.as_str(),
+                        "undefined"
+                            | "any"
+                            | "unknown"
+                            | "never"
+                            | "string"
+                            | "number"
+                            | "boolean"
+                            | "symbol"
+                            | "object"
+                            | "bigint"
+                    )
+                {
                     self.error_at_node_msg(
                         name_idx,
                         crate::diagnostics::diagnostic_codes::CANNOT_EXPORT_ONLY_LOCAL_DECLARATIONS_CAN_BE_EXPORTED_FROM_A_MODULE,
+                        &[&name_str],
+                    );
+                } else {
+                    self.error_at_node_msg(
+                        name_idx,
+                        crate::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
                         &[&name_str],
                     );
                 }

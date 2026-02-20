@@ -1175,11 +1175,19 @@ impl<'a> CheckerState<'a> {
         // Check that class properties are compatible with index signatures (TS2411)
         // Get the class instance type (not constructor type) to access instance index signatures
         let class_instance_type = self.get_class_instance_type(stmt_idx, class);
-        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+        self.check_index_signature_compatibility(
+            &class.members.nodes,
+            class_instance_type,
+            stmt_idx,
+        );
 
         self.check_class_declaration(stmt_idx);
 
-        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+        self.check_index_signature_compatibility(
+            &class.members.nodes,
+            class_instance_type,
+            stmt_idx,
+        );
 
         // Check for decorator-related global types (TS2318)
         // When experimentalDecorators is enabled and a method/accessor has decorators,
@@ -1299,7 +1307,11 @@ impl<'a> CheckerState<'a> {
         // Check that class properties are compatible with index signatures (TS2411)
         // Get the class instance type (not constructor type) to access instance index signatures
         let class_instance_type = self.get_class_instance_type(class_idx, class);
-        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+        self.check_index_signature_compatibility(
+            &class.members.nodes,
+            class_instance_type,
+            class_idx,
+        );
 
         // Check for decorator-related global types (TS2318)
         self.check_decorator_global_types(&class.members.nodes);
