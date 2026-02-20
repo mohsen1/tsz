@@ -1462,11 +1462,12 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
-                && let Some(acc_data) = self.arena.get_accessor(m_node) {
-                    return has_static_modifier(self.arena, &acc_data.modifiers)
-                        && !has_abstract_modifier(self.arena, &acc_data.modifiers)
-                        && !is_private_identifier(self.arena, acc_data.name);
-                }
+                && let Some(acc_data) = self.arena.get_accessor(m_node)
+            {
+                return has_static_modifier(self.arena, &acc_data.modifiers)
+                    && !has_abstract_modifier(self.arena, &acc_data.modifiers)
+                    && !is_private_identifier(self.arena, acc_data.name);
+            }
             false
         });
 
