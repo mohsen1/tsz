@@ -412,6 +412,8 @@ impl<'a> CheckerState<'a> {
     /// ## Error TS2374:
     /// "A parameter property is only allowed in a constructor implementation."
     pub(crate) fn check_parameter_properties(&mut self, parameters: &[NodeIndex]) {
+        println!(">>> check_parameter_properties CALLED");
+
         use crate::diagnostics::diagnostic_codes;
 
         for &param_idx in parameters {

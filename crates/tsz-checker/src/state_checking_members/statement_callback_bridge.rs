@@ -712,7 +712,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.check_async_modifier_on_declaration(&module.modifiers);
 
                 let is_ambient = self.has_declare_modifier(&module.modifiers);
-                if !module.body.is_none() && !is_ambient {
+                if !module.body.is_none() {
                     self.check_module_body(module.body);
                 }
 

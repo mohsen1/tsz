@@ -588,6 +588,11 @@ impl<'a> CheckerState<'a> {
 
     /// Check a constructor declaration.
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
+        println!(
+            ">>> check_constructor_declaration CALLED for {}",
+            member_idx.0
+        );
+
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {
@@ -656,6 +661,19 @@ impl<'a> CheckerState<'a> {
                     diagnostic_codes::A_PARAMETER_PROPERTY_CANNOT_BE_DECLARED_USING_A_REST_PARAMETER,
                 );
             }
+            let name_idx = param.name;
+            {
+                if let Some(name_node) = self.ctx.arena.get(name_idx)
+                    && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+                        && ident.escaped_text == "constructor" {
+                            self.error_at_node(
+                                name_idx,
+                                diagnostic_messages::CONSTRUCTOR_CANNOT_BE_USED_AS_A_PARAMETER_PROPERTY_NAME,
+                                diagnostic_codes::CONSTRUCTOR_CANNOT_BE_USED_AS_A_PARAMETER_PROPERTY_NAME,
+                            );
+                        }
+            }
+
             let Some(name_node) = self.ctx.arena.get(param.name) else {
                 continue;
             };
