@@ -549,26 +549,59 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        let Some(first_super_stmt) = block
+        let mut first_super_pos: Option<u32> = block
             .statements
             .nodes
             .iter()
             .copied()
             .find(|&stmt| self.is_super_call_statement(stmt))
-        else {
+            .and_then(|stmt| self.ctx.arena.get(stmt).map(|n| n.pos));
+
+        if first_super_pos.is_none() {
+            let body_idx = ctor.body;
+            for i in 0..self.ctx.arena.len() {
+                let node_idx = NodeIndex(i as u32);
+                if !self.is_descendant_of_node(node_idx, body_idx) && node_idx != body_idx {
+                    continue;
+                }
+                let Some(node) = self.ctx.arena.get(node_idx) else {
+                    continue;
+                };
+                if node.kind != SyntaxKind::SuperKeyword as u16 {
+                    continue;
+                }
+                let Some(ext) = self.ctx.arena.get_extended(node_idx) else {
+                    continue;
+                };
+                let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                    continue;
+                };
+                if parent.kind != tsz_parser::parser::syntax_kind_ext::CALL_EXPRESSION {
+                    continue;
+                }
+                let Some(call) = self.ctx.arena.get_call_expr(parent) else {
+                    continue;
+                };
+                if call.expression != node_idx {
+                    continue;
+                }
+                if first_super_pos.is_none_or(|p| node.pos < p) {
+                    first_super_pos = Some(node.pos);
+                }
+            }
+        }
+
+        let Some(super_pos) = first_super_pos else {
             // No super() call exists in a derived constructor; any `this` usage
             // in the body is still before the required super() initialization.
             return true;
         };
 
-        let Some(super_stmt_node) = self.ctx.arena.get(first_super_stmt) else {
-            return false;
-        };
         let Some(this_node) = self.ctx.arena.get(this_idx) else {
             return false;
         };
 
-        this_node.pos < super_stmt_node.pos
+        this_node.pos < super_pos
     }
 
     /// Check if a node is inside a constructor of a derived class.

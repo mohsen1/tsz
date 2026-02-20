@@ -605,7 +605,11 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn is_descendant_of_node(&self, node_idx: NodeIndex, ancestor_idx: NodeIndex) -> bool {
+    pub(crate) fn is_descendant_of_node(
+        &self,
+        node_idx: NodeIndex,
+        ancestor_idx: NodeIndex,
+    ) -> bool {
         let mut current = node_idx;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
             let parent_idx = ext.parent;
