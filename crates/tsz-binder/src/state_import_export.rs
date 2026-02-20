@@ -283,8 +283,20 @@ impl BinderState {
                     default_sym.declarations.push(export.export_clause);
                     default_sym.value_declaration = export.export_clause;
                 }
-                // Add to file_locals so it can be found during import resolution
-                self.file_locals.set("default".to_string(), default_sym_id);
+                // Add to current scope so it's captured as a module export
+                self.current_scope
+                    .set("default".to_string(), default_sym_id);
+
+                // Add to file_locals only if we are at the top-level source file scope
+                if self.current_scope_id.is_some()
+                    && self
+                        .scopes
+                        .get(self.current_scope_id.0 as usize)
+                        .is_some_and(|scope| scope.kind == ContainerKind::SourceFile)
+                {
+                    self.file_locals.set("default".to_string(), default_sym_id);
+                }
+
                 self.node_symbols
                     .insert(export.export_clause.0, default_sym_id);
 
