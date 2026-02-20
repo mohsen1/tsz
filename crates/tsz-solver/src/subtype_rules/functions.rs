@@ -916,11 +916,25 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         let s_fn = self.interner.function_shape(s_fn_id);
         let t_callable = self.interner.callable_shape(t_callable_id);
+
         for t_sig in &t_callable.call_signatures {
+            if s_fn.is_constructor {
+                return SubtypeResult::False;
+            }
             if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
                 return SubtypeResult::False;
             }
         }
+
+        for t_sig in &t_callable.construct_signatures {
+            if !s_fn.is_constructor {
+                return SubtypeResult::False;
+            }
+            if !self.check_call_signature_subtype_fn(&s_fn, t_sig).is_true() {
+                return SubtypeResult::False;
+            }
+        }
+
         SubtypeResult::True
     }
 
