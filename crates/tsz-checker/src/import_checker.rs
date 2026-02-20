@@ -810,11 +810,12 @@ impl<'a> CheckerState<'a> {
             let parent_idx = ext.parent;
             if !parent_idx.is_none()
                 && let Some(parent_node) = self.ctx.arena.get(parent_idx)
-                    && let Some(module) = self.ctx.arena.get_module(parent_node)
-                        && let Some(name_node) = self.ctx.arena.get(module.name)
-                            && name_node.kind == SyntaxKind::StringLiteral as u16 {
-                                is_ambient_external_module = true;
-                            }
+                && let Some(module) = self.ctx.arena.get_module(parent_node)
+                && let Some(name_node) = self.ctx.arena.get(module.name)
+                && name_node.kind == SyntaxKind::StringLiteral as u16
+            {
+                is_ambient_external_module = true;
+            }
         }
 
         if body_node.kind == syntax_kind_ext::MODULE_BLOCK {

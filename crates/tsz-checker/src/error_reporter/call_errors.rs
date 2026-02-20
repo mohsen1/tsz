@@ -241,7 +241,9 @@ impl<'a> CheckerState<'a> {
             if !self.is_assignable_to(elem_type, target_element_type) {
                 tracing::debug!(
                     "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
-                    elem_type, target_element_type, self.ctx.file_name
+                    elem_type,
+                    target_element_type,
+                    self.ctx.file_name
                 );
                 self.error_type_not_assignable_at(elem_type, target_element_type, elem_idx);
                 elaborated = true;
