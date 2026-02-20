@@ -1084,6 +1084,7 @@ impl<'a> CheckerState<'a> {
             // For ambient declarations (`declare var foo;`), there's no control flow
             // so we always emit when the type is implicitly `any`.
             let is_ambient = self.is_ambient_declaration(decl_idx);
+            let is_const = self.is_const_variable_declaration(decl_idx);
             if self.ctx.no_implicit_any()
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
@@ -1097,8 +1098,8 @@ impl<'a> CheckerState<'a> {
                     });
 
                 if !is_destructuring_pattern && let Some(ref name) = var_name {
-                    if is_ambient {
-                        // TS7005: Ambient declarations always emit at the declaration site.
+                    if is_ambient || is_const {
+                        // TS7005: Ambient and const declarations always emit at the declaration site.
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
                             var_decl.name,
