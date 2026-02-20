@@ -568,12 +568,13 @@ impl<'a> Printer<'a> {
                 // Try forward scan first; if not found (parser may include `,`
                 // in the preceding node's range), scan backward from prev_end.
                 if let Some(pe) = prev_end
-                    && let Some(node) = self.arena.get(idx) {
-                        self.map_token_after(pe, node.pos, b',');
-                        if self.pending_source_pos.is_none() {
-                            self.map_token_before(pe, pe.saturating_sub(2), b',');
-                        }
+                    && let Some(node) = self.arena.get(idx)
+                {
+                    self.map_token_after(pe, node.pos, b',');
+                    if self.pending_source_pos.is_none() {
+                        self.map_token_before(pe, pe.saturating_sub(2), b',');
                     }
+                }
                 self.write(", ");
             }
             // Emit comments between the previous node/comma and this node.
