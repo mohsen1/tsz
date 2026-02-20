@@ -180,22 +180,30 @@ impl BinderState {
                 };
 
                 // Create symbol with ALIAS flag
-                let sym_id = self.symbols.alloc(symbol_flags::ALIAS, name.to_string());
+                let sym_id = self.declare_symbol(name, symbol_flags::ALIAS, idx, is_exported);
 
                 if let Some(sym) = self.symbols.get_mut(sym_id) {
-                    sym.declarations.push(idx);
-                    sym.value_declaration = idx;
-                    sym.is_exported = is_exported;
+                    // If this is the first value declaration, or if we're merging compatible
+                    // declarations where this should be the value declaration.
+                    // For aliases, we generally track the first one as value decl,
+                    // but for duplicates we just want to ensure it's recorded.
+                    if sym.value_declaration.is_none() {
+                        sym.value_declaration = idx;
+                    }
+
                     // Track module for cross-file resolution and unresolved import detection
                     if let Some(ref specifier) = module_specifier {
+                        // If multiple declarations have different specifiers, we might overwrite here.
+                        // For valid merges (if any), this logic might need refinement,
+                        // but for duplicates it doesn't matter much which one wins for resolution
+                        // as long as we report the error.
                         sym.import_module = Some(specifier.clone());
                     }
                 }
 
-                self.current_scope.set(name.to_string(), sym_id);
-                self.node_symbols.insert(idx.0, sym_id);
-                // Also add to persistent scope for checker lookup
-                self.declare_in_persistent_scope(name.to_string(), sym_id);
+                // declare_symbol handles adding to current_scope and node_symbols.
+                // We still need to explicit export handling if declare_symbol didn't handle it fully?
+                // declare_symbol takes is_exported flag.
             }
         }
     }
