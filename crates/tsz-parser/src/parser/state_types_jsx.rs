@@ -645,12 +645,10 @@ impl ParserState {
                         && let Some(close_data) = self.arena.get_jsx_closing(close_node)
                     {
                         let close_tag = close_data.tag_name;
-                        let open_text = self.get_jsx_tag_name_text(open_tag);
-                        let close_text = self.get_jsx_tag_name_text(close_tag);
-                        if open_text != close_text {
+                        if !self.jsx_tag_names_match(open_tag, close_tag) {
                             // Check if closing matches parent's tag (tsc pattern)
                             let matches_parent = currently_opened_tag
-                                .is_some_and(|pt| self.get_jsx_tag_name_text(pt) == close_text);
+                                .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));
                             if matches_parent {
                                 // TS17008: Our tag is unclosed (closer belongs to parent)
                                 self.emit_jsx_unclosed_tag_error(open_tag);
@@ -1078,6 +1076,57 @@ impl ParserState {
     /// Get the text of a JSX tag name node from source text.
     /// Works for identifiers, property access (Foo.Bar), and namespaced names (a:b).
     /// For property access nodes, finds the tight end by using the last name child.
+    /// Compare two JSX tag names by structure, ignoring whitespace/formatting
+    fn jsx_tag_names_match(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        if a == b {
+            return true;
+        }
+        let node_a = match self.arena.get(a) {
+            Some(n) => n,
+            None => return false,
+        };
+        let node_b = match self.arena.get(b) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        if node_a.kind != node_b.kind {
+            return false;
+        }
+
+        if node_a.kind == SyntaxKind::Identifier as u16 {
+            if let (Some(id_a), Some(id_b)) = (
+                self.arena.get_identifier(node_a),
+                self.arena.get_identifier(node_b),
+            ) {
+                if id_a.atom != Atom::NONE && id_b.atom != Atom::NONE {
+                    return id_a.atom == id_b.atom;
+                } else {
+                    return id_a.escaped_text == id_b.escaped_text;
+                }
+            }
+        } else if node_a.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        } else if node_a.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+            if let (Some(ns_a), Some(ns_b)) = (
+                self.arena.get_jsx_namespaced_name(node_a),
+                self.arena.get_jsx_namespaced_name(node_b),
+            ) {
+                return self.jsx_tag_names_match(ns_a.namespace, ns_b.namespace)
+                    && self.jsx_tag_names_match(ns_a.name, ns_b.name);
+            }
+        } else if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            if let (Some(acc_a), Some(acc_b)) = (
+                self.arena.get_access_expr(node_a),
+                self.arena.get_access_expr(node_b),
+            ) {
+                return self.jsx_tag_names_match(acc_a.expression, acc_b.expression)
+                    && self.jsx_tag_names_match(acc_a.name_or_argument, acc_b.name_or_argument);
+            }
+        }
+        false
+    }
+
     fn get_jsx_tag_name_text(&self, tag_name: NodeIndex) -> String {
         if let Some(node) = self.arena.get(tag_name) {
             let source = self.scanner.source_text();
@@ -1176,11 +1225,9 @@ impl ParserState {
             .map(|d| d.tag_name);
         match (child_open_tag, child_close_tag) {
             (Some(open), Some(close)) => {
-                let open_text = self.get_jsx_tag_name_text(open);
-                let close_text = self.get_jsx_tag_name_text(close);
-                let parent_text = self.get_jsx_tag_name_text(parent_tag_name);
                 // Child has mismatched tags AND its closing matches our opening
-                open_text != close_text && close_text == parent_text
+                !self.jsx_tag_names_match(open, close)
+                    && self.jsx_tag_names_match(close, parent_tag_name)
             }
             _ => false,
         }
@@ -1210,10 +1257,9 @@ impl ParserState {
             .get(elem_data.closing_element)
             .and_then(|n| self.arena.get_jsx_closing(n))
             .map(|d| d.tag_name)?;
-        let open_text = self.get_jsx_tag_name_text(child_open_tag);
-        let close_text = self.get_jsx_tag_name_text(child_close_tag);
-        let parent_text = self.get_jsx_tag_name_text(parent_tag);
-        if open_text != close_text && close_text == parent_text {
+        if !self.jsx_tag_names_match(child_open_tag, child_close_tag)
+            && self.jsx_tag_names_match(child_close_tag, parent_tag)
+        {
             Some((child_open_tag, elem_data.closing_element))
         } else {
             None
