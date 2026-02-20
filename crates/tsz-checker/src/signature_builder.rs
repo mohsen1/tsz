@@ -346,8 +346,9 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{TypePredicate, TypePredicateTarget};
 
         if type_annotation.is_none() {
-            // Return UNKNOWN instead of ANY to enforce strict type checking
-            return (TypeId::UNKNOWN, None);
+            // Return ANY to match TypeScript's implicit 'any' return type for signatures
+            // missing a type annotation.
+            return (TypeId::ANY, None);
         }
 
         let Some(predicate_node_idx) = self.find_type_predicate_node(type_annotation) else {
@@ -424,8 +425,9 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{TypePredicate, TypePredicateTarget};
 
         if type_annotation.is_none() {
-            // Return UNKNOWN instead of ANY for missing type annotation
-            return (TypeId::UNKNOWN, None);
+            // Return ANY to match TypeScript's implicit 'any' return type for signatures
+            // missing a type annotation (especially in ambient declarations and type literals).
+            return (TypeId::ANY, None);
         }
 
         let Some(predicate_node_idx) = self.find_type_predicate_node(type_annotation) else {

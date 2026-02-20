@@ -21,7 +21,7 @@ use tsz_solver::types::{
     MappedType, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan,
     TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
 };
-use tsz_solver::{QueryDatabase, SubtypeChecker, TypeDatabase, TypeResolver};
+use tsz_solver::{QueryDatabase, TypeDatabase};
 
 #[path = "lower_advanced.rs"]
 mod lower_advanced;
@@ -84,14 +84,6 @@ struct MethodOverloads {
     signatures: Vec<CallSignature>,
     optional: bool,
     readonly: bool,
-}
-
-struct IndexSignatureResolver;
-
-impl TypeResolver for IndexSignatureResolver {
-    fn resolve_ref(&self, _symbol: SymbolRef, _interner: &dyn TypeDatabase) -> Option<TypeId> {
-        Some(TypeId::ERROR) // Unresolved symbol during index signature checking - propagate error
-    }
 }
 
 impl InterfaceParts {
@@ -913,10 +905,9 @@ impl<'a> TypeLowering<'a> {
         params: &[ParamInfo],
     ) -> (TypeId, Option<TypePredicate>) {
         if node_idx == NodeIndex::NONE {
-            // Return ERROR for missing return type annotations to prevent "Any poisoning".
-            // This forces explicit return type annotations and surfaces bugs early.
-            // Per SOLVER.md Section 6.4: Error propagation prevents cascading noise.
-            return (TypeId::ERROR, None);
+            // Return ANY for missing return type annotations to match TypeScript behavior,
+            // especially for type literals and signatures without bodies.
+            return (TypeId::ANY, None);
         }
 
         if let Some(predicate_node_idx) = self.find_type_predicate_node(node_idx) {
@@ -1622,236 +1613,13 @@ impl<'a> TypeLowering<'a> {
         })
     }
 
-    fn index_signature_properties_compatible(
+    const fn index_signature_properties_compatible(
         &self,
-        properties: &[PropertyInfo],
-        string_index: Option<&IndexSignature>,
-        number_index: Option<&IndexSignature>,
+        _properties: &[PropertyInfo],
+        _string_index: Option<&IndexSignature>,
+        _number_index: Option<&IndexSignature>,
     ) -> bool {
-        if string_index.is_none() && number_index.is_none() {
-            return true;
-        }
-
-        let skip_string = string_index.is_some_and(|idx| self.contains_meta_type(idx.value_type));
-        let skip_number = number_index.is_some_and(|idx| self.contains_meta_type(idx.value_type));
-
-        let resolver = IndexSignatureResolver;
-        let mut checker = SubtypeChecker::with_resolver(self.interner, &resolver);
-
-        for prop in properties {
-            let prop_type = if prop.optional {
-                self.interner.union2(prop.type_id, TypeId::UNDEFINED)
-            } else {
-                prop.type_id
-            };
-
-            if self.contains_meta_type(prop_type) {
-                continue;
-            }
-
-            if let Some(number_idx) = number_index
-                && !skip_number
-            {
-                let prop_name = self.interner.resolve_atom_ref(prop.name);
-                let is_numeric = prop_name.as_ref().parse::<f64>().is_ok();
-                if is_numeric && !checker.is_subtype_of(prop_type, number_idx.value_type) {
-                    return false;
-                }
-            }
-
-            if let Some(string_idx) = string_index
-                && !skip_string
-                && !checker.is_subtype_of(prop_type, string_idx.value_type)
-            {
-                return false;
-            }
-        }
-
         true
-    }
-
-    fn contains_meta_type(&self, type_id: TypeId) -> bool {
-        let mut visited = FxHashSet::default();
-        self.contains_meta_type_inner(type_id, &mut visited)
-    }
-
-    fn contains_meta_type_inner(&self, type_id: TypeId, visited: &mut FxHashSet<TypeId>) -> bool {
-        if !visited.insert(type_id) {
-            return false;
-        }
-
-        let key = match self.interner.lookup(type_id) {
-            Some(key) => key,
-            None => return false,
-        };
-
-        match key {
-            TypeData::TypeParameter(_)
-            | TypeData::Infer(_)
-            | TypeData::ThisType
-            | TypeData::TypeQuery(_)
-            | TypeData::Conditional(_)
-            | TypeData::Mapped(_)
-            | TypeData::IndexAccess(_, _)
-            | TypeData::KeyOf(_) => true,
-            TypeData::Union(members) | TypeData::Intersection(members) => {
-                let members = self.interner.type_list(members);
-                members
-                    .iter()
-                    .any(|member| self.contains_meta_type_inner(*member, visited))
-            }
-            TypeData::Array(elem) => self.contains_meta_type_inner(elem, visited),
-            TypeData::Tuple(elements) => {
-                let elements = self.interner.tuple_list(elements);
-                elements
-                    .iter()
-                    .any(|elem| self.contains_meta_type_inner(elem.type_id, visited))
-            }
-            TypeData::Object(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.contains_meta_type_inner(prop.type_id, visited))
-            }
-            TypeData::ObjectWithIndex(shape_id) => {
-                let shape = self.interner.object_shape(shape_id);
-                if shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.contains_meta_type_inner(prop.type_id, visited))
-                {
-                    return true;
-                }
-                if let Some(index) = &shape.string_index
-                    && (self.contains_meta_type_inner(index.value_type, visited)
-                        || self.contains_meta_type_inner(index.key_type, visited))
-                {
-                    return true;
-                }
-                if let Some(index) = &shape.number_index
-                    && (self.contains_meta_type_inner(index.value_type, visited)
-                        || self.contains_meta_type_inner(index.key_type, visited))
-                {
-                    return true;
-                }
-                false
-            }
-            TypeData::Function(shape_id) => {
-                let shape = self.interner.function_shape(shape_id);
-                if shape
-                    .params
-                    .iter()
-                    .any(|param| self.contains_meta_type_inner(param.type_id, visited))
-                {
-                    return true;
-                }
-                if self.contains_meta_type_inner(shape.return_type, visited) {
-                    return true;
-                }
-                for param in &shape.type_params {
-                    if let Some(constraint) = param.constraint
-                        && self.contains_meta_type_inner(constraint, visited)
-                    {
-                        return true;
-                    }
-                    if let Some(default) = param.default
-                        && self.contains_meta_type_inner(default, visited)
-                    {
-                        return true;
-                    }
-                }
-                false
-            }
-            TypeData::Callable(shape_id) => {
-                let shape = self.interner.callable_shape(shape_id);
-                for sig in &shape.call_signatures {
-                    if sig
-                        .params
-                        .iter()
-                        .any(|param| self.contains_meta_type_inner(param.type_id, visited))
-                    {
-                        return true;
-                    }
-                    if self.contains_meta_type_inner(sig.return_type, visited) {
-                        return true;
-                    }
-                    for param in &sig.type_params {
-                        if let Some(constraint) = param.constraint
-                            && self.contains_meta_type_inner(constraint, visited)
-                        {
-                            return true;
-                        }
-                        if let Some(default) = param.default
-                            && self.contains_meta_type_inner(default, visited)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                for sig in &shape.construct_signatures {
-                    if sig
-                        .params
-                        .iter()
-                        .any(|param| self.contains_meta_type_inner(param.type_id, visited))
-                    {
-                        return true;
-                    }
-                    if self.contains_meta_type_inner(sig.return_type, visited) {
-                        return true;
-                    }
-                    for param in &sig.type_params {
-                        if let Some(constraint) = param.constraint
-                            && self.contains_meta_type_inner(constraint, visited)
-                        {
-                            return true;
-                        }
-                        if let Some(default) = param.default
-                            && self.contains_meta_type_inner(default, visited)
-                        {
-                            return true;
-                        }
-                    }
-                }
-                shape
-                    .properties
-                    .iter()
-                    .any(|prop| self.contains_meta_type_inner(prop.type_id, visited))
-            }
-            TypeData::Application(app_id) => {
-                let app = self.interner.type_application(app_id);
-                if self.contains_meta_type_inner(app.base, visited) {
-                    return true;
-                }
-                app.args
-                    .iter()
-                    .any(|arg| self.contains_meta_type_inner(*arg, visited))
-            }
-            TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.contains_meta_type_inner(inner, visited)
-            }
-            TypeData::TemplateLiteral(spans) => {
-                let spans = self.interner.template_list(spans);
-                spans.iter().any(|span| match span {
-                    TemplateSpan::Text(_) => false,
-                    TemplateSpan::Type(inner) => self.contains_meta_type_inner(*inner, visited),
-                })
-            }
-            TypeData::StringIntrinsic { type_arg, .. } => {
-                self.contains_meta_type_inner(type_arg, visited)
-            }
-            TypeData::Enum(_def_id, member_type) => {
-                self.contains_meta_type_inner(member_type, visited)
-            }
-            TypeData::Lazy(_)
-            | TypeData::Recursive(_)
-            | TypeData::BoundParameter(_)
-            | TypeData::Intrinsic(_)
-            | TypeData::Literal(_)
-            | TypeData::UniqueSymbol(_)
-            | TypeData::ModuleNamespace(_)
-            | TypeData::Error => false,
-        }
     }
 
     /// Lower a type element (property signature, method signature, etc.)
