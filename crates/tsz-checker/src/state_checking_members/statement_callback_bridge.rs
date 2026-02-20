@@ -239,7 +239,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         let has_type_annotation = !func.type_annotation.is_none();
         if !func.body.is_none() {
             let mut return_type = if has_type_annotation {
-                self.get_type_of_node(func.type_annotation)
+                self.get_type_from_type_node(func.type_annotation)
             } else {
                 // Use UNKNOWN to enforce strict checking
                 TypeId::UNKNOWN

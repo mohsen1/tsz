@@ -414,7 +414,8 @@ impl<'a> CheckerState<'a> {
 
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
-                    let mut incompatible_members: Vec<(String, String, String)> = Vec::new(); // (name, expected_type, actual_type)
+                    let mut incompatible_members: Vec<(NodeIndex, String, String, String)> =
+                        Vec::new(); // (node_idx, name, expected_type, actual_type)
                     let mut interface_has_index_signature = false;
 
                     // Build type arguments vector from implements clause (e.g., A<boolean> -> [boolean])
@@ -523,6 +524,7 @@ impl<'a> CheckerState<'a> {
                                 let expected_str = self.format_type(interface_member_type);
                                 let actual_str = self.format_type(class_member_type);
                                 incompatible_members.push((
+                                    class_member_idx,
                                     member_name.clone(),
                                     expected_str,
                                     actual_str,
@@ -581,13 +583,26 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Report error for incompatible member types
-                    for (member_name, expected, actual) in incompatible_members {
+                    for (member_idx, member_name, expected, actual) in incompatible_members {
+                        let member_name_idx = self
+                            .ctx
+                            .arena
+                            .get(member_idx)
+                            .and_then(|n| self.get_member_name_node(n))
+                            .unwrap_or(member_idx);
+
                         self.error_at_node(
-                            clause_idx,
+                            member_name_idx,
                             &format!(
-                                "Class '{class_name}' incorrectly implements interface '{interface_name}'. Property '{member_name}' has type '{actual}' which is not assignable to type '{expected}'."
+                                "Property '{member_name}' in type '{class_name}' is not assignable to the same property in base type '{interface_name}'."
                             ),
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
+                        );
+                        self.report_type_not_assignable_detail(
+                            member_name_idx,
+                            &actual,
+                            &expected,
+                            diagnostic_codes::PROPERTY_IN_TYPE_IS_NOT_ASSIGNABLE_TO_THE_SAME_PROPERTY_IN_BASE_TYPE,
                         );
                     }
 

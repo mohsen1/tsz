@@ -1062,8 +1062,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             }
 
             // Type predicate nodes appear in function return type positions
-            // (`x is T`) and are not value expressions.
-            k if k == syntax_kind_ext::TYPE_PREDICATE => TypeId::BOOLEAN,
+            // (`x is T` or `asserts x is T`). We delegate to type node resolution
+            // to correctly get `boolean` or `void`.
+            k if k == syntax_kind_ext::TYPE_PREDICATE => self.checker.get_type_from_type_node(idx),
 
             // ExpressionWithTypeArguments: `expr<T>` used as a standalone expression
             // (e.g., `List<number>.makeChild()`). Evaluate the inner expression
