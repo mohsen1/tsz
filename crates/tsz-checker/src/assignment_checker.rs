@@ -1,15 +1,4 @@
-//! Assignment Checking Module
-//!
-//! This module contains methods for checking assignment expressions.
-//! It handles:
-//! - Simple assignment (=)
-//! - Compound assignment (+=, -=, *=, etc.)
-//! - Logical assignment (&&=, ||=, ??=)
-//! - Arithmetic operand validation (TS2362/TS2363)
-//! - Readonly property assignment checking
-//!
-//! This module extends `CheckerState` with assignment-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Assignment expression checking (simple, compound, logical, readonly).
 
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;

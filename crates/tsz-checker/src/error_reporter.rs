@@ -1,13 +1,4 @@
-//! Error Reporter Module
-//!
-//! This module contains all error reporting methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! ## Naming Convention
-//!
-//! - `error_*` methods: Core error emission functions
-//! - `report_*` methods: Higher-level wrapper methods with additional logic
-//!
+//! Error reporting (`error_*` for emission, `report_*` for higher-level wrappers).
 //! This module is split into focused submodules for maintainability.
 
 /// Whether a type-only symbol came from `import type` or `export type`.

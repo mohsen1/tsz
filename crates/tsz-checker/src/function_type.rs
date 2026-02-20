@@ -1,17 +1,4 @@
-//! Function Type Resolution Module
-//!
-//! This module contains function type resolution methods for `CheckerState`
-//! as part of the Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Function/method/arrow function type resolution
-//! - Parameter type inference and contextual typing
-//! - Return type inference and validation
-//! - Property access type resolution
-//! - Async function Promise return type validation
-//!
-//! This module extends `CheckerState` with utilities for function type
-//! resolution, providing cleaner separation of function typing logic.
+//! Function, method, and arrow function type resolution.
 
 use crate::diagnostics::format_message;
 use crate::state::CheckerState;

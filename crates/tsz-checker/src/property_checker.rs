@@ -1,13 +1,4 @@
-//! Property Checking Module
-//!
-//! This module contains methods for checking property access and validation.
-//! It handles:
-//! - Property accessibility (private/protected)
-//! - Computed property names
-//! - Const modifier checking
-//!
-//! This module extends `CheckerState` with property-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Property access checking (accessibility, computed names, const modifiers).
 
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;

@@ -1,13 +1,4 @@
-//! Generic Type Argument Checking Module
-//!
-//! This module contains methods for validating generic type arguments.
-//! It handles:
-//! - Type argument constraint validation (TS2344)
-//! - Call expression type argument validation
-//! - New expression type argument validation
-//!
-//! This module extends `CheckerState` with generic-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Generic type argument validation (TS2344 constraint checking).
 
 use crate::query_boundaries::generic_checker as query;
 use crate::state::CheckerState;

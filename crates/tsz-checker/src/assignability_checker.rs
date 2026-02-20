@@ -1,16 +1,4 @@
-//! Assignability Checking Module
-//!
-//! This module contains methods for checking type assignability and subtyping.
-//! It handles:
-//! - Basic assignability checks (`is_assignable_to`)
-//! - Subtype checking (`is_subtype_of`)
-//! - Type identity (`are_types_identical`)
-//! - Union type assignability
-//! - Excess property checking for object literals
-//! - Weak type union violations
-//!
-//! This module extends `CheckerState` with assignability-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Type assignability, subtyping, identity, and excess property checking.
 
 use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, ExcessPropertiesKind,

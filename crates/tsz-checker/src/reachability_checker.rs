@@ -1,14 +1,4 @@
-//! Code Reachability Checking Module
-//!
-//! This module contains methods for analyzing code reachability and control flow.
-//! It handles:
-//! - Block fall-through analysis
-//! - Unreachable code detection
-//! - Statement fall-through analysis
-//! - Switch/try/loop fall-through
-//!
-//! This module extends `CheckerState` with reachability-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Code reachability and fall-through analysis.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

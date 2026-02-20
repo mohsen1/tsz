@@ -1,24 +1,4 @@
-//! Class Type Resolution Module
-//!
-//! This module contains class and constructor type resolution methods for `CheckerState`
-//! as part of the Phase 2 architecture refactoring (god object decomposition).
-//!
-//! # Extracted Functions (~1,163 lines from state.rs)
-//!
-//! - `get_class_instance_type` - Entry point with cycle detection
-//! - `get_class_instance_type_inner` - Main implementation (~682 lines)
-//! - `get_class_constructor_type` - Constructor/static side type (~469 lines)
-//!
-//! # Responsibilities
-//!
-//! - Instance type construction (properties, methods, accessors)
-//! - Base class inheritance merging
-//! - Interface implementation merging
-//! - Index signature handling
-//! - Private brand property generation for nominal typing
-//! - Constructor type construction (static members, construct signatures)
-//! - Constructor accessibility tracking (private/protected)
-//! - Abstract class tracking
+//! Class and constructor type resolution (instance types, inheritance, static members).
 
 use crate::query_boundaries::class_type::{
     callable_shape_for_type, construct_signatures_for_type, object_shape_for_type,

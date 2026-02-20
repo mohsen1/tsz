@@ -1,13 +1,4 @@
-//! Type Computation Module
-//!
-//! This module contains type computation methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Type computation helpers
-//! - Type relationship queries
-//! - Type format utilities
-//!
+//! Type computation helpers, relationship queries, and format utilities.
 //! This module extends `CheckerState` with additional methods for type-related
 //! operations, providing cleaner APIs for common patterns.
 

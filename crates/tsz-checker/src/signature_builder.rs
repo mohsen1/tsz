@@ -1,14 +1,4 @@
-//! Signature Building Module
-//!
-//! This module contains methods for building call and construct signatures.
-//! It handles:
-//! - Extracting parameters from function/method declarations
-//! - Building `CallSignature` from functions, methods, and constructors
-//! - Instantiating signatures with type arguments
-//! - Processing return types and type predicates
-//!
-//! This module extends `CheckerState` with signature-related methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Call/construct signature building (parameter extraction, instantiation, return types).
 
 use crate::state::{CheckerState, ParamTypeResolutionMode};
 use tsz_common::interner::Atom;

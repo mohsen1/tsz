@@ -1,13 +1,4 @@
-//! Enum Type Checking Utilities Module
-//!
-//! This module contains enum type checking utility methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Enum type detection and validation
-//! - Enum member type checking
-//! - Enum assignability rules
-//! - Const enum vs regular enum handling
+//! Enum type checking (detection, member types, assignability, const enums).
 //!
 //! This module extends `CheckerState` with utilities for enum-related
 //! type checking operations.

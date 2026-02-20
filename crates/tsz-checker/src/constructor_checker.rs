@@ -1,13 +1,4 @@
-//! Constructor Type Checking Utilities Module
-//!
-//! This module contains constructor type checking utility methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Constructor accessibility checking (private, protected, public)
-//! - Constructor signature utilities
-//! - Constructor instantiation validation
-//! - Mixin call return type refinement
+//! Constructor type checking (accessibility, signatures, instantiation, mixins).
 //! - Instance type extraction from constructors
 //! - Abstract constructor assignability
 //!

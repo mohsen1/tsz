@@ -1,13 +1,4 @@
-//! Promise and Async Type Checking Module
-//!
-//! This module contains Promise and async-related type checking methods
-//! extracted from `CheckerState` as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Promise type detection and validation
-//! - Type argument extraction from Promise<T>
-//! - Async function return type checking
-//! - Promise-like type recognition (Promise, `PromiseLike`, custom promises)
+//! Promise/async type checking (detection, type argument extraction, return types).
 
 use crate::query_boundaries::promise_checker as query;
 use crate::state::CheckerState;

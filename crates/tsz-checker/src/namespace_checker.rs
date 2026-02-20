@@ -1,15 +1,4 @@
-//! Namespace Type Checking Module
-//!
-//! This module contains namespace type checking methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Merging namespace exports into constructor types
-//! - Merging namespace exports into function types
-//! - Resolving re-exported members through export chains
-//!
-//! These operations are necessary for TypeScript's declaration merging feature
-//! where a class/function and namespace with the same name can be merged.
+//! Namespace type merging and re-export resolution for declaration merging.
 
 use crate::query_boundaries::class_type as query;
 use crate::state::CheckerState;

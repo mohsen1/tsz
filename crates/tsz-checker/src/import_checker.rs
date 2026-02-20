@@ -1,15 +1,4 @@
-//! Import/Export Checking Module
-//!
-//! This module contains methods for validating import and export declarations.
-//! It handles:
-//! - Import declaration validation (TS2307, TS2305)
-//! - Export assignment validation (TS2309)
-//! - Import equals declaration validation (TS1202)
-//! - Re-export chain cycle detection
-//! - Module body validation
-//!
-//! This module extends `CheckerState` with import/export methods as part of
-//! the Phase 2 architecture refactoring (task 2.3 - file splitting).
+//! Import/export declaration validation (TS2307, TS2305, TS2309, TS1202).
 
 use crate::state::CheckerState;
 use tsz_binder::symbol_flags;

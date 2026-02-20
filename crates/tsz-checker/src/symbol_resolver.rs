@@ -1,13 +1,4 @@
-//! Symbol Resolver Module
-//!
-//! This module contains symbol resolution methods for `CheckerState`
-//! as part of Phase 2 architecture refactoring.
-//!
-//! The methods in this module handle:
-//! - Symbol type resolution helpers
-//! - Global intrinsic detection
-//! - Symbol information queries
-//! - Identifier symbol resolution
+//! Symbol resolution helpers (type resolution, intrinsic detection, identifier lookup).
 //! - Qualified name resolution
 //! - Private identifier resolution
 //! - Type parameter resolution
