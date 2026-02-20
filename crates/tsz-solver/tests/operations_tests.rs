@@ -1516,7 +1516,7 @@ fn test_property_access_primitive_constructor_value() {
 
     let result = evaluator.resolve_property_access(TypeId::SYMBOL, "constructor");
     match result {
-        PropertyAccessResult::Success { type_id, .. } => assert_eq!(type_id, TypeId::ANY),
+        PropertyAccessResult::Success { type_id, .. } => assert_eq!(type_id, TypeId::FUNCTION),
         _ => panic!("Expected success, got {result:?}"),
     }
 }
