@@ -205,7 +205,14 @@ impl<'a> CheckerState<'a> {
             let key = self.ctx.types.application(base, canonical_args);
             if key != type_id {
                 canonical_key = Some(key);
-                if let Some(&cached) = self.ctx.narrowing_cache.resolve_cache.borrow().get(&key) {
+                let cached_opt = self
+                    .ctx
+                    .narrowing_cache
+                    .resolve_cache
+                    .borrow()
+                    .get(&key)
+                    .copied();
+                if let Some(cached) = cached_opt {
                     self.ctx
                         .narrowing_cache
                         .resolve_cache
