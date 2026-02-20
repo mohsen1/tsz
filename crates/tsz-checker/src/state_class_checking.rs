@@ -905,11 +905,6 @@ impl<'a> CheckerState<'a> {
         // TS1212: Check class name for strict mode reserved words
         self.check_strict_mode_reserved_name_at(class.name, stmt_idx);
 
-        println!(
-            ">>> class Customers MEMBERS LEN = {}",
-            class.members.nodes.len()
-        );
-
         // Check for reserved class names (error 2414)
         if class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)

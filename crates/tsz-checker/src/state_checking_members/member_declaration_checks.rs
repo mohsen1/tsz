@@ -1223,12 +1223,6 @@ impl<'a> CheckerState<'a> {
         // TS2302: Static members cannot reference class type parameters
         self.check_static_member_for_class_type_param_refs(member_idx);
 
-        if node.kind == 176 {
-            panic!(">>> check_class_member KIND = CONSTRUCTOR");
-        }
-
-        println!(">>> check_class_member KIND = {}", node.kind);
-
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.check_property_declaration(member_idx);
@@ -1301,46 +1295,102 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let modifiers = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                .ctx
-                .arena
-                .get_property_decl(node)
-                .and_then(|p| p.modifiers.as_ref()),
-            k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                .ctx
-                .arena
-                .get_method_decl(node)
-                .and_then(|m| m.modifiers.as_ref()),
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
-                .ctx
-                .arena
-                .get_accessor(node)
-                .and_then(|a| a.modifiers.as_ref()),
-            k if k == syntax_kind_ext::CONSTRUCTOR => self
-                .ctx
-                .arena
-                .get_constructor(node)
-                .and_then(|c| c.modifiers.as_ref()),
-            _ => None,
-        };
-
-        let Some(modifiers) = modifiers else {
-            return;
-        };
-
-        for &modifier_idx in &modifiers.nodes {
-            let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
-                continue;
-            };
-            if modifier_node.kind != syntax_kind_ext::DECORATOR {
-                continue;
+        let (modifiers, parameters) = match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let decl = self.ctx.arena.get_property_decl(node).unwrap();
+                (decl.modifiers.as_ref(), None)
             }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let decl = self.ctx.arena.get_method_decl(node).unwrap();
+                (decl.modifiers.as_ref(), Some(&decl.parameters))
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let decl = self.ctx.arena.get_accessor(node).unwrap();
+                (decl.modifiers.as_ref(), Some(&decl.parameters))
+            }
+            k if k == syntax_kind_ext::CONSTRUCTOR => {
+                let decl = self.ctx.arena.get_constructor(node).unwrap();
+                (decl.modifiers.as_ref(), Some(&decl.parameters))
+            }
+            _ => (None, None),
+        };
 
-            let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {
-                continue;
-            };
-            self.get_type_of_node(decorator.expression);
+        let is_abstract = modifiers.is_some_and(|m| self.has_abstract_modifier(&Some(m.clone())));
+
+        let is_ambient =
+            self.ctx
+                .enclosing_class
+                .as_ref()
+                .is_some_and(|c| c.is_declared)
+                || modifiers.is_some_and(|m| {
+                    m.nodes.iter().any(|&n| {
+                        self.ctx.arena.get(n).is_some_and(|n| {
+                            n.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
+                        })
+                    })
+                });
+
+        let is_ambient_field = is_ambient && node.kind == syntax_kind_ext::PROPERTY_DECLARATION;
+
+        if let Some(modifiers) = modifiers {
+            for &modifier_idx in &modifiers.nodes {
+                let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
+                    continue;
+                };
+                if modifier_node.kind != syntax_kind_ext::DECORATOR {
+                    continue;
+                }
+
+                if is_abstract
+                    || (!self.ctx.compiler_options.experimental_decorators && is_ambient_field)
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        modifier_idx,
+                        "Decorators are not valid here.",
+                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                    );
+                }
+
+                let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {
+                    continue;
+                };
+                self.get_type_of_node(decorator.expression);
+            }
+        }
+
+        if let Some(parameters) = parameters {
+            for &param_idx in &parameters.nodes {
+                let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if let Some(param_modifiers) = &param.modifiers {
+                    for &modifier_idx in &param_modifiers.nodes {
+                        let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
+                            continue;
+                        };
+                        if modifier_node.kind != syntax_kind_ext::DECORATOR {
+                            continue;
+                        }
+
+                        if !self.ctx.compiler_options.experimental_decorators {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node(
+                                modifier_idx,
+                                "Decorators are not valid here.",
+                                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                            );
+                        }
+
+                        if let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) {
+                            self.get_type_of_node(decorator.expression);
+                        }
+                    }
+                }
+            }
         }
     }
 
