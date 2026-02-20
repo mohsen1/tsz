@@ -791,6 +791,7 @@ impl<'a> CheckerState<'a> {
             let mut error_message = error.message.clone();
             if error_code
                 == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS
+                || error_code == crate::diagnostics::diagnostic_codes::CANNOT_FIND_MODULE_DID_YOU_MEAN_TO_SET_THE_MODULERESOLUTION_OPTION_TO_NODENEXT_O
             {
                 // Side-effect imports use TS2882 instead of TS2307/TS2792
                 if is_side_effect_import {
