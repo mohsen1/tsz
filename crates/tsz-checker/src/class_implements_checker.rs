@@ -666,7 +666,7 @@ impl<'a> CheckerState<'a> {
                     // Report error for missing members
                     let diagnostic_code = if is_class {
                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
-                    } else if interface_has_index_signature {
+                    } else if is_interface {
                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
                     } else {
                         diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
