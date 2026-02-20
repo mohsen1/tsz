@@ -520,6 +520,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         // Collect all target properties (including base types if intersection)
         let target_properties = self.collect_target_properties(target);
 
+        // TypeScript forgives excess properties when the target type is completely empty
+        // (like `{}`, an empty interface, or an empty class) because it accepts any non-primitive.
+        if target_properties.is_empty() && !has_number_index {
+            return true;
+        }
+
         // Check each source property
         for prop_info in &source_shape.properties {
             if !target_properties.contains(&prop_info.name) {
@@ -593,6 +599,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         // Collect all target properties (including base types if intersection)
         let target_properties = self.collect_target_properties(resolved_target);
+
+        // TypeScript forgives excess properties when the target type is completely empty
+        if target_properties.is_empty() && !has_number_index {
+            return None;
+        }
 
         // Check each source property
         for prop_info in &source_shape.properties {

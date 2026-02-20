@@ -65,6 +65,13 @@ impl<'a> CheckerState<'a> {
                         type_idx
                     };
 
+                // Evaluate the heritage expression to trigger control flow analysis (TS2454)
+                // and compute the actual type of the expression. We only do this for `extends`,
+                // because `implements` only takes types, not expressions.
+                if is_extends_clause {
+                    let _ = self.get_type_of_node(expr_idx);
+                }
+
                 // TS2562: Base class expressions cannot reference class type parameters.
                 // This applies to `extends` expressions that include type positions
                 // (e.g., call type arguments like `extends base<T>()`), but should not
@@ -1101,6 +1108,9 @@ impl<'a> CheckerState<'a> {
 
         // Check abstract consistency for method overloads (TS2512)
         self.check_abstract_overload_consistency(&class.members.nodes);
+
+        // Check consecutive abstract declarations (TS2516)
+        self.check_abstract_method_consecutive_declarations(&class.members.nodes);
 
         // Check for accessor abstract consistency (error 2676)
         // Getter and setter must both be abstract or both non-abstract

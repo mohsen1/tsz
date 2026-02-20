@@ -614,7 +614,10 @@ impl<'a> CheckerState<'a> {
         // Get the flow node for this identifier usage
         let flow_node = match self.ctx.binder.get_node_flow(idx) {
             Some(flow) => flow,
-            None => return true, // No flow info - assume assigned to avoid false positives
+            None => {
+                println!("No flow info for {idx:?}");
+                return true;
+            }
         };
 
         // Create a flow analyzer and check definite assignment
