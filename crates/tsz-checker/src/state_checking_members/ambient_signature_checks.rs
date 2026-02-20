@@ -665,13 +665,14 @@ impl<'a> CheckerState<'a> {
             {
                 if let Some(name_node) = self.ctx.arena.get(name_idx)
                     && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                        && ident.escaped_text == "constructor" {
-                            self.error_at_node(
+                    && ident.escaped_text == "constructor"
+                {
+                    self.error_at_node(
                                 name_idx,
                                 diagnostic_messages::CONSTRUCTOR_CANNOT_BE_USED_AS_A_PARAMETER_PROPERTY_NAME,
                                 diagnostic_codes::CONSTRUCTOR_CANNOT_BE_USED_AS_A_PARAMETER_PROPERTY_NAME,
                             );
-                        }
+                }
             }
 
             let Some(name_node) = self.ctx.arena.get(param.name) else {
