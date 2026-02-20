@@ -18383,9 +18383,9 @@ fn test_sourcemap_parity_object_array_literals() {
 
     if print_all {
         let num_missing = missing.len();
-        eprintln!("Missing {num_missing} mappings:");
+        println!("Missing {num_missing} mappings:");
         for (m, adj_line) in &missing {
-            eprintln!(
+            println!(
                 "  tsc gen({}:{}) [adj gen({}:{})] -> src({}:{})",
                 m.generated_line,
                 m.generated_column,
@@ -18395,14 +18395,14 @@ fn test_sourcemap_parity_object_array_literals() {
                 m.original_column
             );
         }
-        eprintln!("\ntsz mappings ({}):", tsz_decoded.len());
+        println!("\ntsz mappings ({}):", tsz_decoded.len());
         for m in &tsz_decoded {
-            eprintln!(
+            println!(
                 "  gen({}:{}) -> src({}:{})",
                 m.generated_line, m.generated_column, m.original_line, m.original_column
             );
         }
-        eprintln!("\nOutput:\n{output}");
+        println!("\nOutput:\n{output}");
     }
 
     const EXPECTED_MISSING: usize = 62;

@@ -14,6 +14,8 @@
 //! Note: The thin checker is the unified checker pipeline; `CheckerState`
 //! is an alias to the thin checker.
 
+extern crate self as tsz_checker;
+
 pub mod accessor_checker;
 pub mod assignability_checker;
 pub mod assignment_checker;

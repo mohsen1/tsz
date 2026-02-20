@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "conformance-never-stop-loop",
+            "type": "command",
+            "command": "$GEMINI_PROJECT_DIR/.gemini/hooks/conformance-never-stop.sh",
+            "description": "Always retry with the conformance loop prompt so the agent keeps running."
+          }
+        ]
+      }
+    ]
+  }
+}

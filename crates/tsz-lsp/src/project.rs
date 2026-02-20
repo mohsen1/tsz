@@ -19,7 +19,9 @@ use crate::dependency_graph::DependencyGraph;
 use crate::diagnostics::{LspDiagnostic, convert_diagnostic};
 use crate::export_signature::ExportSignature;
 use crate::hover::{HoverInfo, HoverProvider};
-use crate::rename::{TextEdit, WorkspaceEdit};
+use crate::rename::TextEdit;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::rename::WorkspaceEdit;
 use crate::resolver::{ScopeCache, ScopeCacheStats};
 use crate::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::symbol_index::SymbolIndex;
