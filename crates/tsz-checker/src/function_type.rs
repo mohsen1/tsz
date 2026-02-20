@@ -309,7 +309,7 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Infer from contextual type, default to ANY for implicit any parameters
                     // TypeScript uses `any` (with TS7006) when no contextual type is available.
-                    if is_js_file {
+                    let inferred_type = if is_js_file {
                         // In checkJs mode, contextual `unknown` from weak callback types
                         // (e.g. `(...args: unknown[]) => T`) should not force parameters
                         // to become `unknown`; TypeScript treats these as effectively `any`.
@@ -318,6 +318,19 @@ impl<'a> CheckerState<'a> {
                             .unwrap_or(TypeId::ANY)
                     } else {
                         contextual_type.unwrap_or(TypeId::ANY)
+                    };
+
+                    if inferred_type == TypeId::ANY && param.initializer.is_some() {
+                        let init_type = self.get_type_of_node(param.initializer);
+                        // Only widen when the initializer is a "fresh" literal expression
+                        let is_enum_member = self.is_enum_member_type_for_widening(init_type);
+                        if is_enum_member || self.is_fresh_literal_expression(param.initializer) {
+                            self.widen_initializer_type_for_mutable_binding(init_type)
+                        } else {
+                            init_type
+                        }
+                    } else {
+                        inferred_type
                     }
                 };
 

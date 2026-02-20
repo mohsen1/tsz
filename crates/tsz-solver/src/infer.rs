@@ -14,9 +14,9 @@ use crate::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
-    FunctionShapeId, InferencePriority, IntrinsicKind, LiteralValue, MappedTypeId, ObjectShapeId,
-    TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId, TypeData,
-    TypeId, TypeListId,
+    CallableShapeId, FunctionShapeId, InferencePriority, IntrinsicKind, LiteralValue, MappedTypeId,
+    ObjectShapeId, TemplateLiteralId, TemplateSpan, TupleElement, TupleListId, TypeApplicationId,
+    TypeData, TypeId, TypeListId,
 };
 use crate::visitor::is_literal_type;
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
@@ -1135,6 +1135,11 @@ impl<'a> InferenceContext<'a> {
                 self.infer_functions(source_func, target_func, priority)?;
             }
 
+            // Callable types: infer across signatures and properties
+            (Some(TypeData::Callable(source_call)), Some(TypeData::Callable(target_call))) => {
+                self.infer_callables(source_call, target_call, priority)?;
+            }
+
             // Array types: recurse into element types
             (Some(TypeData::Array(source_elem)), Some(TypeData::Array(target_elem))) => {
                 self.infer_from_types(source_elem, target_elem, priority)?;
@@ -1467,6 +1472,76 @@ impl<'a> InferenceContext<'a> {
 
         for (source_elem, target_elem) in source_list.iter().zip(target_list.iter()) {
             self.infer_from_types(source_elem.type_id, target_elem.type_id, priority)?;
+        }
+
+        Ok(())
+    }
+
+    /// Infer from callable types, handling signatures and properties
+    fn infer_callables(
+        &mut self,
+        source_id: CallableShapeId,
+        target_id: CallableShapeId,
+        priority: InferencePriority,
+    ) -> Result<(), InferenceError> {
+        let source = self.interner.callable_shape(source_id);
+        let target = self.interner.callable_shape(target_id);
+
+        // For each call signature in the target, try to find a compatible one in the source
+        for target_sig in &target.call_signatures {
+            for source_sig in &source.call_signatures {
+                if source_sig.params.len() == target_sig.params.len() {
+                    for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
+                    {
+                        self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+                    }
+                    self.infer_from_types(
+                        source_sig.return_type,
+                        target_sig.return_type,
+                        priority,
+                    )?;
+                    break;
+                }
+            }
+        }
+
+        // For each construct signature
+        for target_sig in &target.construct_signatures {
+            for source_sig in &source.construct_signatures {
+                if source_sig.params.len() == target_sig.params.len() {
+                    for (s_param, t_param) in source_sig.params.iter().zip(target_sig.params.iter())
+                    {
+                        self.infer_from_types(t_param.type_id, s_param.type_id, priority)?;
+                    }
+                    self.infer_from_types(
+                        source_sig.return_type,
+                        target_sig.return_type,
+                        priority,
+                    )?;
+                    break;
+                }
+            }
+        }
+
+        // Properties
+        for target_prop in &target.properties {
+            if let Some(source_prop) = source
+                .properties
+                .iter()
+                .find(|p| p.name == target_prop.name)
+            {
+                self.infer_from_types(source_prop.type_id, target_prop.type_id, priority)?;
+            }
+        }
+
+        // String index
+        if let (Some(target_idx), Some(source_idx)) = (&target.string_index, &source.string_index) {
+            self.infer_from_types(source_idx.value_type, target_idx.value_type, priority)?;
+        }
+
+        // Number index
+        if let (Some(target_idx), Some(source_idx)) = (&target.number_index, &source.number_index) {
+            self.infer_from_types(source_idx.value_type, target_idx.value_type, priority)?;
         }
 
         Ok(())
