@@ -5,7 +5,7 @@ use crate::state::CheckerState;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{PropertyInfo, TypeId, Visibility};
+use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, TypeId, Visibility};
 
 #[derive(Clone)]
 struct JsdocTypedefInfo {
@@ -304,6 +304,50 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Narrow support for conformance-critical pattern:
+                //   @type {Object.<K, V>} or @type {Object<K, V>}
+                let obj_map_inner = type_expr
+                    .strip_prefix("Object.<")
+                    .and_then(|rest| rest.strip_suffix(">"))
+                    .or_else(|| {
+                        type_expr
+                            .strip_prefix("Object<")
+                            .and_then(|rest| rest.strip_suffix(">"))
+                    });
+
+                if let Some(inner) = obj_map_inner {
+                    let mut parts = inner.split(',');
+                    let key_str = parts.next().unwrap_or("").trim();
+                    let value_str = parts.next().unwrap_or("").trim();
+                    if let (Some(key_type), Some(value_type)) = (
+                        self.jsdoc_type_from_expression(key_str),
+                        self.jsdoc_type_from_expression(value_str),
+                    ) {
+                        let mut shape = ObjectShape {
+                            flags: ObjectFlags::empty(),
+                            properties: Vec::new(),
+                            string_index: None,
+                            number_index: None,
+                            symbol: None,
+                        };
+                        if key_type == TypeId::STRING {
+                            shape.string_index = Some(IndexSignature {
+                                key_type,
+                                value_type,
+                                readonly: false,
+                            });
+                            return Some(factory.object_with_index(shape));
+                        } else if key_type == TypeId::NUMBER {
+                            shape.number_index = Some(IndexSignature {
+                                key_type,
+                                value_type,
+                                readonly: false,
+                            });
+                            return Some(factory.object_with_index(shape));
+                        }
+                    }
+                }
+
+                // Narrow support for conformance-critical pattern:
                 //   @type {keyof typeof <identifier>}
                 if let Some(rest) = type_expr.strip_prefix("keyof") {
                     let rest = rest.trim_start();
@@ -428,8 +472,20 @@ impl<'a> CheckerState<'a> {
 
     fn type_from_jsdoc_typedef(&mut self, info: JsdocTypedefInfo) -> Option<TypeId> {
         let factory = self.ctx.types.factory();
-        let mut prop_infos = Vec::with_capacity(info.properties.len());
 
+        let base_type = if let Some(base_type_expr) = &info.base_type {
+            let expr = base_type_expr.trim();
+            // If base type is explicitly provided and is NOT generic "Object"/"object",
+            // TypeScript ignores all @property tags and uses the base type directly.
+            if expr != "Object" && expr != "object" {
+                return self.jsdoc_type_from_expression(expr);
+            }
+            Some(self.jsdoc_type_from_expression(expr).unwrap_or(TypeId::ANY))
+        } else {
+            None
+        };
+
+        let mut prop_infos = Vec::with_capacity(info.properties.len());
         for (name, prop_type_expr) in info.properties {
             let prop_type = if prop_type_expr.trim().is_empty() {
                 TypeId::ANY
@@ -450,14 +506,17 @@ impl<'a> CheckerState<'a> {
             });
         }
 
-        if !prop_infos.is_empty() {
-            return Some(factory.object(prop_infos));
-        }
-
-        if let Some(base_type_expr) = info.base_type {
-            self.jsdoc_type_from_expression(&base_type_expr)
+        let object_type = if !prop_infos.is_empty() {
+            Some(factory.object(prop_infos))
         } else {
             None
+        };
+
+        match (object_type, base_type) {
+            (Some(obj), Some(base)) => Some(factory.intersection(vec![obj, base])),
+            (Some(obj), None) => Some(obj),
+            (None, Some(base)) => Some(base),
+            (None, None) => None,
         }
     }
 
@@ -578,7 +637,33 @@ impl<'a> CheckerState<'a> {
     }
 
     fn extract_jsdoc_type_expression(jsdoc: &str) -> Option<&str> {
-        let tag_pos = jsdoc.find("@type")?;
+        let typedef_pos = jsdoc.find("@typedef");
+        let mut tag_pos = jsdoc.find("@type");
+
+        while let Some(pos) = tag_pos {
+            let next_char = jsdoc[pos + "@type".len()..].chars().next();
+            if next_char.is_none() || !next_char.unwrap().is_alphabetic() {
+                // If there's a @typedef before this @type, check if it absorbs it.
+                if let Some(td_pos) = typedef_pos
+                    && td_pos < pos {
+                        let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
+                        let mut has_non_object_base = false;
+                        if let Some(open) = typedef_rest.find('{')
+                            && let Some(close) = typedef_rest[open..].find('}') {
+                                let base = typedef_rest[open + 1..open + close].trim();
+                                if base != "Object" && base != "object" && !base.is_empty() {
+                                    has_non_object_base = true;
+                                }
+                            }
+                        if !has_non_object_base {
+                            return None; // The @type is absorbed by the @typedef
+                        }
+                    }
+                break;
+            }
+            tag_pos = jsdoc[pos + 1..].find("@type").map(|p| p + pos + 1);
+        }
+        let tag_pos = tag_pos?;
         let rest = &jsdoc[tag_pos + "@type".len()..];
         let open = rest.find('{')?;
         let after_open = &rest[open + 1..];
