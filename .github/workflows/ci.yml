@@ -456,10 +456,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [changes]
+    outputs:
+      pass_rate: ${{ steps.conformance-metrics.outputs.pass_rate }}
+      passed: ${{ steps.conformance-metrics.outputs.passed }}
+      total: ${{ steps.conformance-metrics.outputs.total }}
     if: >-
       needs.changes.outputs.solver == 'true' ||
       needs.changes.outputs.checker == 'true' ||
       needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
       needs.changes.outputs.common == 'true' ||
       needs.changes.outputs.root == 'true' ||
       needs.changes.outputs.emitter == 'true'
@@ -489,20 +495,34 @@ jobs:
           restore-keys: ${{ runner.os }}-conformance-
 
       - name: Run conformance tests
+        id: conformance-metrics
         run: |
+          set -euo pipefail
+
           # Extract baseline percentage from README
           BASELINE=$(sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%')
           echo "README baseline: ${BASELINE}%"
 
           # Build and run conformance (cache is checked into the repo)
           TMPOUT=$(mktemp)
+          CLEANOUT=$(mktemp)
+          trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
+
           # CI runners are slower and noisier than local machines; use an
           # explicit timeout/workers config to avoid timeout-induced flake.
           ./scripts/conformance.sh run --timeout 10 --workers 12 2>&1 | tee "$TMPOUT" || true
+          sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
 
-          # Extract actual percentage from output (matches "N.N%" pattern)
-          ACTUAL=$(grep -oE '[0-9]+\.[0-9]+%' "$TMPOUT" | tail -1 | tr -d '%')
-          rm -f "$TMPOUT"
+          # Extract pass counters and percentage from final result line:
+          # FINAL RESULTS: <passed>/<total> passed (<rate>%)
+          FINAL_LINE=$(grep "FINAL RESULTS:" "$CLEANOUT" | tail -1 || true)
+          ACTUAL=$(echo "$FINAL_LINE" | grep -oE '\([0-9]+\.[0-9]+%\)' | tr -d '()%')
+          PASSED=$(echo "$FINAL_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+) passed.*/\1/' || true)
+          TOTAL=$(echo "$FINAL_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*([0-9]+)\/([0-9]+) passed.*/\2/' || true)
+
+          echo "pass_rate=${ACTUAL}" >> "$GITHUB_OUTPUT"
+          echo "passed=${PASSED}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL}" >> "$GITHUB_OUTPUT"
 
           if [ -z "$ACTUAL" ] || [ "$ACTUAL" = "0.0" ]; then
             echo "::error::Conformance runner produced no results (0.0% or no output)"
@@ -521,13 +541,355 @@ jobs:
             echo "::warning::Could not extract baseline from README, skipping regression check"
           fi
 
+      - name: Report conformance pass rate
+        if: always()
+        run: |
+          RATE="${{ steps.conformance-metrics.outputs.pass_rate }}"
+          PASSED="${{ steps.conformance-metrics.outputs.passed }}"
+          TOTAL="${{ steps.conformance-metrics.outputs.total }}"
+
+          if [ -z "$RATE" ]; then RATE="n/a"; fi
+          if [ -z "$PASSED" ]; then PASSED="n/a"; fi
+          if [ -z "$TOTAL" ]; then TOTAL="n/a"; fi
+
+          {
+            echo "### Conformance"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            if [ "$RATE" = "n/a" ]; then
+              echo "| Conformance | $PASSED | $TOTAL | n/a |"
+            else
+              echo "| Conformance | $PASSED | $TOTAL | ${RATE}% |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ─── Emit parity ───────────────────────────────────────────────────────────
+  emit:
+    name: Emit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [changes]
+    outputs:
+      js_pass_rate: ${{ steps.emit-metrics.outputs.js_pass_rate }}
+      js_passed: ${{ steps.emit-metrics.outputs.js_passed }}
+      js_total: ${{ steps.emit-metrics.outputs.js_total }}
+      dts_pass_rate: ${{ steps.emit-metrics.outputs.dts_pass_rate }}
+      dts_passed: ${{ steps.emit-metrics.outputs.dts_passed }}
+      dts_total: ${{ steps.emit-metrics.outputs.dts_total }}
+    if: >-
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.emitter == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch TypeScript baselines
+        run: |
+          git submodule update --init --depth 1 -- TypeScript
+          test -d TypeScript/tests/baselines/reference || { echo "ERROR: TypeScript baseline files missing"; exit 1; }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            target
+            scripts/node_modules
+          key: ${{ runner.os }}-emit-${{ hashFiles('**/Cargo.lock', 'scripts/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-emit-
+            ${{ runner.os }}-cargo-
+
+      - name: Run emit tests
+        id: emit-metrics
+        run: |
+          set -euo pipefail
+
+          BASE_JS=$(sed -n '/EMIT_START/,/EMIT_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | sed -n '1p' | tr -d '%' || true)
+          BASE_DTS=$(sed -n '/EMIT_START/,/EMIT_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | sed -n '2p' | tr -d '%' || true)
+          echo "README baselines: JS=${BASE_JS:-n/a}% DTS=${BASE_DTS:-n/a}%"
+
+          TMPOUT=$(mktemp)
+          CLEANOUT=$(mktemp)
+          trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
+
+          ./scripts/emit/run.sh --max=all 2>&1 | tee "$TMPOUT" || true
+          sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
+
+          JS_LINE=$(grep "Pass Rate:" "$CLEANOUT" | sed -n '1p' || true)
+          DTS_LINE=$(grep "Pass Rate:" "$CLEANOUT" | sed -n '2p' || true)
+
+          JS_RATE=$(echo "$JS_LINE" | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%' || true)
+          DTS_RATE=$(echo "$DTS_LINE" | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%' || true)
+
+          JS_COUNTS=$(echo "$JS_LINE" | grep -oE '\([0-9]+/[0-9]+\)' | tr -d '()' || true)
+          DTS_COUNTS=$(echo "$DTS_LINE" | grep -oE '\([0-9]+/[0-9]+\)' | tr -d '()' || true)
+
+          JS_PASSED=$(echo "$JS_COUNTS" | cut -d/ -f1)
+          JS_TOTAL=$(echo "$JS_COUNTS" | cut -d/ -f2)
+          DTS_PASSED=$(echo "$DTS_COUNTS" | cut -d/ -f1)
+          DTS_TOTAL=$(echo "$DTS_COUNTS" | cut -d/ -f2)
+
+          echo "js_pass_rate=${JS_RATE}" >> "$GITHUB_OUTPUT"
+          echo "js_passed=${JS_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "js_total=${JS_TOTAL}" >> "$GITHUB_OUTPUT"
+          echo "dts_pass_rate=${DTS_RATE}" >> "$GITHUB_OUTPUT"
+          echo "dts_passed=${DTS_PASSED}" >> "$GITHUB_OUTPUT"
+          echo "dts_total=${DTS_TOTAL}" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$JS_RATE" ] || [ -z "$DTS_RATE" ]; then
+            echo "::error::Emit runner produced no parseable pass-rate output"
+            exit 1
+          fi
+
+          echo "Actual: JS ${JS_RATE}% (${JS_PASSED}/${JS_TOTAL}) | DTS ${DTS_RATE}% (${DTS_PASSED}/${DTS_TOTAL})"
+
+          REGRESSION=0
+          if [ -n "$BASE_JS" ] && echo "$JS_RATE $BASE_JS" | awk '{exit !($1 < $2)}'; then
+            echo "::error::Emit JS regression: ${JS_RATE}% < ${BASE_JS}% (README baseline)"
+            REGRESSION=1
+          else
+            echo "::notice::Emit JS OK: ${JS_RATE}% >= ${BASE_JS:-n/a}% baseline"
+          fi
+
+          if [ -n "$BASE_DTS" ] && echo "$DTS_RATE $BASE_DTS" | awk '{exit !($1 < $2)}'; then
+            echo "::error::Emit DTS regression: ${DTS_RATE}% < ${BASE_DTS}% (README baseline)"
+            REGRESSION=1
+          else
+            echo "::notice::Emit DTS OK: ${DTS_RATE}% >= ${BASE_DTS:-n/a}% baseline"
+          fi
+
+          if [ "$REGRESSION" -eq 1 ]; then
+            exit 1
+          fi
+
+      - name: Report emit pass rates
+        if: always()
+        run: |
+          JS_RATE="${{ steps.emit-metrics.outputs.js_pass_rate }}"
+          JS_PASSED="${{ steps.emit-metrics.outputs.js_passed }}"
+          JS_TOTAL="${{ steps.emit-metrics.outputs.js_total }}"
+          DTS_RATE="${{ steps.emit-metrics.outputs.dts_pass_rate }}"
+          DTS_PASSED="${{ steps.emit-metrics.outputs.dts_passed }}"
+          DTS_TOTAL="${{ steps.emit-metrics.outputs.dts_total }}"
+
+          if [ -z "$JS_RATE" ]; then JS_RATE="n/a"; fi
+          if [ -z "$JS_PASSED" ]; then JS_PASSED="n/a"; fi
+          if [ -z "$JS_TOTAL" ]; then JS_TOTAL="n/a"; fi
+          if [ -z "$DTS_RATE" ]; then DTS_RATE="n/a"; fi
+          if [ -z "$DTS_PASSED" ]; then DTS_PASSED="n/a"; fi
+          if [ -z "$DTS_TOTAL" ]; then DTS_TOTAL="n/a"; fi
+
+          {
+            echo "### Emit"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            if [ "$JS_RATE" = "n/a" ]; then
+              echo "| Emit JavaScript | $JS_PASSED | $JS_TOTAL | n/a |"
+            else
+              echo "| Emit JavaScript | $JS_PASSED | $JS_TOTAL | ${JS_RATE}% |"
+            fi
+            if [ "$DTS_RATE" = "n/a" ]; then
+              echo "| Emit Declaration | $DTS_PASSED | $DTS_TOTAL | n/a |"
+            else
+              echo "| Emit Declaration | $DTS_PASSED | $DTS_TOTAL | ${DTS_RATE}% |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ─── Fourslash parity ──────────────────────────────────────────────────────
+  fourslash:
+    name: Fourslash Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [changes]
+    outputs:
+      pass_rate: ${{ steps.fourslash-metrics.outputs.pass_rate }}
+      passed: ${{ steps.fourslash-metrics.outputs.passed }}
+      total: ${{ steps.fourslash-metrics.outputs.total }}
+    if: >-
+      needs.changes.outputs.solver == 'true' ||
+      needs.changes.outputs.checker == 'true' ||
+      needs.changes.outputs.binder == 'true' ||
+      needs.changes.outputs.parser == 'true' ||
+      needs.changes.outputs.scanner == 'true' ||
+      needs.changes.outputs.common == 'true' ||
+      needs.changes.outputs.root == 'true' ||
+      needs.changes.outputs.lsp == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch TypeScript fourslash tests
+        run: |
+          git submodule update --init --depth 1 -- TypeScript
+          test -d TypeScript/tests/cases/fourslash || { echo "ERROR: TypeScript fourslash tests missing"; exit 1; }
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      - name: Cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            .target
+            target
+            scripts/fourslash/node_modules
+            TypeScript/node_modules
+          key: ${{ runner.os }}-fourslash-${{ hashFiles('**/Cargo.lock', 'scripts/fourslash/package-lock.json', 'TypeScript/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-fourslash-
+            ${{ runner.os }}-cargo-
+
+      - name: Run fourslash tests
+        id: fourslash-metrics
+        run: |
+          set -euo pipefail
+
+          BASELINE=$(sed -n '/FOURSLASH_START/,/FOURSLASH_END/p' README.md | grep -oE '[0-9]+\.[0-9]+%' | head -1 | tr -d '%' || true)
+          echo "README baseline: ${BASELINE:-n/a}%"
+
+          TMPOUT=$(mktemp)
+          CLEANOUT=$(mktemp)
+          trap 'rm -f "$TMPOUT" "$CLEANOUT"' EXIT
+
+          ./scripts/run-fourslash.sh 2>&1 | tee "$TMPOUT" || true
+          sed -E 's/\x1b\[[0-9;]*m//g' "$TMPOUT" > "$CLEANOUT"
+
+          RESULTS_LINE=$(grep "^Results:" "$CLEANOUT" | tail -1 || true)
+          RATE=$(grep "Pass rate:" "$CLEANOUT" | tail -1 | grep -oE '[0-9]+\.[0-9]+%' | tr -d '%' || true)
+          PASSED=$(echo "$RESULTS_LINE" | grep -oE 'Results:[[:space:]]*[0-9]+ passed' | grep -oE '[0-9]+' | head -1 || true)
+          RAN=$(echo "$RESULTS_LINE" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+' | head -1 || true)
+          TOTAL_LINE=$(grep "total available" "$CLEANOUT" | tail -1 || true)
+          if [ -n "$TOTAL_LINE" ]; then
+            TOTAL=$(echo "$TOTAL_LINE" | grep -oE '[0-9]+ total available' | grep -oE '[0-9]+' | head -1 || true)
+          else
+            TOTAL="$RAN"
+          fi
+
+          echo "pass_rate=${RATE}" >> "$GITHUB_OUTPUT"
+          echo "passed=${PASSED}" >> "$GITHUB_OUTPUT"
+          echo "total=${TOTAL}" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$RATE" ] || [ -z "$PASSED" ] || [ -z "$TOTAL" ]; then
+            echo "::error::Fourslash runner produced no parseable pass-rate output"
+            exit 1
+          fi
+
+          echo "Actual: ${RATE}% (${PASSED}/${TOTAL})"
+
+          if [ -n "$BASELINE" ]; then
+            if echo "$RATE $BASELINE" | awk '{exit !($1 < $2)}'; then
+              echo "::error::Fourslash regression: ${RATE}% < ${BASELINE}% (README baseline)"
+              exit 1
+            else
+              echo "::notice::Fourslash OK: ${RATE}% >= ${BASELINE}% baseline"
+            fi
+          else
+            echo "::warning::Could not extract baseline from README, skipping regression check"
+          fi
+
+      - name: Report fourslash pass rate
+        if: always()
+        run: |
+          RATE="${{ steps.fourslash-metrics.outputs.pass_rate }}"
+          PASSED="${{ steps.fourslash-metrics.outputs.passed }}"
+          TOTAL="${{ steps.fourslash-metrics.outputs.total }}"
+
+          if [ -z "$RATE" ]; then RATE="n/a"; fi
+          if [ -z "$PASSED" ]; then PASSED="n/a"; fi
+          if [ -z "$TOTAL" ]; then TOTAL="n/a"; fi
+
+          {
+            echo "### Fourslash"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            if [ "$RATE" = "n/a" ]; then
+              echo "| Fourslash | $PASSED | $TOTAL | n/a |"
+            else
+              echo "| Fourslash | $PASSED | $TOTAL | ${RATE}% |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   # ─── Summary ───────────────────────────────────────────────────────────────
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance]
+    needs: [lint, build, test-foundation, test-binder, test-solver, test-checker, test-leaf, test-root, wasm-build, conformance, emit, fourslash]
     if: always()
     steps:
+      - name: Publish pass-rate summary
+        if: always()
+        run: |
+          conf_rate="${{ needs.conformance.outputs.pass_rate }}"
+          conf_passed="${{ needs.conformance.outputs.passed }}"
+          conf_total="${{ needs.conformance.outputs.total }}"
+
+          emit_js_rate="${{ needs.emit.outputs.js_pass_rate }}"
+          emit_js_passed="${{ needs.emit.outputs.js_passed }}"
+          emit_js_total="${{ needs.emit.outputs.js_total }}"
+          emit_dts_rate="${{ needs.emit.outputs.dts_pass_rate }}"
+          emit_dts_passed="${{ needs.emit.outputs.dts_passed }}"
+          emit_dts_total="${{ needs.emit.outputs.dts_total }}"
+
+          fs_rate="${{ needs.fourslash.outputs.pass_rate }}"
+          fs_passed="${{ needs.fourslash.outputs.passed }}"
+          fs_total="${{ needs.fourslash.outputs.total }}"
+
+          format_row() {
+            local suite="$1"
+            local passed="$2"
+            local total="$3"
+            local rate="$4"
+            [ -n "$passed" ] || passed="n/a"
+            [ -n "$total" ] || total="n/a"
+            if [ -z "$rate" ]; then
+              echo "| $suite | $passed | $total | n/a |"
+            else
+              echo "| $suite | $passed | $total | ${rate}% |"
+            fi
+          }
+
+          {
+            echo "## Pass-rate overview"
+            echo ""
+            echo "| Suite | Passed | Total | Pass rate |"
+            echo "| --- | ---: | ---: | ---: |"
+            format_row "Conformance" "$conf_passed" "$conf_total" "$conf_rate"
+            format_row "Emit JavaScript" "$emit_js_passed" "$emit_js_total" "$emit_js_rate"
+            format_row "Emit Declaration" "$emit_dts_passed" "$emit_dts_total" "$emit_dts_rate"
+            format_row "Fourslash" "$fs_passed" "$fs_total" "$fs_rate"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Check results
         run: |
           # Only check jobs that actually ran (skip if skipped due to no changes)
@@ -550,5 +912,7 @@ jobs:
           check_job "Root Tests" "${{ needs.test-root.result }}"
           check_job "WASM Build" "${{ needs.wasm-build.result }}"
           check_job "Conformance" "${{ needs.conformance.result }}"
+          check_job "Emit" "${{ needs.emit.result }}"
+          check_job "Fourslash" "${{ needs.fourslash.result }}"
 
           echo "All critical jobs passed (or were skipped because no relevant changes)!"
