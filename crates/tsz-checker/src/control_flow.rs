@@ -776,7 +776,7 @@ impl<'a> FlowAnalyzer<'a> {
                             self.get_assigned_type(flow.node, reference, is_destructuring)
                         {
                             // Killing definition: replace type with RHS type and stop traversal
-                            assigned_type
+                            self.narrow_assignment(initial_type, assigned_type)
                         } else {
                             // If we can't resolve the RHS type, conservatively return declared type
                             // The value HAS changed, so we can't continue to antecedent

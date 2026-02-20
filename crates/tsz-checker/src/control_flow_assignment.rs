@@ -1886,4 +1886,43 @@ impl<'a> FlowAnalyzer<'a> {
                 || k == SyntaxKind::CaretEqualsToken as u16
         )
     }
+
+    pub(crate) fn narrow_assignment(&self, initial_type: TypeId, assigned_type: TypeId) -> TypeId {
+        use crate::query_boundaries::flow_analysis::union_members_for_type;
+        use tsz_solver::is_subtype_of;
+
+        if initial_type == TypeId::ANY
+            || initial_type == TypeId::ERROR
+            || initial_type == TypeId::UNKNOWN
+        {
+            return initial_type;
+        }
+
+        let members_opt = union_members_for_type(self.interner, initial_type);
+        let members = match members_opt {
+            Some(m) => m,
+            None => return initial_type,
+        };
+
+        if members.len() <= 1 {
+            return initial_type;
+        }
+
+        let mut kept = Vec::new();
+        for &m in &members {
+            if is_subtype_of(self.interner, assigned_type, m)
+                || is_subtype_of(self.interner, m, assigned_type)
+            {
+                kept.push(m);
+            }
+        }
+
+        if kept.is_empty() {
+            initial_type
+        } else if kept.len() == 1 {
+            kept[0]
+        } else {
+            self.interner.union(kept)
+        }
+    }
 }
