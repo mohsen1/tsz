@@ -364,6 +364,9 @@ pub fn get_async_iterable_element_type(
 ) -> TypeId {
     match get_iterator_info(db, type_id, true) {
         Some(info) => info.yield_type,
-        None => TypeId::ANY,
+        None => match get_iterator_info(db, type_id, false) {
+            Some(info) => info.yield_type,
+            None => TypeId::ANY,
+        },
     }
 }
