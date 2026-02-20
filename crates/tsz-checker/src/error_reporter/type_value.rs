@@ -237,38 +237,67 @@ impl<'a> CheckerState<'a> {
         use tsz_binder::symbol_flags;
 
         let sym_id = self.resolve_identifier_symbol(idx)?;
+        let mut visited = Vec::new();
+        let target = self.resolve_alias_symbol(sym_id, &mut visited);
+
         let lib_binders = self.get_lib_binders();
-        let symbol = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)?;
 
-        // Only applies to alias symbols explicitly marked type-only
-        if (symbol.flags & symbol_flags::ALIAS) == 0 || !symbol.is_type_only {
-            return None;
-        }
+        // Walk the alias chain to find the first type-only import or export.
+        for &alias_sym_id in &visited {
+            let symbol = match self
+                .ctx
+                .binder
+                .get_symbol_with_libs(alias_sym_id, &lib_binders)
+            {
+                Some(s) => s,
+                None => continue,
+            };
 
-        // Walk up from the symbol's declaration to determine if it came from
-        // an import or export statement.
-        for &decl in &symbol.declarations {
-            if decl.is_none() {
+            // Only applies to alias symbols explicitly marked type-only
+            if (symbol.flags & symbol_flags::ALIAS) == 0 || !symbol.is_type_only {
                 continue;
             }
-            let mut current = decl;
-            let mut guard = 0;
-            while guard < 16 {
-                guard += 1;
-                let node = self.ctx.arena.get(current)?;
-                if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
-                    return Some(TypeOnlyKind::Import);
+
+            // Walk up from the symbol's declaration to determine if it came from
+            // an import or export statement.
+            for &decl in &symbol.declarations {
+                if decl.is_none() {
+                    continue;
                 }
-                if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                    return Some(TypeOnlyKind::Export);
+                let mut current = decl;
+                let mut guard = 0;
+                while guard < 16 {
+                    guard += 1;
+                    let Some(node) = self.ctx.arena.get(current) else {
+                        break;
+                    };
+                    if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                        return Some(TypeOnlyKind::Import);
+                    }
+                    if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                        return Some(TypeOnlyKind::Export);
+                    }
+                    let Some(ext) = self.ctx.arena.get_extended(current) else {
+                        break;
+                    };
+                    if ext.parent.is_none() {
+                        break;
+                    }
+                    current = ext.parent;
                 }
-                let ext = self.ctx.arena.get_extended(current)?;
-                if ext.parent.is_none() {
-                    break;
-                }
-                current = ext.parent;
             }
         }
+
+        // If the target symbol itself is marked type-only (e.g. `export type { A }`),
+        // it means it was exported as a type, so return Export.
+        if let Some(target_id) = target
+            && let Some(target_symbol) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(target_id, &lib_binders)
+                && target_symbol.is_type_only {
+                    return Some(TypeOnlyKind::Export);
+                }
 
         None
     }
