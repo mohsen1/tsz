@@ -294,7 +294,7 @@ impl<'a> Printer<'a> {
         })
     }
 
-    fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
+    pub(super) fn param_initializer_has_top_level_await(&self, param_idx: NodeIndex) -> bool {
         let Some(param_node) = self.arena.get(param_idx) else {
             return false;
         };

@@ -820,6 +820,15 @@ impl<'a> Printer<'a> {
                 }
                 false
             }
+            // Const enums and declare enums are erased, so they are type-only
+            syntax_kind_ext::ENUM_DECLARATION => {
+                if let Some(enum_decl) = self.arena.get_enum(node) {
+                    self.has_declare_modifier(&enum_decl.modifiers)
+                        || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+                } else {
+                    false
+                }
+            }
             // A namespace containing only type-only declarations is itself type-only
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
