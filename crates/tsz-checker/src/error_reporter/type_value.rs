@@ -374,6 +374,8 @@ impl<'a> CheckerState<'a> {
 
     /// Report TS2708: Cannot use namespace '{0}' as a value.
     pub fn error_namespace_used_as_value_at(&mut self, name: &str, idx: NodeIndex) {
+        println!("error_namespace_used_as_value_at: {name}");
+
         if let Some(loc) = self.get_source_location(idx) {
             let message = format_message(
                 diagnostic_messages::CANNOT_USE_NAMESPACE_AS_A_VALUE,
