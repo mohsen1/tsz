@@ -722,7 +722,12 @@ impl<'a> CheckerState<'a> {
                 // TS2355: Skip for async functions - they implicitly return Promise<void>
                 // Async functions without a return statement automatically resolve to Promise<void>
                 // so they should not emit "function must return a value" errors
-                if has_type_annotation && requires_return && falls_through && !is_async {
+                if has_type_annotation
+                    && requires_return
+                    && falls_through
+                    && !is_async
+                    && return_type != TypeId::VOID
+                {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     if !has_return {
                         self.error_at_node(
