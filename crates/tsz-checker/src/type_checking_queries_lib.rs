@@ -1288,10 +1288,26 @@ impl<'a> CheckerState<'a> {
             None => return false,
         };
 
+        // If any intermediate alias in the chain was marked type-only
+        // (e.g. `export type { A }`), then the resolved symbol is type-only.
+        for &alias_sym_id in &visited {
+            if let Some(alias_sym) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(alias_sym_id, &lib_binders)
+                && alias_sym.is_type_only {
+                    return true;
+                }
+        }
+
         let target_symbol = match self.ctx.binder.get_symbol_with_libs(target, &lib_binders) {
             Some(target_symbol) => target_symbol,
             None => return false,
         };
+
+        if target_symbol.is_type_only {
+            return true;
+        }
 
         let has_value = (target_symbol.flags & symbol_flags::VALUE) != 0;
         let has_type = (target_symbol.flags & symbol_flags::TYPE) != 0;
