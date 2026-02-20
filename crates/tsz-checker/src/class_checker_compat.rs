@@ -764,6 +764,51 @@ impl<'a> CheckerState<'a> {
                 guard.leave(class_idx);
                 return Some(info);
             }
+
+            if !target_is_static
+                && let Some(member_node) = self.ctx.arena.get(member_idx)
+                && member_node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR
+                && let Some(ctor) = self.ctx.arena.get_constructor(member_node)
+            {
+                for &param_idx in &ctor.parameters.nodes {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && self.has_parameter_property_modifier(&param.modifiers)
+                        && let Some(name) = self.get_property_name(param.name)
+                        && name == target_name
+                    {
+                        if skip_private && self.has_private_modifier(&param.modifiers) {
+                            continue;
+                        }
+                        let visibility = if self.has_private_modifier(&param.modifiers) {
+                            MemberVisibility::Private
+                        } else if self.has_protected_modifier(&param.modifiers) {
+                            MemberVisibility::Protected
+                        } else {
+                            MemberVisibility::Public
+                        };
+                        let prop_type = if !param.type_annotation.is_none() {
+                            self.get_type_from_type_node(param.type_annotation)
+                        } else {
+                            tsz_solver::TypeId::ANY
+                        };
+                        let info = ClassMemberInfo {
+                            name,
+                            type_id: prop_type,
+                            name_idx: param.name,
+                            visibility,
+                            is_method: false,
+                            is_static: false,
+                            is_accessor: false,
+                            is_abstract: false,
+                            has_override: self.has_override_modifier(&param.modifiers),
+                            has_dynamic_name: false,
+                        };
+                        guard.leave(class_idx);
+                        return Some(info);
+                    }
+                }
+            }
         }
 
         // Walk up to base class
