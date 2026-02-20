@@ -862,7 +862,7 @@ impl<'a> CheckerState<'a> {
 
                     // Check for duplicate property (skip in destructuring targets)
                     // TS1117: duplicate properties are an error in object literals.
-                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) {
+                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) && !self.ctx.has_parse_errors {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1046,7 +1046,7 @@ impl<'a> CheckerState<'a> {
 
                     // Check for duplicate property (skip in destructuring targets)
                     // TS1117: duplicate properties are an error in object literals.
-                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) {
+                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) && !self.ctx.has_parse_errors {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1115,7 +1115,7 @@ impl<'a> CheckerState<'a> {
 
                     // Check for duplicate property (skip in destructuring targets)
                     // TS1117: duplicate properties are an error in object literals.
-                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) {
+                    if !skip_duplicate_check && explicit_property_names.contains(&name_atom) && !self.ctx.has_parse_errors {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
                             &[&name],
@@ -1340,6 +1340,7 @@ impl<'a> CheckerState<'a> {
                     if !skip_duplicate_check
                         && explicit_property_names.contains(&name_atom)
                         && !is_complementary_pair
+                        && !self.ctx.has_parse_errors
                     {
                         let message = format_message(
                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,

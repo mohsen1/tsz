@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{Level, debug, span};
 use tsz_common::common::ScriptTarget;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
@@ -1301,6 +1302,32 @@ impl BinderState {
             }
             if Self::is_node_exported(arena, stmt_idx) {
                 return true;
+            }
+        }
+
+        Self::source_file_contains_import_meta(arena, root)
+    }
+
+    pub(crate) fn source_file_contains_import_meta(arena: &NodeArena, root: NodeIndex) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            if idx.is_none() {
+                continue;
+            }
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = arena.get_access_expr(node)
+                    && let Some(expr_node) = arena.get(access.expression)
+                        && expr_node.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16 {
+                            return true;
+                        }
+
+            // Add children to stack
+            for child in arena.get_children(idx) {
+                stack.push(child);
             }
         }
 

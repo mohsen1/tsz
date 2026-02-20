@@ -155,3 +155,22 @@ var x: foo.A = foo.bar("hello");
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn test_import_meta_makes_external_module() {
+    let source = "
+declare global { interface ImportMeta {foo?: () => void} };
+
+if (import.meta.foo) {
+  import.meta.foo();
+}
+";
+    let mut parser =
+        tsz_parser::parser::state::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = tsz_binder::state::BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    assert!(binder.is_external_module());
+}
