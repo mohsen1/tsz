@@ -19,7 +19,6 @@ pub mod assignability_checker;
 pub mod assignment_checker;
 pub mod call_checker;
 pub mod callable_type;
-mod check_circular_type_arguments;
 pub mod class_checker;
 mod class_checker_compat;
 mod class_implements_checker;

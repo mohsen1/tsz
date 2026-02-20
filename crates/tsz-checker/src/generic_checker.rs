@@ -223,7 +223,7 @@ impl<'a> CheckerState<'a> {
 
         let symbol_type = self.get_type_of_symbol(sym_id);
 
-        if self.check_circular_type_arguments(symbol_type, &type_args) {
+        if type_args.contains(&symbol_type) {
             // Report TS4109 at the specific type argument node
             if let Some(&arg_idx) = type_args_list.nodes.first() {
                 let lib_binders = self.get_lib_binders();
