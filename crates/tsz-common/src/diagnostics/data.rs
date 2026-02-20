@@ -14483,7 +14483,6 @@ pub mod diagnostic_messages {
 /// TypeScript diagnostic error codes.
 /// Matches codes from TypeScript's diagnosticMessages.json
 pub mod diagnostic_codes {
-    pub const IMPORT_EXPECTS_FROM_CLAUSE: u32 = 2000;
     pub const UNTERMINATED_STRING_LITERAL: u32 = 1002;
     pub const IDENTIFIER_EXPECTED: u32 = 1003;
     pub const EXPECTED: u32 = 1005;
@@ -15101,6 +15100,7 @@ pub mod diagnostic_codes {
         u32 = 2210;
     pub const ADD_EXTENDS_CONSTRAINT: u32 = 2211;
     pub const ADD_EXTENDS_CONSTRAINT_TO_ALL_TYPE_PARAMETERS: u32 = 2212;
+    pub const DUPLICATE_IDENTIFIER: u32 = 2300;
     pub const INITIALIZER_OF_INSTANCE_MEMBER_VARIABLE_CANNOT_REFERENCE_IDENTIFIER_DECLARED_IN: u32 =
         2301;
     pub const STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS: u32 = 2302;
@@ -17258,5 +17258,5 @@ pub mod diagnostic_codes {
     pub const ADD_RESOLUTION_MODE_IMPORT_ATTRIBUTE: u32 = 95196;
     pub const ADD_RESOLUTION_MODE_IMPORT_ATTRIBUTE_TO_ALL_TYPE_ONLY_IMPORTS_THAT_NEED_IT: u32 =
         95197;
-    pub const DUPLICATE_IDENTIFIER: u32 = 2300;
+    pub const IMPORT_EXPECTS_FROM_CLAUSE: u32 = 10001;
 }

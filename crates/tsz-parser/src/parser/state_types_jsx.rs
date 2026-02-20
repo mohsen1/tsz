@@ -2,7 +2,7 @@
 
 use super::state::{ParseDiagnostic, ParserState};
 use crate::parser::{NodeArena, NodeIndex, NodeList, node, syntax_kind_ext};
-use tsz_common::interner::Atom;
+use tsz_common::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {
