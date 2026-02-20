@@ -1223,6 +1223,12 @@ impl<'a> CheckerState<'a> {
         // TS2302: Static members cannot reference class type parameters
         self.check_static_member_for_class_type_param_refs(member_idx);
 
+        if node.kind == 176 {
+            panic!(">>> check_class_member KIND = CONSTRUCTOR");
+        }
+
+        println!(">>> check_class_member KIND = {}", node.kind);
+
         match node.kind {
             syntax_kind_ext::PROPERTY_DECLARATION => {
                 self.check_property_declaration(member_idx);
