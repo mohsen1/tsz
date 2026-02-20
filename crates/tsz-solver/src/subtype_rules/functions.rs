@@ -254,7 +254,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         &mut self,
         source: &FunctionShape,
         target: &FunctionShape,
-    ) -> TypeSubstitution {
+    ) -> Result<TypeSubstitution, crate::infer::InferenceError> {
         use crate::type_queries::unpack_tuple_rest_parameter;
 
         let mut infer_ctx = InferenceContext::new(self.interner);
@@ -388,7 +388,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let _ = infer_ctx.infer_from_types(target_ty, source_ty, InferencePriority::ReturnType);
         }
 
-        let inferred = infer_ctx.resolve_all_with_constraints().unwrap_or_default();
+        let inferred = infer_ctx.resolve_all_with_constraints()?;
         let mut substitution = TypeSubstitution::new();
         for tp in &source.type_params {
             let inferred_ty = inferred
@@ -401,7 +401,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             };
             substitution.insert(tp.name, inferred_ty.unwrap_or(fallback));
         }
-        substitution
+        Ok(substitution)
     }
 
     fn infer_target_type_param_substitution(
@@ -688,8 +688,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // is contextually typed by a concrete callback/function type.
         if !source_instantiated.type_params.is_empty() && target_instantiated.type_params.is_empty()
         {
-            let substitution = self
-                .infer_source_type_param_substitution(&source_instantiated, &target_instantiated);
+            let substitution = match self
+                .infer_source_type_param_substitution(&source_instantiated, &target_instantiated)
+            {
+                Ok(sub) => sub,
+                Err(_) => return SubtypeResult::False,
+            };
             source_instantiated =
                 self.instantiate_function_shape(&source_instantiated, &substitution);
         }
