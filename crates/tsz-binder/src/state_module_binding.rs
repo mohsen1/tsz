@@ -160,7 +160,7 @@ impl BinderState {
                         is_exported = true;
                     }
                 }
-                
+
                 if self.in_global_augmentation {
                     self.global_augmentations
                         .entry(name.clone())
