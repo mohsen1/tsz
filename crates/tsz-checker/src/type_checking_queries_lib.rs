@@ -1295,9 +1295,10 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(alias_sym_id, &lib_binders)
-                && alias_sym.is_type_only {
-                    return true;
-                }
+                && alias_sym.is_type_only
+            {
+                return true;
+            }
         }
 
         let target_symbol = match self.ctx.binder.get_symbol_with_libs(target, &lib_binders) {

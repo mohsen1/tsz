@@ -986,6 +986,7 @@ impl<'a> CheckerState<'a> {
             // TS7034: Check if this identifier references a pending implicit-any variable
             // from a nested function scope (i.e., the variable is captured by a closure).
             // If so, emit TS7034 at the declaration site.
+            let mut emit_ts7005 = false;
             if self.ctx.pending_implicit_any_vars.contains_key(&sym_id) {
                 let ref_fn = self.find_enclosing_function(idx);
                 let decl_name_node = self.ctx.pending_implicit_any_vars[&sym_id];
@@ -994,6 +995,7 @@ impl<'a> CheckerState<'a> {
                     // Variable is captured by a nested function — emit TS7034 at declaration.
                     let decl_name_node =
                         self.ctx.pending_implicit_any_vars.remove(&sym_id).unwrap();
+                    self.ctx.reported_implicit_any_vars.insert(sym_id);
                     if let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
@@ -1002,8 +1004,32 @@ impl<'a> CheckerState<'a> {
                             &[&sym.escaped_name, "any"],
                         );
                     }
+                    emit_ts7005 = true;
+                }
+            } else if self.ctx.reported_implicit_any_vars.contains(&sym_id) {
+                let ref_fn = self.find_enclosing_function(idx);
+                let decl_node = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .and_then(|sym| sym.declarations.first().copied());
+                if let Some(decl_node) = decl_node {
+                    let decl_fn = self.find_enclosing_function(decl_node);
+                    if ref_fn != decl_fn {
+                        emit_ts7005 = true;
+                    }
                 }
             }
+
+            if emit_ts7005
+                && let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node_msg(
+                        idx,
+                        diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+                        &[&sym.escaped_name, "any"],
+                    );
+                }
 
             if self.is_type_only_import_equals_namespace_expr(idx) {
                 self.error_namespace_used_as_value_at(name, idx);

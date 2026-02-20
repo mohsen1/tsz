@@ -1273,9 +1273,10 @@ impl<'a> CheckerState<'a> {
                         is_error = true;
                     } else if let Some(module) = self.ctx.arena.get_module(node)
                         && let Some(name_node) = self.ctx.arena.get(module.name)
-                            && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
-                                is_error = true;
-                            }
+                        && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    {
+                        is_error = true;
+                    }
                 }
                 // Declarations that can have an `export` modifier
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT

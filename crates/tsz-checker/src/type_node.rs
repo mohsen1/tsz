@@ -1570,9 +1570,10 @@ pub(crate) fn check_duplicate_parameters_in_type(
     let mut seen_names = rustc_hash::FxHashSet::default();
     for &param_idx in &parameters.nodes {
         if let Some(param_node) = ctx.arena.get(param_idx)
-            && let Some(param) = ctx.arena.get_parameter(param_node) {
-                collect_names_in_type(ctx, param.name, &mut seen_names);
-            }
+            && let Some(param) = ctx.arena.get_parameter(param_node)
+        {
+            collect_names_in_type(ctx, param.name, &mut seen_names);
+        }
     }
 }
 
@@ -1590,53 +1591,51 @@ fn collect_names_in_type(
             .arena
             .get_identifier(node)
             .map(|i| i.escaped_text.clone())
-            && !seen.insert(name.clone()) {
-                let msg = crate::diagnostics::format_message(
-                    crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
-                    &[&name],
-                );
-                ctx.error(
-                    node.pos,
-                    node.end - node.pos,
-                    msg,
-                    crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
-                );
-            }
+            && !seen.insert(name.clone())
+        {
+            let msg = crate::diagnostics::format_message(
+                crate::diagnostics::diagnostic_messages::DUPLICATE_IDENTIFIER,
+                &[&name],
+            );
+            ctx.error(
+                node.pos,
+                node.end - node.pos,
+                msg,
+                crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+        }
     } else if (node.kind == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
         || node.kind == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN)
-        && let Some(pattern) = ctx.arena.get_binding_pattern(node) {
-            for &elem_idx in &pattern.elements.nodes {
-                if let Some(elem_node) = ctx.arena.get(elem_idx) {
-                    if elem_node.kind == tsz_parser::parser::syntax_kind_ext::OMITTED_EXPRESSION {
-                        continue;
+        && let Some(pattern) = ctx.arena.get_binding_pattern(node)
+    {
+        for &elem_idx in &pattern.elements.nodes {
+            if let Some(elem_node) = ctx.arena.get(elem_idx) {
+                if elem_node.kind == tsz_parser::parser::syntax_kind_ext::OMITTED_EXPRESSION {
+                    continue;
+                }
+                if let Some(elem) = ctx.arena.get_binding_element(elem_node) {
+                    if elem.property_name.is_some()
+                        && let Some(prop_node) = ctx.arena.get(elem.property_name)
+                        && prop_node.kind == SyntaxKind::Identifier as u16
+                        && let Some(name_node) = ctx.arena.get(elem.name)
+                        && name_node.kind == SyntaxKind::Identifier as u16
+                    {
+                        let prop_name = ctx
+                            .arena
+                            .get_identifier(prop_node)
+                            .map(|i| i.escaped_text.trim_end_matches(":").trim().to_string())
+                            .unwrap_or_default();
+                        let name_str = ctx
+                            .arena
+                            .get_identifier(name_node)
+                            .map(|i| i.escaped_text.clone())
+                            .unwrap_or_default();
+                        let msg = crate::diagnostics::format_message(crate::diagnostics::diagnostic_messages::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION, &[&name_str, &prop_name]);
+                        ctx.error(name_node.pos, name_node.end - name_node.pos, msg, crate::diagnostics::diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION);
                     }
-                    if let Some(elem) = ctx.arena.get_binding_element(elem_node) {
-                        if elem.property_name.is_some()
-                            && let Some(prop_node) = ctx.arena.get(elem.property_name)
-                                && prop_node.kind == SyntaxKind::Identifier as u16
-                                    && let Some(name_node) = ctx.arena.get(elem.name)
-                                        && name_node.kind == SyntaxKind::Identifier as u16 {
-                                            let prop_name = ctx
-                                                .arena
-                                                .get_identifier(prop_node)
-                                                .map(|i| {
-                                                    i.escaped_text
-                                                        .trim_end_matches(":")
-                                                        .trim()
-                                                        .to_string()
-                                                })
-                                                .unwrap_or_default();
-                                            let name_str = ctx
-                                                .arena
-                                                .get_identifier(name_node)
-                                                .map(|i| i.escaped_text.clone())
-                                                .unwrap_or_default();
-                                            let msg = crate::diagnostics::format_message(crate::diagnostics::diagnostic_messages::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION, &[&name_str, &prop_name]);
-                                            ctx.error(name_node.pos, name_node.end - name_node.pos, msg, crate::diagnostics::diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION);
-                                        }
-                        collect_names_in_type(ctx, elem.name, seen);
-                    }
+                    collect_names_in_type(ctx, elem.name, seen);
                 }
             }
         }
+    }
 }
