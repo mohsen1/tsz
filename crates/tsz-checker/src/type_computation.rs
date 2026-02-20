@@ -1471,6 +1471,68 @@ impl<'a> CheckerState<'a> {
             }
             // instanceof always produces boolean
             if op_kind == SyntaxKind::InstanceOfKeyword as u16 {
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let eval_left = self.evaluate_type_for_assignability(left_type);
+                if eval_left != TypeId::ERROR {
+                    let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                    if !evaluator.is_valid_instanceof_left_operand(eval_left)
+                        && let Some(left_node) = self.ctx.arena.get(left_idx)
+                    {
+                        let message = format_message(
+                                diagnostic_messages::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
+                                &[],
+                            );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                left_node.pos,
+                                left_node.end - left_node.pos,
+                                message,
+                                diagnostic_codes::THE_LEFT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_OF_TYPE_ANY_AN_OBJECT_TYP,
+                            ));
+                    }
+                }
+
+                let eval_right = self.evaluate_type_for_assignability(right_type);
+                if eval_right != TypeId::ERROR {
+                    let mut is_valid_rhs = false;
+
+                    let func_ty_opt = self
+                        .ctx
+                        .binder
+                        .file_locals
+                        .get("Function")
+                        .map(|sym_id| self.get_type_of_symbol(sym_id))
+                        .or_else(|| self.resolve_lib_type_by_name("Function"));
+
+                    if let Some(func_ty) = func_ty_opt {
+                        let evaluator = BinaryOpEvaluator::new(self.ctx.types);
+                        is_valid_rhs = evaluator.is_valid_instanceof_right_operand(
+                            eval_right,
+                            func_ty,
+                            &mut |src, tgt| self.is_assignable_to(src, tgt),
+                        );
+                    } else if eval_right == TypeId::ANY
+                        || eval_right == TypeId::UNKNOWN
+                        || eval_right == TypeId::FUNCTION
+                    {
+                        is_valid_rhs = true;
+                    }
+
+                    if !is_valid_rhs && let Some(right_node) = self.ctx.arena.get(right_idx) {
+                        let message = format_message(
+                                diagnostic_messages::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
+                                &[],
+                            );
+                        self.ctx.diagnostics.push(Diagnostic::error(
+                                self.ctx.file_name.clone(),
+                                right_node.pos,
+                                right_node.end - right_node.pos,
+                                message,
+                                diagnostic_codes::THE_RIGHT_HAND_SIDE_OF_AN_INSTANCEOF_EXPRESSION_MUST_BE_EITHER_OF_TYPE_ANY_A_CLA,
+                            ));
+                    }
+                }
+
                 type_stack.push(TypeId::BOOLEAN);
                 continue;
             }

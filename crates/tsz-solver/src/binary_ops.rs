@@ -128,6 +128,82 @@ primitive_visitor!(BigIntLikeVisitor, IntrinsicKind::Bigint,
 primitive_visitor!(BooleanLikeVisitor, IntrinsicKind::Boolean,
     LiteralValue::Boolean(_) => true);
 
+struct InstanceofLeftOperandVisitor<'a> {
+    _db: &'a dyn TypeDatabase,
+}
+
+impl<'a> TypeVisitor for InstanceofLeftOperandVisitor<'a> {
+    type Output = bool;
+
+    fn visit_intrinsic(&mut self, kind: IntrinsicKind) -> bool {
+        matches!(
+            kind,
+            IntrinsicKind::Any | IntrinsicKind::Unknown | IntrinsicKind::Object
+        )
+    }
+
+    fn visit_literal(&mut self, _value: &LiteralValue) -> bool {
+        false
+    }
+
+    fn visit_type_parameter(&mut self, _info: &crate::types::TypeParamInfo) -> bool {
+        true
+    }
+
+    fn visit_object(&mut self, _shape_id: u32) -> bool {
+        true
+    }
+    fn visit_object_with_index(&mut self, _shape_id: u32) -> bool {
+        true
+    }
+    fn visit_array(&mut self, _element_type: TypeId) -> bool {
+        true
+    }
+    fn visit_tuple(&mut self, _list_id: u32) -> bool {
+        true
+    }
+    fn visit_function(&mut self, _shape_id: u32) -> bool {
+        true
+    }
+    fn visit_callable(&mut self, _shape_id: u32) -> bool {
+        true
+    }
+    fn visit_application(&mut self, _app_id: u32) -> bool {
+        true
+    }
+    fn visit_readonly_type(&mut self, _type_id: TypeId) -> bool {
+        true
+    }
+
+    fn visit_union(&mut self, list_id: u32) -> bool {
+        let members = self._db.type_list(crate::types::TypeListId(list_id));
+        let mut any_valid = false;
+        for &m in members.iter() {
+            if self.visit_type(self._db, m) {
+                any_valid = true;
+                break;
+            }
+        }
+        any_valid
+    }
+
+    fn visit_intersection(&mut self, list_id: u32) -> bool {
+        let members = self._db.type_list(crate::types::TypeListId(list_id));
+        let mut any_valid = false;
+        for &m in members.iter() {
+            if self.visit_type(self._db, m) {
+                any_valid = true;
+                break;
+            }
+        }
+        any_valid
+    }
+
+    fn default_output() -> bool {
+        false
+    }
+}
+
 struct SymbolLikeVisitor<'a> {
     _db: &'a dyn TypeDatabase,
 }
@@ -378,6 +454,62 @@ impl<'a> BinaryOpEvaluator<'a> {
     /// Create a new binary operation evaluator.
     pub fn new(interner: &'a dyn QueryDatabase) -> Self {
         Self { interner }
+    }
+
+    /// Check if a type is valid for the left side of an `instanceof` expression.
+    /// TS2358: "The left-hand side of an 'instanceof' expression must be of type 'any', an object type or a type parameter."
+    pub fn is_valid_instanceof_left_operand(&self, type_id: TypeId) -> bool {
+        if type_id == TypeId::ERROR || type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+            return true;
+        }
+        let mut visitor = InstanceofLeftOperandVisitor { _db: self.interner };
+        visitor.visit_type(self.interner, type_id)
+    }
+
+    /// Check if a type is valid for the right side of an `instanceof` expression.
+    /// TS2359: "The right-hand side of an 'instanceof' expression must be either of type 'any', a class, function, or other type assignable to the 'Function' interface type..."
+    pub fn is_valid_instanceof_right_operand<F>(
+        &self,
+        type_id: TypeId,
+        func_ty: TypeId,
+        assignable_check: &mut F,
+    ) -> bool
+    where
+        F: FnMut(TypeId, TypeId) -> bool,
+    {
+        if type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::ERROR
+            || type_id == TypeId::FUNCTION
+        {
+            return true;
+        }
+
+        if let Some(crate::TypeData::Union(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            let mut all_valid = true;
+            for &m in members.iter() {
+                if !self.is_valid_instanceof_right_operand(m, func_ty, assignable_check) {
+                    all_valid = false;
+                    break;
+                }
+            }
+            return all_valid && !members.is_empty();
+        }
+
+        if let Some(crate::TypeData::Intersection(list_id)) = self.interner.lookup(type_id) {
+            let members = self.interner.type_list(list_id);
+            let mut any_valid = false;
+            for &m in members.iter() {
+                if self.is_valid_instanceof_right_operand(m, func_ty, assignable_check) {
+                    any_valid = true;
+                    break;
+                }
+            }
+            return any_valid;
+        }
+
+        assignable_check(type_id, func_ty) || assignable_check(type_id, TypeId::FUNCTION)
     }
 
     /// Check if a type is valid for arithmetic operations (number, bigint, enum, or any).
