@@ -108,7 +108,19 @@ impl ParserState {
             seen_rest_parameter = seen_rest_parameter || is_rest_param;
             params.push(param);
 
-            if !self.parse_optional(SyntaxKind::CommaToken) {
+            let has_comma = self.parse_optional(SyntaxKind::CommaToken);
+
+            if is_rest_param && has_comma {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    self.token_pos() - 1, // approximate comma position
+                    1,
+                    "A rest parameter or binding pattern may not have a trailing comma.",
+                    diagnostic_codes::A_REST_PARAMETER_OR_BINDING_PATTERN_MAY_NOT_HAVE_A_TRAILING_COMMA,
+                );
+            }
+
+            if !has_comma {
                 // Recovery: in malformed parameter initializers like
                 // `function* f(a = yield => yield) {}` or
                 // `async function f(a = await => await) {}`
