@@ -1015,7 +1015,10 @@ impl<'a> CheckerState<'a> {
         // Check accessor body
         if accessor.body.is_some() {
             if is_getter && !has_type_annotation {
-                return_type = self.infer_getter_return_type(accessor.body);
+                // Use full body-based inference for getter checking so nested returns
+                // and implicit fallthrough are represented (e.g. `T | void`), which
+                // aligns noImplicitReturns diagnostics with TSC behavior.
+                return_type = self.infer_return_type_from_body(member_idx, accessor.body, None);
             }
 
             // TS7010 (implicit any return) is only emitted for ambient accessors,

@@ -597,9 +597,9 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         .arena
                         .get(clause_idx)
                         .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
-                    {
-                        self.check_local_named_exports(clause_idx);
-                    }
+                {
+                    self.check_local_named_exports(clause_idx);
+                }
 
                 let is_inline_object_literal =
                     self.ctx.arena.get(clause_idx).is_some_and(|clause_node| {
