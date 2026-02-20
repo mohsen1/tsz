@@ -45,11 +45,12 @@ impl<'a> CheckerState<'a> {
                         &[&ident.escaped_text],
                     );
                 } else {
-                    self.error_at_node_msg(
-                        param.name,
-                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                        &[&ident.escaped_text],
-                    );
+                    let code = if self.ctx.enclosing_class.is_some() {
+                        crate::diagnostics::diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT
+                    } else {
+                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE
+                    };
+                    self.error_at_node_msg(param.name, code, &[&ident.escaped_text]);
                 }
             }
 

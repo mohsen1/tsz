@@ -564,11 +564,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     && (ident.escaped_text == "eval" || ident.escaped_text == "arguments")
                     && self.checker.is_strict_mode_for_node(idx)
                 {
-                    self.checker.error_at_node_msg(
-                        func.name,
-                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
-                        &[&ident.escaped_text],
-                    );
+                    let code = if self.checker.ctx.enclosing_class.is_some() {
+                        crate::diagnostics::diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT
+                    } else {
+                        crate::diagnostics::diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE
+                    };
+                    self.checker
+                        .error_at_node_msg(func.name, code, &[&ident.escaped_text]);
                 }
                 self.checker.get_type_of_function(idx)
             }
@@ -609,9 +611,14 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         && self.checker.is_strict_mode_for_node(unary.operand)
                     {
                         use crate::diagnostics::diagnostic_codes;
+                        let code = if self.checker.ctx.enclosing_class.is_some() {
+                            diagnostic_codes::CODE_CONTAINED_IN_A_CLASS_IS_EVALUATED_IN_JAVASCRIPTS_STRICT_MODE_WHICH_DOES_NOT
+                        } else {
+                            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE
+                        };
                         self.checker.error_at_node_msg(
                             unary.operand,
-                            diagnostic_codes::INVALID_USE_OF_IN_STRICT_MODE,
+                            code,
                             &[&id_data.escaped_text],
                         );
                         emitted_strict = true;
