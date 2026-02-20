@@ -1376,7 +1376,7 @@ impl TypeInterner {
     /// This method is kept for backward compatibility with tests and legacy code.
     /// It converts `SymbolRef` to `DefId` and creates `TypeData::Lazy`.
     ///
-    /// **Phase 1 migration**: New code should use `lazy(def_id)` instead.
+    /// Deprecated: new code should use `lazy(def_id)` instead.
     pub fn reference(&self, symbol: SymbolRef) -> TypeId {
         // Convert SymbolRef to DefId by wrapping the raw u32 value
         // This maintains the same identity while using the new TypeData::Lazy variant
@@ -1389,7 +1389,7 @@ impl TypeInterner {
     /// This is the replacement for `reference()` that uses Solver-owned
     /// `DefIds` instead of Binder-owned `SymbolRefs`.
     ///
-    /// Phase 1 migration: Use this method for all new type references
+    /// Use this method for all new type references
     /// to enable O(1) type equality across Binder and Solver boundaries.
     pub fn lazy(&self, def_id: DefId) -> TypeId {
         self.intern(TypeData::Lazy(def_id))

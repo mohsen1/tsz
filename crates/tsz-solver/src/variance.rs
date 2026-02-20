@@ -24,12 +24,8 @@
 //! Cycle detection uses `(TypeId, Polarity)` pairs to allow correct variance
 //! calculation for recursive types like `type List<T> = { head: T; tail: List<T> }`.
 //!
-//! ## Phase 3: Recursive Variance
-//!
-//! Phase 3 adds support for:
-//! - **Lazy type resolution**: Resolving `Lazy(DefId)` types to analyze variance
-//! - **Recursive variance composition**: Composing variance through generic applications
-//! - **Ref type handling**: Resolving `Ref(SymbolRef)` types for complete coverage
+//! Also supports lazy type resolution, recursive variance composition,
+//! and Ref(SymbolRef) type handling.
 
 use crate::TypeVisitor;
 use crate::db::QueryDatabase;
@@ -366,10 +362,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
     /// Bound parameters: not handled in variance (used for canonicalization).
     fn visit_bound_parameter(&mut self, _de_bruijn_index: u32) {}
 
-    /// Lazy types: resolve and continue (Phase 3).
-    ///
-    /// Phase 3: Resolve Lazy(DefId) types to analyze variance of the underlying type.
-    /// This is critical for analyzing user-defined types like `type Box<T> = { value: T }`.
+    /// Resolve Lazy(DefId) types to analyze variance of the underlying type.
     fn visit_lazy(&mut self, def_id: u32) {
         // Resolve the Lazy(DefId) to its underlying TypeId
         let def_id = DefId(def_id);
@@ -379,14 +372,11 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         }
     }
 
-    /// Ref types: resolve and continue (Phase 3).
-    ///
-    /// Phase 3: Resolve Ref(SymbolRef) types to analyze variance.
-    /// This handles legacy symbol-based type references.
+    /// Resolve Ref(SymbolRef) types to analyze variance (legacy path).
     fn visit_ref(&mut self, symbol_ref: u32) {
         let symbol_ref = SymbolRef(symbol_ref);
 
-        // Try to convert Ref to DefId (Phase 3.4 migration path)
+        // Try to convert Ref to DefId (migration path)
         if let Some(def_id) = self.db.symbol_to_def_id(symbol_ref) {
             // Convert to Lazy and resolve
             if let Some(resolved) = self.db.resolve_lazy(def_id, self.db.as_type_database()) {
@@ -415,9 +405,7 @@ impl<'a> TypeVisitor for VarianceVisitor<'a> {
         self.visit_with_polarity(member_type, current_polarity);
     }
 
-    /// Generic applications: variance composition (Phase 3).
-    ///
-    /// Phase 3: Look up the base type's variance and compose it with current polarity.
+    /// Look up the base type's variance and compose it with current polarity.
     /// This enables recursive variance calculation for nested generics like
     /// `type Wrapper<T> = Box<T>` where `Box` is covariant, so `Wrapper` should also be covariant.
     fn visit_application(&mut self, app_id: u32) {

@@ -141,11 +141,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check Lazy(DefId) to Lazy(DefId) subtype with optional identity shortcut.
     ///
-    /// Phase 3.1: Mirrors `check_ref_ref_subtype` but for DefId-based type identity.
-    /// This handles cycles in Lazy(DefId) types at the `DefId` level, preventing
-    /// infinite expansion of recursive type aliases that use `DefId` references.
-    ///
-    /// Phase 3.2: Added `InheritanceGraph` bridge for O(1) nominal class subtype checking.
+    /// Handles cycles in Lazy(DefId) types and uses the `InheritanceGraph` bridge
+    /// for O(1) nominal class subtype checking.
     pub(crate) fn check_lazy_lazy_subtype(
         &mut self,
         source: TypeId,
@@ -186,7 +183,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         // =======================================================================
-        // O(1) NOMINAL CLASS SUBTYPE CHECKING (Phase 3.2: InheritanceGraph Bridge)
+        // O(1) NOMINAL CLASS SUBTYPE CHECKING (InheritanceGraph Bridge)
         // =======================================================================
         // This short-circuits expensive structural checks for class inheritance.
         // We use the def_to_symbol bridge to map DefIds back to SymbolIds, then
@@ -330,7 +327,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     /// Check if a generic type application is a subtype of another application.
     ///
-    /// Task #41 Phase 2: Variance-aware generic assignability checking.
+    /// Variance-aware generic assignability checking.
     ///
     /// This function implements O(1) generic type assignability by using variance
     /// annotations to avoid expensive structural expansion. When both applications
@@ -743,8 +740,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Try to expand an Application type to its structural form.
     /// Returns None if the application cannot be expanded (missing type params or body).
     ///
-    /// Phase 3.3: Now supports both Ref(SymbolRef) and Lazy(DefId) bases for unified
-    /// generic type expansion.
+    /// Supports both Ref(SymbolRef) and Lazy(DefId) bases for unified generic type expansion.
     pub(crate) fn try_expand_application(&mut self, app_id: TypeApplicationId) -> Option<TypeId> {
         use crate::{TypeSubstitution, instantiate_type};
 

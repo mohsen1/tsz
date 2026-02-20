@@ -335,10 +335,7 @@ impl RelationCacheKey {
 /// // Processing T first prevents circular T <-> U dependency
 /// ```
 ///
-/// ## Phase 7 Implementation (tsz-3)
-///
-/// This enum is part of the Priority-Based Contextual Inference implementation.
-/// See docs/sessions/tsz-3.md for Phase 7 details.
+/// Part of the Priority-Based Contextual Inference implementation.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum InferencePriority {
     /// Naked type variable with no constraints (highest priority).

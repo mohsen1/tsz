@@ -16,15 +16,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Returns true if there exists at least one type that is a subtype of both a and b.
     /// Returns false if a & b would be the `never` type (zero overlap).
     ///
-    /// # MVP Implementation (Phase 1)
-    ///
     /// This catches OBVIOUS non-overlaps:
     /// - Different primitives (string vs number, boolean vs bigint, etc.)
     /// - Different literals of same primitive ("a" vs "b", 1 vs 2)
     /// - Object property type mismatches ({ a: string } vs { a: number })
     ///
     /// For complex types (unions, intersections, generics), we conservatively return true
-    /// to avoid false positives. Phase 2 will add more sophisticated overlap detection.
+    /// to avoid false positives.
     ///
     /// # Examples
     /// - `are_types_overlapping(string, number)` -> false (different primitives)

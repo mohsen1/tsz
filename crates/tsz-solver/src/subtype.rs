@@ -114,7 +114,7 @@ pub use crate::subtype_visitor::SubtypeVisitor;
 pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     pub(crate) interner: &'a dyn TypeDatabase,
     /// Optional query database for Salsa-backed memoization.
-    /// When set, Phase 2/3 will route `evaluate_type` and `is_subtype_of` through Salsa.
+    /// When set, routes `evaluate_type` and `is_subtype_of` through Salsa.
     pub(crate) query_db: Option<&'a dyn QueryDatabase>,
     pub(crate) resolver: &'a R,
     /// Unified recursion guard for TypeId-pair cycle detection, depth, and iteration limits.
@@ -124,7 +124,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// infinite expansion of recursive type aliases and interfaces.
     pub(crate) seen_refs: FxHashSet<(SymbolRef, SymbolRef)>,
     /// Unified recursion guard for DefId-pair cycle detection.
-    /// Phase 3.1: Catches cycles in Lazy(DefId) types before they're resolved.
+    /// Catches cycles in Lazy(DefId) types before they're resolved.
     pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
     /// Symbol-pair visiting set for Object-level cycle detection.
     /// Catches cycles when comparing evaluated Object types with symbols
@@ -278,7 +278,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     }
 
     /// Set the query database for Salsa-backed memoization.
-    /// When set, Phase 2/3 will route `evaluate_type` and `is_subtype_of` through Salsa.
+    /// When set, routes `evaluate_type` and `is_subtype_of` through Salsa.
     pub fn with_query_db(mut self, db: &'a dyn QueryDatabase) -> Self {
         self.query_db = Some(db);
         self
@@ -1381,8 +1381,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             lazy_def_id(self.interner, source),
             lazy_def_id(self.interner, target),
         ) {
-            // Phase 3.1: Use proper DefId-level cycle detection
-            // Phase 3.2: Now checked before Ref types (priority)
+            // Use DefId-level cycle detection (checked before Ref types)
             return self.check_lazy_lazy_subtype(source, target, s_def, t_def);
         }
 

@@ -57,9 +57,7 @@ where
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct InferenceVar(pub u32);
 
-// Phase 7a Task 2: Use TypeScript-standard InferencePriority from types.rs
-// The old simplified InferencePriority enum has been removed
-// See: src/solver/types.rs for the new priority levels
+// Uses TypeScript-standard InferencePriority from types.rs
 
 /// A candidate type for an inference variable.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -968,7 +966,7 @@ impl<'a> InferenceContext<'a> {
     // =========================================================================
 
     /// Add a lower bound constraint: ty <: var
-    /// Phase 7a Task 2: This is used when an argument type flows into a type parameter.
+    /// This is used when an argument type flows into a type parameter.
     /// Updated to use `NakedTypeVariable` (highest priority) for direct argument inference.
     pub fn add_lower_bound(&mut self, var: InferenceVar, ty: TypeId) {
         self.add_candidate(var, ty, InferencePriority::NakedTypeVariable);

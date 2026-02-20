@@ -346,7 +346,7 @@ pub fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 }
 
 // =============================================================================
-// Intrinsic Type Queries (Phase 5 - Anti-Pattern 8.1 Removal)
+// Intrinsic Type Queries
 // =============================================================================
 //
 // These functions provide TypeData-free checking for intrinsic types.

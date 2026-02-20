@@ -292,7 +292,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // Task B: Resolve TypeQuery bases to DefId for expansion
         // This fixes the "Ref(5)<error>" diagnostic issue where generic types
         // aren't expanded to their underlying function/object types
-        // Note: Ref(SymbolRef) was migrated to Lazy(DefId) in Phase 4.2
+        // Note: Ref(SymbolRef) was migrated to Lazy(DefId)
         let def_id = match base_key {
             TypeData::Lazy(def_id) => Some(def_id),
             TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
@@ -624,7 +624,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.evaluate(arg)
             }
             TypeData::Lazy(def_id) => {
-                // Resolve Lazy types in type arguments (Phase 4.3)
+                // Resolve Lazy types in type arguments
                 // This helps with generic instantiation accuracy
                 self.resolver
                     .resolve_lazy(def_id, self.interner)

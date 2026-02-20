@@ -341,7 +341,7 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    /// Phase 7a Task 2: Filter candidates by priority using NEW `InferencePriority`.
+    /// Filter candidates by priority using `InferencePriority`.
     ///
     /// CRITICAL FIX: In the new enum, LOWER values = HIGHER priority (processed earlier).
     /// - `NakedTypeVariable` (1) is highest priority
@@ -916,7 +916,7 @@ impl<'a> InferenceContext<'a> {
     /// Strengthen constraints by analyzing relationships between type parameters.
     /// For example, if T <: U and we know T = string, then U must be at least string.
     pub fn strengthen_constraints(&mut self) -> Result<(), InferenceError> {
-        // Phase 1: Detect and unify circular constraints (SCCs)
+        // Detect and unify circular constraints (SCCs)
         // This ensures that type parameters in cycles (T extends U, U extends T)
         // are treated as a single equivalence class for inference.
         self.unify_circular_constraints()?;
@@ -925,7 +925,7 @@ impl<'a> InferenceContext<'a> {
         let mut changed = true;
         let mut iterations = 0;
 
-        // Phase 2: Fixed-point propagation
+        // Fixed-point propagation
         // Iterate to fixed point - continue until no new candidates are added
         while changed && iterations < MAX_CONSTRAINT_ITERATIONS {
             changed = false;

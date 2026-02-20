@@ -127,7 +127,7 @@ impl<'a, R: TypeResolver> ApplicationEvaluator<'a, R> {
             return ApplicationResult::NotApplication(type_id);
         };
 
-        // Phase 4.2: Get DefId from Lazy type instead of SymbolRef
+        // Get DefId from Lazy type instead of SymbolRef
         let Some(def_id) = type_queries::get_lazy_def_id(self.interner, base) else {
             return ApplicationResult::NotApplication(type_id);
         };

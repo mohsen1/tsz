@@ -274,7 +274,7 @@ impl<'a> TypeVisitor for ThisTypeMarkerExtractor<'a> {
         // the object literal shape BEFORE determining which this type to use.
         // Example: If context is (A & ThisType<X>) | (B & ThisType<Y>) and
         // the literal is { type: 'b' }, we should pick ThisType<Y>, not ThisType<X>.
-        // This is acceptable for Phase 1, but should be improved in Phase 2.
+        // This is a conservative heuristic and could be improved.
         members
             .iter()
             .find_map(|&member_id| self.visit_type(self.db, member_id))
