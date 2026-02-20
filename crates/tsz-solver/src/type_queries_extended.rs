@@ -923,12 +923,6 @@ pub enum LazyTypeKind {
     Lazy(crate::def::DefId),
     /// Not a Lazy type
     NotLazy,
-    /// Deprecated: `SymbolRef` - use Lazy instead
-    #[deprecated(note = "Use Lazy instead")]
-    Ref(crate::def::DefId),
-    /// Deprecated: `NotRef` - use `NotLazy` instead
-    #[deprecated(note = "Use NotLazy instead")]
-    NotRef,
 }
 
 /// Classify a type for Lazy resolution.
@@ -941,16 +935,6 @@ pub fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> L
         TypeData::Lazy(def_id) => LazyTypeKind::Lazy(def_id),
         _ => LazyTypeKind::NotLazy,
     }
-}
-
-/// Compatibility alias for `RefTypeKind`.
-#[deprecated(note = "Use LazyTypeKind instead")]
-pub type RefTypeKind = LazyTypeKind;
-
-/// Compatibility alias for `classify_for_lazy_resolution`.
-#[deprecated(note = "Use classify_for_lazy_resolution instead")]
-pub fn classify_for_ref_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
-    classify_for_lazy_resolution(db, type_id)
 }
 
 // =============================================================================
@@ -1340,8 +1324,6 @@ pub fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> TypeQueryK
 pub enum SymbolRefKind {
     /// Lazy reference (`DefId`)
     Lazy(crate::def::DefId),
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    Ref(crate::types::SymbolRef),
     TypeQuery(crate::types::SymbolRef),
     Other,
 }

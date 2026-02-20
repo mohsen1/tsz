@@ -71,7 +71,7 @@ impl<'a> Printer<'a> {
     }
 
     /// Extract `/// <amd-dependency path='...' name='...'/>` directives.
-    /// Returns (path, optional_name, original_line) tuples.
+    /// Returns (path, `optional_name`, `original_line`) tuples.
     fn extract_amd_dependencies(&self) -> Vec<(String, Option<String>, String)> {
         let Some(text) = self.source_text else {
             return Vec::new();
