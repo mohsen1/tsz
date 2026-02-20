@@ -221,6 +221,25 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             return TypeId::ERROR;
         };
 
+        // If yield is outside a generator function, the parser already emitted TS1163.
+        // Return ANY without evaluating the operand to avoid cascading TS2304 errors.
+        let is_in_generator = self
+            .checker
+            .find_enclosing_function(idx)
+            .and_then(|fn_idx| self.checker.ctx.arena.get(fn_idx))
+            .is_some_and(|fn_node| {
+                if let Some(func) = self.checker.ctx.arena.get_function(fn_node) {
+                    func.asterisk_token
+                } else if let Some(method) = self.checker.ctx.arena.get_method_decl(fn_node) {
+                    method.asterisk_token
+                } else {
+                    false
+                }
+            });
+        if !is_in_generator {
+            return TypeId::ANY;
+        }
+
         let yielded_type = if yield_expr.expression.is_none() {
             TypeId::UNDEFINED
         } else {
