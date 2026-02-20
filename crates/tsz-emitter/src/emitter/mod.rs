@@ -97,6 +97,8 @@ pub struct PrinterOptions {
     pub always_strict: bool,
     /// Emit class fields using Object.defineProperty semantics when downleveling
     pub use_define_for_class_fields: bool,
+    /// Enable legacy (experimental) decorator lowering (`__decorate` style)
+    pub legacy_decorators: bool,
 }
 
 impl Default for PrinterOptions {
@@ -113,6 +115,7 @@ impl Default for PrinterOptions {
             type_only_nodes: Arc::new(FxHashSet::default()),
             always_strict: false,
             use_define_for_class_fields: false,
+            legacy_decorators: false,
         }
     }
 }
@@ -1270,6 +1273,21 @@ impl<'a> Printer<'a> {
             self.ctx.options.module = ModuleKind::CommonJS;
         }
 
+        // Node16/NodeNext default to CommonJS for `.ts`/`.js` unless the file
+        // extension explicitly opts into ESM (`.mts`/`.mjs`).
+        if matches!(
+            self.ctx.options.module,
+            ModuleKind::Node16 | ModuleKind::NodeNext
+        ) {
+            let file_name = source.file_name.to_ascii_lowercase();
+            let is_explicit_esm = file_name.ends_with(".mts") || file_name.ends_with(".mjs");
+            self.ctx.options.module = if is_explicit_esm {
+                ModuleKind::ESNext
+            } else {
+                ModuleKind::CommonJS
+            };
+        }
+
         // Detect export assignment (export =) to suppress other exports
         if self.has_export_assignment(&source.statements) {
             self.ctx.module_state.has_export_assignment = true;
@@ -1566,6 +1584,9 @@ impl<'a> Printer<'a> {
                 self.arena,
                 &source.statements.nodes,
             );
+            // Track non-hoisted exports (vars/classes/enums/modules) so default export
+            // assignments can preserve live bindings (`exports.default = exports.x`).
+            self.ctx.module_state.pending_exports = other_exports.clone();
             // Emit other exports first: exports.X = void 0;
             // TypeScript emits void 0 initialization before hoisted function exports
             if !other_exports.is_empty() {

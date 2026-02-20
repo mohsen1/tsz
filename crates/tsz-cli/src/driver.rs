@@ -1571,6 +1571,7 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.experimental_decorators {
         options.checker.experimental_decorators = true;
+        options.printer.legacy_decorators = true;
     }
     if args.no_unused_locals {
         options.checker.no_unused_locals = true;

@@ -340,7 +340,7 @@ impl EmitContext {
 
     /// Check if we're in `CommonJS` mode
     pub const fn is_commonjs(&self) -> bool {
-        matches!(self.options.module, ModuleKind::CommonJS)
+        self.options.module.is_commonjs()
     }
 
     // =========================================================================

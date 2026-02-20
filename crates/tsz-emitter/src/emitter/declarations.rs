@@ -198,9 +198,13 @@ impl<'a> Printer<'a> {
 
         // Emit keyword based on node flags.
         let flags = node.flags as u32;
+        let is_using = flags & tsz_parser::parser::node_flags::USING != 0;
         let is_const = flags & tsz_parser::parser::node_flags::CONST != 0;
         let is_let = flags & tsz_parser::parser::node_flags::LET != 0;
-        let keyword = if is_const {
+        let keyword = if is_using && self.ctx.options.target.supports_es2025() {
+            // await using is encoded as USING | CONST
+            if is_const { "await using" } else { "using" }
+        } else if is_const {
             // For ES6+ targets, preserve const as-is even without initializer
             // (tsc preserves user's code even if it's a syntax error)
             "const"
@@ -248,6 +252,76 @@ impl<'a> Printer<'a> {
     // Classes
     // =========================================================================
 
+    pub(super) fn collect_class_decorators(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> Vec<NodeIndex> {
+        let Some(mods) = modifiers else {
+            return Vec::new();
+        };
+        mods.nodes
+            .iter()
+            .copied()
+            .filter(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+            })
+            .collect()
+    }
+
+    pub(super) fn emit_legacy_class_decorator_assignment(
+        &mut self,
+        class_name: &str,
+        decorators: &[NodeIndex],
+        commonjs_exported: bool,
+        commonjs_default: bool,
+        emit_commonjs_pre_assignment: bool,
+    ) {
+        if class_name.is_empty() || decorators.is_empty() {
+            return;
+        }
+
+        if commonjs_exported && !commonjs_default && emit_commonjs_pre_assignment {
+            self.write("exports.");
+            self.write(class_name);
+            self.write(" = ");
+            self.write(class_name);
+            self.write(";");
+            self.write_line();
+        }
+
+        if commonjs_exported {
+            if commonjs_default {
+                self.write("exports.default = ");
+            } else {
+                self.write("exports.");
+                self.write(class_name);
+                self.write(" = ");
+            }
+        }
+
+        self.write(class_name);
+        self.write(" = __decorate([");
+        self.write_line();
+        self.increase_indent();
+        for (i, &dec_idx) in decorators.iter().enumerate() {
+            if let Some(dec_node) = self.arena.get(dec_idx)
+                && let Some(dec) = self.arena.get_decorator(dec_node)
+            {
+                self.emit(dec.expression);
+                if i + 1 != decorators.len() {
+                    self.write(",");
+                }
+                self.write_line();
+            }
+        }
+        self.decrease_indent();
+        self.write("], ");
+        self.write(class_name);
+        self.write(");");
+    }
+
     /// Emit a class declaration.
     pub(super) fn emit_class_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(class) = self.arena.get_class(node) else {
@@ -257,6 +331,89 @@ impl<'a> Printer<'a> {
         // Skip ambient declarations (declare class)
         if self.has_declare_modifier(&class.modifiers) {
             self.skip_comments_for_erased_node(node);
+            return;
+        }
+
+        let legacy_class_decorators = if self.ctx.options.legacy_decorators
+            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+        {
+            self.collect_class_decorators(&class.modifiers)
+        } else {
+            Vec::new()
+        };
+
+        if !legacy_class_decorators.is_empty() {
+            let class_name = if class.name.is_none() {
+                self.anonymous_default_export_name
+                    .clone()
+                    .unwrap_or_default()
+            } else {
+                self.get_identifier_text_idx(class.name)
+            };
+
+            if self.ctx.target_es5 {
+                let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                es5_emitter.set_indent_level(self.writer.indent_level());
+                es5_emitter.set_transforms(self.transforms.clone());
+                if let Some(text) = self.source_text_for_map() {
+                    if self.writer.has_source_map() {
+                        es5_emitter
+                            .set_source_map_context(text, self.writer.current_source_index());
+                    } else {
+                        es5_emitter.set_source_text(text);
+                    }
+                }
+                let output = es5_emitter.emit_class(idx);
+                let mappings = es5_emitter.take_mappings();
+                if !mappings.is_empty() && self.writer.has_source_map() {
+                    self.writer.write("");
+                    let base_line = self.writer.current_line();
+                    let base_column = self.writer.current_column();
+                    self.writer
+                        .add_offset_mappings(base_line, base_column, &mappings);
+                    self.writer.write(&output);
+                } else {
+                    self.write(&output);
+                }
+                self.write_line();
+                let commonjs_exported = self.ctx.is_commonjs()
+                    && self.has_export_modifier(&class.modifiers)
+                    && !self.ctx.module_state.has_export_assignment;
+                let commonjs_default =
+                    commonjs_exported && self.has_default_modifier(&class.modifiers);
+                self.emit_legacy_class_decorator_assignment(
+                    &class_name,
+                    &legacy_class_decorators,
+                    commonjs_exported,
+                    commonjs_default,
+                    false,
+                );
+                while self.comment_emit_idx < self.all_comments.len()
+                    && self.all_comments[self.comment_emit_idx].end <= node.end
+                {
+                    self.comment_emit_idx += 1;
+                }
+                return;
+            }
+
+            if class_name.is_empty() {
+                self.emit_class_es6_with_options(node, idx, false, None);
+                return;
+            }
+
+            self.emit_class_es6_with_options(node, idx, true, Some(("let", class_name.clone())));
+            self.write_line();
+            let commonjs_exported = self.ctx.is_commonjs()
+                && self.has_export_modifier(&class.modifiers)
+                && !self.ctx.module_state.has_export_assignment;
+            let commonjs_default = commonjs_exported && self.has_default_modifier(&class.modifiers);
+            self.emit_legacy_class_decorator_assignment(
+                &class_name,
+                &legacy_class_decorators,
+                commonjs_exported,
+                commonjs_default,
+                false,
+            );
             return;
         }
 
@@ -295,19 +452,29 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_class_es6(node, idx);
+        self.emit_class_es6_with_options(node, idx, false, None);
     }
 
     /// Emit a class using ES6 native class syntax (no transforms).
     /// This is the pure emission logic that can be reused by both the old API
     /// and the new transform system.
-    pub(super) fn emit_class_es6(&mut self, node: &Node, _idx: NodeIndex) {
+    pub(super) fn emit_class_es6(&mut self, node: &Node, idx: NodeIndex) {
+        self.emit_class_es6_with_options(node, idx, false, None);
+    }
+
+    pub(super) fn emit_class_es6_with_options(
+        &mut self,
+        node: &Node,
+        _idx: NodeIndex,
+        suppress_modifiers: bool,
+        assignment_prefix: Option<(&str, String)>,
+    ) {
         let Some(class) = self.arena.get_class(node) else {
             return;
         };
 
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
-        if let Some(ref modifiers) = class.modifiers {
+        if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
                     // Skip export/default modifiers in CommonJS mode or namespace IIFE
@@ -335,6 +502,13 @@ impl<'a> Printer<'a> {
                     }
                 }
             }
+        }
+
+        if let Some((keyword, binding_name)) = assignment_prefix.as_ref() {
+            self.write(keyword);
+            self.write(" ");
+            self.write(binding_name);
+            self.write(" = ");
         }
 
         self.write("class");
@@ -793,6 +967,9 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+        if assignment_prefix.is_some() {
+            self.write(";");
+        }
 
         // Emit static field initializers after class body: ClassName.field = value;
         if !static_field_inits.is_empty() {

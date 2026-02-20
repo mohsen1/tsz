@@ -5,6 +5,20 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> Printer<'a> {
+    fn hoist_decorate_helper_before_wrapper(&mut self) -> bool {
+        if self.ctx.options.no_emit_helpers
+            || !self.transforms.helpers_populated()
+            || !self.transforms.helpers().decorate
+        {
+            return false;
+        }
+
+        self.write(crate::transforms::helpers::DECORATE_HELPER);
+        self.write_line();
+        self.transforms.helpers_mut().decorate = false;
+        true
+    }
+
     pub(super) fn emit_module_wrapper(
         &mut self,
         format: crate::transform_context::ModuleFormat,
@@ -105,6 +119,7 @@ impl<'a> Printer<'a> {
     ) {
         use crate::transforms::module_commonjs;
 
+        let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
         let amd_name = self.extract_amd_module_name();
         let amd_deps = self.extract_amd_dependencies();
 
@@ -168,6 +183,9 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("});");
+        if restore_decorate_helper {
+            self.transforms.helpers_mut().decorate = true;
+        }
     }
 
     pub(super) fn emit_umd_wrapper(
@@ -175,6 +193,7 @@ impl<'a> Printer<'a> {
         source_node: &tsz_parser::parser::node::Node,
         source_idx: NodeIndex,
     ) {
+        let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
         self.write("(function (factory) {");
         self.write_line();
         self.increase_indent();
@@ -212,6 +231,9 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("});");
+        if restore_decorate_helper {
+            self.transforms.helpers_mut().decorate = true;
+        }
     }
 
     pub(super) fn emit_system_wrapper(
