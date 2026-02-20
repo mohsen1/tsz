@@ -358,8 +358,8 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        let needs_substitution = tsz_solver::is_this_type(self.ctx.types, type_id)
-            || tsz_solver::contains_this_type(self.ctx.types, type_id);
+        let needs_substitution = tsz_solver::is_this_type(self.ctx.types, type_id);
+
         if !needs_substitution {
             return type_id;
         }
