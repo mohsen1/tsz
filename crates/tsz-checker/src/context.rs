@@ -206,7 +206,6 @@ pub struct CheckerContext<'a> {
     /// Query database for type interning and memoized type operations.
     /// Supports both `TypeInterner` (via trait upcasting) and `QueryCache`.
     pub types: &'a dyn QueryDatabase,
-
     /// Current file name.
     pub file_name: String,
 
@@ -610,7 +609,7 @@ pub struct CheckerContext<'a> {
 }
 
 /// Context for a lib file (arena + binder) for global type resolution.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct LibContext {
     /// The AST arena for this lib file.
     pub arena: Arc<NodeArena>,

@@ -1522,6 +1522,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 is_constructor: false,
                 is_method: sig.is_method,
             };
+            println!("resolve_callable_call: signature = {sig:?}");
 
             match self.resolve_function_call(&func, arg_types) {
                 CallResult::Success(ret) => return CallResult::Success(ret),

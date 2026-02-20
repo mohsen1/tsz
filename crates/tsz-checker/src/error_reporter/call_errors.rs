@@ -239,6 +239,10 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_assignable_to(elem_type, target_element_type) {
+                println!(
+                    "try_elaborate_array_literal_elements: elem_type = {:?}, target_element_type = {:?}, file = {}",
+                    elem_type, target_element_type, self.ctx.file_name
+                );
                 self.error_type_not_assignable_at(elem_type, target_element_type, elem_idx);
                 elaborated = true;
             }
@@ -254,7 +258,13 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         idx: NodeIndex,
     ) {
+        println!(
+            "error_argument_not_assignable_at: File name: {}",
+            self.ctx.file_name
+        );
+
         // Suppress cascading errors when either type is ERROR, ANY, or UNKNOWN
+
         if arg_type == TypeId::ERROR || param_type == TypeId::ERROR {
             return;
         }
@@ -271,6 +281,7 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
                 &[&arg_str, &param_str],
             );
+            println!("File name: {}", self.ctx.file_name);
             if let Some(prop_name) = self.missing_single_required_property(arg_type, param_type) {
                 let prop = self.ctx.types.resolve_atom_ref(prop_name);
                 let detail = format_message(
@@ -360,6 +371,11 @@ impl<'a> CheckerState<'a> {
         idx: NodeIndex,
         failures: &[tsz_solver::PendingDiagnostic],
     ) {
+        println!(
+            "error_no_overload_matches_at: File name: {}",
+            self.ctx.file_name
+        );
+
         if self.should_suppress_concat_overload_error(idx) {
             return;
         }
@@ -374,6 +390,8 @@ impl<'a> CheckerState<'a> {
         let mut related = Vec::new();
         let span =
             tsz_solver::SourceSpan::new(self.ctx.file_name.as_str(), loc.start, loc.length());
+
+        println!("File name: {}", self.ctx.file_name);
 
         for failure in failures {
             let pending: PendingDiagnostic = PendingDiagnostic {

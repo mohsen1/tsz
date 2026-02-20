@@ -363,6 +363,7 @@ impl DefinitionInfo {
 /// // Look up later
 /// let info = store.get(def_id).expect("definition exists");
 /// ```
+#[derive(Debug)]
 pub struct DefinitionStore {
     /// Unique instance ID for debugging (tracks which store instance this is)
     instance_id: u64,

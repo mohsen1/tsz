@@ -663,7 +663,6 @@ impl Runner {
                         all_codes.remove(&2769);
                         all_fingerprints.retain(|fp| fp.code != 2769);
                     }
-
                     let compile_result = tsz_wrapper::CompilationResult {
                         error_codes: all_codes.into_iter().collect(),
                         diagnostic_fingerprints: all_fingerprints.into_iter().collect(),

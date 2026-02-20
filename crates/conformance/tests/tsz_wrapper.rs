@@ -145,13 +145,23 @@ fn compile_tsz_with_binary(
     use std::process::Command;
 
     // Run tsz with --pretty false for machine-readable output
-    let output = Command::new(tsz_path)
+    let mut command = Command::new(tsz_path);
+    command
         .arg("--project")
         .arg(base_dir)
         .arg("--noEmit")
         .arg("--pretty")
-        .arg("false")
-        .output()?;
+        .arg("false");
+
+    // Pass environment variables for tracing
+    if let Ok(rust_log) = std::env::var("RUST_LOG") {
+        command.env("RUST_LOG", rust_log);
+    }
+    if let Ok(rust_backtrace) = std::env::var("RUST_BACKTRACE") {
+        command.env("RUST_BACKTRACE", rust_backtrace);
+    }
+
+    let output = command.output()?;
 
     // Parse diagnostics from stderr and stdout
     // This is a simplified version - real implementation would need to parse
@@ -248,6 +258,7 @@ fn find_tsz_binary() -> String {
 
 #[test]
 fn test_compile_simple_error() {
+    let _ = tracing_subscriber::fmt::try_init();
     let content = r#"
 // @strict: true
 const x: number = "string";

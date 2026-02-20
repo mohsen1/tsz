@@ -462,6 +462,11 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::FunctionShape;
         use tsz_solver::operations::CallResult;
 
+        tracing::debug!(
+            "resolve_overloaded_call_with_signatures: signatures = {:?}, args = {:?}",
+            signatures,
+            args
+        );
         if signatures.is_empty() {
             return None;
         }

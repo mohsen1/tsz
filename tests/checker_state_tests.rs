@@ -1341,7 +1341,36 @@ fn test_checker_type_identity() {
     assert!(checker.are_types_identical(lit1, lit2));
 }
 
-// ============== Function overload validation ==============
+#[test]
+fn test_check_object_literal_excess_properties() {
+    use crate::parser::ParserState;
+
+    let source = r#"
+type Foo = { x: number };
+let foo: Foo = { x: 1, y: 2 };
+"#;
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    crate::test_fixtures::merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::checker::context::CheckerOptions::default(),
+    );
+    crate::test_fixtures::setup_lib_contexts(&mut checker);
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(codes.contains(&2322), "Expected error code 2322");
+}
 
 #[test]
 fn test_function_overload_missing_implementation_2391() {
