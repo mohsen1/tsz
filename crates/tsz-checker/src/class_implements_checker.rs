@@ -363,7 +363,25 @@ impl<'a> CheckerState<'a> {
                                     {
                                         has_private_members = true;
                                     }
-                                    all_interface_members.extend(&base_class_data.members.nodes);
+                                    for &member_idx in &base_class_data.members.nodes {
+                                        if self.ctx.arena.get(member_idx).is_none() {
+                                            continue;
+                                        }
+                                        let is_static = self
+                                            .ctx
+                                            .binder
+                                            .get_node_symbol(member_idx)
+                                            .and_then(|member_sym_id| {
+                                                self.ctx.binder.get_symbol(member_sym_id)
+                                            })
+                                            .is_some_and(|member_sym| {
+                                                member_sym.flags & tsz_binder::symbol_flags::STATIC
+                                                    != 0
+                                            });
+                                        if !is_static {
+                                            all_interface_members.push(member_idx);
+                                        }
+                                    }
                                     if interface_type_params.is_none() {
                                         interface_type_params =
                                             base_class_data.type_parameters.clone();
