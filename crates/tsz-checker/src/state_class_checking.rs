@@ -1263,6 +1263,44 @@ impl<'a> CheckerState<'a> {
         // Class expressions should have the same property initialization checks as class declarations
         self.check_property_initialization(class_idx, class, false, is_abstract_class);
 
+        // Check for duplicate member names (TS2300, TS2393)
+        self.check_duplicate_class_members(&class.members.nodes);
+
+        // Check for missing method/constructor implementations (2389, 2390, 2391)
+        self.check_class_member_implementations(&class.members.nodes);
+
+        // Check static/instance consistency for method overloads (TS2387, TS2388)
+        self.check_static_instance_overload_consistency(&class.members.nodes);
+
+        // Check abstract consistency for method overloads (TS2512)
+        self.check_abstract_overload_consistency(&class.members.nodes);
+
+        // Check consecutive abstract declarations (TS2516)
+        self.check_abstract_method_consecutive_declarations(&class.members.nodes);
+
+        // Check for accessor abstract consistency (error 2676)
+        // Getter and setter must both be abstract or both non-abstract
+        self.check_accessor_abstract_consistency(&class.members.nodes);
+
+        // Check for accessor type compatibility (TS2322)
+        // TS 5.1+ allows divergent types ONLY if both have explicit annotations.
+        self.check_accessor_type_compatibility(&class.members.nodes);
+
+        // Check for property type compatibility with base class (error 2416)
+        // Property type in derived class must be assignable to same property in base class
+        self.check_property_inheritance_compatibility(class_idx, class);
+
+        // Check that non-abstract class implements all abstract members from base class (error 2653, 2656)
+        self.check_abstract_member_implementations(class_idx, class);
+
+        // Check that class properly implements all interfaces from implements clauses (error 2420)
+        self.check_implements_clauses(class_idx, class);
+
+        // Check that class properties are compatible with index signatures (TS2411)
+        // Get the class instance type (not constructor type) to access instance index signatures
+        let class_instance_type = self.get_class_instance_type(class_idx, class);
+        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+
         // Check for decorator-related global types (TS2318)
         self.check_decorator_global_types(&class.members.nodes);
 

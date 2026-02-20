@@ -42,10 +42,13 @@ impl BinderState {
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         // Function declarations inside blocks are block-scoped when:
                         // - The file is an external module (ES6 modules), or
-                        // - The scope is in strict mode ("use strict" or --alwaysStrict)
-                        // In non-strict, non-module scripts, they hoist (Annex B behavior).
-                        let block_scoped =
-                            in_block && (self.is_external_module || self.is_strict_scope);
+                        // - The scope is in strict mode ("use strict" or --alwaysStrict), or
+                        // - The target is ES2015 or later.
+                        // In non-strict, non-module ES3/ES5 scripts, they hoist (Annex B behavior).
+                        let is_es6_or_later = self.options.target as u32
+                            >= tsz_common::common::ScriptTarget::ES2015 as u32;
+                        let block_scoped = in_block
+                            && (self.is_external_module || self.is_strict_scope || is_es6_or_later);
                         if !block_scoped {
                             self.hoisted_functions.push(stmt_idx);
                         }

@@ -165,34 +165,61 @@ impl<'a> CheckerState<'a> {
                 String::from("<anonymous>")
             };
 
-            // TypeScript uses different error codes based on the number of missing members:
+            let is_class_expression = self
+                .ctx
+                .arena
+                .get(class_idx)
+                .is_some_and(|n| n.kind == syntax_kind_ext::CLASS_EXPRESSION);
+
+            // TypeScript uses different error codes based on the number of missing members and whether it's an expression:
             // - TS2515: Single missing member: "Non-abstract class 'C' does not implement inherited abstract member 'bar' from class 'B'."
+            // - TS2653: Single missing member (class expression): "Non-abstract class expression does not implement inherited abstract member 'bar' from class 'B'."
             // - TS2654: Multiple missing members: "Non-abstract class 'C' is missing implementations for the following members of 'B': 'foo', 'bar'."
+            // - TS2656: Multiple missing members (class expression): "Non-abstract class expression is missing implementations for the following members of 'B': 'foo', 'bar'."
             if missing_members.len() == 1 {
-                // TS2515: Single missing member
-                self.error_at_node(
-                    class_idx,
-                    &format!(
-                        "Non-abstract class '{}' does not implement inherited abstract member '{}' from class '{}'.",
-                        derived_class_name, missing_members[0], base_class_name
-                    ),
-                    diagnostic_codes::NON_ABSTRACT_CLASS_DOES_NOT_IMPLEMENT_INHERITED_ABSTRACT_MEMBER_FROM_CLASS, // TS2515
-                );
+                if is_class_expression {
+                    self.error_at_node(
+                        class_idx,
+                        &format!(
+                            "Non-abstract class expression does not implement inherited abstract member '{}' from class '{}'.",
+                            missing_members[0], base_class_name
+                        ),
+                        2653,
+                    );
+                } else {
+                    self.error_at_node(
+                        class_idx,
+                        &format!(
+                            "Non-abstract class '{}' does not implement inherited abstract member '{}' from class '{}'.",
+                            derived_class_name, missing_members[0], base_class_name
+                        ),
+                        diagnostic_codes::NON_ABSTRACT_CLASS_DOES_NOT_IMPLEMENT_INHERITED_ABSTRACT_MEMBER_FROM_CLASS, // TS2515
+                    );
+                }
             } else {
-                // TS2654: Multiple missing members
                 let missing_list = missing_members
                     .iter()
                     .map(|s| format!("'{s}'"))
                     .collect::<Vec<_>>()
                     .join(", ");
 
-                self.error_at_node(
-                    class_idx,
-                    &format!(
-                        "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {missing_list}."
-                    ),
-                    diagnostic_codes::NON_ABSTRACT_CLASS_IS_MISSING_IMPLEMENTATIONS_FOR_THE_FOLLOWING_MEMBERS_OF,
-                );
+                if is_class_expression {
+                    self.error_at_node(
+                        class_idx,
+                        &format!(
+                            "Non-abstract class expression is missing implementations for the following members of '{base_class_name}': {missing_list}."
+                        ),
+                        2656,
+                    );
+                } else {
+                    self.error_at_node(
+                        class_idx,
+                        &format!(
+                            "Non-abstract class '{derived_class_name}' is missing implementations for the following members of '{base_class_name}': {missing_list}."
+                        ),
+                        diagnostic_codes::NON_ABSTRACT_CLASS_IS_MISSING_IMPLEMENTATIONS_FOR_THE_FOLLOWING_MEMBERS_OF,
+                    );
+                }
             }
         }
     }
