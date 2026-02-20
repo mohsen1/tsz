@@ -384,6 +384,9 @@ impl<'a> CheckerState<'a> {
             if let Some(sig) = self.ctx.arena.get_signature(member) {
                 match member.kind {
                     CALL_SIGNATURE => {
+                        if let Some(ref params) = sig.parameters {
+                            self.check_duplicate_parameters(params, false);
+                        }
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
                         // Check for unused type parameters (TS6133)
@@ -406,6 +409,9 @@ impl<'a> CheckerState<'a> {
                         self.pop_type_parameters(type_param_updates);
                     }
                     CONSTRUCT_SIGNATURE => {
+                        if let Some(ref params) = sig.parameters {
+                            self.check_duplicate_parameters(params, false);
+                        }
                         let (type_params, type_param_updates) =
                             self.push_type_parameters(&sig.type_parameters);
                         // Check for unused type parameters (TS6133)
@@ -434,6 +440,9 @@ impl<'a> CheckerState<'a> {
                         let name_atom = self.ctx.types.intern_string(&name);
 
                         if member.kind == METHOD_SIGNATURE {
+                            if let Some(ref params) = sig.parameters {
+                                self.check_duplicate_parameters(params, false);
+                            }
                             let (type_params, type_param_updates) =
                                 self.push_type_parameters(&sig.type_parameters);
                             let (params, this_type) =

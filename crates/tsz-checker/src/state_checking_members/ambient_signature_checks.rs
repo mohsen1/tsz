@@ -379,7 +379,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check for duplicate parameter names (TS2300)
-        self.check_duplicate_parameters(&method.parameters);
+        self.check_duplicate_parameters(&method.parameters, method.body.is_some());
 
         // TS1210: Check for reserved names in class method parameter lists (strict mode)
         if self
@@ -706,7 +706,7 @@ impl<'a> CheckerState<'a> {
         self.cache_parameter_types(&ctor.parameters.nodes, None);
 
         // Check for duplicate parameter names (TS2300)
-        self.check_duplicate_parameters(&ctor.parameters);
+        self.check_duplicate_parameters(&ctor.parameters, ctor.body.is_some());
 
         // TS1210/TS1213: Check constructor parameter names in class strict mode.
         // Classes are implicitly strict mode.
