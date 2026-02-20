@@ -1093,8 +1093,21 @@ impl<'a> CheckerState<'a> {
                 }
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                // Get the method type
-                self.get_type_of_node(member_idx)
+                let Some(method) = self.ctx.arena.get_method_decl(member_node) else {
+                    return TypeId::ANY;
+                };
+                let signature = self.call_signature_from_method(method, member_idx);
+                use tsz_solver::FunctionShape;
+                let factory = self.ctx.types.factory();
+                factory.function(FunctionShape {
+                    type_params: signature.type_params,
+                    params: signature.params,
+                    this_type: signature.this_type,
+                    return_type: signature.return_type,
+                    type_predicate: signature.type_predicate,
+                    is_constructor: false,
+                    is_method: true,
+                })
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {

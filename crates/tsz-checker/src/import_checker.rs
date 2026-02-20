@@ -805,6 +805,18 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::MODULE_BLOCK
         );
 
+        let mut is_ambient_external_module = false;
+        if let Some(ext) = self.ctx.arena.get_extended(body_idx) {
+            let parent_idx = ext.parent;
+            if !parent_idx.is_none()
+                && let Some(parent_node) = self.ctx.arena.get(parent_idx)
+                    && let Some(module) = self.ctx.arena.get_module(parent_node)
+                        && let Some(name_node) = self.ctx.arena.get(module.name)
+                            && name_node.kind == SyntaxKind::StringLiteral as u16 {
+                                is_ambient_external_module = true;
+                            }
+        }
+
         if body_node.kind == syntax_kind_ext::MODULE_BLOCK {
             if let Some(block) = self.ctx.arena.get_module_block(body_node)
                 && let Some(ref statements) = block.statements
@@ -818,7 +830,7 @@ impl<'a> CheckerState<'a> {
                         .arena
                         .get(stmt_idx)
                         .is_some_and(|n| n.kind == syntax_kind_ext::EXPORT_ASSIGNMENT);
-                    if is_export_assign {
+                    if is_export_assign && !is_ambient_external_module {
                         self.error_at_node(
                             stmt_idx,
                             diagnostic_messages::AN_EXPORT_ASSIGNMENT_CANNOT_BE_USED_IN_A_NAMESPACE,
@@ -832,17 +844,22 @@ impl<'a> CheckerState<'a> {
                 // Check for duplicate export assignments (TS2300) and conflicts (TS2309)
                 // Filter out export assignments in namespace bodies since they're already
                 // flagged with TS1063 and shouldn't trigger TS2304/TS2309 follow-up errors.
-                let non_export_assign: Vec<NodeIndex> = statements
-                    .nodes
-                    .iter()
-                    .copied()
-                    .filter(|&idx| {
-                        self.ctx
-                            .arena
-                            .get(idx)
-                            .is_none_or(|n| n.kind != syntax_kind_ext::EXPORT_ASSIGNMENT)
-                    })
-                    .collect();
+                // However, they ARE checked in ambient external modules.
+                let non_export_assign: Vec<NodeIndex> = if is_ambient_external_module {
+                    statements.nodes.clone()
+                } else {
+                    statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .filter(|&idx| {
+                            self.ctx
+                                .arena
+                                .get(idx)
+                                .is_none_or(|n| n.kind != syntax_kind_ext::EXPORT_ASSIGNMENT)
+                        })
+                        .collect()
+                };
                 self.check_export_assignment(&non_export_assign);
             }
         } else if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
