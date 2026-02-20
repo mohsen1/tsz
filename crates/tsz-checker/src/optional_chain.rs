@@ -1,89 +1,9 @@
 //! Optional Chaining Type Checking
 //!
 //! Provides AST-level utilities for detecting optional chaining expressions (`?.`).
-//! Solver-level nullish type utilities live in `tsz_solver`.
 
-use rustc_hash::FxHashSet;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
-
-/// Maximum depth for optional chain traversal to prevent infinite loops
-const MAX_OPTIONAL_CHAIN_DEPTH: usize = 1000;
-
-/// Information about an optional chain expression
-#[derive(Debug, Clone)]
-pub struct OptionalChainInfo {
-    /// Whether this is an optional chain (has ?. somewhere in the chain)
-    pub is_optional: bool,
-    /// The root expression of the chain
-    pub root: NodeIndex,
-    /// Whether the immediate expression is optional (has ?. directly)
-    pub is_immediate_optional: bool,
-}
-
-/// Analyze optional chain information for a node
-pub fn analyze_optional_chain(arena: &NodeArena, idx: NodeIndex) -> OptionalChainInfo {
-    let mut is_optional = false;
-    let mut current = idx;
-    let mut root = idx;
-    let mut is_immediate_optional = false;
-
-    // Track visited nodes to prevent infinite loops on malformed AST
-    let mut visited: FxHashSet<u32> = FxHashSet::default();
-    let mut iterations = 0;
-
-    // Walk up the expression chain looking for optional chaining
-    loop {
-        // Infinite loop protection
-        iterations += 1;
-        if iterations > MAX_OPTIONAL_CHAIN_DEPTH {
-            break;
-        }
-
-        // Cycle detection
-        if !visited.insert(current.0) {
-            break;
-        }
-
-        let Some(node) = arena.get(current) else {
-            break;
-        };
-
-        match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-            {
-                if let Some(access) = arena.get_access_expr(node) {
-                    if current == idx && access.question_dot_token {
-                        is_immediate_optional = true;
-                    }
-                    if access.question_dot_token {
-                        is_optional = true;
-                    }
-                    root = access.expression;
-                    current = access.expression;
-                } else {
-                    break;
-                }
-            }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                if let Some(call) = arena.get_call_expr(node) {
-                    root = call.expression;
-                    current = call.expression;
-                } else {
-                    break;
-                }
-            }
-            _ => break,
-        }
-    }
-
-    OptionalChainInfo {
-        is_optional,
-        root,
-        is_immediate_optional,
-    }
-}
 
 /// Checks if a node is an optional chain expression
 pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
@@ -118,7 +38,3 @@ pub fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
         _ => false,
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/optional_chain.rs"]
-mod tests;
