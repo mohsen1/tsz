@@ -1115,14 +1115,14 @@ impl ParserState {
                 return self.jsx_tag_names_match(ns_a.namespace, ns_b.namespace)
                     && self.jsx_tag_names_match(ns_a.name, ns_b.name);
             }
-        } else if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            if let (Some(acc_a), Some(acc_b)) = (
+        } else if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let (Some(acc_a), Some(acc_b)) = (
                 self.arena.get_access_expr(node_a),
                 self.arena.get_access_expr(node_b),
-            ) {
-                return self.jsx_tag_names_match(acc_a.expression, acc_b.expression)
-                    && self.jsx_tag_names_match(acc_a.name_or_argument, acc_b.name_or_argument);
-            }
+            )
+        {
+            return self.jsx_tag_names_match(acc_a.expression, acc_b.expression)
+                && self.jsx_tag_names_match(acc_a.name_or_argument, acc_b.name_or_argument);
         }
         false
     }
