@@ -95,6 +95,26 @@ impl<'a> CheckerState<'a> {
                 true // We inserted it
             } else {
                 // Symbol already in set - this is a cycle, return ERROR
+                let error_node = class.name;
+                use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+                let name_text = self
+                    .ctx
+                    .arena
+                    .get(class.name)
+                    .and_then(|n| self.get_identifier_text(n))
+                    .unwrap_or_else(|| "unknown".to_string());
+                let message = format_message(
+                    diagnostic_messages::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+                    &[&name_text],
+                );
+                // Avoid duplicate emission
+                if !self.ctx.diagnostics.iter().any(|d| d.code == diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION && d.start == self.ctx.arena.get(error_node).map_or(0, |n| n.pos)) {
+                    self.error_at_node(
+                        error_node,
+                        &message,
+                        diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION,
+                    );
+                }
                 return TypeId::ERROR;
             }
         } else {
