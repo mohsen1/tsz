@@ -603,7 +603,9 @@ impl BinderState {
             }
 
             // Export declarations - bind the exported declaration
-            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION =>
+            {
                 self.bind_export_declaration(arena, node, idx);
             }
             // Export assignment - bind the assigned expression

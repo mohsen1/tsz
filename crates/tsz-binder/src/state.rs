@@ -1293,6 +1293,7 @@ impl BinderState {
                 syntax_kind_ext::IMPORT_DECLARATION
                 | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_ASSIGNMENT => {
                     return true;
                 }
