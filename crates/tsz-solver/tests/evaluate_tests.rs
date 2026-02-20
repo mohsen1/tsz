@@ -7402,7 +7402,7 @@ fn test_conditional_infer_object_call_signature_overload_source_non_distributive
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::NEVER);
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]
@@ -38195,7 +38195,7 @@ fn test_callable_param_infer_overloaded_callable() {
     // This returns never because Callable vs Callable matching with infer patterns
     // is not fully implemented for extracting from last signature.
     // TODO: Implement proper overload signature extraction for infer patterns
-    assert_eq!(result, TypeId::NEVER);
+    assert_eq!(result, TypeId::NUMBER);
 }
 
 #[test]

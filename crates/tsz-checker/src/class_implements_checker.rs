@@ -266,6 +266,7 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
+        println!("check_implements_clauses called");
         use tsz_parser::parser::syntax_kind_ext::{METHOD_SIGNATURE, PROPERTY_SIGNATURE};
 
         let Some(ref heritage_clauses) = class_data.heritage_clauses else {
@@ -524,6 +525,11 @@ impl<'a> CheckerState<'a> {
                                 self.ctx.types,
                                 interface_member_type,
                                 &substitution,
+                            );
+
+                            println!(
+                                "Checking member {} type {} vs interface type {}",
+                                member_name, class_member_type.0, interface_member_type.0
                             );
 
                             // Check type compatibility (class member type must be assignable to interface member type)
