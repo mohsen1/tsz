@@ -631,6 +631,24 @@ impl<'a> Printer<'a> {
             || clause_node.kind == syntax_kind_ext::ENUM_DECLARATION
             || clause_node.kind == syntax_kind_ext::MODULE_DECLARATION;
 
+        if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && !export.is_default_export
+            && self.ctx.options.legacy_decorators
+            && let Some(class) = self.arena.get_class(clause_node)
+        {
+            let legacy_decorators = self.collect_class_decorators(&class.modifiers);
+            if !legacy_decorators.is_empty()
+                && let Some(name) = self.get_identifier_text_opt(class.name)
+            {
+                self.emit_class_declaration(clause_node, export.export_clause);
+                self.write_line();
+                self.write("export { ");
+                self.write(&name);
+                self.write(" };");
+                return;
+            }
+        }
+
         self.write("export ");
         self.emit(export.export_clause);
 
@@ -788,8 +806,17 @@ impl<'a> Printer<'a> {
                 || clause_kind == syntax_kind_ext::MODULE_DECLARATION;
 
             if is_decl && self.transforms.has_transform(export.export_clause) {
-                self.emit(export.export_clause);
-                return;
+                let is_legacy_decorated_export_class = clause_kind
+                    == syntax_kind_ext::CLASS_DECLARATION
+                    && self.ctx.options.legacy_decorators
+                    && !export.is_default_export
+                    && self.arena.get_class(clause_node).is_some_and(|class| {
+                        !self.collect_class_decorators(&class.modifiers).is_empty()
+                    });
+                if !is_legacy_decorated_export_class {
+                    self.emit(export.export_clause);
+                    return;
+                }
             }
 
             if is_anonymous_default {
@@ -809,7 +836,25 @@ impl<'a> Printer<'a> {
                                 self.write("exports.");
                                 self.write(name);
                                 self.write(" = ");
-                                self.emit(*init_idx);
+                                if let Some(init_node) = self.arena.get(*init_idx)
+                                    && init_node.kind == SyntaxKind::Identifier as u16
+                                {
+                                    let ident = self.get_identifier_text_idx(*init_idx);
+                                    if self
+                                        .ctx
+                                        .module_state
+                                        .pending_exports
+                                        .iter()
+                                        .any(|n| n == &ident)
+                                    {
+                                        self.write("exports.");
+                                        self.write(&ident);
+                                    } else {
+                                        self.emit(*init_idx);
+                                    }
+                                } else {
+                                    self.emit(*init_idx);
+                                }
                                 self.write(";");
                                 self.write_line();
                             }
@@ -854,6 +899,71 @@ impl<'a> Printer<'a> {
                 }
                 // export class C {} or export default class C {}
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if self.ctx.options.legacy_decorators
+                        && !self.ctx.module_state.has_export_assignment
+                        && !export.is_default_export
+                        && let Some(class) = self.arena.get_class(clause_node)
+                    {
+                        let legacy_decorators = self.collect_class_decorators(&class.modifiers);
+                        if !legacy_decorators.is_empty()
+                            && let Some(name) = self.get_identifier_text_opt(class.name)
+                        {
+                            if self.ctx.target_es5 {
+                                let mut es5_emitter = ClassES5Emitter::new(self.arena);
+                                es5_emitter.set_indent_level(self.writer.indent_level());
+                                es5_emitter.set_transforms(self.transforms.clone());
+                                if let Some(text) = self.source_text_for_map() {
+                                    if self.writer.has_source_map() {
+                                        es5_emitter.set_source_map_context(
+                                            text,
+                                            self.writer.current_source_index(),
+                                        );
+                                    } else {
+                                        es5_emitter.set_source_text(text);
+                                    }
+                                }
+                                let output = es5_emitter.emit_class(export.export_clause);
+                                let mappings = es5_emitter.take_mappings();
+                                if !mappings.is_empty() && self.writer.has_source_map() {
+                                    self.writer.write("");
+                                    let base_line = self.writer.current_line();
+                                    let base_column = self.writer.current_column();
+                                    self.writer.add_offset_mappings(
+                                        base_line,
+                                        base_column,
+                                        &mappings,
+                                    );
+                                    self.writer.write(&output);
+                                } else {
+                                    self.write(&output);
+                                }
+                                while self.comment_emit_idx < self.all_comments.len()
+                                    && self.all_comments[self.comment_emit_idx].end
+                                        <= clause_node.end
+                                {
+                                    self.comment_emit_idx += 1;
+                                }
+                            } else {
+                                self.emit_class_es6_with_options(
+                                    clause_node,
+                                    export.export_clause,
+                                    true,
+                                    Some(("let", name.clone())),
+                                );
+                            }
+                            self.write_line();
+                            self.emit_legacy_class_decorator_assignment(
+                                &name,
+                                &legacy_decorators,
+                                true,
+                                false,
+                                true,
+                            );
+                            self.write_line();
+                            return;
+                        }
+                    }
+
                     // Emit the class declaration
                     self.emit_class_declaration(clause_node, export.export_clause);
                     self.write_line();
@@ -937,6 +1047,16 @@ impl<'a> Printer<'a> {
                                 self.write("exports.");
                                 self.write(&export_name);
                                 self.write(" = ");
+                                if export_name != local_name
+                                    && self
+                                        .ctx
+                                        .module_state
+                                        .pending_exports
+                                        .iter()
+                                        .any(|n| n == &local_name)
+                                {
+                                    self.write("exports.");
+                                }
                                 self.write(&local_name);
                                 self.write(";");
                                 self.write_line();
@@ -950,6 +1070,25 @@ impl<'a> Printer<'a> {
                 // export default <expression> - emit as exports.default = expr;
                 _ => {
                     // This is likely an expression-based default export: export default 42;
+                    if let Some(expr_node) = self.arena.get(export.export_clause)
+                        && expr_node.kind == SyntaxKind::Identifier as u16
+                    {
+                        let ident = self.get_identifier_text_idx(export.export_clause);
+                        if self
+                            .ctx
+                            .module_state
+                            .pending_exports
+                            .iter()
+                            .any(|n| n == &ident)
+                        {
+                            self.write("exports.default = exports.");
+                            self.write(&ident);
+                            self.write(";");
+                            self.write_line();
+                            return;
+                        }
+                    }
+
                     self.write("exports.default = ");
                     self.emit(export.export_clause);
                     self.write_semicolon();
@@ -981,6 +1120,29 @@ impl<'a> Printer<'a> {
             if export_assign.is_export_equals {
                 self.write("module.exports = ");
             } else {
+                // Preserve live binding when the default export expression is an
+                // identifier that is also exported as a named value:
+                //   export const x = 1; export default x;
+                // -> exports.default = exports.x;
+                if let Some(expr_node) = self.arena.get(export_assign.expression)
+                    && expr_node.kind == SyntaxKind::Identifier as u16
+                {
+                    let ident = self.get_identifier_text_idx(export_assign.expression);
+                    if self
+                        .ctx
+                        .module_state
+                        .pending_exports
+                        .iter()
+                        .any(|n| n == &ident)
+                    {
+                        self.write("exports.default = exports.");
+                        self.write(&ident);
+                        self.write(";");
+                        self.write_line();
+                        return;
+                    }
+                }
+
                 self.write("exports.default = ");
             }
             self.emit_expression(export_assign.expression);

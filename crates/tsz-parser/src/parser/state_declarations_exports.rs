@@ -113,6 +113,43 @@ impl ParserState {
         self.parse_export_declaration_or_statement(start_pos)
     }
 
+    /// Parse `@decorator export class ...` form, preserving decorators on the class node.
+    pub(crate) fn parse_export_declaration_with_decorators(
+        &mut self,
+        start_pos: u32,
+        decorators: Option<crate::parser::NodeList>,
+    ) -> NodeIndex {
+        self.parse_expected(SyntaxKind::ExportKeyword);
+
+        let declaration = match self.token() {
+            SyntaxKind::ClassKeyword => {
+                self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+            }
+            SyntaxKind::AbstractKeyword => {
+                self.parse_abstract_class_declaration_with_decorators(decorators, self.token_pos())
+            }
+            _ => {
+                self.error_statement_expected();
+                self.parse_expression_statement()
+            }
+        };
+
+        let end_pos = self.token_end();
+        self.arena.add_export_decl(
+            syntax_kind_ext::EXPORT_DECLARATION,
+            start_pos,
+            end_pos,
+            ExportDeclData {
+                modifiers: None,
+                is_type_only: false,
+                is_default_export: false,
+                export_clause: declaration,
+                module_specifier: NodeIndex::NONE,
+                attributes: NodeIndex::NONE,
+            },
+        )
+    }
+
     // Parse export import X = Y (re-export of import equals declaration)
     pub(crate) fn parse_export_import_equals(&mut self, start_pos: u32) -> NodeIndex {
         // Parse the import equals declaration
