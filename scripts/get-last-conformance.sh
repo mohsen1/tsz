@@ -2,7 +2,9 @@
 #
 # Get the last recorded conformance pass rate from git history
 #
-# Scans commit messages for "CURRENT_CONFORMANCE_PASS_RATE: XX.X%" and returns the most recent value.
+# Scans commit messages for "CURRENT_CONFORMANCE_PASS_RATE: XX.X%" and returns
+# the most recent value. If no commit marker is found, falls back to README
+# baseline (CONFORMANCE_START/CONFORMANCE_END section).
 # Searches up to 100 commits by default.
 #
 # Usage:
@@ -11,7 +13,7 @@
 #
 # Exit codes:
 #   0 - Found conformance value (printed to stdout)
-#   1 - No conformance value found in history
+#   1 - No conformance value found in history or README baseline
 
 set -euo pipefail
 
@@ -41,7 +43,7 @@ while IFS= read -r line; do
     MESSAGE=$(git log -1 --format=%B "$SHA" 2>/dev/null || continue)
     
     # Look for the specific pattern: "CURRENT_CONFORMANCE_PASS_RATE: XX.X%"
-    CONFORMANCE=$(echo "$MESSAGE" | grep -oE 'CURRENT_CONFORMANCE_PASS_RATE:\s*[0-9]+(\.[0-9]+)?%' | head -1 | grep -oE '[0-9]+(\.[0-9]+)?')
+    CONFORMANCE=$(echo "$MESSAGE" | grep -oE 'CURRENT_CONFORMANCE_PASS_RATE:\s*[0-9]+(\.[0-9]+)?%' | head -1 | grep -oE '[0-9]+(\.[0-9]+)?' || true)
     
     if [[ -n "$CONFORMANCE" ]]; then
         if [[ "$PRINT_SHA" == true ]]; then
@@ -53,5 +55,25 @@ while IFS= read -r line; do
     fi
 done < <(git log --oneline -n "$MAX_COMMITS" 2>/dev/null)
 
-# No conformance found
+# Fallback: README conformance baseline (CONFORMANCE_START/CONFORMANCE_END)
+README_FILE="$ROOT_DIR/README.md"
+if [[ -f "$README_FILE" ]]; then
+    README_CONFORMANCE=$(
+        sed -n '/CONFORMANCE_START/,/CONFORMANCE_END/p' "$README_FILE" \
+            | grep -oE '[0-9]+(\.[0-9]+)?%' \
+            | head -1 \
+            | tr -d '%'
+    ) || true
+
+    if [[ -n "$README_CONFORMANCE" ]]; then
+        if [[ "$PRINT_SHA" == true ]]; then
+            echo "$README_CONFORMANCE README"
+        else
+            echo "$README_CONFORMANCE"
+        fi
+        exit 0
+    fi
+fi
+
+# No conformance value found
 exit 1
