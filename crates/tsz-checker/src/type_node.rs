@@ -135,6 +135,23 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             // Check for TS7039 before TypeLowering since TypeLowering doesn't emit diagnostics
             k if k == syntax_kind_ext::MAPPED_TYPE => self.get_type_from_mapped_type(idx),
 
+            k if k == syntax_kind_ext::THIS_TYPE
+                || k == tsz_scanner::SyntaxKind::ThisKeyword as u16 =>
+            {
+                if !self.is_this_type_allowed(idx) {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.ctx.error(
+                        node.pos,
+                        node.end.saturating_sub(node.pos),
+                        diagnostic_messages::A_THIS_TYPE_IS_AVAILABLE_ONLY_IN_A_NON_STATIC_MEMBER_OF_A_CLASS_OR_INTERFACE.to_string(),
+                        diagnostic_codes::A_THIS_TYPE_IS_AVAILABLE_ONLY_IN_A_NON_STATIC_MEMBER_OF_A_CLASS_OR_INTERFACE,
+                    );
+                    TypeId::ERROR
+                } else {
+                    self.ctx.types.this_type()
+                }
+            }
+
             // Fall back to TypeLowering for type nodes not handled above
             // (conditional types, indexed access types, etc.)
             _ => {
@@ -1637,5 +1654,88 @@ fn collect_names_in_type(
                 }
             }
         }
+    }
+}
+
+impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    fn is_this_type_allowed(&self, this_node_idx: tsz_parser::parser::NodeIndex) -> bool {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut child_idx = this_node_idx;
+        let mut current = self
+            .ctx
+            .arena
+            .get_extended(this_node_idx)
+            .map(|ext| ext.parent);
+
+        while let Some(parent_idx) = current {
+            if parent_idx.is_none() {
+                break;
+            }
+            let Some(node) = self.ctx.arena.get(parent_idx) else {
+                break;
+            };
+
+            match node.kind {
+                // Nodes that PROVIDE a 'this' type context
+                syntax_kind_ext::CLASS_DECLARATION
+                | syntax_kind_ext::CLASS_EXPRESSION
+                | syntax_kind_ext::INTERFACE_DECLARATION => {
+                    return true;
+                }
+
+                // Class/Interface members
+                syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::PROPERTY_DECLARATION
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::INDEX_SIGNATURE
+                | syntax_kind_ext::PROPERTY_SIGNATURE
+                | syntax_kind_ext::METHOD_SIGNATURE => {
+                    // If it's static, 'this' type is not allowed
+                    let is_static = (node.flags & tsz_parser::modifier_flags::STATIC as u16) != 0;
+                    if is_static {
+                        return false;
+                    }
+                    // Otherwise, it's an instance member, so 'this' type is allowed.
+                    // We continue walking up, we will eventually hit the class/interface declaration.
+                }
+
+                // Nodes that BLOCK 'this' type context
+                syntax_kind_ext::CONSTRUCTOR => {
+                    // 'this' type not allowed in constructor parameters or return type,
+                    // but it IS allowed in the constructor body.
+                    if let Some(c) = self.ctx.arena.get_constructor(node) {
+                        if child_idx == c.body {
+                            return true; // The body provides a 'this' context
+                        }
+                    }
+                    return false;
+                }
+
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                | syntax_kind_ext::MODULE_DECLARATION
+                | syntax_kind_ext::TYPE_LITERAL
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                | syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
+                    return false;
+                }
+
+                // Everything else (ARROW_FUNCTION, MAPPED_TYPE, BLOCK, RETURN_STATEMENT, etc.)
+                // just passes through to the parent.
+                _ => {}
+            }
+
+            child_idx = parent_idx;
+            current = self
+                .ctx
+                .arena
+                .get_extended(parent_idx)
+                .map(|ext| ext.parent);
+        }
+
+        false
     }
 }
