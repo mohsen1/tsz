@@ -433,10 +433,32 @@ impl<'a> CheckerState<'a> {
                         use_index_signature_check = false;
                         Some(TypeId::ERROR)
                     } else {
-                        // CRITICAL FIX: Don't immediately return ANY when property is not found.
-                        // Let it fall through to check for index signatures below.
-                        // This allows map["foo"] to work when map has [key: string]: boolean
-                        None
+                        // TS2339 parity for element access on `typeof const enum` with missing member.
+                        // Const enums do not have a reverse mapping, so they shouldn't fall back to
+                        // TS7053 string index signature checks like regular enums do.
+                        let mut is_const_enum = false;
+                        if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access) {
+                            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                                if symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0 {
+                                    is_const_enum = true;
+                                }
+                            }
+                        }
+
+                        if is_const_enum {
+                            self.error_property_not_exist_at(
+                                &property_name,
+                                object_type_for_access,
+                                access.name_or_argument,
+                            );
+                            use_index_signature_check = false;
+                            Some(TypeId::ERROR)
+                        } else {
+                            // CRITICAL FIX: Don't immediately return ANY when property is not found.
+                            // Let it fall through to check for index signatures below.
+                            // This allows map["foo"] to work when map has [key: string]: boolean
+                            None
+                        }
                     }
                 }
             };
