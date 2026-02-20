@@ -100,11 +100,26 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            let element_type = if parent_type == TypeId::ANY {
+            let mut element_type = if parent_type == TypeId::ANY {
                 TypeId::ANY
             } else {
                 self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
             };
+
+            // If there's an initializer, the type incorporates it.
+            // TypeScript widens the inferred type with the initializer type.
+            if element_data.initializer.is_some() {
+                let init_type = self.get_type_of_node(element_data.initializer);
+                if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
+                    element_type = init_type;
+                } else if !self.is_assignable_to(init_type, element_type) {
+                    element_type = self
+                        .ctx
+                        .types
+                        .factory()
+                        .union(vec![element_type, init_type]);
+                }
+            }
 
             let Some(name_node) = self.ctx.arena.get(element_data.name) else {
                 continue;
