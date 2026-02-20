@@ -902,7 +902,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Check if the types are comparable (assignable in either direction).
         // Types are comparable if they overlap — i.e., at least one direction works.
         // For example, "a" is comparable to "a" | "b" | "c" because "a" <: union.
-        if !self.is_type_comparable_to(effective_case_type, effective_switch_type) {
+        // TypeScript unconditionally allows 'null' and 'undefined' as the case type.
+        let is_comparable = effective_case_type == tsz_solver::TypeId::NULL
+            || effective_case_type == tsz_solver::TypeId::UNDEFINED
+            || self.is_type_comparable_to(effective_case_type, effective_switch_type);
+
+        if !is_comparable {
             // TS2678: Type 'X' is not comparable to type 'Y'
             if let Some(loc) = self.get_source_location(case_expr) {
                 let case_str = self.format_type(effective_case_type);
