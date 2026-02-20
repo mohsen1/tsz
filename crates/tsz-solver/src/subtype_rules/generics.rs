@@ -717,7 +717,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         match self.try_expand_mapped(mapped_id) {
             Some(expanded) => self.check_subtype(expanded, target),
-            None => SubtypeResult::False,
+            None => {
+                if let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id) {
+                    self.check_subtype(expanded, target)
+                } else {
+                    SubtypeResult::False
+                }
+            }
         }
     }
 
@@ -733,8 +739,49 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         match self.try_expand_mapped(mapped_id) {
             Some(expanded) => self.check_subtype(source, expanded),
-            None => SubtypeResult::False,
+            None => {
+                if let Some(expanded) = self.try_expand_mapped_with_constraint(mapped_id) {
+                    self.check_subtype(source, expanded)
+                } else {
+                    SubtypeResult::False
+                }
+            }
         }
+    }
+
+    fn try_expand_mapped_with_constraint(&mut self, mapped_id: MappedTypeId) -> Option<TypeId> {
+        use crate::{MappedType, TypeData, TypeSubstitution, instantiate_type};
+        let mapped = self.interner.mapped_type(mapped_id);
+        if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint)
+            && let Some(TypeData::TypeParameter(param)) = self.interner.lookup(source)
+            && let Some(constraint) = param.constraint
+        {
+            let mut subst = TypeSubstitution::new();
+            subst.insert(param.name, constraint);
+            // Use keyof(constraint) directly to prevent eager evaluation
+            // which would break array/tuple preservation in evaluate_mapped.
+            let inst_constraint = self.interner.keyof(constraint);
+            let inst_template = instantiate_type(self.interner, mapped.template, &subst);
+            let inst_name = mapped
+                .name_type
+                .map(|n| instantiate_type(self.interner, n, &subst));
+            let new_mapped_id = self.interner.mapped(MappedType {
+                type_param: mapped.type_param.clone(),
+                constraint: inst_constraint,
+                name_type: inst_name,
+                template: inst_template,
+                optional_modifier: mapped.optional_modifier,
+                readonly_modifier: mapped.readonly_modifier,
+            });
+            if let Some(TypeData::Mapped(m_id)) = self.interner.lookup(new_mapped_id) {
+                let new_mapped = self.interner.mapped_type(m_id);
+                let res = crate::evaluate::evaluate_mapped(self.interner, &new_mapped);
+                if res != TypeId::ERROR && res != new_mapped_id {
+                    return Some(res);
+                }
+            }
+        }
+        None
     }
 
     /// Try to expand an Application type to its structural form.

@@ -193,13 +193,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // In this case, we should preserve the original property modifiers
         let is_homomorphic = self.is_homomorphic_mapped_type(mapped);
 
-        // Extract source object type if this is homomorphic
-        // For { [K in keyof T]: T[K] }, the constraint is keyof T and template is T[K]
-        let source_object = if is_homomorphic {
-            self.extract_source_from_homomorphic(mapped)
-        } else {
-            None
-        };
+        // Extract source object type from the constraint if it is `keyof T`
+        // This is needed for homomorphic mapped types and for preserving Array/Tuple
+        // structure in mapped types over arrays/tuples (even non-homomorphic ones).
+        let source_object = self.extract_source_from_keyof(mapped.constraint);
 
         // PERF: Memoize source properties into a hash map for O(1) lookup during the key loop.
         // This avoids repeated O(N) collect_properties calls inside the loop.
@@ -711,18 +708,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 } else {
                     None
                 }
-            }
-            _ => None,
-        }
-    }
-
-    /// Extract the source object type from a homomorphic mapped type.
-    /// For { [K in keyof T]: T[K] }, extract T.
-    fn extract_source_from_homomorphic(&self, mapped: &MappedType) -> Option<TypeId> {
-        match self.interner().lookup(mapped.template) {
-            Some(TypeData::IndexAccess(obj, _idx)) => {
-                // The object part of T[K] is the source type
-                Some(obj)
             }
             _ => None,
         }
