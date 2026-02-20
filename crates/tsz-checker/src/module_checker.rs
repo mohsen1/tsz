@@ -14,6 +14,17 @@ impl<'a> CheckerState<'a> {
     // Dynamic Import Validation
     // =========================================================================
 
+    /// Validate dynamic import module options/attributes.
+    ///
+    /// Compatibility hook for call-site checks; concrete validation rules are
+    /// handled in dedicated module-option logic.
+    pub(crate) fn check_dynamic_import_module_options(
+        &mut self,
+        _call: &tsz_parser::parser::node::CallExprData,
+        _idx: NodeIndex,
+    ) {
+    }
+
     /// Check dynamic import module specifier for unresolved modules.
     ///
     /// Validates that the module specifier in a dynamic `import()` call
