@@ -260,6 +260,15 @@ impl<'a> CheckerContext<'a> {
             return self.def_to_symbol_id(def_id);
         }
 
+        // 3. Try to get SymbolId from ObjectShape
+        if let Some(shape_id) = type_queries::get_object_shape_id(self.types, type_id) {
+            return self
+                .types
+                .object_shape(shape_id)
+                .symbol
+                .map(|s| SymbolId(s.0));
+        }
+
         None
     }
 

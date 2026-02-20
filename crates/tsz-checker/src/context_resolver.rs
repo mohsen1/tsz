@@ -86,6 +86,11 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
             {
                 return Some(*instance_type);
+            } else if let Some(symbol) = symbol
+                && (symbol.flags & symbol_flags::INTERFACE) != 0
+                && let Some(instance_type) = self.symbol_instance_types.get(&sym_id)
+            {
+                return Some(*instance_type);
             }
 
             // Look up the cached type for this symbol (constructor type for classes)

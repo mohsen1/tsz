@@ -1026,7 +1026,7 @@ impl<'a> CheckerState<'a> {
     /// type (via the MODULE branch in `compute_type_of_symbol`). This helper computes the
     /// interface type directly from the interface declarations, which is needed when the
     /// symbol is used in type position (e.g., `var f: Foo` where Foo is interface+namespace).
-    fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
+    pub(crate) fn compute_interface_type_from_declarations(&mut self, sym_id: SymbolId) -> TypeId {
         use tsz_lowering::TypeLowering;
 
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
