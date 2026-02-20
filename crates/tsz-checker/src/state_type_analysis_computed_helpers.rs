@@ -237,10 +237,6 @@ impl<'a> CheckerState<'a> {
     // - Assignability checking (need actual type, not typeof reference)
     // - Type comparison (typeof X should be compared to X's type)
     // - Generic constraint evaluation
-    // NOTE: refine_mixin_call_return_type, mixin_base_param_index, instance_type_from_constructor_type,
-    // instance_type_from_constructor_type_inner, merge_base_instance_into_constructor_return,
-    // merge_base_constructor_properties_into_constructor_return moved to constructor_checker.rs
-
     pub(crate) fn get_type_of_private_property_access(
         &mut self,
         idx: NodeIndex,

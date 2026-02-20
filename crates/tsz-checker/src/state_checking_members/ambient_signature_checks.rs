@@ -1159,10 +1159,6 @@ impl<'a> CheckerState<'a> {
             .resolve_identifier(self.ctx.arena, computed.expression)
     }
 
-    /// Promise/async type checking methods moved to `promise_checker.rs`
-    /// The `lower_type_with_bindings` helper remains here as it requires
-    /// access to private resolver methods.
-    ///
     /// Lower a type node with type parameter bindings.
     ///
     /// This is used to substitute type parameters with concrete types
