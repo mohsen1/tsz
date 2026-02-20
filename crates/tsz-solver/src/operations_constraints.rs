@@ -690,7 +690,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     &t_callable.properties,
                     priority,
                 );
-                if let (Some(s_idx), Some(t_idx)) = (&s_callable.string_index, &t_callable.string_index) {
+                if let (Some(s_idx), Some(t_idx)) =
+                    (&s_callable.string_index, &t_callable.string_index)
+                {
                     self.constrain_types(
                         ctx,
                         var_map,
@@ -699,7 +701,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         priority,
                     );
                 }
-                if let (Some(s_idx), Some(t_idx)) = (&s_callable.number_index, &t_callable.number_index) {
+                if let (Some(s_idx), Some(t_idx)) =
+                    (&s_callable.number_index, &t_callable.number_index)
+                {
                     self.constrain_types(
                         ctx,
                         var_map,
