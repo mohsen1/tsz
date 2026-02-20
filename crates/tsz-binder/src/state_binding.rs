@@ -373,6 +373,13 @@ impl BinderState {
             // Enter class scope for members
             self.enter_scope(ContainerKind::Class, idx);
 
+            self.bind_type_parameters(arena, class.type_parameters.as_ref());
+            if let Some(ref heritage) = class.heritage_clauses {
+                for &clause_idx in &heritage.nodes {
+                    self.bind_node(arena, clause_idx);
+                }
+            }
+
             for &member_idx in &class.members.nodes {
                 self.bind_class_member(arena, member_idx);
             }
@@ -393,6 +400,13 @@ impl BinderState {
                 }
                 let sym_id = self.declare_symbol(name, flags, idx, false);
                 self.node_symbols.insert(class.name.0, sym_id);
+            }
+
+            self.bind_type_parameters(arena, class.type_parameters.as_ref());
+            if let Some(ref heritage) = class.heritage_clauses {
+                for &clause_idx in &heritage.nodes {
+                    self.bind_node(arena, clause_idx);
+                }
             }
 
             for &member_idx in &class.members.nodes {

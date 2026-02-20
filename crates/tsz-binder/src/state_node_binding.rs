@@ -256,6 +256,19 @@ impl BinderState {
             k if k == SyntaxKind::Identifier as u16 => {
                 self.record_flow(idx);
             }
+            k if k == syntax_kind_ext::HERITAGE_CLAUSE => {
+                if let Some(heritage) = arena.get_heritage_clause(node) {
+                    for &type_idx in &heritage.types.nodes {
+                        self.bind_node(arena, type_idx);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS => {
+                if let Some(expr) = arena.get_expr_type_args(node) {
+                    self.bind_expression(arena, expr.expression);
+                    self.bind_type_parameters(arena, expr.type_arguments.as_ref());
+                }
+            }
             // Variable declarations
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node) {

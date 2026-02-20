@@ -1669,11 +1669,6 @@ impl<'a> CheckerState<'a> {
                 }
 
                 group.push((member_idx, is_abstract, has_body, error_node));
-
-                if has_body {
-                    // Start a new group after the implementation
-                    break;
-                }
             }
 
             // Determine the "truth" abstractness for the group
@@ -1697,6 +1692,73 @@ impl<'a> CheckerState<'a> {
             }
 
             i += group.len();
+        }
+    }
+
+    /// Check that all declarations of an abstract method are consecutive (TS2516).
+    pub(crate) fn check_abstract_method_consecutive_declarations(
+        &mut self,
+        members: &[tsz_parser::parser::NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use rustc_hash::{FxHashMap, FxHashSet};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        // Map from (method_name, is_static) to the node index of its FIRST abstract declaration.
+        let mut first_abstract_decl: FxHashMap<(String, bool), tsz_parser::parser::NodeIndex> =
+            FxHashMap::default();
+        // Track the methods we've already emitted TS2516 for, to avoid duplicate errors.
+        let mut reported_methods: FxHashSet<(String, bool)> = FxHashSet::default();
+
+        let mut last_seen_method: Option<(String, bool)> = None;
+
+        for &member_idx in members {
+            let Some(node) = self.ctx.arena.get(member_idx) else {
+                last_seen_method = None;
+                continue;
+            };
+
+            // Only care about method declarations.
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                last_seen_method = None;
+                continue;
+            }
+
+            let Some(method) = self.ctx.arena.get_method_decl(node) else {
+                last_seen_method = None;
+                continue;
+            };
+
+            let name = self.get_method_name_from_node(member_idx);
+            let is_static = self.has_static_modifier(&method.modifiers);
+            let is_abstract = self.has_abstract_modifier(&method.modifiers);
+
+            if let Some(name_str) = name {
+                let method_key = (name_str, is_static);
+
+                if is_abstract {
+                    if let Some(&first_decl_node) = first_abstract_decl.get(&method_key) {
+                        // We have seen an abstract declaration of this method before.
+                        // If the last seen method wasn't this one, we have a discontinuity!
+                        if last_seen_method.as_ref() != Some(&method_key)
+                            && reported_methods.insert(method_key.clone()) {
+                                self.error_at_node(
+                                        first_decl_node,
+                                        diagnostic_messages::ALL_DECLARATIONS_OF_AN_ABSTRACT_METHOD_MUST_BE_CONSECUTIVE,
+                                        diagnostic_codes::ALL_DECLARATIONS_OF_AN_ABSTRACT_METHOD_MUST_BE_CONSECUTIVE,
+                                    );
+                            }
+                    } else {
+                        // First time seeing an abstract declaration for this method key.
+                        first_abstract_decl.insert(method_key.clone(), method.name);
+                    }
+                }
+
+                // Update the last seen method key (even if it's non-abstract, as long as it's the same method group).
+                last_seen_method = Some(method_key);
+            } else {
+                last_seen_method = None;
+            }
         }
     }
 }
