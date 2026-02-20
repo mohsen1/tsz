@@ -933,6 +933,34 @@ impl<'a> CheckerState<'a> {
 
         // First check if this is a type that needs special handling with binder resolution
         if let Some(node) = self.ctx.arena.get(idx) {
+            if node.kind == syntax_kind_ext::TYPE_PREDICATE {
+                let mut is_valid = false;
+                if let Some(ext) = self.ctx.arena.get_extended(idx)
+                    && let Some(parent) = self.ctx.arena.get(ext.parent)
+                        && matches!(
+                            parent.kind,
+                            syntax_kind_ext::FUNCTION_DECLARATION
+                                | syntax_kind_ext::FUNCTION_EXPRESSION
+                                | syntax_kind_ext::METHOD_DECLARATION
+                                | syntax_kind_ext::METHOD_SIGNATURE
+                                | syntax_kind_ext::CALL_SIGNATURE
+                                | syntax_kind_ext::ARROW_FUNCTION
+                                | syntax_kind_ext::CONSTRUCT_SIGNATURE
+                                | syntax_kind_ext::FUNCTION_TYPE
+                                | syntax_kind_ext::CONSTRUCTOR_TYPE
+                        ) {
+                            is_valid = true;
+                        }
+                if !is_valid {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        idx,
+                        diagnostic_messages::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+                        diagnostic_codes::A_TYPE_PREDICATE_IS_ONLY_ALLOWED_IN_RETURN_TYPE_POSITION_FOR_FUNCTIONS_AND_METHO,
+                    );
+                }
+            }
+
             if node.kind == syntax_kind_ext::TYPE_REFERENCE {
                 // Recovery path: a type reference can appear where an expression statement is expected
                 // (e.g. malformed `this.x: any;` parses through a labeled statement).

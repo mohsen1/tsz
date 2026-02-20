@@ -1064,6 +1064,16 @@ impl<'a> CheckerState<'a> {
     /// Used for if-conditions and `!` operands.
     pub(crate) fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
+
+        let ty = self.get_type_of_node(node_idx);
+        if ty == TypeId::VOID {
+            self.error_at_node(
+                node_idx,
+                "An expression of type 'void' cannot be tested for truthiness.",
+                diagnostic_codes::AN_EXPRESSION_OF_TYPE_VOID_CANNOT_BE_TESTED_FOR_TRUTHINESS,
+            );
+        }
+
         match self.get_syntactic_truthy_semantics(node_idx) {
             SyntacticTruthiness::AlwaysTruthy => {
                 self.error_at_node(
