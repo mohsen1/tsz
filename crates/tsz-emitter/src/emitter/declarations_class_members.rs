@@ -60,8 +60,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Emit modifiers (static, async only for JavaScript)
-        self.emit_method_modifiers_js(&method.modifiers);
+        let is_async = self.has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword as u16);
+        let needs_async_lowering =
+            is_async && self.ctx.needs_async_lowering && !method.asterisk_token;
+
+        if needs_async_lowering {
+            // Emit static modifier if present
+            if self.has_modifier(&method.modifiers, SyntaxKind::StaticKeyword as u16) {
+                self.write("static ");
+            }
+        } else {
+            // Emit modifiers (static, async only for JavaScript)
+            self.emit_method_modifiers_js(&method.modifiers);
+        }
 
         // Emit generator asterisk
         if method.asterisk_token {
@@ -102,19 +113,99 @@ impl<'a> Printer<'a> {
 
         // Skip return type for JavaScript emit
 
-        self.write(" ");
-        let prev_emitting_function_body_block = self.emitting_function_body_block;
-        self.emitting_function_body_block = true;
-        let prev_in_generator = self.ctx.flags.in_generator;
-        self.ctx.block_scope_state.enter_scope();
-        self.push_temp_scope();
-        self.prepare_logical_assignment_value_temps(method.body);
-        self.ctx.flags.in_generator = method.asterisk_token;
-        self.emit(method.body);
-        self.pop_temp_scope();
-        self.ctx.block_scope_state.exit_scope();
-        self.ctx.flags.in_generator = prev_in_generator;
-        self.emitting_function_body_block = prev_emitting_function_body_block;
+        if needs_async_lowering {
+            self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
+        } else {
+            self.write(" ");
+            let prev_emitting_function_body_block = self.emitting_function_body_block;
+            self.emitting_function_body_block = true;
+            let prev_in_generator = self.ctx.flags.in_generator;
+            self.ctx.block_scope_state.enter_scope();
+            self.push_temp_scope();
+            self.prepare_logical_assignment_value_temps(method.body);
+            self.ctx.flags.in_generator = method.asterisk_token;
+            self.emit(method.body);
+            self.pop_temp_scope();
+            self.ctx.block_scope_state.exit_scope();
+            self.ctx.flags.in_generator = prev_in_generator;
+            self.emitting_function_body_block = prev_emitting_function_body_block;
+        }
+    }
+
+    /// Emit async method body lowered to __awaiter + function* for ES2015 target
+    fn emit_method_async_lowered_body(&mut self, body: NodeIndex, params: &[NodeIndex]) {
+        let params_have_top_level_await = params
+            .iter()
+            .copied()
+            .any(|p| self.param_initializer_has_top_level_await(p));
+        let move_params_to_generator = params_have_top_level_await;
+
+        let body_is_empty_single_line = self
+            .arena
+            .get(body)
+            .and_then(|n| {
+                let block = self.arena.get_block(n)?;
+                if block.statements.nodes.is_empty() {
+                    Some(self.is_single_line(n))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false);
+
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        self.write("return __awaiter(this");
+        if move_params_to_generator {
+            self.write(", arguments, void 0, function* (");
+            let saved = self.ctx.emit_await_as_yield;
+            self.ctx.emit_await_as_yield = true;
+            self.emit_function_parameters_js(params);
+            self.ctx.emit_await_as_yield = saved;
+            if body_is_empty_single_line {
+                self.write(") { });");
+            } else {
+                self.write(") {");
+            }
+        } else if body_is_empty_single_line {
+            self.write(", void 0, void 0, function* () { });");
+        } else {
+            self.write(", void 0, void 0, function* () {");
+        }
+
+        if body_is_empty_single_line {
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            return;
+        }
+
+        self.write_line();
+        self.increase_indent();
+
+        // Emit function body with await→yield substitution
+        self.ctx.emit_await_as_yield = true;
+        if let Some(body_node) = self.arena.get(body)
+            && let Some(block) = self.arena.get_block(body_node)
+        {
+            for &stmt in &block.statements.nodes {
+                if let Some(stmt_node) = self.arena.get(stmt) {
+                    let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                    self.emit_comments_before_pos(actual_start);
+                }
+                self.emit(stmt);
+                self.write_line();
+            }
+        }
+        self.ctx.emit_await_as_yield = false;
+
+        self.decrease_indent();
+        self.write("});");
+        self.write_line();
+        self.decrease_indent();
+        self.write("}");
     }
 
     /// Emit method modifiers for JavaScript (static, async only)
@@ -249,7 +340,7 @@ impl<'a> Printer<'a> {
 
     /// Collect parameter property names from constructor parameters.
     /// Returns names of parameters that have accessibility modifiers (public/private/protected/readonly).
-    fn collect_parameter_properties(&self, params: &[NodeIndex]) -> Vec<String> {
+    pub(super) fn collect_parameter_properties(&self, params: &[NodeIndex]) -> Vec<String> {
         let mut names = Vec::new();
         for &param_idx in params {
             if let Some(param_node) = self.arena.get(param_idx)
