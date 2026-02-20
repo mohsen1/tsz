@@ -359,6 +359,25 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Check for uninstantiated namespaces first (TS2708)
+        let is_namespace = (symbol.flags & symbol_flags::NAMESPACE_MODULE) != 0;
+        let value_flags_except_module = symbol_flags::VALUE & !symbol_flags::VALUE_MODULE;
+        let has_other_value = (symbol.flags & value_flags_except_module) != 0;
+
+        if is_namespace && !has_other_value {
+            let mut is_instantiated = false;
+            for decl_idx in &symbol.declarations {
+                if self.is_namespace_declaration_instantiated(*decl_idx) {
+                    is_instantiated = true;
+                    break;
+                }
+            }
+            if !is_instantiated {
+                self.error_namespace_used_as_value_at(name, inner);
+                return true;
+            }
+        }
+
         // Check for type-only symbols used as values in assignment position (TS2693)
         if symbol.flags & symbol_flags::TYPE != 0 && symbol.flags & symbol_flags::VALUE == 0 {
             self.error_type_only_value_at(name, inner);
