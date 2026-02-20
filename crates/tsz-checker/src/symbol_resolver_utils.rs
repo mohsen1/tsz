@@ -405,12 +405,7 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Also check module_exports keys for wildcard module declarations with bodies.
-        // These are stored as exact pattern strings in module_exports.
-        binder
-            .module_exports
-            .keys()
-            .any(|pattern| Self::module_name_matches_pattern(pattern, module_name))
+        false
     }
 
     fn matches_module_pattern(
