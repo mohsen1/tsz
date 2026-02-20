@@ -1822,6 +1822,19 @@ impl BinderState {
             return true;
         }
 
+        // Allow TYPE_PARAMETER to merge with VALUE symbols
+        // e.g., `<T>(T: T) => T`
+        if (existing_flags & symbol_flags::TYPE_PARAMETER) != 0
+            && (new_flags & symbol_flags::VALUE) != 0
+        {
+            return true;
+        }
+        if (new_flags & symbol_flags::TYPE_PARAMETER) != 0
+            && (existing_flags & symbol_flags::VALUE) != 0
+        {
+            return true;
+        }
+
         // Allow static and instance members to have the same name
         // TypeScript allows a class to have both a static member and an instance member with the same name
         // e.g., class C { static foo; foo; }
