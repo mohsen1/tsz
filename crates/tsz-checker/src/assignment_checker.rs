@@ -113,13 +113,15 @@ impl<'a> CheckerState<'a> {
 
         if let Some(&file_idx) = self.ctx.cross_file_symbol_targets.borrow().get(&sym_id) {
             if let Some(all_binders) = &self.ctx.all_binders
-                && let Some(b) = all_binders.get(file_idx) {
-                    target_binder = b;
-                }
+                && let Some(b) = all_binders.get(file_idx)
+            {
+                target_binder = b;
+            }
             if let Some(all_arenas) = &self.ctx.all_arenas
-                && let Some(a) = all_arenas.get(file_idx) {
-                    target_arena = a;
-                }
+                && let Some(a) = all_arenas.get(file_idx)
+            {
+                target_arena = a;
+            }
         } else if let Some(arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
             // It could be a lib symbol where target_binder is still self.ctx.binder (due to merging)
             // or one of the lib_contexts.
@@ -129,11 +131,12 @@ impl<'a> CheckerState<'a> {
         // Also check if it's from a lib context
         for lib in &self.ctx.lib_contexts {
             if let Some(sym) = lib.binder.get_symbol(sym_id)
-                && sym.escaped_name == name {
-                    target_binder = &lib.binder;
-                    target_arena = lib.arena.as_ref();
-                    break;
-                }
+                && sym.escaped_name == name
+            {
+                target_binder = &lib.binder;
+                target_arena = lib.arena.as_ref();
+                break;
+            }
         }
 
         let symbol = target_binder
@@ -150,9 +153,10 @@ impl<'a> CheckerState<'a> {
             .binder
             .declaration_arenas
             .get(&(sym_id, value_decl))
-            && let Some(first) = arenas.first() {
-                target_arena = first.as_ref();
-            }
+            && let Some(first) = arenas.first()
+        {
+            target_arena = first.as_ref();
+        }
 
         let decl_node = target_arena.get(value_decl)?;
         let mut decl_flags = decl_node.flags as u32;

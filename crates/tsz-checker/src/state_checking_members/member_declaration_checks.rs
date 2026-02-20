@@ -1741,13 +1741,14 @@ impl<'a> CheckerState<'a> {
                         // We have seen an abstract declaration of this method before.
                         // If the last seen method wasn't this one, we have a discontinuity!
                         if last_seen_method.as_ref() != Some(&method_key)
-                            && reported_methods.insert(method_key.clone()) {
-                                self.error_at_node(
+                            && reported_methods.insert(method_key.clone())
+                        {
+                            self.error_at_node(
                                         first_decl_node,
                                         diagnostic_messages::ALL_DECLARATIONS_OF_AN_ABSTRACT_METHOD_MUST_BE_CONSECUTIVE,
                                         diagnostic_codes::ALL_DECLARATIONS_OF_AN_ABSTRACT_METHOD_MUST_BE_CONSECUTIVE,
                                     );
-                            }
+                        }
                     } else {
                         // First time seeing an abstract declaration for this method key.
                         first_abstract_decl.insert(method_key.clone(), method.name);

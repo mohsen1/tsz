@@ -891,10 +891,9 @@ impl<'a> CheckerState<'a> {
         let is_cross_file = symbol.decl_file_idx != u32::MAX
             && symbol.decl_file_idx != self.ctx.current_file_idx as u32;
 
-        if is_cross_file
-            && (self.ctx.current_file_idx as u32) > symbol.decl_file_idx {
-                return false;
-            }
+        if is_cross_file && (self.ctx.current_file_idx as u32) > symbol.decl_file_idx {
+            return false;
+        }
 
         // In multi-file mode, symbol declarations may reference nodes in another
         // file's arena.  `self.ctx.arena` only contains the *current* file, so
@@ -922,10 +921,11 @@ impl<'a> CheckerState<'a> {
 
         if is_cross_file
             && let Some(arenas) = self.ctx.all_arenas.as_ref()
-                && let Some(arena) = arenas.get(symbol.decl_file_idx as usize) {
-                    decl_node_opt = arena.get(decl_idx);
-                    decl_arena = arena.as_ref();
-                }
+            && let Some(arena) = arenas.get(symbol.decl_file_idx as usize)
+        {
+            decl_node_opt = arena.get(decl_idx);
+            decl_arena = arena.as_ref();
+        }
 
         let Some(decl_node) = decl_node_opt else {
             return false;

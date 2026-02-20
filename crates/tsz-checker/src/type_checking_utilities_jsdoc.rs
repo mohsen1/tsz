@@ -645,20 +645,22 @@ impl<'a> CheckerState<'a> {
             if next_char.is_none() || !next_char.unwrap().is_alphabetic() {
                 // If there's a @typedef before this @type, check if it absorbs it.
                 if let Some(td_pos) = typedef_pos
-                    && td_pos < pos {
-                        let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
-                        let mut has_non_object_base = false;
-                        if let Some(open) = typedef_rest.find('{')
-                            && let Some(close) = typedef_rest[open..].find('}') {
-                                let base = typedef_rest[open + 1..open + close].trim();
-                                if base != "Object" && base != "object" && !base.is_empty() {
-                                    has_non_object_base = true;
-                                }
-                            }
-                        if !has_non_object_base {
-                            return None; // The @type is absorbed by the @typedef
+                    && td_pos < pos
+                {
+                    let typedef_rest = &jsdoc[td_pos + "@typedef".len()..pos];
+                    let mut has_non_object_base = false;
+                    if let Some(open) = typedef_rest.find('{')
+                        && let Some(close) = typedef_rest[open..].find('}')
+                    {
+                        let base = typedef_rest[open + 1..open + close].trim();
+                        if base != "Object" && base != "object" && !base.is_empty() {
+                            has_non_object_base = true;
                         }
                     }
+                    if !has_non_object_base {
+                        return None; // The @type is absorbed by the @typedef
+                    }
+                }
                 break;
             }
             tag_pos = jsdoc[pos + 1..].find("@type").map(|p| p + pos + 1);

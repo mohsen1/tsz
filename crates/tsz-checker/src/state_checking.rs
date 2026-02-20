@@ -1263,10 +1263,21 @@ impl<'a> CheckerState<'a> {
 
             match node.kind {
                 syntax_kind_ext::IMPORT_DECLARATION
-                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                 | syntax_kind_ext::EXPORT_DECLARATION
                 | syntax_kind_ext::EXPORT_ASSIGNMENT => {
                     is_error = true;
+                }
+                syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    // `import Alias = Ns.Member` is an internal namespace alias and
+                    // should not trigger TS1148. Only `import x = require("...")`
+                    // should be treated as module syntax for module=none checks.
+                    if let Some(import_decl) = self.ctx.arena.get_import_decl(node)
+                        && let Some(module_ref_node) =
+                            self.ctx.arena.get(import_decl.module_specifier)
+                        && module_ref_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    {
+                        is_error = true;
+                    }
                 }
                 syntax_kind_ext::MODULE_DECLARATION => {
                     if self.is_declaration_exported(self.ctx.arena, stmt_idx) {
