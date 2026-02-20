@@ -63,7 +63,15 @@ impl<'a> CheckerState<'a> {
                     let matching = shape
                         .call_signatures
                         .iter()
-                        .find(|sig| sig.type_params.len() == got)
+                        .find(|sig| {
+                            let max = sig.type_params.len();
+                            let min = sig
+                                .type_params
+                                .iter()
+                                .filter(|tp| tp.default.is_none())
+                                .count();
+                            got >= min && got <= max
+                        })
                         .map(|sig| sig.type_params.clone());
                     if let Some(params) = matching {
                         params
@@ -79,7 +87,8 @@ impl<'a> CheckerState<'a> {
                 query::TypeArgumentExtractionKind::Other => return,
             };
 
-        let expected = type_params.len();
+        let max_expected = type_params.len();
+        let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
 
         if type_params.is_empty() {
             // TS2558: Expected 0 type arguments, but got N.
@@ -93,12 +102,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if got != expected {
+        if got < min_required || got > max_expected {
             // TS2558: Expected N type arguments, but got M.
+            // When there are type params with defaults, show the range
+            let expected_str = if min_required == max_expected {
+                max_expected.to_string()
+            } else {
+                format!("{min_required}-{max_expected}")
+            };
             self.error_at_node_msg(
                 call_idx,
                 crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                &[&expected.to_string(), &got.to_string()],
+                &[&expected_str, &got.to_string()],
             );
             return;
         }
@@ -262,7 +277,15 @@ impl<'a> CheckerState<'a> {
             let matching = shape
                 .construct_signatures
                 .iter()
-                .find(|sig| sig.type_params.len() == got)
+                .find(|sig| {
+                    let max = sig.type_params.len();
+                    let min = sig
+                        .type_params
+                        .iter()
+                        .filter(|tp| tp.default.is_none())
+                        .count();
+                    got >= min && got <= max
+                })
                 .map(|sig| sig.type_params.clone());
             if let Some(params) = matching {
                 params
@@ -288,13 +311,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        let expected = type_params.len();
-        if got != expected {
+        let max_expected = type_params.len();
+        let min_required = type_params.iter().filter(|tp| tp.default.is_none()).count();
+        if got < min_required || got > max_expected {
             // TS2558: Expected N type arguments, but got M.
+            let expected_str = if min_required == max_expected {
+                max_expected.to_string()
+            } else {
+                format!("{min_required}-{max_expected}")
+            };
             self.error_at_node_msg(
                 call_idx,
                 crate::diagnostics::diagnostic_codes::EXPECTED_TYPE_ARGUMENTS_BUT_GOT,
-                &[&expected.to_string(), &got.to_string()],
+                &[&expected_str, &got.to_string()],
             );
             return;
         }
