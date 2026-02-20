@@ -294,7 +294,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // we want to emit TS2454 errors to avoid duplicates.
                 let prev_suppress = self.ctx.suppress_definite_assignment_errors;
                 self.ctx.suppress_definite_assignment_errors = true;
-                return_type = self.infer_return_type_from_body(func.body, None);
+                return_type = self.infer_return_type_from_body(func_idx, func.body, None);
                 self.ctx.suppress_definite_assignment_errors = prev_suppress;
             }
 

@@ -246,7 +246,7 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let signature = self.call_signature_from_method(method);
+                    let signature = self.call_signature_from_method(method, member_idx);
                     let visibility = self.get_visibility_from_modifiers(&method.modifiers);
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
@@ -1169,8 +1169,11 @@ impl<'a> CheckerState<'a> {
                         .binder
                         .get_node_symbol(class_idx)
                         .map(|sym_id| self.get_type_of_symbol(sym_id));
-                    let signature =
-                        self.call_signature_from_method_with_this(method, static_this_type);
+                    let signature = self.call_signature_from_method_with_this(
+                        method,
+                        static_this_type,
+                        member_idx,
+                    );
                     let entry = methods.entry(name_atom).or_insert(MethodAggregate {
                         overload_signatures: Vec::new(),
                         impl_signatures: Vec::new(),

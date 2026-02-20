@@ -887,8 +887,13 @@ impl<'a> CheckerState<'a> {
             return shape.properties.iter().any(|p| p.name == prototype_atom);
         }
 
-        // Function types typically have prototype
-        query::has_function_shape(self.ctx.types, type_id)
+        // Check callable shape for prototype property
+        if let Some(symbol_id) = self.ctx.resolve_type_to_symbol_id(type_id)
+            && self.is_class_symbol(symbol_id) {
+                // Function types typically have prototype
+                return query::has_function_shape(self.ctx.types, type_id);
+            }
+        false
     }
 
     /// Check if a symbol is a class symbol.

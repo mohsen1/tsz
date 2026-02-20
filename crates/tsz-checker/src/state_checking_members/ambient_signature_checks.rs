@@ -434,7 +434,7 @@ impl<'a> CheckerState<'a> {
         // Check method body
         if method.body.is_some() {
             if !has_type_annotation {
-                return_type = self.infer_return_type_from_body(method.body, None);
+                return_type = self.infer_return_type_from_body(member_idx, method.body, None);
             }
 
             // TS2697: Check if async method has access to Promise type

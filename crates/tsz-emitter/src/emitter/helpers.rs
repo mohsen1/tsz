@@ -125,6 +125,23 @@ impl<'a> Printer<'a> {
 
     /// Set `pending_source_pos` to the first occurrence of `token` byte found
     /// by scanning forward from `from_pos` within the source text.
+    /// Like `map_token_after`, but scans backward from `from_pos` (exclusive)
+    /// down to `limit` (inclusive) looking for `token`. Used when the parser
+    /// includes a separator (like `,`) in the preceding node's range.
+    pub(super) fn map_token_before(&mut self, from_pos: u32, limit: u32, token: u8) {
+        if let Some(text) = self.source_text_for_map() {
+            let bytes = text.as_bytes();
+            let start = (limit as usize).min(bytes.len());
+            let end = (from_pos as usize).min(bytes.len());
+            for i in (start..end).rev() {
+                if bytes[i] == token {
+                    self.pending_source_pos = Some(source_position_from_offset(text, i as u32));
+                    return;
+                }
+            }
+        }
+    }
+
     pub(super) fn map_token_after(&mut self, from_pos: u32, limit: u32, token: u8) {
         if let Some(text) = self.source_text_for_map() {
             let bytes = text.as_bytes();
@@ -547,6 +564,16 @@ impl<'a> Printer<'a> {
         let mut prev_end: Option<u32> = None;
         for &idx in nodes {
             if !first {
+                // Map the `,` separator to its source position.
+                // Try forward scan first; if not found (parser may include `,`
+                // in the preceding node's range), scan backward from prev_end.
+                if let Some(pe) = prev_end
+                    && let Some(node) = self.arena.get(idx) {
+                        self.map_token_after(pe, node.pos, b',');
+                        if self.pending_source_pos.is_none() {
+                            self.map_token_before(pe, pe.saturating_sub(2), b',');
+                        }
+                    }
                 self.write(", ");
             }
             // Emit comments between the previous node/comma and this node.
