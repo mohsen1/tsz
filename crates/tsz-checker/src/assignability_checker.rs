@@ -959,6 +959,7 @@ impl<'a> CheckerState<'a> {
             ExcessPropertiesKind::ObjectWithIndex(_shape_id) => false,
             ExcessPropertiesKind::Union(members) => {
                 let mut target_shapes = Vec::new();
+                let mut matched_shapes = Vec::new();
 
                 for member in members {
                     let resolved_member = self.resolve_type_for_property_access(member);
@@ -983,15 +984,25 @@ impl<'a> CheckerState<'a> {
                         return false;
                     }
 
-                    target_shapes.push(shape);
+                    target_shapes.push(shape.clone());
+
+                    if self.ctx.types.is_subtype_of(source, member) {
+                        matched_shapes.push(shape);
+                    }
                 }
 
                 if target_shapes.is_empty() {
                     return false;
                 }
 
+                let effective_shapes = if matched_shapes.is_empty() {
+                    target_shapes
+                } else {
+                    matched_shapes
+                };
+
                 source_props.iter().any(|source_prop| {
-                    !target_shapes.iter().any(|shape| {
+                    !effective_shapes.iter().any(|shape| {
                         shape
                             .properties
                             .iter()
