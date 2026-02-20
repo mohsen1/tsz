@@ -275,9 +275,10 @@ impl<'a> CheckerState<'a> {
             use tsz_parser::parser::syntax_kind_ext;
             if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                && let Some(access) = self.ctx.arena.get_access_expr(callee_node) {
-                    actual_this_type = Some(self.get_type_of_node(access.expression));
-                }
+                && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
+            {
+                actual_this_type = Some(self.get_type_of_node(access.expression));
+            }
         }
 
         if let Some(signatures) = overload_signatures.as_deref()

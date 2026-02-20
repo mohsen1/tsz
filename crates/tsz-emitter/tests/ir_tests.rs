@@ -232,6 +232,7 @@ fn test_ir_es5_class_iife() {
         ],
         weakmap_decls: vec![],
         weakmap_inits: vec![],
+        deferred_static_blocks: vec![],
     };
 
     match class_iife {

@@ -119,6 +119,7 @@ fn test_emit_es5_class_iife() {
         ],
         weakmap_decls: vec![],
         weakmap_inits: vec![],
+        deferred_static_blocks: vec![],
     };
 
     let output = IRPrinter::emit_to_string(&class);
@@ -142,6 +143,7 @@ fn test_emit_es5_class_with_extends() {
         ],
         weakmap_decls: vec![],
         weakmap_inits: vec![],
+        deferred_static_blocks: vec![],
     };
 
     let output = IRPrinter::emit_to_string(&class);

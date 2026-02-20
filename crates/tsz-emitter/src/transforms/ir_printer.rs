@@ -727,6 +727,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 weakmap_decls,
                 weakmap_inits,
+                deferred_static_blocks,
             } => {
                 // Emit WeakMap declarations if any
                 if !weakmap_decls.is_empty() {
@@ -770,6 +771,31 @@ impl<'a> IRPrinter<'a> {
                     self.write_line();
                     self.write(&weakmap_inits.join(", "));
                     self.write(";");
+                }
+
+                // Emit deferred static block IIFEs after the class IIFE
+                for deferred in deferred_static_blocks {
+                    self.write_line();
+                    self.write_indent();
+                    self.emit_node(deferred);
+                }
+            }
+            IRNode::StaticBlockIIFE { statements } => {
+                // (function () { ...statements... })();
+                self.write("(function () {");
+                if statements.is_empty() {
+                    self.write(" })();");
+                } else {
+                    self.write_line();
+                    self.increase_indent();
+                    for stmt in statements {
+                        self.write_indent();
+                        self.emit_node(stmt);
+                        self.write_line();
+                    }
+                    self.decrease_indent();
+                    self.write_indent();
+                    self.write("})();");
                 }
             }
             IRNode::ExtendsHelper { class_name } => {
