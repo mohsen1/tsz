@@ -1082,6 +1082,39 @@ impl<'a> CheckerState<'a> {
             // (e.g., `interface Promise<T>` in es5.d.ts) and VALUE in another
             // (e.g., `declare var Promise` in es2015.promise.d.ts). When we find
             // a TYPE-only symbol, check if a VALUE exists elsewhere in libs.
+            // Check for uninstantiated namespace used as a value (TS2708)
+            let is_namespace = (flags & tsz_binder::symbol_flags::NAMESPACE_MODULE) != 0;
+            let value_flags_except_module =
+                tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE;
+            let has_other_value = (flags & value_flags_except_module) != 0;
+            if is_namespace && !has_other_value {
+                let mut is_instantiated = false;
+                for decl_idx in &symbol_declarations {
+                    if self.is_namespace_declaration_instantiated(*decl_idx) {
+                        is_instantiated = true;
+                        break;
+                    }
+                }
+                if !is_instantiated {
+                    if self.is_direct_heritage_type_reference(idx) {
+                        return TypeId::ERROR;
+                    }
+                    if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
+                        && !parent_ext.parent.is_none()
+                        && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
+                    {
+                        use tsz_parser::parser::syntax_kind_ext;
+                        if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                            || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                        {
+                            return TypeId::ERROR;
+                        }
+                    }
+                    self.error_namespace_used_as_value_at(name, idx);
+                    return TypeId::ERROR;
+                }
+            }
+
             if is_type_alias || (has_type && !has_value) {
                 trace!(
                     name = name,
