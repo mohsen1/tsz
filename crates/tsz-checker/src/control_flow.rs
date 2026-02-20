@@ -33,6 +33,8 @@ use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeId, TypePredica
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
 type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
+/// Instantiated type predicates from generic call resolutions, keyed by call node index.
+pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
 
 // =============================================================================
 // FlowGraph
@@ -123,6 +125,9 @@ pub struct FlowAnalyzer<'a> {
     pub(crate) shared_numeric_atom_cache: Option<&'a RefCell<FxHashMap<u64, Atom>>>,
     /// Optional shared narrowing cache.
     pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
+    /// Instantiated type predicates from generic call resolutions.
+    /// Keyed by call expression node index.
+    pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
     /// Reusable buffers for flow analysis.
     pub(crate) flow_worklist: Option<&'a RefCell<VecDeque<(FlowNodeId, TypeId)>>>,
     pub(crate) flow_in_worklist: Option<&'a RefCell<FxHashSet<FlowNodeId>>>,
@@ -166,6 +171,7 @@ impl<'a> FlowAnalyzer<'a> {
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
+            call_type_predicates: None,
             flow_worklist: None,
             flow_in_worklist: None,
             flow_visited: None,
@@ -196,6 +202,7 @@ impl<'a> FlowAnalyzer<'a> {
             numeric_atom_cache: RefCell::new(FxHashMap::default()),
             shared_numeric_atom_cache: None,
             narrowing_cache: None,
+            call_type_predicates: None,
             flow_worklist: None,
             flow_in_worklist: None,
             flow_visited: None,
@@ -227,6 +234,12 @@ impl<'a> FlowAnalyzer<'a> {
     /// Set a shared narrowing cache.
     pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
         self.narrowing_cache = Some(cache);
+        self
+    }
+
+    /// Set instantiated call type predicates from generic call resolutions.
+    pub const fn with_call_type_predicates(mut self, predicates: &'a CallPredicateMap) -> Self {
+        self.call_type_predicates = Some(predicates);
         self
     }
 

@@ -147,6 +147,9 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     pub(crate) constraint_recursion_depth: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
     pub(crate) constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
+    /// After a generic call resolves, holds the instantiated type predicate (if any).
+    /// This lets the checker retrieve the predicate with inferred type arguments applied.
+    pub last_instantiated_predicate: Option<(TypePredicate, Vec<ParamInfo>)>,
 }
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
@@ -159,6 +162,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             contextual_type: None,
             constraint_recursion_depth: RefCell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
+            last_instantiated_predicate: None,
         }
     }
 
@@ -497,6 +501,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     ///
     /// This is pure type logic - no AST nodes, just types in and types out.
     pub fn resolve_call(&mut self, func_type: TypeId, arg_types: &[TypeId]) -> CallResult {
+        self.last_instantiated_predicate = None;
         // Look up the function shape
         let key = match self.interner.lookup(func_type) {
             Some(k) => k,

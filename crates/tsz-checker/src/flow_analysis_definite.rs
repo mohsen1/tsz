@@ -131,6 +131,7 @@ impl<'a> CheckerState<'a> {
         .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
         .with_type_environment(Rc::clone(&self.ctx.type_environment))
         .with_narrowing_cache(&self.ctx.narrowing_cache)
+        .with_call_type_predicates(&self.ctx.call_type_predicates)
         .with_flow_buffers(
             &self.ctx.flow_worklist,
             &self.ctx.flow_in_worklist,

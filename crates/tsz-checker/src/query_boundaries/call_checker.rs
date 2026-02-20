@@ -43,11 +43,16 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     arg_types: &[TypeId],
     force_bivariant_callbacks: bool,
     contextual_type: Option<TypeId>,
-) -> CallResult {
+) -> (
+    CallResult,
+    Option<(tsz_solver::TypePredicate, Vec<tsz_solver::ParamInfo>)>,
+) {
     let mut evaluator = tsz_solver::CallEvaluator::new(db, checker);
     evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
     evaluator.set_contextual_type(contextual_type);
-    evaluator.resolve_call(func_type, arg_types)
+    let result = evaluator.resolve_call(func_type, arg_types);
+    let predicate = evaluator.last_instantiated_predicate.take();
+    (result, predicate)
 }
 
 pub(crate) fn resolve_new<C: AssignabilityChecker>(

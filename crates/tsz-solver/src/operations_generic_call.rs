@@ -9,7 +9,9 @@
 use crate::infer::{InferenceContext, InferenceError};
 use crate::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator, CallResult};
-use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo};
+use crate::types::{
+    FunctionShape, ParamInfo, TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{debug, trace};
 
@@ -630,6 +632,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         tracing::debug!("Final check succeeded");
 
         let return_type = instantiate_type(self.interner, func.return_type, &final_subst);
+
+        // Instantiate the type predicate if present, so the checker can use it
+        // for flow narrowing with the correct (inferred) type arguments.
+        if let Some(ref predicate) = func.type_predicate {
+            let instantiated_predicate = TypePredicate {
+                asserts: predicate.asserts,
+                target: predicate.target.clone(),
+                type_id: predicate
+                    .type_id
+                    .map(|tid| instantiate_type(self.interner, tid, &final_subst)),
+                parameter_index: predicate.parameter_index,
+            };
+            let instantiated_params_for_pred: Vec<ParamInfo> = func
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    name: p.name,
+                    type_id: instantiate_type(self.interner, p.type_id, &final_subst),
+                    optional: p.optional,
+                    rest: p.rest,
+                })
+                .collect();
+            self.last_instantiated_predicate =
+                Some((instantiated_predicate, instantiated_params_for_pred));
+        }
+
         CallResult::Success(return_type)
     }
 
