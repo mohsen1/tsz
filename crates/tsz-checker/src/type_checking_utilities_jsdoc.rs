@@ -862,10 +862,11 @@ impl<'a> CheckerState<'a> {
                         chars.next();
                     }
                     if let Ok(code) = u32::from_str_radix(&hex, 16)
-                        && let Some(decoded) = char::from_u32(code) {
-                            result.push(decoded);
-                            continue;
-                        }
+                        && let Some(decoded) = char::from_u32(code)
+                    {
+                        result.push(decoded);
+                        continue;
+                    }
                     // Fallback: push original
                     result.push_str("\\u{");
                     result.push_str(&hex);
@@ -885,10 +886,11 @@ impl<'a> CheckerState<'a> {
                     }
                     if hex.len() == 4
                         && let Ok(code) = u32::from_str_radix(&hex, 16)
-                            && let Some(decoded) = char::from_u32(code) {
-                                result.push(decoded);
-                                continue;
-                            }
+                        && let Some(decoded) = char::from_u32(code)
+                    {
+                        result.push(decoded);
+                        continue;
+                    }
                     // Fallback: push original
                     result.push_str("\\u");
                     result.push_str(&hex);
