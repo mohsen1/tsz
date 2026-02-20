@@ -1608,4 +1608,95 @@ impl<'a> CheckerState<'a> {
             _ => {}
         }
     }
+
+    /// Check that all method overload signatures in a group share the same abstract modifier
+    /// (TS2512: Overload signatures must all be abstract or non-abstract).
+    pub(crate) fn check_abstract_overload_consistency(
+        &mut self,
+        members: &[tsz_parser::parser::NodeIndex],
+    ) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let mut i = 0;
+        while i < members.len() {
+            let start_idx = i;
+            let start_member_idx = members[start_idx];
+
+            let Some(node) = self.ctx.arena.get(start_member_idx) else {
+                i += 1;
+                continue;
+            };
+
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                i += 1;
+                continue;
+            }
+
+            let start_name = self.get_method_name_from_node(start_member_idx);
+            if start_name.is_none() {
+                i += 1;
+                continue;
+            }
+
+            // Collect the group of methods with the same name
+            let mut group = Vec::new();
+            let mut impl_index_in_group = None;
+
+            for &member_idx in members.iter().skip(start_idx) {
+                let Some(cur_node) = self.ctx.arena.get(member_idx) else {
+                    break;
+                };
+                if cur_node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                    break;
+                }
+
+                let cur_name = self.get_method_name_from_node(member_idx);
+                if cur_name != start_name {
+                    break;
+                }
+
+                let Some(method) = self.ctx.arena.get_method_decl(cur_node) else {
+                    break;
+                };
+
+                let is_abstract = self.has_abstract_modifier(&method.modifiers);
+                let has_body = method.body.is_some();
+                let error_node = method.name;
+
+                if has_body && impl_index_in_group.is_none() {
+                    impl_index_in_group = Some(group.len());
+                }
+
+                group.push((member_idx, is_abstract, has_body, error_node));
+
+                if has_body {
+                    // Start a new group after the implementation
+                    break;
+                }
+            }
+
+            // Determine the "truth" abstractness for the group
+            if group.len() > 1 {
+                let truth_abstract = if let Some(idx) = impl_index_in_group {
+                    group[idx].1
+                } else {
+                    group[0].1
+                };
+
+                // Report TS2512 for any signature that differs
+                for &(_member_idx, is_abstract, _has_body, error_node) in &group {
+                    if is_abstract != truth_abstract {
+                        self.error_at_node(
+                            error_node,
+                            diagnostic_messages::OVERLOAD_SIGNATURES_MUST_ALL_BE_ABSTRACT_OR_NON_ABSTRACT,
+                            diagnostic_codes::OVERLOAD_SIGNATURES_MUST_ALL_BE_ABSTRACT_OR_NON_ABSTRACT,
+                        );
+                    }
+                }
+            }
+
+            i += group.len();
+        }
+    }
 }
