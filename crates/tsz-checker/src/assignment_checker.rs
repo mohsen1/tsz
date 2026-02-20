@@ -105,24 +105,62 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = ident.escaped_text.clone();
 
-        let sym_id = self
-            .ctx
-            .binder
-            .resolve_identifier(self.ctx.arena, ident_idx)?;
-        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let sym_id = self.resolve_identifier_symbol(ident_idx)?;
 
+        // Find the correct binder and arena for this symbol
+        let mut target_binder = self.ctx.binder;
+        let mut target_arena = self.ctx.arena;
+
+        if let Some(&file_idx) = self.ctx.cross_file_symbol_targets.borrow().get(&sym_id) {
+            if let Some(all_binders) = &self.ctx.all_binders
+                && let Some(b) = all_binders.get(file_idx) {
+                    target_binder = b;
+                }
+            if let Some(all_arenas) = &self.ctx.all_arenas
+                && let Some(a) = all_arenas.get(file_idx) {
+                    target_arena = a;
+                }
+        } else if let Some(arena) = self.ctx.binder.symbol_arenas.get(&sym_id) {
+            // It could be a lib symbol where target_binder is still self.ctx.binder (due to merging)
+            // or one of the lib_contexts.
+            target_arena = arena.as_ref();
+        }
+
+        // Also check if it's from a lib context
+        for lib in &self.ctx.lib_contexts {
+            if let Some(sym) = lib.binder.get_symbol(sym_id)
+                && sym.escaped_name == name {
+                    target_binder = &lib.binder;
+                    target_arena = lib.arena.as_ref();
+                    break;
+                }
+        }
+
+        let symbol = target_binder
+            .get_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol(sym_id))?;
         let value_decl = symbol.value_declaration;
         if value_decl.is_none() {
             return None;
         }
 
-        let decl_node = self.ctx.arena.get(value_decl)?;
+        // Sometimes the declaration is specifically registered in declaration_arenas
+        if let Some(arenas) = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(sym_id, value_decl))
+            && let Some(first) = arenas.first() {
+                target_arena = first.as_ref();
+            }
+
+        let decl_node = target_arena.get(value_decl)?;
         let mut decl_flags = decl_node.flags as u32;
 
         // If CONST/LET not directly on node, check parent (VariableDeclarationList)
         if (decl_flags & (node_flags::LET | node_flags::CONST)) == 0
-            && let Some(ext) = self.ctx.arena.get_extended(value_decl)
-            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && let Some(ext) = target_arena.get_extended(value_decl)
+            && let Some(parent_node) = target_arena.get(ext.parent)
             && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
         {
             decl_flags |= parent_node.flags as u32;
