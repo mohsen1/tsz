@@ -299,6 +299,12 @@ impl<'a> CheckerState<'a> {
     ///   - `declared_modules`
     ///   - CLI-resolved modules
     pub(crate) fn is_unresolved_import_symbol(&self, idx: NodeIndex) -> bool {
+        tracing::info!("DEBUG MODULE EXPORTS: {:?}", self.ctx.binder.module_exports.keys());
+        let res = self.is_unresolved_import_symbol_impl(idx);
+        tracing::info!("DEBUG is_unresolved_import_symbol {:?} -> {}", idx, res);
+        res
+    }
+    fn is_unresolved_import_symbol_impl(&self, idx: NodeIndex) -> bool {
         let Some(sym_id) = self.resolve_identifier_symbol(idx) else {
             return false;
         };

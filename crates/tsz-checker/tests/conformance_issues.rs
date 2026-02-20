@@ -992,7 +992,6 @@ const fn2: <T>(x: T) => void = function test(t) { };
     let types = TypeInterner::new();
     let options = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -1042,7 +1041,6 @@ f(t => { });
     let types = TypeInterner::new();
     let options = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -1101,7 +1099,6 @@ const fn2: <T>(x: T) => void = function test(t) {
 
     let options = CheckerOptions {
         strict: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(source, options);
 
@@ -1209,7 +1206,6 @@ var f = function(x) { };
     let types = TypeInterner::new();
     let options = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -1281,7 +1277,6 @@ good2({ when: value => false });
     let types = TypeInterner::new();
     let options = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let mut checker = CheckerState::new(
         parser.get_arena(),
@@ -1347,7 +1342,6 @@ three<number>();
         ",
         CheckerOptions {
             no_implicit_any: true,
-            ..Default::default()
         },
     );
 
@@ -1544,7 +1538,6 @@ class TimestampedUser extends Timestamped(User) {
 fn test_contextual_typing_union_with_undefined() {
     let opts = CheckerOptions {
         strict: true,
-        ..Default::default()
     }
     .apply_strict_defaults();
     let diagnostics = compile_and_get_diagnostics_with_options(
@@ -1570,7 +1563,6 @@ a({ fn(x) {} });
 fn test_contextual_typing_property_in_union_with_null() {
     let opts = CheckerOptions {
         strict: true,
-        ..Default::default()
     }
     .apply_strict_defaults();
     let diagnostics = compile_and_get_diagnostics_with_options(
@@ -1600,7 +1592,6 @@ b({ callback: (x) => {} });
 fn test_ts7022_recursive_object_literal() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1619,7 +1610,6 @@ var a = { f: a };
 fn test_ts7022_not_emitted_without_no_implicit_any() {
     let opts = CheckerOptions {
         no_implicit_any: false,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1639,7 +1629,6 @@ var a = { f: a };
 fn test_ts7022_not_emitted_for_function_body_reference() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1661,7 +1650,6 @@ var foo3 = function () {
 fn test_ts7022_not_emitted_for_class_expression_body_reference() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1685,7 +1673,6 @@ let C = class {
 fn test_ts7022_not_emitted_for_arrow_body_reference() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1713,7 +1700,6 @@ const fn1 = () => {
 fn test_ts7023_function_expression_self_call() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1739,7 +1725,6 @@ var f1 = function () {
 fn test_ts7023_arrow_function_self_call() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1758,7 +1743,6 @@ var f2 = () => f2();
 fn test_ts7023_not_emitted_without_no_implicit_any() {
     let opts = CheckerOptions {
         no_implicit_any: false,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1782,7 +1766,6 @@ var f1 = function () {
 fn test_ts7034_captured_variable_in_nested_function() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1802,7 +1785,6 @@ function func(k: any) { y };
 fn test_ts7034_not_emitted_for_same_scope_usage() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1824,7 +1806,6 @@ func(x);
 fn test_ts7034_captured_by_arrow_function() {
     let opts = CheckerOptions {
         no_implicit_any: true,
-        ..Default::default()
     };
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
@@ -1842,9 +1823,7 @@ function f10() {
     );
 }
 
-// =============================================================================
 // TS2882: Cannot find module or type declarations for side-effect import
-// =============================================================================
 
 /// TS2882 should fire for side-effect imports by default (tsc 6.0 default: true).
 #[test]

@@ -79,6 +79,7 @@ impl TsCompilerOptions {
             use_unknown_in_catch_variables: self.strict_null_checks.unwrap_or(strict),
             isolated_modules: false,
             no_unchecked_indexed_access: false,
+            no_unchecked_side_effect_imports: false,
             strict_bind_call_apply: false,
             exact_optional_property_types: false,
             no_lib: self.no_lib.unwrap_or(false),
