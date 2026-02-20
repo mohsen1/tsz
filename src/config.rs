@@ -715,6 +715,7 @@ pub fn resolve_compiler_options(
 
     if let Some(experimental_decorators) = options.experimental_decorators {
         resolved.checker.experimental_decorators = experimental_decorators;
+        resolved.printer.legacy_decorators = experimental_decorators;
     }
 
     if let Some(allow_js) = options.allow_js {

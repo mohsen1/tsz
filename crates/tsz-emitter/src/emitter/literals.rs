@@ -164,8 +164,14 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_string_literal(&mut self, node: &Node) {
-        // Try to use raw source text to preserve line continuations etc.
+        // Try to use raw source text to preserve line continuations and escape forms.
         if let Some(raw) = self.get_raw_string_literal(node) {
+            if !self.ctx.options.target.supports_es2015()
+                && let Some(downleveled) = self.downlevel_string_literal_for_es5(&raw)
+            {
+                self.write(&downleveled);
+                return;
+            }
             self.write(&raw);
             return;
         }
@@ -189,20 +195,58 @@ impl<'a> Printer<'a> {
         let text = self.source_text?;
         let bytes = text.as_bytes();
         let start = node.pos as usize;
-        let end = std::cmp::min(node.end as usize, bytes.len());
+        if start >= bytes.len() {
+            return None;
+        }
+
         // Skip leading trivia to find the quote
         let mut i = start;
-        while i < end {
+        while i < bytes.len() {
             match bytes[i] {
                 b'\'' | b'"' => break,
                 b' ' | b'\t' | b'\r' | b'\n' => i += 1,
                 _ => return None,
             }
         }
-        if i >= end {
+        if i >= bytes.len() {
             return None;
         }
-        Some(text[i..end].to_string())
+
+        let quote = bytes[i];
+        let mut j = i + 1;
+        let mut escaped = false;
+        while j < bytes.len() {
+            let b = bytes[j];
+            if escaped {
+                escaped = false;
+                j += 1;
+                continue;
+            }
+
+            if b == b'\\' {
+                escaped = true;
+                j += 1;
+                continue;
+            }
+
+            if b == quote {
+                return Some(text[i..=j].to_string());
+            }
+
+            // Unterminated literal fallback: use parser end range.
+            if b == b'\n' || b == b'\r' {
+                break;
+            }
+
+            j += 1;
+        }
+
+        let end = std::cmp::min(node.end as usize, bytes.len());
+        if end > i {
+            Some(text[i..end].to_string())
+        } else {
+            None
+        }
     }
 
     /// Detect the original quote character used in source text.
@@ -233,6 +277,146 @@ impl<'a> Printer<'a> {
         self.write_char(quote);
         self.emit_escaped_string(text, quote);
         self.write_char(quote);
+    }
+
+    pub(super) fn emit_raw_string_literal_text(&mut self, text: &str) {
+        let quote = if self.ctx.options.single_quote {
+            '\''
+        } else {
+            '"'
+        };
+        self.write_char(quote);
+        self.write(text);
+        self.write_char(quote);
+    }
+
+    fn downlevel_string_literal_for_es5(&self, raw: &str) -> Option<String> {
+        let bytes = raw.as_bytes();
+        if bytes.len() < 2 {
+            return None;
+        }
+
+        let quote = bytes[0];
+        if (quote != b'\'' && quote != b'"') || bytes[bytes.len() - 1] != quote {
+            return None;
+        }
+
+        let quote_char = quote as char;
+        let inner = &raw[1..bytes.len() - 1];
+        let converted = self.downlevel_codepoint_escapes_in_literal_text(inner, quote_char, false);
+        Some(format!("{quote_char}{converted}{quote_char}"))
+    }
+
+    pub(super) fn downlevel_codepoint_escapes_in_literal_text(
+        &self,
+        text: &str,
+        quote_char: char,
+        escape_invalid_codepoint_sequences: bool,
+    ) -> String {
+        let bytes = text.as_bytes();
+        let mut out = String::new();
+        let mut i = 0;
+
+        while i < bytes.len() {
+            if bytes[i] == b'\\' {
+                if i + 2 < bytes.len() && bytes[i + 1] == b'u' && bytes[i + 2] == b'{' {
+                    let mut j = i + 3;
+                    while j < bytes.len() && bytes[j] != b'}' {
+                        j += 1;
+                    }
+                    if j < bytes.len() {
+                        let hex = &text[i + 3..j];
+                        let valid_hex =
+                            !hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit());
+                        if valid_hex
+                            && let Ok(cp) = u32::from_str_radix(hex, 16)
+                            && cp <= 0x10FFFF
+                        {
+                            self.push_downleveled_codepoint(&mut out, cp, quote_char);
+                            i = j + 1;
+                            continue;
+                        }
+
+                        // Invalid \u{...} sequence handling differs by context:
+                        // - string literals: keep `\u{...}` as-is
+                        // - template downlevel to string: emit literal backslash (`\\u{...}`)
+                        if escape_invalid_codepoint_sequences {
+                            out.push('\\');
+                        }
+                        out.push_str(&text[i..=j]);
+                        i = j + 1;
+                        continue;
+                    }
+                }
+
+                if i + 1 < bytes.len() {
+                    out.push('\\');
+                    out.push(bytes[i + 1] as char);
+                    i += 2;
+                } else {
+                    out.push('\\');
+                    i += 1;
+                }
+                continue;
+            }
+
+            let ch = match text[i..].chars().next() {
+                Some(ch) => ch,
+                None => break,
+            };
+            if ch == quote_char {
+                out.push('\\');
+                out.push(ch);
+            } else if ch == '\\' {
+                out.push_str("\\\\");
+            } else {
+                out.push(ch);
+            }
+            i += ch.len_utf8();
+        }
+
+        out
+    }
+
+    fn push_downleveled_codepoint(&self, out: &mut String, cp: u32, quote_char: char) {
+        if cp == 0 {
+            out.push_str("\\0");
+            return;
+        }
+
+        if cp <= 0xFFFF {
+            self.push_downleveled_code_unit(out, cp as u16, quote_char);
+            return;
+        }
+
+        let adjusted = cp - 0x10000;
+        let high = 0xD800 + ((adjusted >> 10) as u16);
+        let low = 0xDC00 + ((adjusted & 0x03FF) as u16);
+        self.push_downleveled_code_unit(out, high, quote_char);
+        self.push_downleveled_code_unit(out, low, quote_char);
+    }
+
+    fn push_downleveled_code_unit(&self, out: &mut String, code_unit: u16, quote_char: char) {
+        if code_unit as u32 == quote_char as u32 {
+            out.push('\\');
+            out.push(quote_char);
+            return;
+        }
+
+        match code_unit {
+            0x0008 => out.push_str("\\b"),
+            0x0009 => out.push_str("\\t"),
+            0x000A => out.push_str("\\n"),
+            0x000C => out.push_str("\\f"),
+            0x000D => out.push_str("\\r"),
+            0x005C => out.push_str("\\\\"),
+            0x0020..=0x007E => {
+                out.push(code_unit as u8 as char);
+            }
+            _ => {
+                let _ = write!(out, "\\u{code_unit:04X}");
+            }
+        }
     }
 
     pub(super) fn emit_escaped_string(&mut self, s: &str, quote_char: char) {

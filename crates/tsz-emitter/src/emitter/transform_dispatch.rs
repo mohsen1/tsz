@@ -366,7 +366,25 @@ impl<'a> Printer<'a> {
                             self.write("exports.");
                             self.write(name);
                             self.write(" = ");
-                            self.emit(*init_idx);
+                            if let Some(init_node) = self.arena.get(*init_idx)
+                                && init_node.kind == SyntaxKind::Identifier as u16
+                            {
+                                let ident = self.get_identifier_text_idx(*init_idx);
+                                if self
+                                    .ctx
+                                    .module_state
+                                    .pending_exports
+                                    .iter()
+                                    .any(|n| n == &ident)
+                                {
+                                    self.write("exports.");
+                                    self.write(&ident);
+                                } else {
+                                    self.emit(*init_idx);
+                                }
+                            } else {
+                                self.emit(*init_idx);
+                            }
                             self.write(";");
                             self.write_line();
                         }

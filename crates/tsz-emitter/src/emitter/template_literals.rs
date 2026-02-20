@@ -33,11 +33,13 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_no_substitution_template(&mut self, node: &Node) {
-        if let Some(lit) = self.arena.get_literal(node) {
-            self.write("`");
-            self.write(&lit.text);
-            self.write("`");
-        }
+        let text = self
+            .get_raw_template_part_text(node)
+            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
+            .unwrap_or_default();
+        self.write("`");
+        self.write(&text);
+        self.write("`");
     }
 
     pub(super) fn emit_template_span(&mut self, node: &Node) {
@@ -54,25 +56,80 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_template_head(&mut self, node: &Node) {
-        if let Some(lit) = self.arena.get_literal(node) {
-            // Template head starts with ` and ends with ${
-            self.write("`");
-            self.write(&lit.text);
-        }
+        let text = self
+            .get_raw_template_part_text(node)
+            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
+            .unwrap_or_default();
+        // Template head starts with ` and ends with ${
+        self.write("`");
+        self.write(&text);
     }
 
     pub(super) fn emit_template_middle(&mut self, node: &Node) {
-        if let Some(lit) = self.arena.get_literal(node) {
-            // Template middle is between } and ${
-            self.write(&lit.text);
-        }
+        let text = self
+            .get_raw_template_part_text(node)
+            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
+            .unwrap_or_default();
+        // Template middle is between } and ${
+        self.write(&text);
     }
 
     pub(super) fn emit_template_tail(&mut self, node: &Node) {
-        if let Some(lit) = self.arena.get_literal(node) {
-            // Template tail ends with `
-            self.write(&lit.text);
-            self.write("`");
+        let text = self
+            .get_raw_template_part_text(node)
+            .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
+            .unwrap_or_default();
+        // Template tail ends with `
+        self.write(&text);
+        self.write("`");
+    }
+
+    pub(super) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let cooked_fallback = self
+            .arena
+            .get_literal(node)
+            .map(|lit| lit.text.clone())
+            .unwrap_or_default();
+
+        let (skip_leading, allow_dollar_brace, allow_backtick) = match node.kind {
+            k if k == tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
+                (1_usize, false, true)
+            }
+            k if k == tsz_scanner::SyntaxKind::TemplateHead as u16 => (1_usize, true, true),
+            k if k == tsz_scanner::SyntaxKind::TemplateMiddle as u16 => (1_usize, true, true),
+            k if k == tsz_scanner::SyntaxKind::TemplateTail as u16 => (1_usize, false, true),
+            _ => return Some(cooked_fallback),
+        };
+
+        let start = node.pos as usize;
+        if start >= text.len() || start + skip_leading >= text.len() {
+            return Some(cooked_fallback);
         }
+
+        let bytes = text.as_bytes();
+        let mut i = start + skip_leading;
+        while i < bytes.len() {
+            let ch = bytes[i];
+            if ch == b'\\' {
+                i += 1;
+                if i < bytes.len() {
+                    i += 1;
+                }
+                continue;
+            }
+
+            if allow_backtick && ch == b'`' {
+                return Some(text[start + skip_leading..i].to_string());
+            }
+
+            if allow_dollar_brace && ch == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                return Some(text[start + skip_leading..i].to_string());
+            }
+
+            i += 1;
+        }
+
+        Some(cooked_fallback)
     }
 }
