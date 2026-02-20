@@ -1,7 +1,5 @@
 //! Assignment type resolution, destructuring matching, and condition-based type narrowing
 //! for `FlowAnalyzer`.
-//!
-//! Split from `control_flow.rs` for maintainability.
 
 use crate::control_flow::{FlowAnalyzer, PropertyKey};
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};

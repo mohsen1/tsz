@@ -1,7 +1,5 @@
-//! Type Environment Module
-//!
-//! Extracted from state.rs: Methods for building type environments, evaluating
-//! application types, resolving property access types, and type node resolution.
+//! Type environment building, application type evaluation, property access
+//! type resolution, and type node resolution.
 
 use crate::query_boundaries::state_type_environment as query;
 use crate::state::{CheckerState, EnumKind, MAX_INSTANTIATION_DEPTH};

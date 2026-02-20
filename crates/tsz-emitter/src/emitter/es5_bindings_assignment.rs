@@ -1,7 +1,4 @@
-//! ES5 destructuring - for-of array indexing and assignment destructuring
-//!
-//! Extracted from `es5_bindings.rs`: for-of array indexing emission, assignment
-//! array/object destructuring, and utility helpers.
+//! ES5 destructuring - for-of array indexing and assignment destructuring.
 
 use super::{Printer, is_valid_identifier_name};
 use tsz_parser::parser::NodeIndex;

@@ -1,7 +1,4 @@
-//! Declaration & Statement Checking Module
-//!
-//! Extracted from state.rs: Methods for checking source files, declarations,
-//! statements, and class/interface validation. Also includes `StatementCheckCallbacks`.
+//! Declaration and statement checking, including `StatementCheckCallbacks`.
 
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;

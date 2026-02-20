@@ -1,8 +1,4 @@
 //! Destructuring pattern type resolution and validation.
-//!
-//! Extracted from `state_variable_checking.rs`: binding pattern type assignment,
-//! destructured binding group recording, element type resolution from parent types,
-//! and empty array destructuring bounds checking.
 
 use crate::query_boundaries::state_checking as query;
 use crate::state::CheckerState;

@@ -1,11 +1,6 @@
-//! Type Checking Module
-//!
-//! This module contains type checking validation methods for `CheckerState`:
-//! utility methods, AST traversal helpers, member/declaration validation,
-//! private identifier validation, type name validation, parameter properties,
-//! destructuring validation, import/return/await/variable/using declaration validation.
-//!
-//! Split from original `type_checking.rs` for maintainability.
+//! Type checking validation: utility methods, AST traversal helpers,
+//! member/declaration/private identifier/parameter property validation,
+//! destructuring, import/return/await/variable/using declaration validation.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;

@@ -1,8 +1,5 @@
-//! Property Access Type Resolution
-//!
-//! Split from `function_type.rs` to keep file sizes manageable.
-//! Contains property access type resolution, global augmentation
-//! property lookup, and expando function pattern detection.
+//! Property access type resolution, global augmentation property lookup,
+//! and expando function pattern detection.
 
 use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;

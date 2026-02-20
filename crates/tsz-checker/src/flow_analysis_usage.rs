@@ -1,9 +1,4 @@
 //! Flow-based definite assignment and declaration ordering checks.
-//!
-//! Split from `flow_analysis.rs` to keep file sizes manageable.
-//! Contains `check_flow_usage` (main flow analysis entry point),
-//! definite assignment checking (TS2454), and declaration ordering
-//! checks (use-before-declaration in static blocks, computed props, heritage clauses).
 
 use std::rc::Rc;
 

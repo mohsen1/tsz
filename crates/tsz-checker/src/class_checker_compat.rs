@@ -1,8 +1,5 @@
-//! Class and Interface Compatibility Checking
-//!
-//! Extracted from `class_checker.rs`: index signature compatibility (TS2415),
-//! interface extension compatibility (TS2430), member lookup in class chains,
-//! and visibility conflict detection.
+//! Class and interface compatibility checking (TS2415, TS2430), member lookup
+//! in class chains, and visibility conflict detection.
 
 use crate::class_checker::{ClassMemberInfo, MemberVisibility};
 use crate::diagnostics::diagnostic_codes;

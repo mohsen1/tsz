@@ -1,8 +1,5 @@
-//! Cross-File Symbol Resolution
-//!
-//! Extracted from `state_type_analysis.rs`: Methods for resolving symbols across
-//! multiple files, delegating type resolution to child checkers with the correct
-//! arena, and tracking cross-file symbol targets.
+//! Cross-file symbol resolution: resolving symbols across multiple files,
+//! delegating type resolution to child checkers, and tracking cross-file targets.
 
 use crate::state::CheckerState;
 use tsz_binder::{SymbolId, symbol_flags};

@@ -1,8 +1,5 @@
-//! Module/Namespace Declaration Checking
-//!
-//! Extracted from `declarations.rs`: module and namespace declaration validation
-//! including TS2580, TS2668, TS2669, TS2433, TS2434, TS2435, TS1035, TS1235,
-//! TS5061, TS2664, TS2666/TS2667, and namespace merge checks.
+//! Module and namespace declaration validation (TS2580, TS2668, TS2669, TS2433,
+//! TS2434, TS2435, TS1035, TS1235, TS5061, TS2664, TS2666/TS2667).
 
 use crate::declarations::DeclarationChecker;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};

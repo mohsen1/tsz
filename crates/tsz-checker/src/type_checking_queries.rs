@@ -1,7 +1,4 @@
-//! Type Checking Queries Module
-//!
-//! This module contains modifier, member access, and query methods for `CheckerState`.
-//! Split from `type_checking.rs` for maintainability.
+//! Modifier, member access, and query methods for `CheckerState`.
 
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::symbol_flags;

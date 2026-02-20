@@ -1,7 +1,4 @@
 //! Module resolution and query helpers for `DeclarationChecker`.
-//!
-//! Extracted from `declarations.rs`: module existence checks, ambient module
-//! pattern matching, relative path normalization, and ambient context detection.
 
 use std::path::{Component, Path, PathBuf};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};

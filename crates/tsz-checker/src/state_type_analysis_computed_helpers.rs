@@ -1,8 +1,4 @@
 //! Contextual literal types, circular reference detection, and private property access.
-//!
-//! Extracted from `state_type_analysis_computed.rs`: contextual literal type checking,
-//! simple type reference and direct circular reference detection, private identifier
-//! diagnostics, and private property access type computation.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;

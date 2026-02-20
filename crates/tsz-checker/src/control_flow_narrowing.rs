@@ -1,8 +1,5 @@
-//! Control Flow Narrowing (continued)
-//!
-//! Extracted from `control_flow.rs`: Second half of `FlowAnalyzer` impl block
-//! containing narrowing methods for assignments, predicates, instanceof,
-//! in-operator, typeof, discriminants, literals, and reference matching.
+//! Control flow narrowing: assignments, predicates, instanceof, in-operator,
+//! typeof, discriminants, literals, and reference matching.
 
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;

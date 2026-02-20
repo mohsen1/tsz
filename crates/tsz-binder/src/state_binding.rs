@@ -1,7 +1,4 @@
 //! Binder declaration binding, accessors, flow graph, validation, and statistics.
-//!
-//! This file contains the second half of the `impl BinderState` block,
-//! split from `state.rs` for maintainability.
 
 use crate::lib_loader;
 use crate::state::FileFeatures;

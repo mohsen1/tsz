@@ -1,7 +1,6 @@
 //! `TypeResolver` trait implementation for `CheckerContext`.
 //!
-//! Split from `context.rs` to keep file sizes manageable.
-//! This implements `tsz_solver::TypeResolver` which enables the solver to resolve
+//! Implements `tsz_solver::TypeResolver` which enables the solver to resolve
 //! `TypeData::Lazy(DefId)` references back to cached types during evaluation.
 
 use crate::context::CheckerContext;

@@ -1,5 +1,4 @@
 //! JSDoc type annotation utilities, class and enum helper methods for `CheckerState`.
-//! Split from `type_checking_utilities.rs` for maintainability.
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;

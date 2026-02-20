@@ -1,6 +1,4 @@
-//! Declaration & Statement Checking Module (Members)
-//!
-//! Extracted from `state_checking.rs`: split implementation into focused member modules.
+//! Declaration and statement checking (member submodules).
 
 mod ambient_signature_checks;
 mod member_access;

@@ -1,8 +1,4 @@
-//! Parser state - literal, binding pattern, and compound expression parsing
-//!
-//! Extracted from `state_expressions.rs`: binding patterns, numeric/string/regex/
-//! template literals, parenthesized expressions, array/object literals,
-//! property assignments, new expressions, and member expressions.
+//! Parser state - literal, binding pattern, and compound expression parsing.
 
 use super::state::{
     CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_DISALLOW_IN, CONTEXT_FLAG_GENERATOR,

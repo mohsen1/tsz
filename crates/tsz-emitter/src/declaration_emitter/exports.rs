@@ -1,7 +1,4 @@
-//! Declaration emitter - export and import emission
-//!
-//! Extracted from `mod.rs`: export declarations, export specifiers, import
-//! declarations, import filtering, module declarations, and import equals.
+//! Declaration emitter - export and import emission.
 
 use super::DeclarationEmitter;
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};

@@ -1,8 +1,4 @@
-//! Value declaration resolution and TDZ checking helpers.
-//!
-//! Extracted from `type_computation_call.rs`: TDZ violation detection, value
-//! declaration type resolution (including cross-arena delegation), and other
-//! helper functions for identifier type computation.
+//! Value declaration resolution, TDZ checking, and identifier type computation helpers.
 
 use crate::state::CheckerState;
 use tsz_binder::SymbolId;

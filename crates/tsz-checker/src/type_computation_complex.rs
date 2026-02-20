@@ -1,7 +1,5 @@
-//! Type Computation (Complex Operations)
-//!
-//! Extracted from `type_computation.rs`: Complex type computation methods for
-//! new expressions, constructability, union/keyof types, and class type helpers.
+//! Complex type computation: new expressions, constructability, union/keyof types,
+//! and class type helpers.
 
 use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;

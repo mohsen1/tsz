@@ -1,7 +1,5 @@
 //! Module resolution, cross-file exports, and constructor type operations
 //! for `CheckerState`.
-//!
-//! Split from `state_type_resolution.rs` for maintainability.
 
 use crate::module_resolution::module_specifier_candidates;
 use crate::query_boundaries::state_type_resolution as query;

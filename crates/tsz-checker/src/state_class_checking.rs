@@ -1,8 +1,4 @@
 //! Class declaration, heritage clause, and class member checking.
-//!
-//! Split from `state_property_checking.rs` to keep file sizes manageable.
-//! Contains heritage clause validation, class declaration/expression checking,
-//! property initialization, and decorator/triple-slash reference checks.
 
 use crate::EnclosingClassInfo;
 use crate::error_handler::ErrorHandler;

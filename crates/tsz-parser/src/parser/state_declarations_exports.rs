@@ -1,7 +1,4 @@
-//! Parser state - export declarations and control flow statement parsing
-//!
-//! Extracted from `state_declarations.rs`: export declarations, if/while/for/
-//! switch/try/do statements, string literals, and expression statements.
+//! Parser state - export declarations and control flow statement parsing.
 
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
 use crate::parser::{

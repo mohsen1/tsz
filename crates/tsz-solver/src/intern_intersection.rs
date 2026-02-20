@@ -1,8 +1,4 @@
 //! Intersection type normalization and merging.
-//!
-//! Extracted from `intern.rs`: intersection normalization logic including
-//! empty object elimination, callable/object merging in intersections,
-//! and intersection distribution over unions.
 
 use super::*;
 

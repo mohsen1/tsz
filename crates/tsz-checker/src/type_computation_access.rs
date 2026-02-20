@@ -1,12 +1,4 @@
-//! Element Access, Object Literal, and Await Type Computation
-//!
-//! This module contains type computation methods for `CheckerState` related to:
-//! - Element access expressions (arr[i], obj["prop"])
-//! - Super keyword type resolution
-//! - Object literal type computation with spreads
-//! - Await expression type resolution (Promise unwrapping)
-//!
-//! Split from `type_computation.rs` for maintainability.
+//! Element access, object literal, super keyword, and await type computation.
 
 use crate::state::{CheckerState, EnumKind};
 use tsz_parser::parser::NodeIndex;

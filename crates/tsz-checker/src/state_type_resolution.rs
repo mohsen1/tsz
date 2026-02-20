@@ -1,7 +1,5 @@
-//! Type Reference Resolution Module
-//!
-//! Extracted from state.rs: Methods for resolving type references,
-//! interface types, and type aliases on `CheckerState`.
+//! Type reference resolution: interfaces, type aliases, and type references
+//! on `CheckerState`.
 
 use crate::query_boundaries::state_type_resolution as query;
 use crate::state::CheckerState;

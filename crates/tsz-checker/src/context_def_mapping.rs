@@ -3,8 +3,6 @@
 //! Handles bidirectional mapping between `SymbolId` and `DefId`, lazy type
 //! references, type parameter registration, and resolved-type registration
 //! in the `TypeEnvironment`.
-//!
-//! Extracted from `context.rs` for maintainability.
 
 use tracing::trace;
 use tsz_binder::SymbolId;
