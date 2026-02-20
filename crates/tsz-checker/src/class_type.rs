@@ -840,7 +840,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Resolve Lazy(DefId) to structural type before extracting shape
-                    // Phase 4.3: type_reference_symbol_type returns Lazy types for error messages,
+                    // type_reference_symbol_type returns Lazy types for error messages,
                     // but get_object_shape needs the actual Object type
                     interface_type = self.resolve_lazy_type(interface_type);
 

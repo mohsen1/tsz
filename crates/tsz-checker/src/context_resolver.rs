@@ -19,7 +19,7 @@ use crate::context::CheckerContext;
 impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
     /// Resolve a symbol reference to its cached type (deprecated).
     ///
-    /// Phase 4.2: `TypeData::Ref` is removed, but we keep this for compatibility.
+    /// `TypeData::Ref` is removed, but we keep this for compatibility.
     /// Converts `SymbolRef` to `SymbolId` and looks up in cache.
     fn resolve_ref(
         &self,
@@ -135,7 +135,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
 
     /// Get type parameters for a Lazy type.
     ///
-    /// Phase 4.2.1: For type aliases, type parameters are stored in `def_type_params`
+    /// For type aliases, type parameters are stored in `def_type_params`
     /// and used by the Solver to expand Application(Lazy(DefId), Args).
     ///
     /// For classes/interfaces, type parameters are embedded in the resolved type's shape
@@ -144,7 +144,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         &self,
         def_id: tsz_solver::DefId,
     ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
-        // Phase 4.2.1: Look up type parameters for type aliases
+        // Look up type parameters for type aliases
         self.get_def_type_params(def_id)
     }
 

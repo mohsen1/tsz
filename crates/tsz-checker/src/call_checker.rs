@@ -471,7 +471,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Phase 6 Task 4: Overload contextual typing baseline.
+        // Overload contextual typing baseline.
         // First pass collects argument types once using a union of overload signatures.
         // If that fails to find a match, we run a second pass that re-collects arguments
         // per candidate signature with signature-specific contextual types. This helps
@@ -560,10 +560,10 @@ impl<'a> CheckerState<'a> {
             }
             match result {
                 CallResult::Success(return_type) => {
-                    // Phase 6 Task 4: Merge the node types inferred during argument collection
+                    // Merge the node types inferred during argument collection
                     self.ctx.node_types.extend(temp_node_types);
 
-                    // Phase 6 Task 4: CRITICAL FIX - Check excess properties against the MATCHED signature,
+                    // CRITICAL FIX - Check excess properties against the MATCHED signature,
                     // not the union. Using the union would allow properties that exist in other overloads
                     // but not in the selected one, causing false negatives.
                     let matched_sig_helper = ContextualTypeContext::with_expected_and_options(

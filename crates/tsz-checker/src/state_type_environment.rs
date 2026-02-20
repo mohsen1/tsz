@@ -117,13 +117,6 @@ impl<'a> CheckerState<'a> {
         Some(factory.object(properties))
     }
 
-    // Note: enum_kind and enum_member_type_from_decl are defined in type_checking.rs
-    //
-    // Note: Enumeration assignability logic has been migrated to the Solver
-    // (src/solver/compat.rs). The Checker's AssignabilityOverrideProvider implementation
-    // now returns None for enum cases, delegating all enumeration logic to the Solver.
-    // See commit 5b8c56551 and Phase 5 (Anti-Pattern 8.1 Removal) in session file.
-
     /// Evaluate complex type constructs for assignability checking.
     ///
     /// This function pre-processes types before assignability checking to ensure
@@ -1281,7 +1274,7 @@ impl<'a> CheckerState<'a> {
     /// // format_type(Complex) → "Array<{ id: number } | null>"
     /// ```
     pub fn format_type(&self, type_id: TypeId) -> String {
-        // Phase 4.2.1: Use full formatter with DefId context for proper type name display
+        // Use full formatter with DefId context for proper type name display
         let mut formatter = self.ctx.create_type_formatter();
         formatter.format(type_id)
     }

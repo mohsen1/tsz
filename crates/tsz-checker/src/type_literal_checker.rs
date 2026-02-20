@@ -77,9 +77,6 @@ impl<'a> CheckerState<'a> {
     }
 
     fn get_type_from_type_reference_in_type_literal(&mut self, idx: NodeIndex) -> TypeId {
-        // Phase 4.3: Migration to TypeData::Lazy(DefId) is complete for this file.
-        // Type references now use create_lazy_type_ref() instead of TypeData::Ref(SymbolRef).
-
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR; // Missing node - propagate error
         };
@@ -112,7 +109,7 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ERROR;
                 }
             };
-            // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+            // Use Lazy(DefId) instead of Ref(SymbolRef)
             let base_type = self.ctx.create_lazy_type_ref(sym_id);
             if has_type_args {
                 let type_args = type_ref
@@ -205,7 +202,7 @@ impl<'a> CheckerState<'a> {
                 let base_type = if let Some(type_param) = type_param {
                     type_param
                 } else if let Some(sym_id) = sym_id {
-                    // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+                    // Use Lazy(DefId) instead of Ref(SymbolRef)
                     self.ctx.create_lazy_type_ref(sym_id)
                 } else {
                     TypeId::ERROR
@@ -228,7 +225,7 @@ impl<'a> CheckerState<'a> {
                 if let TypeSymbolResolution::Type(sym_id) =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx)
                 {
-                    // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+                    // Use Lazy(DefId) instead of Ref(SymbolRef)
                     return self.ctx.create_lazy_type_ref(sym_id);
                 }
                 if let Some(type_param) = self.lookup_type_parameter(name) {
@@ -292,7 +289,7 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_identifier_symbol_in_type_position(type_name_idx)
             {
-                // Phase 4.3: Use Lazy(DefId) instead of Ref(SymbolRef)
+                // Use Lazy(DefId) instead of Ref(SymbolRef)
                 return self.ctx.create_lazy_type_ref(sym_id);
             }
 

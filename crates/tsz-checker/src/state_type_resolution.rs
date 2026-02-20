@@ -94,7 +94,7 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                // Phase 2: Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
+                // Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
                     self.resolve_type_symbol_for_lowering(node_idx)
                         .map(|sym_id| self.ctx.get_or_create_def_id(SymbolId(sym_id)))
@@ -399,7 +399,7 @@ impl<'a> CheckerState<'a> {
                 let type_param_bindings = self.get_type_param_bindings();
                 let type_resolver =
                     |node_idx: NodeIndex| self.resolve_type_symbol_for_lowering(node_idx);
-                // Phase 2: Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
+                // Use DefId resolver to prefer Lazy(DefId) over Ref(SymbolRef)
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<DefId> {
                     self.resolve_type_symbol_for_lowering(node_idx)
                         .map(|sym_id| self.ctx.get_or_create_def_id(SymbolId(sym_id)))
@@ -871,7 +871,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-            // Phase 4.3: For classes, return Lazy(DefId) to preserve class names in error messages
+            // For classes, return Lazy(DefId) to preserve class names in error messages
             // (e.g., "type MyClass" instead of expanded object shape)
             //
             // Special case: For merged class+namespace symbols, we still need the constructor type
@@ -893,7 +893,7 @@ impl<'a> CheckerState<'a> {
             }
             if symbol.flags & symbol_flags::INTERFACE != 0 {
                 if !symbol.declarations.is_empty() {
-                    // Phase 4.3: Return Lazy(DefId) for interface type references
+                    // Return Lazy(DefId) for interface type references
                     // This preserves interface names in error messages (e.g., "type A" instead of "{ x: number }")
                     //
                     // IMPORTANT: We must still compute and cache the structural type first so that:
@@ -998,7 +998,7 @@ impl<'a> CheckerState<'a> {
                     || !symbol.declarations.is_empty();
                 if has_type_alias_decl {
                     // Get the correct arena for the symbol (lib arena or current arena)
-                    // Phase 4.3: Return structural type directly for type alias type references
+                    // Return structural type directly for type alias type references
                     //
                     // NOTE: This was changed from returning Lazy(DefId) to fix a bug where
                     // conditional types in type aliases weren't fully resolved during assignability checking.
@@ -1108,7 +1108,7 @@ impl<'a> CheckerState<'a> {
                 && let Some((instance_type, params)) =
                     self.class_instance_type_with_params_from_symbol(sym_id)
             {
-                // Phase 4.2.1: Store type parameters for DefId-based resolution
+                // Store type parameters for DefId-based resolution
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                     self.ctx.insert_def_type_params(def_id, params.clone());
                 }
@@ -1239,7 +1239,7 @@ impl<'a> CheckerState<'a> {
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
 
-                // Phase 4.2: Add def_id_resolver for DefId-based resolution
+                // Add def_id_resolver for DefId-based resolution
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::def::DefId> {
                     if has_declaration_arenas {
                         multi_arena_resolve(node_idx)
@@ -1283,7 +1283,7 @@ impl<'a> CheckerState<'a> {
 
                 self.pop_type_parameters(updates);
 
-                // Phase 4.2.1: Store type parameters for DefId-based resolution
+                // Store type parameters for DefId-based resolution
                 if let Some(def_id) = self.ctx.get_existing_def_id(sym_id) {
                     self.ctx.insert_def_type_params(def_id, params.clone());
                 }

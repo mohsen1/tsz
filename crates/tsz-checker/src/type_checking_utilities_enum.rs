@@ -33,7 +33,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Returns the symbol ID if the type refers to an enum, None otherwise.
     pub(crate) fn enum_symbol_from_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        // Phase 4.2: Use resolve_type_to_symbol_id instead of get_ref_symbol
+        // Use resolve_type_to_symbol_id instead of get_ref_symbol
         let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.flags & symbol_flags::ENUM == 0 {
