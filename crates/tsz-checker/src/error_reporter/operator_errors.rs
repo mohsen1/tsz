@@ -103,39 +103,27 @@ impl<'a> CheckerState<'a> {
     // Binary Operator Errors
     // =========================================================================
 
-    /// Emit errors for binary operator type mismatches.
-    /// Emits TS18050 for null/undefined operands, TS2362 for left-hand side,
-    /// TS2363 for right-hand side, or TS2365 for general operator errors.
-    pub(crate) fn emit_binary_operator_error(
+    /// Emits TS18050 for null/undefined operands in binary operations.
+    pub(crate) fn check_and_emit_nullish_binary_operands(
         &mut self,
-        node_idx: NodeIndex,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
         left_type: TypeId,
         right_type: TypeId,
         op: &str,
-    ) {
-        // Suppress cascade errors from unresolved types
+    ) -> bool {
         if left_type == TypeId::ERROR
             || right_type == TypeId::ERROR
             || left_type == TypeId::UNKNOWN
             || right_type == TypeId::UNKNOWN
         {
-            return;
+            return false;
         }
 
-        // Track nullish operands for proper error reporting
         let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
         let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
         let mut emitted_nullish_error = false;
 
-        // TS18050 is emitted for null/undefined operands in arithmetic, bitwise, AND `+` operations.
-        // tsc emits TS18050 per-operand for each null/undefined value, not TS2365 for the expression.
-        // Relational operators (<, >, <=, >=) also emit TS18050, but only for literal null/undefined.
-        // For now, we only handle arithmetic/bitwise/+ since our evaluator doesn't distinguish
-        // literal values from variables typed as null/undefined.
-        // TS18050 only applies under strictNullChecks — without it, null/undefined are in
-        // every type's domain and should not trigger this error.
         let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
             && matches!(
                 op,
@@ -156,7 +144,6 @@ impl<'a> CheckerState<'a> {
                     | ">="
             );
 
-        // Emit TS18050 for null/undefined operands in arithmetic operations (except +)
         if left_is_nullish && should_emit_nullish_error {
             let value_name = if left_type == TypeId::NULL {
                 "null"
@@ -200,6 +187,61 @@ impl<'a> CheckerState<'a> {
                 emitted_nullish_error = true;
             }
         }
+
+        emitted_nullish_error
+    }
+
+    /// Emit errors for binary operator type mismatches.
+    /// TS2362 for left-hand side, TS2363 for right-hand side, or TS2365 for general operator errors.
+    pub(crate) fn emit_binary_operator_error(
+        &mut self,
+        node_idx: NodeIndex,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+        left_type: TypeId,
+        right_type: TypeId,
+        op: &str,
+        emitted_nullish_error: bool,
+    ) {
+        // Suppress cascade errors from unresolved types
+        if left_type == TypeId::ERROR
+            || right_type == TypeId::ERROR
+            || left_type == TypeId::UNKNOWN
+            || right_type == TypeId::UNKNOWN
+        {
+            return;
+        }
+
+        // Track nullish operands for proper error reporting
+        let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
+        let right_is_nullish = right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+
+        // TS18050 is emitted for null/undefined operands in arithmetic, bitwise, AND `+` operations.
+        // tsc emits TS18050 per-operand for each null/undefined value, not TS2365 for the expression.
+        // Relational operators (<, >, <=, >=) also emit TS18050, but only for literal null/undefined.
+        // For now, we only handle arithmetic/bitwise/+ since our evaluator doesn't distinguish
+        // literal values from variables typed as null/undefined.
+        // TS18050 only applies under strictNullChecks — without it, null/undefined are in
+        // every type's domain and should not trigger this error.
+        let should_emit_nullish_error = self.ctx.compiler_options.strict_null_checks
+            && matches!(
+                op,
+                "+" | "-"
+                    | "*"
+                    | "/"
+                    | "%"
+                    | "**"
+                    | "&"
+                    | "|"
+                    | "^"
+                    | "<<"
+                    | ">>"
+                    | ">>>"
+                    | "<"
+                    | ">"
+                    | "<="
+                    | ">="
+            );
 
         use tsz_solver::BinaryOpEvaluator;
 

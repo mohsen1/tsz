@@ -437,12 +437,11 @@ impl<'a> CheckerState<'a> {
                         // Const enums do not have a reverse mapping, so they shouldn't fall back to
                         // TS7053 string index signature checks like regular enums do.
                         let mut is_const_enum = false;
-                        if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access) {
-                            if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
-                                if symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0 {
-                                    is_const_enum = true;
-                                }
-                            }
+                        if let Some(sym_id) = self.enum_symbol_from_type(object_type_for_access)
+                            && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                            && symbol.flags & tsz_binder::symbol_flags::CONST_ENUM != 0
+                        {
+                            is_const_enum = true;
                         }
 
                         if is_const_enum {
