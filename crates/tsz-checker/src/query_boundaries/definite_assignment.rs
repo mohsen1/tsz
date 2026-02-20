@@ -9,18 +9,18 @@ pub(crate) fn constructor_assigned_properties(
     state: &CheckerState<'_>,
     body_idx: NodeIndex,
     tracked: &FxHashSet<PropertyKey>,
-    require_super: bool,
+    _require_super: bool,
 ) -> FxHashSet<PropertyKey> {
-    state.analyze_constructor_assignments(body_idx, tracked, require_super)
+    state.analyze_constructor_assignments(body_idx, tracked, false)
 }
 
 pub(crate) fn check_constructor_property_use_before_assignment(
     state: &mut CheckerState<'_>,
     body_idx: NodeIndex,
     tracked: &FxHashSet<PropertyKey>,
-    require_super: bool,
+    _require_super: bool,
 ) {
-    state.check_properties_used_before_assigned(body_idx, tracked, require_super);
+    state.check_properties_used_before_assigned(body_idx, tracked, false);
 }
 
 pub(crate) fn should_report_variable_use_before_assignment(
