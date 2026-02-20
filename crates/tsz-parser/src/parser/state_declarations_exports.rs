@@ -1,5 +1,10 @@
 //! Parser state - export declarations and control flow statement parsing.
+use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
 
+/// Parser state - export declarations and control flow statement parsing
+//
+//
+/// switch/try/do statements, string literals, and expression statements.
 use super::state::{CONTEXT_FLAG_DISALLOW_IN, ParserState};
 use crate::parser::{
     NodeIndex,
@@ -14,15 +19,14 @@ use tsz_scanner::SyntaxKind;
 use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
-    /// Parse export declaration
-    /// export { x, y };
-    /// export { x } from "mod";
-    /// export * from "mod";
-    /// export default x;
-    /// export function `f()` {}
-    /// export class C {}
+    // Parse export declaration
+    // export { x, y };
+    // export { x } from "mod";
+    // export * from "mod";
+    // export default x;
+    // export function `f()` {}
+    // export class C {}
     pub(crate) fn parse_export_declaration(&mut self) -> NodeIndex {
-        use tsz_common::diagnostics::diagnostic_codes;
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ExportKeyword);
 
@@ -109,7 +113,7 @@ impl ParserState {
         self.parse_export_declaration_or_statement(start_pos)
     }
 
-    /// Parse export import X = Y (re-export of import equals declaration)
+    // Parse export import X = Y (re-export of import equals declaration)
     pub(crate) fn parse_export_import_equals(&mut self, start_pos: u32) -> NodeIndex {
         // Parse the import equals declaration
         let import_decl = self.parse_import_equals_declaration();
@@ -132,7 +136,7 @@ impl ParserState {
         )
     }
 
-    /// Parse export = expression (CommonJS-style default export)
+    // Parse export = expression (CommonJS-style default export)
     pub(crate) fn parse_export_assignment(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::EqualsToken);
         let expression = self.parse_assignment_expression();
@@ -155,10 +159,10 @@ impl ParserState {
         )
     }
 
-    /// Parse `export as namespace Foo;` (UMD global namespace declaration)
-    ///
-    /// This creates a `NamespaceExportDeclaration` node. The syntax declares that the module's
-    /// exports are also available globally under the given namespace name.
+    // Parse `export as namespace Foo;` (UMD global namespace declaration)
+    //
+    // This creates a `NamespaceExportDeclaration` node. The syntax declares that the module's
+    // exports are also available globally under the given namespace name.
     pub(crate) fn parse_namespace_export_declaration(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsKeyword);
         self.parse_expected(SyntaxKind::NamespaceKeyword);
@@ -181,7 +185,7 @@ impl ParserState {
         )
     }
 
-    /// Parse export default
+    // Parse export default
     pub(crate) fn parse_export_default(&mut self, start_pos: u32) -> NodeIndex {
         self.parse_expected(SyntaxKind::DefaultKeyword);
 
@@ -224,7 +228,7 @@ impl ParserState {
         )
     }
 
-    /// Parse export * from "mod"
+    // Parse export * from "mod"
     pub(crate) fn parse_export_star(&mut self, start_pos: u32, is_type_only: bool) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsteriskToken);
 
@@ -264,7 +268,7 @@ impl ParserState {
         )
     }
 
-    /// Parse export { x, y } or export { x } from "mod"
+    // Parse export { x, y } or export { x } from "mod"
     pub(crate) fn parse_export_named(&mut self, start_pos: u32, is_type_only: bool) -> NodeIndex {
         let export_clause = self.parse_named_exports();
 
@@ -299,7 +303,7 @@ impl ParserState {
         )
     }
 
-    /// Parse named exports: { x, y as z }
+    // Parse named exports: { x, y as z }
     pub(crate) fn parse_named_exports(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::OpenBraceToken);
@@ -338,7 +342,7 @@ impl ParserState {
         )
     }
 
-    /// Parse export specifier: x or x as y
+    // Parse export specifier: x or x as y
     pub(crate) fn parse_export_specifier(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut is_type_only = false;
@@ -380,7 +384,7 @@ impl ParserState {
         )
     }
 
-    /// Parse exported declaration (export function, export class, etc.)
+    // Parse exported declaration (export function, export class, etc.)
     pub(crate) fn parse_export_declaration_or_statement(&mut self, start_pos: u32) -> NodeIndex {
         let declaration = self.parse_exported_declaration(start_pos);
 
@@ -430,7 +434,6 @@ impl ParserState {
             SyntaxKind::AtToken => self.parse_export_decorated_declaration(),
             // Duplicate 'export' modifier (e.g., `export export class Foo {}`)
             SyntaxKind::ExportKeyword => {
-                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     &format!("'{}' modifier already seen.", "export"),
                     diagnostic_codes::MODIFIER_ALREADY_SEEN,
@@ -554,10 +557,9 @@ impl ParserState {
         }
     }
 
-    /// Parse a string literal (used for module specifiers)
+    // Parse a string literal (used for module specifiers)
     pub(crate) fn parse_string_literal(&mut self) -> NodeIndex {
         if !self.is_token(SyntaxKind::StringLiteral) {
-            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.parse_error_at_current_token(
                 diagnostic_messages::STRING_LITERAL_EXPECTED,
                 diagnostic_codes::STRING_LITERAL_EXPECTED,
@@ -573,7 +575,6 @@ impl ParserState {
 
         // Check for unterminated string literal (TS1002)
         if (self.scanner.get_token_flags() & TokenFlags::Unterminated as u32) != 0 {
-            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
             self.parse_error_at(
                 start_pos,
                 1,
@@ -597,7 +598,7 @@ impl ParserState {
         )
     }
 
-    /// Parse if statement
+    // Parse if statement
     pub(crate) fn parse_if_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::IfKeyword);
@@ -643,7 +644,6 @@ impl ParserState {
         if let Some(node) = self.arena.get(then_statement)
             && node.kind == syntax_kind_ext::EMPTY_STATEMENT
         {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at(
                 node.pos,
                 node.end - node.pos,
@@ -673,7 +673,7 @@ impl ParserState {
         )
     }
 
-    /// Parse return statement
+    // Parse return statement
     pub(crate) fn parse_return_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ReturnKeyword);
@@ -697,7 +697,7 @@ impl ParserState {
         )
     }
 
-    /// Parse while statement
+    // Parse while statement
     pub(crate) fn parse_while_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::WhileKeyword);
@@ -734,7 +734,7 @@ impl ParserState {
         )
     }
 
-    /// Parse for statement (basic for loop only, not for-in/for-of yet)
+    // Parse for statement (basic for loop only, not for-in/for-of yet)
     pub(crate) fn parse_for_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ForKeyword);
@@ -793,7 +793,6 @@ impl ParserState {
         if self.is_token(SyntaxKind::InKeyword) {
             // TS1005: for-await can only be used with 'of', not 'in'
             if await_modifier {
-                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token("'of' expected.", diagnostic_codes::EXPECTED);
             }
             return self.parse_for_in_statement_rest(start_pos, initializer);
@@ -910,8 +909,6 @@ impl ParserState {
     }
 
     fn parse_for_variable_declarations(&mut self) -> Vec<NodeIndex> {
-        use tsz_common::diagnostics::diagnostic_codes;
-
         if self.is_for_variable_declaration_empty() {
             self.parse_error_at_current_token(
                 "Variable declaration list cannot be empty.",
@@ -1015,7 +1012,7 @@ impl ParserState {
         false
     }
 
-    /// Parse for-in statement after initializer: for (x in obj)
+    // Parse for-in statement after initializer: for (x in obj)
     pub(crate) fn parse_for_in_statement_rest(
         &mut self,
         start_pos: u32,
@@ -1028,7 +1025,6 @@ impl ParserState {
             && let Some(data) = self.arena.get_variable(node)
             && data.declarations.nodes.len() > 1
         {
-            use tsz_common::diagnostics::diagnostic_codes;
             // Report error at the second declaration
             if let Some(&second_decl) = data.declarations.nodes.get(1)
                 && let Some(second_node) = self.arena.get(second_decl)
@@ -1061,7 +1057,7 @@ impl ParserState {
         )
     }
 
-    /// Parse for-of statement after initializer: for (x of arr)
+    // Parse for-of statement after initializer: for (x of arr)
     pub(crate) fn parse_for_of_statement_rest(
         &mut self,
         start_pos: u32,
@@ -1075,7 +1071,6 @@ impl ParserState {
             && let Some(data) = self.arena.get_variable(node)
             && data.declarations.nodes.len() > 1
         {
-            use tsz_common::diagnostics::diagnostic_codes;
             // Report error at the second declaration
             if let Some(&second_decl) = data.declarations.nodes.get(1)
                 && let Some(second_node) = self.arena.get(second_decl)
@@ -1108,7 +1103,7 @@ impl ParserState {
         )
     }
 
-    /// Parse break statement
+    // Parse break statement
     pub(crate) fn parse_break_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::BreakKeyword);
@@ -1135,7 +1130,7 @@ impl ParserState {
         )
     }
 
-    /// Parse continue statement
+    // Parse continue statement
     pub(crate) fn parse_continue_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ContinueKeyword);
@@ -1162,10 +1157,8 @@ impl ParserState {
         )
     }
 
-    /// Parse throw statement
+    // Parse throw statement
     pub(crate) fn parse_throw_statement(&mut self) -> NodeIndex {
-        use tsz_common::diagnostics::diagnostic_codes;
-
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::ThrowKeyword);
 
@@ -1219,7 +1212,7 @@ impl ParserState {
         )
     }
 
-    /// Parse do-while statement
+    // Parse do-while statement
     pub(crate) fn parse_do_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DoKeyword);
@@ -1256,7 +1249,7 @@ impl ParserState {
         )
     }
 
-    /// Parse switch statement
+    // Parse switch statement
     pub(crate) fn parse_switch_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::SwitchKeyword);
@@ -1318,7 +1311,6 @@ impl ParserState {
                 // like `class D {}` are consumed in one shot (emitting only ONE TS1130),
                 // matching TSC's parseList / abortParsingListOrMoveToNextToken behavior.
                 if self.token_pos() != self.last_error_pos {
-                    use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
                     self.parse_error_at_current_token(
                         diagnostic_messages::CASE_OR_DEFAULT_EXPECTED,
                         diagnostic_codes::CASE_OR_DEFAULT_EXPECTED,
@@ -1365,7 +1357,6 @@ impl ParserState {
     ) -> NodeIndex {
         let clause_start = self.token_pos();
         if *seen_default && !*reported_duplicate_default {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "A 'default' clause cannot appear more than once in a 'switch' statement.",
                 diagnostic_codes::A_DEFAULT_CLAUSE_CANNOT_APPEAR_MORE_THAN_ONCE_IN_A_SWITCH_STATEMENT,
@@ -1409,13 +1400,11 @@ impl ParserState {
         statements
     }
 
-    /// Parse try statement
-    /// Parse orphan catch/finally block (missing try)
-    /// Emits TS1005: 'try' expected
-    /// Special case: if catch is followed by finally, absorb both with one error
+    // Parse try statement
+    // Parse orphan catch/finally block (missing try)
+    // Emits TS1005: 'try' expected
+    // Special case: if catch is followed by finally, absorb both with one error
     pub(crate) fn parse_orphan_catch_or_finally_block(&mut self) -> NodeIndex {
-        use tsz_common::diagnostics::diagnostic_codes;
-
         // Emit TS1005: 'try' expected
         self.parse_error_at_current_token("'try' expected.", diagnostic_codes::EXPECTED);
 
@@ -1523,7 +1512,6 @@ impl ParserState {
             && finally_block.is_none()
             && self.token_pos() != self.last_error_pos
         {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "catch or finally expected.",
                 diagnostic_codes::CATCH_OR_FINALLY_EXPECTED,
@@ -1543,7 +1531,7 @@ impl ParserState {
         )
     }
 
-    /// Parse with statement
+    // Parse with statement
     pub(crate) fn parse_with_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::WithKeyword);
@@ -1576,7 +1564,7 @@ impl ParserState {
         )
     }
 
-    /// Parse debugger statement
+    // Parse debugger statement
     pub(crate) fn parse_debugger_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::DebuggerKeyword);
@@ -1587,7 +1575,7 @@ impl ParserState {
             .add_token(syntax_kind_ext::DEBUGGER_STATEMENT, start_pos, end_pos)
     }
 
-    /// Parse expression statement
+    // Parse expression statement
     pub(crate) fn parse_expression_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -1608,7 +1596,6 @@ impl ParserState {
             // Emit error for unexpected token if we haven't already
             if self.token_pos() != self.last_error_pos && !self.is_token(SyntaxKind::EndOfFileToken)
             {
-                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Expression expected.",
                     diagnostic_codes::EXPRESSION_EXPECTED,

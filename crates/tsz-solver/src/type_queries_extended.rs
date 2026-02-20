@@ -546,9 +546,6 @@ pub enum ConstructSignatureKind {
     Callable(crate::types::CallableShapeId),
     /// Lazy reference (`DefId`) - resolve and check
     Lazy(crate::def::DefId),
-    /// Symbol reference - may be a class (deprecated)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    Ref(crate::types::SymbolRef),
     /// `TypeQuery` (typeof X) - check if class
     TypeQuery(crate::types::SymbolRef),
     /// Application type - needs evaluation
@@ -1565,9 +1562,6 @@ pub fn classify_for_constructor_return_merge(
 pub enum AbstractConstructorKind {
     /// `TypeQuery` (typeof `AbstractClass`) - check if symbol is abstract
     TypeQuery(crate::types::SymbolRef),
-    /// Ref - resolve and check (deprecated)
-    #[deprecated(note = "Lazy types don't use SymbolRef")]
-    Ref(crate::types::SymbolRef),
     /// Callable - check if marked as abstract
     Callable(crate::types::CallableShapeId),
     /// Application - check base type
