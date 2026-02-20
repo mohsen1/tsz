@@ -43,6 +43,7 @@ impl<'a> CheckerState<'a> {
         // Handle union targets first using type_queries
         if let Some(members) = query::union_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
+            let mut matched_shapes = Vec::new();
 
             for &member in &members {
                 let resolved_member = self.resolve_type_for_property_access(member);
@@ -65,16 +66,26 @@ impl<'a> CheckerState<'a> {
                     return;
                 }
 
-                target_shapes.push(shape);
+                target_shapes.push(shape.clone());
+
+                if self.ctx.types.is_subtype_of(source, member) {
+                    matched_shapes.push(shape);
+                }
             }
 
             if target_shapes.is_empty() {
                 return;
             }
 
+            let effective_shapes = if matched_shapes.is_empty() {
+                target_shapes
+            } else {
+                matched_shapes
+            };
+
             for source_prop in source_props {
                 // For unions, check if property exists in ANY member
-                let target_prop_types: Vec<TypeId> = target_shapes
+                let target_prop_types: Vec<TypeId> = effective_shapes
                     .iter()
                     .filter_map(|shape| {
                         shape
