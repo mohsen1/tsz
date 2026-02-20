@@ -632,9 +632,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     for &span_idx in &template.template_spans.nodes {
                         if let Some(span_node) = self.ctx.arena.get(span_idx)
                             && let Some(span) = self.ctx.arena.get_template_span(span_node)
-                            && !self.is_constant_expression(span.expression) {
-                                return false;
-                            }
+                            && !self.is_constant_expression(span.expression)
+                        {
+                            return false;
+                        }
                     }
                     true
                 } else {
