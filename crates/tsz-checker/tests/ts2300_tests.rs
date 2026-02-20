@@ -311,10 +311,7 @@ fn duplicate_symbol_computed_property() {
 }
 
 /// Test that duplicate import = alias declarations emit TS2300.
-// TODO: Fix bind_import_equals_declaration overwriting symbols instead of merging/conflicting.
-// Currently fails to report error because the second import overwrites the first.
 #[test]
-#[ignore = "bind_import_equals_declaration overwrites symbols instead of merging"]
 fn duplicate_import_equals_alias() {
     verify_errors(
         "namespace m { export const x = 1; } import a = m; import a = m;",
