@@ -311,8 +311,10 @@ fn duplicate_symbol_computed_property() {
 }
 
 /// Test that duplicate import = alias declarations emit TS2300.
+// TODO: Fix bind_import_equals_declaration overwriting symbols instead of merging/conflicting.
+// Currently fails to report error because the second import overwrites the first.
 #[test]
-#[ignore = "not yet implemented: duplicate import = alias detection"]
+#[ignore]
 fn duplicate_import_equals_alias() {
     verify_errors(
         "namespace m { export const x = 1; } import a = m; import a = m;",
@@ -330,4 +332,14 @@ fn import_equals_alias_conflicts_with_local() {
 
     let ts2440 = diagnostics.iter().filter(|d| d.code == 2440).count();
     assert!(ts2440 > 0, "Should emit TS2440");
+}
+
+/// Test for acceptableAlias1.ts false positive
+/// "export import X = N" should NOT be a duplicate identifier
+#[test]
+fn acceptable_alias_repro() {
+    verify_errors(
+        "namespace M { export namespace N {} export import X = N; } import r = M.X;",
+        &[],
+    );
 }

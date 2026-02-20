@@ -965,7 +965,7 @@ impl<'a> CheckerState<'a> {
 
             let has_non_block_scoped = declarations.iter().any(|(decl_idx, flags, _, _)| {
                 conflicts.contains(decl_idx) && {
-                    (flags & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::ALIAS)) == 0
+                    (flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0
                 }
             });
 
