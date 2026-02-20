@@ -255,6 +255,49 @@ impl<'a> CheckerState<'a> {
                 );
             }
         }
+
+        // Validate type arguments against their constraints
+        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
+            if let Some(constraint) = param.constraint {
+                if type_arg == TypeId::ERROR {
+                    continue;
+                }
+
+                if query::contains_type_parameters(self.ctx.types, type_arg) {
+                    continue;
+                }
+
+                let constraint = self.resolve_lazy_type(constraint);
+
+                let mut subst = tsz_solver::TypeSubstitution::new();
+                for (j, p) in type_params.iter().take(i + 1).enumerate() {
+                    if let Some(&arg) = type_args.get(j) {
+                        subst.insert(p.name, arg);
+                    }
+                }
+
+                let instantiated_constraint = if subst.is_empty() {
+                    constraint
+                } else {
+                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
+                };
+
+                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
+                    continue;
+                }
+
+                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
+
+                if !is_satisfied
+                    && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                        self.error_type_constraint_not_satisfied(
+                            type_arg,
+                            instantiated_constraint,
+                            arg_idx,
+                        );
+                    }
+            }
+        }
     }
 
     /// Validate explicit type arguments against their constraints for new expressions.
