@@ -1097,9 +1097,7 @@ const fn2: <T>(x: T) => void = function test(t) {
 };
 ";
 
-    let options = CheckerOptions {
-        strict: true,
-    };
+    let options = CheckerOptions { strict: true };
     let diagnostics = compile_and_get_diagnostics_with_options(source, options);
 
     let relevant: Vec<_> = diagnostics
@@ -1536,10 +1534,7 @@ class TimestampedUser extends Timestamped(User) {
 /// types from unions when computing contextual types for object literals.
 #[test]
 fn test_contextual_typing_union_with_undefined() {
-    let opts = CheckerOptions {
-        strict: true,
-    }
-    .apply_strict_defaults();
+    let opts = CheckerOptions { strict: true }.apply_strict_defaults();
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
 interface Opts {
@@ -1561,10 +1556,7 @@ a({ fn(x) {} });
 /// Issue: Contextual typing for property assignment fails when parameter type is a union
 #[test]
 fn test_contextual_typing_property_in_union_with_null() {
-    let opts = CheckerOptions {
-        strict: true,
-    }
-    .apply_strict_defaults();
+    let opts = CheckerOptions { strict: true }.apply_strict_defaults();
     let diagnostics = compile_and_get_diagnostics_with_options(
         r"
 interface Opts {

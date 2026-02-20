@@ -476,12 +476,17 @@ impl<'a> CheckerState<'a> {
                                 };
 
                                 // Check visibility (TS2420)
-                                let sym_flags = self.ctx.binder.get_node_symbol(class_member_idx)
+                                let sym_flags = self
+                                    .ctx
+                                    .binder
+                                    .get_node_symbol(class_member_idx)
                                     .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
                                     .map(|s| s.flags)
                                     .unwrap_or(0);
-                                let is_class_member_private = (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0;
-                                let is_class_member_protected = (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
+                                let is_class_member_private =
+                                    (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0;
+                                let is_class_member_protected =
+                                    (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
                                 if is_class_member_private {
                                     self.error_at_node(
                                         class_idx,
