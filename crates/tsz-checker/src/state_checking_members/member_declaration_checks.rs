@@ -361,9 +361,12 @@ impl<'a> CheckerState<'a> {
                     for &param_idx in &func_type.parameters.nodes {
                         self.check_parameter_type_for_missing_names(param_idx);
                     }
+                    let typeof_param_names =
+                        self.push_typeof_params_from_ast_nodes(&func_type.parameters.nodes);
                     if func_type.type_annotation.is_some() {
                         self.check_type_for_missing_names(func_type.type_annotation);
                     }
+                    self.pop_typeof_params_from_ast(typeof_param_names);
                     self.pop_type_parameters(updates);
                 }
             }
@@ -573,6 +576,52 @@ impl<'a> CheckerState<'a> {
         updates
     }
 
+    /// Push parameter names from an AST `Option<NodeList>` (signature parameters) into
+    /// `typeof_param_scope` so that `typeof paramName` in return types resolves without TS2304.
+    /// Returns the names pushed so they can be popped later.
+    fn push_typeof_params_from_ast_params(
+        &mut self,
+        params: &Option<tsz_parser::parser::NodeList>,
+    ) -> Vec<String> {
+        let Some(list) = params else {
+            return Vec::new();
+        };
+        self.push_typeof_params_from_ast_nodes(&list.nodes)
+    }
+
+    /// Push parameter names from a slice of parameter `NodeIndex` values into `typeof_param_scope`.
+    fn push_typeof_params_from_ast_nodes(&mut self, nodes: &[NodeIndex]) -> Vec<String> {
+        let mut names = Vec::new();
+        for &param_idx in nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            // Only handle simple identifier binding names (covers the common case).
+            let Some(name_node) = self.ctx.arena.get(param.name) else {
+                continue;
+            };
+            let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+                continue;
+            };
+            let name = ident.escaped_text.clone();
+            self.ctx
+                .typeof_param_scope
+                .insert(name.clone(), TypeId::ANY);
+            names.push(name);
+        }
+        names
+    }
+
+    /// Pop parameter names previously pushed by `push_typeof_params_from_ast_*`.
+    fn pop_typeof_params_from_ast(&mut self, names: Vec<String>) {
+        for name in names {
+            self.ctx.typeof_param_scope.remove(&name);
+        }
+    }
+
     pub(crate) fn check_type_member_for_missing_names(&mut self, member_idx: NodeIndex) {
         let Some(member_node) = self.ctx.arena.get(member_idx) else {
             return;
@@ -589,9 +638,13 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_type_for_missing_names(param_idx);
                 }
             }
+            // Push parameter names into typeof_param_scope so that `typeof paramName`
+            // in return type annotations can resolve without emitting TS2304.
+            let typeof_param_names = self.push_typeof_params_from_ast_params(&sig.parameters);
             if sig.type_annotation.is_some() {
                 self.check_type_for_missing_names(sig.type_annotation);
             }
+            self.pop_typeof_params_from_ast(typeof_param_names);
             self.pop_type_parameters(updates);
             return;
         }
