@@ -4,14 +4,14 @@
 #
 # Only tests crates affected by your changes. If you change files in
 # crates/tsz-scanner, it tests tsz-scanner + all dependents (parser,
-# binder, solver, checker, emitter, lsp) but NOT tsz-common.
+# binder, solver, checker, lowering, emitter, lsp) but NOT tsz-common.
 #
 # Steps:
 #   0. Reset TypeScript submodule to pinned SHA
 #   0b. Block TypeScript submodule changes
 #   1. Detect changed crates
 #   3. cargo fmt -- check & auto-fix
-#   4. cargo clippy -- deny warnings (only affected crates)
+#   4. cargo clippy -- deny warnings (affected crates + CI parity commands)
 #   5. Run unit tests (only affected crates)
 #   6. Microbenchmark regression check (if solver/checker changed)
 #   7. Conformance regression check (if solver/checker changed)
@@ -21,6 +21,7 @@
 #   TSZ_SKIP_CONFORMANCE=1   Skip the conformance regression check
 #   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
+#   TSZ_SKIP_LINT_PARITY=1   Skip CI parity lint commands
 #   TSZ_CLEAN_STALE_DAYS=7   Remove build artifacts older than N days
 #   TSZ_BENCH_UPDATE_BASELINE=1  Refresh local microbenchmark baseline
 #   TSZ_TEST_ALL=1           Force testing all crates
@@ -36,6 +37,7 @@ cd "$ROOT_DIR"
 SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
 SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
+SKIP_LINT_PARITY="${TSZ_SKIP_LINT_PARITY:-}"
 CLEAN_STALE_DAYS="${TSZ_CLEAN_STALE_DAYS:-7}"
 
 echo "Pre-commit checks..."
@@ -93,7 +95,7 @@ fi
 # ─── 1. Detect affected workspace crates ─────────────────────────────────────
 #
 # Dependency graph (linear pipeline):
-#   common -> scanner -> parser -> binder -> solver -> checker -> emitter, lsp
+#   common -> scanner -> parser -> binder -> solver -> checker -> lowering -> emitter, lsp
 #
 # If crate X changed, all crates that depend on X (transitively) need retesting.
 # Uses simple string variable as a set (bash 3.2 compatible, no associative arrays).
@@ -114,24 +116,26 @@ add_with_dependents() {
     case "$1" in
         tsz-common)
             add_crate tsz-common; add_crate tsz-scanner; add_crate tsz-parser
-            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker; add_crate tsz-lowering
             add_crate tsz-emitter; add_crate tsz-lsp ;;
         tsz-scanner)
             add_crate tsz-scanner; add_crate tsz-parser
-            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker; add_crate tsz-lowering
             add_crate tsz-emitter; add_crate tsz-lsp ;;
         tsz-parser)
             add_crate tsz-parser
-            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker; add_crate tsz-lowering
             add_crate tsz-emitter; add_crate tsz-lsp ;;
         tsz-binder)
-            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-binder; add_crate tsz-solver; add_crate tsz-checker; add_crate tsz-lowering
             add_crate tsz-emitter; add_crate tsz-lsp ;;
         tsz-solver)
-            add_crate tsz-solver; add_crate tsz-checker
+            add_crate tsz-solver; add_crate tsz-checker; add_crate tsz-lowering
             add_crate tsz-emitter; add_crate tsz-lsp ;;
         tsz-checker)
             add_crate tsz-checker; add_crate tsz-emitter; add_crate tsz-lsp ;;
+        tsz-lowering)
+            add_crate tsz-lowering ;;
         tsz-emitter)
             add_crate tsz-emitter ;;
         tsz-lsp)
@@ -149,6 +153,7 @@ for file in $CHANGED_RS; do
         crates/tsz-binder/*)  add_with_dependents tsz-binder ;;
         crates/tsz-solver/*)  add_with_dependents tsz-solver ;;
         crates/tsz-checker/*) add_with_dependents tsz-checker ;;
+        crates/tsz-lowering/*) add_with_dependents tsz-lowering ;;
         crates/tsz-emitter/*) add_with_dependents tsz-emitter ;;
         crates/tsz-lsp/*)     add_with_dependents tsz-lsp ;;
         src/*)                 ROOT_CHANGED=true ;;
@@ -163,7 +168,7 @@ fi
 
 # Root or force-all: test everything
 if [ "$ROOT_CHANGED" = "true" ] || [ "${TSZ_TEST_ALL:-}" = "1" ]; then
-    AFFECTED="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-emitter tsz-lsp"
+    AFFECTED="tsz-common tsz-scanner tsz-parser tsz-binder tsz-solver tsz-checker tsz-lowering tsz-emitter tsz-lsp"
 fi
 
 # Normalize: trim leading/trailing whitespace
@@ -175,12 +180,12 @@ if [ -z "$AFFECTED" ]; then
 fi
 
 NUM_AFFECTED=$(echo $AFFECTED | wc -w | xargs)
-echo "  Affected crates: $AFFECTED ($NUM_AFFECTED/8)"
+echo "  Affected crates: $AFFECTED ($NUM_AFFECTED/9)"
 
-# Check if solver/checker changed (needed for bench/conformance)
-SOLVER_OR_CHECKER_CHANGED=false
-if has_crate tsz-solver || has_crate tsz-checker; then
-    SOLVER_OR_CHECKER_CHANGED=true
+# Check if solver/checker/lowering changed (needed for bench/conformance/root tests)
+SOLVER_CHECKER_OR_LOWERING_CHANGED=false
+if has_crate tsz-solver || has_crate tsz-checker || has_crate tsz-lowering; then
+    SOLVER_CHECKER_OR_LOWERING_CHANGED=true
 fi
 
 # ─── 2. Clean stale target artifacts ─────────────────────────────────────────
@@ -282,6 +287,26 @@ if [ "$ROOT_CHANGED" = "true" ]; then
         exit 1
     }
 fi
+
+if [ "$SKIP_LINT_PARITY" = "1" ]; then
+    echo "  CI lint parity checks skipped (TSZ_SKIP_LINT_PARITY=1)"
+else
+    # Match CI lint commands exactly to prevent local-vs-CI drift.
+    CI_CLIPPY_PKGS="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp"
+    CI_CLIPPY_OUTPUT=$(cargo clippy $CI_CLIPPY_PKGS --all-targets -- -D warnings 2>&1) || {
+        echo ""
+        echo "ERROR: CI parity lint failed (workspace crates deny warnings):"
+        echo "$CI_CLIPPY_OUTPUT" | tail -30
+        exit 1
+    }
+
+    FULL_WS_CLIPPY_OUTPUT=$(cargo clippy --all-targets --all-features 2>&1) || {
+        echo ""
+        echo "ERROR: CI parity lint failed (full workspace):"
+        echo "$FULL_WS_CLIPPY_OUTPUT" | tail -30
+        exit 1
+    }
+fi
 echo "  Clippy passed (zero warnings)"
 
 # ─── 4.5. Architecture guardrail (checker boundary) ──────────────────────────
@@ -317,7 +342,7 @@ fi
 
 # Only include root tsz crate if root files or solver/checker changed.
 # Previously this was unconditional, forcing slow integration tests on every commit.
-if [ "$ROOT_CHANGED" = "true" ] || [ "$SOLVER_OR_CHECKER_CHANGED" = "true" ]; then
+if [ "$ROOT_CHANGED" = "true" ] || [ "$SOLVER_CHECKER_OR_LOWERING_CHANGED" = "true" ]; then
     if ! echo "$NEXTEST_FILTER" | grep -q "package(tsz)"; then
         NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz)"
     fi
@@ -353,7 +378,7 @@ echo "  Tests passed"
 
 # if [ "$SKIP_BENCH" = "1" ]; then
 #     echo "5/6 Microbenchmark check skipped (TSZ_SKIP_BENCH=1)"
-# elif [ "$SOLVER_OR_CHECKER_CHANGED" = "false" ]; then
+# elif [ "$SOLVER_CHECKER_OR_LOWERING_CHANGED" = "false" ]; then
 #     echo "5/6 Microbenchmark check skipped (solver/checker unchanged)"
 # else
 #     echo "5/6 Microbenchmark regression check..."
@@ -381,8 +406,8 @@ echo "5/6 Microbenchmark check disabled"
 
 if [ "$SKIP_CONFORMANCE" = "1" ]; then
     echo "6/6 Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
-elif [ "$SOLVER_OR_CHECKER_CHANGED" = "false" ]; then
-    echo "6/6 Conformance check skipped (solver/checker unchanged)"
+elif [ "$SOLVER_CHECKER_OR_LOWERING_CHANGED" = "false" ]; then
+    echo "6/6 Conformance check skipped (solver/checker/lowering unchanged)"
 else
     echo "6/6 Conformance regression check..."
 

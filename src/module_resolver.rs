@@ -2284,7 +2284,6 @@ impl ModuleResolver {
 }
 
 /// Parse a package specifier into package name and subpath
-
 #[cfg(test)]
 mod tests {
     use super::*;

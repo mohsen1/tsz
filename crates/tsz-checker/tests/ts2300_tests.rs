@@ -1,13 +1,12 @@
 #![allow(warnings)]
 //! Tests for TS2300 emission ("Duplicate identifier")
 
-use crate::CheckerState;
-use crate::context::CheckerOptions;
-use crate::diagnostics::diagnostic_codes;
 use std::path::Path;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_binder::lib_loader::LibFile;
+use tsz_checker::context::CheckerOptions;
+use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -80,7 +79,7 @@ fn get_line_and_col(source: &str, offset: u32) -> (u32, u32) {
 fn verify_errors(
     source: &str,
     expected: &[(u32, u32, &str)],
-) -> Vec<crate::diagnostics::Diagnostic> {
+) -> Vec<tsz_checker::diagnostics::Diagnostic> {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -107,7 +106,7 @@ fn verify_errors(
     if !lib_files.is_empty() {
         let lib_contexts: Vec<_> = lib_files
             .iter()
-            .map(|lib| crate::context::LibContext {
+            .map(|lib| tsz_checker::context::LibContext {
                 arena: Arc::clone(&lib.arena),
                 binder: Arc::clone(&lib.binder),
             })
