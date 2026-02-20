@@ -350,6 +350,19 @@ impl<'a> CheckerState<'a> {
             if !is_function_scoped {
                 return false;
             }
+
+            if let Some(usage_node) = self.ctx.arena.get(idx) {
+                // If usage is textually at or after declaration, it's assigned
+                if usage_node.pos >= decl_node.pos {
+                    return false;
+                }
+                // If usage is inside a nested function relative to the declaration, skip
+                if self.find_enclosing_function_or_source_file(decl_id_to_check)
+                    != self.find_enclosing_function_or_source_file(idx)
+                {
+                    return false;
+                }
+            }
         }
 
         // If there's a definite assignment assertion (!), skip check
