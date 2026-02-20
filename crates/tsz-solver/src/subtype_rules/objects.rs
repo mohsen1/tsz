@@ -93,22 +93,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source_shape_id: Option<ObjectShapeId>,
         target: &ObjectShape,
     ) -> SubtypeResult {
-        // Fast path: Nominal inheritance check for class instances
-        // If both source and target are class instances with symbols,
-        // check if source is derived from target (O(1) lookup)
-        if let (Some(source_sym), Some(target_sym)) = (source.symbol, target.symbol)
-            && let Some(graph) = self.inheritance_graph
-        {
-            // Convert SymbolRef to SymbolId for InheritanceGraph
-            // Both types wrap u32, so we extract the inner value
-            use tsz_binder::SymbolId;
-            let source_id = SymbolId(source_sym.0);
-            let target_id = SymbolId(target_sym.0);
-            if graph.is_derived_from(source_id, target_id) {
-                return SubtypeResult::True;
-            }
-        }
-
         // Private brand checking for nominal typing of classes with private fields
         if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
             return SubtypeResult::False;
