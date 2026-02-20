@@ -929,11 +929,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 match member.kind {
                     CALL_SIGNATURE => {
                         let (params, this_type) = self.extract_params_from_signature(sig);
-                        let return_type = if !sig.type_annotation.is_none() {
-                            self.check(sig.type_annotation)
-                        } else {
-                            TypeId::ANY
-                        };
+                        let return_type = self
+                            .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
                         call_signatures.push(CallSignature {
                             type_params: Vec::new(),
                             params,
@@ -945,11 +942,8 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     }
                     CONSTRUCT_SIGNATURE => {
                         let (params, this_type) = self.extract_params_from_signature(sig);
-                        let return_type = if !sig.type_annotation.is_none() {
-                            self.check(sig.type_annotation)
-                        } else {
-                            TypeId::ANY
-                        };
+                        let return_type = self
+                            .resolve_return_type_with_params_in_scope(sig.type_annotation, &params);
                         construct_signatures.push(CallSignature {
                             type_params: Vec::new(),
                             params,
@@ -967,11 +961,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                         if member.kind == METHOD_SIGNATURE {
                             let (params, this_type) = self.extract_params_from_signature(sig);
-                            let return_type = if !sig.type_annotation.is_none() {
-                                self.check(sig.type_annotation)
-                            } else {
-                                TypeId::ANY
-                            };
+                            let return_type = self.resolve_return_type_with_params_in_scope(
+                                sig.type_annotation,
+                                &params,
+                            );
                             let shape = FunctionShape {
                                 type_params: Vec::new(),
                                 params,
@@ -1187,6 +1180,16 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             && expr_type != TypeId::ERROR
         {
             return expr_type;
+        }
+
+        // Check typeof_param_scope — resolves `typeof paramName` in return type
+        // annotations where the parameter isn't a file-level binding.
+        if let Some(expr_node) = self.ctx.arena.get(type_query.expr_name)
+            && expr_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && let Some(ident) = self.ctx.arena.get_identifier(expr_node)
+            && let Some(&param_type) = self.ctx.typeof_param_scope.get(ident.escaped_text.as_str())
+        {
+            return param_type;
         }
 
         // For qualified names (e.g., typeof M.F2), resolve the symbol through
@@ -1457,6 +1460,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         (params, this_type)
+    }
+
+    /// Resolve return type annotation with parameter names in scope for `typeof`.
+    ///
+    /// Pushes parameter names into `typeof_param_scope` so that `typeof paramName`
+    /// in the return type annotation resolves to the parameter's declared type.
+    fn resolve_return_type_with_params_in_scope(
+        &mut self,
+        type_annotation: NodeIndex,
+        params: &[tsz_solver::ParamInfo],
+    ) -> TypeId {
+        if type_annotation.is_none() {
+            return TypeId::ANY;
+        }
+
+        // Push param names into typeof_param_scope
+        for param in params {
+            if let Some(name_atom) = param.name {
+                let name = self.ctx.types.resolve_atom(name_atom);
+                self.ctx.typeof_param_scope.insert(name, param.type_id);
+            }
+        }
+
+        let return_type = self.check(type_annotation);
+
+        // Clear typeof_param_scope
+        for param in params {
+            if let Some(name_atom) = param.name {
+                let name = self.ctx.types.resolve_atom(name_atom);
+                self.ctx.typeof_param_scope.remove(&name);
+            }
+        }
+
+        return_type
     }
 
     /// Get parameter name from a binding name node.

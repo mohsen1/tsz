@@ -377,6 +377,11 @@ pub struct CheckerContext<'a> {
     /// Current type parameter scope.
     pub type_parameter_scope: FxHashMap<String, TypeId>,
 
+    /// Temporary scope for value parameters visible to `typeof` in return type annotations.
+    /// Populated during signature processing so `typeof paramName` in return types
+    /// can resolve to the parameter's type.
+    pub typeof_param_scope: FxHashMap<String, TypeId>,
+
     /// Contextual type for expression being checked.
     pub contextual_type: Option<TypeId>,
 

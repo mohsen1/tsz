@@ -94,6 +94,7 @@ impl<'a> CheckerState<'a> {
                     let (type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
                     let (params, this_type) = self.extract_params_from_signature(sig);
+                    self.push_typeof_param_scope(&params);
                     let (return_type, type_predicate) = if !sig.type_annotation.is_none() {
                         let is_predicate = self
                             .ctx
@@ -109,6 +110,7 @@ impl<'a> CheckerState<'a> {
                         // Return UNKNOWN instead of ANY for missing return type annotation
                         (TypeId::UNKNOWN, None)
                     };
+                    self.pop_typeof_param_scope(&params);
 
                     call_signatures.push(SolverCallSignature {
                         type_params,
@@ -126,6 +128,7 @@ impl<'a> CheckerState<'a> {
                     let (type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
                     let (params, this_type) = self.extract_params_from_signature(sig);
+                    self.push_typeof_param_scope(&params);
                     let (return_type, type_predicate) = if !sig.type_annotation.is_none() {
                         let is_predicate = self
                             .ctx
@@ -141,6 +144,7 @@ impl<'a> CheckerState<'a> {
                         // Return UNKNOWN instead of ANY for missing return type annotation
                         (TypeId::UNKNOWN, None)
                     };
+                    self.pop_typeof_param_scope(&params);
 
                     construct_signatures.push(SolverCallSignature {
                         type_params,
