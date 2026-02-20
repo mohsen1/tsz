@@ -618,12 +618,29 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // Literals are always constant
             k if k == SyntaxKind::NumericLiteral as u16 => true,
             k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => true,
             k if k == SyntaxKind::TrueKeyword as u16 => true,
             k if k == SyntaxKind::FalseKeyword as u16 => true,
             k if k == SyntaxKind::NullKeyword as u16 => true,
 
             // Identifiers (enum member references) are constant
             k if k == SyntaxKind::Identifier as u16 => true,
+
+            // Template expressions
+            k if k == tsz_parser::parser::syntax_kind_ext::TEMPLATE_EXPRESSION => {
+                if let Some(template) = self.ctx.arena.get_template_expr(node) {
+                    for &span_idx in &template.template_spans.nodes {
+                        if let Some(span_node) = self.ctx.arena.get(span_idx)
+                            && let Some(span) = self.ctx.arena.get_template_span(span_node)
+                            && !self.is_constant_expression(span.expression) {
+                                return false;
+                            }
+                    }
+                    true
+                } else {
+                    false
+                }
+            }
 
             // Default case: check using accessor methods
             _ => {
