@@ -392,6 +392,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
                     // Contravariant parameters: target_param <: source_param
                     for (s_p, t_p) in s_params_unpacked.iter().zip(t_params_unpacked.iter()) {
+                        if t_p.rest || s_p.rest {
+                            // If target has a rest parameter, we stop the 1-to-1 mapping
+                            // The special cases below will handle inferring the rest tuple
+                            // or array element type.
+                            break;
+                        }
                         self.constrain_types(ctx, var_map, t_p.type_id, s_p.type_id, priority);
                     }
 
@@ -837,7 +843,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             (Some(TypeData::Application(s_app_id)), Some(TypeData::Application(t_app_id))) => {
                 let s_app = self.interner.type_application(s_app_id);
                 let t_app = self.interner.type_application(t_app_id);
-                if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
+                let evaluated_source = self.checker.evaluate_type(source);
+                let evaluated_target = self.checker.evaluate_type(target);
+                if evaluated_source != source || evaluated_target != target {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        evaluated_source,
+                        evaluated_target,
+                        priority,
+                    );
+                } else if s_app.base == t_app.base && s_app.args.len() == t_app.args.len() {
                     for (s_arg, t_arg) in s_app.args.iter().zip(t_app.args.iter()) {
                         self.constrain_types(ctx, var_map, *s_arg, *t_arg, priority);
                     }

@@ -545,7 +545,53 @@ fn extract_param_type_at(
             {
                 return Some(last_elem.type_id);
             }
+            // If out of bounds of the tuple constraint without rest, return undefined/unknown?
+            // Fall through
+        } else if let Some(TypeData::TypeParameter(param_info)) = db.lookup(last_param.type_id) {
+            if let Some(constraint) = param_info.constraint {
+                let mut mock_params = params.to_vec();
+                mock_params.last_mut().unwrap().type_id = constraint;
+                return extract_param_type_at(db, &mock_params, index);
+            }
+        } else if let Some(TypeData::Intersection(members)) = db.lookup(last_param.type_id) {
+            let members = db.type_list(members);
+            for &m in members.iter() {
+                let mut mock_params = params.to_vec();
+                mock_params.last_mut().unwrap().type_id = m;
+                if let Some(param_type) = extract_param_type_at(db, &mock_params, index) {
+                    // Try to evaluate it if it's a generic type or placeholder to see if it yields a concrete type
+                    if !matches!(
+                        db.lookup(param_type),
+                        Some(TypeData::TypeParameter(_) | TypeData::Intersection(_))
+                    ) {
+                        return Some(param_type);
+                    }
+                }
+            }
+            // If all returned generic types, just fall through
+        } else if let Some(TypeData::Application(_app_id)) = db.lookup(last_param.type_id) {
+            let evaluated = crate::evaluate::evaluate_type(db, last_param.type_id);
+            if evaluated != last_param.type_id {
+                let mut mock_params = params.to_vec();
+                mock_params.last_mut().unwrap().type_id = evaluated;
+                return extract_param_type_at(db, &mock_params, index);
+            }
         }
+
+        // If we still didn't extract a specific type, check constraint
+        if let Some(constraint) =
+            crate::type_queries::get_type_parameter_constraint(db, last_param.type_id)
+        {
+            let mut mock_params = params.to_vec();
+            mock_params.last_mut().unwrap().type_id = constraint;
+            if let Some(param_type) = extract_param_type_at(db, &mock_params, index) {
+                // If it yielded something different than the constraint itself, use it
+                if param_type != constraint {
+                    return Some(param_type);
+                }
+            }
+        }
+
         return Some(last_param.type_id);
     }
 

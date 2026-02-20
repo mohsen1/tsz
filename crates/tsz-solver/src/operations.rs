@@ -541,13 +541,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // This handles cases like: Function & { prop: number }
                 self.resolve_intersection_call(func_type, list_id, arg_types)
             }
-            TypeData::Application(app_id) => {
+            TypeData::Application(_app_id) => {
                 // Handle Application types (e.g., GenericCallable<string>)
-                // Get the application and resolve the call on its base type
-                let app = self.interner.type_application(app_id);
-                // Resolve the call on the base type with type arguments applied
-                // The application's base should already be a callable type after type evaluation
-                self.resolve_call(app.base, arg_types)
+                // Evaluate the application type to properly instantiate its base type with arguments
+                let evaluated = self.checker.evaluate_type(func_type);
+                if evaluated != func_type {
+                    self.resolve_call(evaluated, arg_types)
+                } else {
+                    CallResult::NotCallable { type_id: func_type }
+                }
             }
             TypeData::TypeParameter(param_info) => {
                 // For type parameters with callable constraints (e.g., T extends { (): string }),

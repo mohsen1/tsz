@@ -597,12 +597,44 @@ impl<'a> CheckerState<'a> {
             !is_const && !is_readonly && self.check_generic_indexed_write_restriction(left_idx);
 
         if !is_const && !is_readonly && !blocked_generic_index_write && left_type != TypeId::ANY {
+            let mut check_assignability = !is_array_destructuring;
+
+            if check_assignability {
+                let widened_left = tsz_solver::widening::widen_type(self.ctx.types, left_type);
+                if widened_left != left_type
+                    && let Some(right_node) = self.ctx.arena.get(right_idx)
+                {
+                    use tsz_parser::parser::syntax_kind_ext;
+                    use tsz_scanner::SyntaxKind;
+                    if right_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                        && let Some(bin) = self.ctx.arena.get_binary_expr(right_node)
+                    {
+                        let op = bin.operator_token;
+                        let is_compound_like = op == SyntaxKind::PlusToken as u16
+                            || op == SyntaxKind::MinusToken as u16
+                            || op == SyntaxKind::AsteriskToken as u16
+                            || op == SyntaxKind::SlashToken as u16
+                            || op == SyntaxKind::PercentToken as u16
+                            || op == SyntaxKind::AsteriskAsteriskToken as u16
+                            || op == SyntaxKind::LessThanLessThanToken as u16
+                            || op == SyntaxKind::GreaterThanGreaterThanToken as u16
+                            || op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16;
+
+                        if is_compound_like
+                            && self.ctx.types.is_assignable_to(right_type, widened_left)
+                        {
+                            check_assignability = false;
+                        }
+                    }
+                }
+            }
+
             self.check_assignment_compatibility(
                 left_idx,
                 right_idx,
                 right_type,
                 left_type,
-                !is_array_destructuring,
+                check_assignability, // check_assignability
                 true,
             );
 
