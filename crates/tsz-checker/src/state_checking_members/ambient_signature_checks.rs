@@ -588,11 +588,6 @@ impl<'a> CheckerState<'a> {
 
     /// Check a constructor declaration.
     pub(crate) fn check_constructor_declaration(&mut self, member_idx: NodeIndex) {
-        println!(
-            ">>> check_constructor_declaration CALLED for {}",
-            member_idx.0
-        );
-
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
 
         let Some(node) = self.ctx.arena.get(member_idx) else {

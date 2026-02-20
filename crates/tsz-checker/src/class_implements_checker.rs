@@ -278,7 +278,7 @@ impl<'a> CheckerState<'a> {
             String::from("<anonymous>")
         };
 
-        let class_namespace = self.enclosing_namespace_node(class_idx);
+        let _class_namespace = self.enclosing_namespace_node(class_idx);
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -319,74 +319,69 @@ impl<'a> CheckerState<'a> {
                     let interface_name = self
                         .heritage_name_text(expr_idx)
                         .unwrap_or_else(|| symbol.escaped_name.clone());
-                    let interface_idx = symbol
-                        .declarations
-                        .iter()
-                        .copied()
-                        .find(|&decl_idx| {
-                            self.enclosing_namespace_node(decl_idx) == class_namespace
-                        })
-                        .or_else(|| {
-                            if !symbol.value_declaration.is_none() {
-                                Some(symbol.value_declaration)
-                            } else {
-                                symbol.declarations.first().copied()
+
+                    let mut all_interface_members = Vec::new();
+                    let mut interface_type_params = None;
+                    let mut has_private_members = false;
+                    let mut is_class = false;
+                    let mut is_interface = false;
+                    let mut early_exit = false;
+
+                    for &decl_idx in &symbol.declarations {
+                        if let Some(node) = self.ctx.arena.get(decl_idx) {
+                            if node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                                is_class = true;
+                                if let Some(base_class_data) = self.ctx.arena.get_class(node) {
+                                    if self.class_has_private_or_protected_members(base_class_data)
+                                    {
+                                        has_private_members = true;
+                                    }
+                                    all_interface_members.extend(&base_class_data.members.nodes);
+                                    if interface_type_params.is_none() {
+                                        interface_type_params =
+                                            base_class_data.type_parameters.clone();
+                                    }
+                                }
+                            } else if node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                                is_interface = true;
+                                if let Some(interface_decl) = self.ctx.arena.get_interface(node) {
+                                    if self.interface_extends_class_with_inaccessible_members(
+                                        decl_idx,
+                                        interface_decl,
+                                        class_idx,
+                                        class_data,
+                                    ) {
+                                        self.error_at_node(
+                                            type_idx,
+                                            &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
+                                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                        );
+                                        early_exit = true;
+                                        break;
+                                    }
+                                    all_interface_members.extend(&interface_decl.members.nodes);
+                                    if interface_type_params.is_none() {
+                                        interface_type_params =
+                                            interface_decl.type_parameters.clone();
+                                    }
+                                }
                             }
-                        });
-                    let Some(interface_idx) = interface_idx else {
-                        continue;
-                    };
-
-                    let Some(interface_node) = self.ctx.arena.get(interface_idx) else {
-                        continue;
-                    };
-
-                    // TS2720: `implements` can reference a class symbol. When that class has
-                    // private/protected members, structural implementation is invalid and tsc
-                    // reports "Did you mean to extend ...".
-                    if interface_node.kind == syntax_kind_ext::CLASS_DECLARATION {
-                        if let Some(base_class_data) = self.ctx.arena.get_class(interface_node)
-                            && self.class_has_private_or_protected_members(base_class_data)
-                        {
-                            let message = format!(
-                                "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
-                            );
-                            self.error_at_node(
-                                type_idx,
-                                &message,
-                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
-                            );
-
-                            // For implements-on-class with private/protected members, tsc
-                            // reports TS2720 as the primary diagnostic.
                         }
+                    }
+
+                    if early_exit {
                         continue;
                     }
 
-                    // Check if it's actually an interface declaration
-                    if interface_node.kind != syntax_kind_ext::INTERFACE_DECLARATION {
-                        continue;
-                    }
-
-                    let Some(interface_decl) = self.ctx.arena.get_interface(interface_node) else {
-                        continue;
-                    };
-
-                    // Check if interface extends a class with private/protected members (TS2420)
-                    // Only error if the implementing class doesn't extend the same base class
-                    if self.interface_extends_class_with_inaccessible_members(
-                        interface_idx,
-                        interface_decl,
-                        class_idx,
-                        class_data,
-                    ) {
-                        self.error_at_node(
-                            type_idx,
-                            &format!(
-                                "Class '{class_name}' incorrectly implements interface '{interface_name}'."
-                            ),
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                    if has_private_members {
+                        let message = format!(
+                            "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
                         );
+                        self.error_at_node(type_idx, &message, diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER);
+                        continue;
+                    }
+
+                    if !is_class && !is_interface {
                         continue;
                     }
 
@@ -406,7 +401,7 @@ impl<'a> CheckerState<'a> {
                     // Push interface type parameters into scope so they're available when
                     // checking member types (fixes TS2304 false positive for interface type params)
                     let (interface_type_params, interface_type_param_updates) =
-                        self.push_type_parameters(&interface_decl.type_parameters);
+                        self.push_type_parameters(&interface_type_params);
 
                     // Fill in missing type arguments with defaults/constraints/unknown
                     if type_args.len() < interface_type_params.len() {
@@ -429,7 +424,7 @@ impl<'a> CheckerState<'a> {
                         &type_args,
                     );
 
-                    for &member_idx in &interface_decl.members.nodes {
+                    for &member_idx in &all_interface_members {
                         let Some(member_node) = self.ctx.arena.get(member_idx) else {
                             continue;
                         };
@@ -442,6 +437,10 @@ impl<'a> CheckerState<'a> {
                         // Skip non-property/method signatures
                         if member_node.kind != METHOD_SIGNATURE
                             && member_node.kind != PROPERTY_SIGNATURE
+                            && member_node.kind != syntax_kind_ext::METHOD_DECLARATION
+                            && member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION
+                            && member_node.kind != syntax_kind_ext::GET_ACCESSOR
+                            && member_node.kind != syntax_kind_ext::SET_ACCESSOR
                         {
                             continue;
                         }
@@ -468,8 +467,13 @@ impl<'a> CheckerState<'a> {
                                     computed
                                 };
                             // Get the expected type from the interface and instantiate with type arguments
-                            let interface_member_type =
-                                self.get_type_of_interface_member_simple(member_idx);
+                            let interface_member_type = if member_node.kind == METHOD_SIGNATURE
+                                || member_node.kind == PROPERTY_SIGNATURE
+                            {
+                                self.get_type_of_interface_member_simple(member_idx)
+                            } else {
+                                self.get_type_of_class_member(member_idx)
+                            };
                             let interface_member_type = tsz_solver::instantiate_type(
                                 self.ctx.types,
                                 interface_member_type,
@@ -525,12 +529,13 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Report error for missing members
-                    let diagnostic_code =
-                        if interface_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                            diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
-                        } else {
-                            diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                        };
+                    let diagnostic_code = if is_class {
+                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
+                    } else if interface_has_index_signature {
+                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
+                    } else {
+                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                    };
 
                     if !missing_members.is_empty() {
                         let missing_list = missing_members

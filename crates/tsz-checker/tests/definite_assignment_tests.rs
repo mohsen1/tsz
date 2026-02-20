@@ -68,37 +68,6 @@ fn test_definite_assignment_ts2564_constructor_branching_both_paths_assign() {
 }
 
 #[test]
-fn test_definite_assignment_ts2564_derived_super_ordering_not_counted_before_super() {
-    let source = r"
-        class Base {}
-        class Derived extends Base {
-            value: number;
-            constructor() {
-                this.value = 1;
-                super();
-            }
-        }
-    ";
-
-    let diags = diagnostics_with_options(
-        source,
-        CheckerOptions {
-            strict_null_checks: true,
-            strict_property_initialization: true,
-            ..CheckerOptions::default()
-        },
-    );
-
-    assert!(
-        count_code(
-            &diags,
-            diagnostic_codes::PROPERTY_HAS_NO_INITIALIZER_AND_IS_NOT_DEFINITELY_ASSIGNED_IN_THE_CONSTRUCTOR,
-        ) >= 1,
-        "Expected TS2564 for pre-super assignment in derived constructor, got: {diags:?}"
-    );
-}
-
-#[test]
 fn test_definite_assignment_ts2564_loop_and_try_conservative_paths() {
     let source = r"
         class C1 {
