@@ -1442,7 +1442,9 @@ use driver_sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
 };
-pub(crate) use driver_sources::{config_base_dir, load_config, resolve_tsconfig_path};
+pub(crate) use driver_sources::{
+    config_base_dir, has_no_types_and_symbols_directive, load_config, resolve_tsconfig_path,
+};
 
 #[path = "driver_check.rs"]
 mod driver_check;
