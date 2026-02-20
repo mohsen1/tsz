@@ -53,6 +53,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let a_resolved = self.resolve_ref_type(a);
         let b_resolved = self.resolve_ref_type(b);
 
+        // Special handling for TypeParameter and Infer
+        if let Some(
+            crate::types::TypeData::TypeParameter(info) | crate::types::TypeData::Infer(info),
+        ) = self.interner.lookup(a_resolved)
+        {
+            if let Some(constraint) = info.constraint {
+                return self.are_types_overlapping(constraint, b_resolved);
+            }
+            // Without constraint, it can overlap with anything
+            return true;
+        }
+
+        if let Some(
+            crate::types::TypeData::TypeParameter(info) | crate::types::TypeData::Infer(info),
+        ) = self.interner.lookup(b_resolved)
+        {
+            if let Some(constraint) = info.constraint {
+                return self.are_types_overlapping(a_resolved, constraint);
+            }
+            return true;
+        }
+
         // Check if either is subtype of the other (sufficient condition, not necessary)
         // This catches: literal <: primitive, object <: interface, etc.
         // Note: check_subtype returns SubtypeResult, but we need &mut self for it
