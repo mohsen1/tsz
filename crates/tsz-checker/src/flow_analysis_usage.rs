@@ -885,13 +885,13 @@ impl<'a> CheckerState<'a> {
         if symbol.import_module.is_some() {
             return false;
         }
-        // If decl_file_idx is set and differs from the current file, the declaration
-        // is in another file — TDZ position comparison is meaningless across files.
-        if symbol.decl_file_idx != u32::MAX
-            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
-        {
-            return false;
-        }
+        let is_cross_file = symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32;
+
+        if is_cross_file
+            && (self.ctx.current_file_idx as u32) > symbol.decl_file_idx {
+                return false;
+            }
 
         // In multi-file mode, symbol declarations may reference nodes in another
         // file's arena.  `self.ctx.arena` only contains the *current* file, so
@@ -913,14 +913,25 @@ impl<'a> CheckerState<'a> {
         let Some(usage_node) = self.ctx.arena.get(usage_idx) else {
             return false;
         };
-        let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+
+        let mut decl_node_opt = self.ctx.arena.get(decl_idx);
+        let mut decl_arena = self.ctx.arena;
+
+        if is_cross_file
+            && let Some(arenas) = self.ctx.all_arenas.as_ref()
+                && let Some(arena) = arenas.get(symbol.decl_file_idx as usize) {
+                    decl_node_opt = arena.get(decl_idx);
+                    decl_arena = arena.as_ref();
+                }
+
+        let Some(decl_node) = decl_node_opt else {
             return false;
         };
 
         // In multi-file mode, validate the declaration node kind matches the
         // symbol.  A mismatch means the node index is from a different file's
         // arena and should not be compared.
-        if is_multi_file {
+        if is_multi_file && !is_cross_file {
             let is_class = symbol.flags & symbol_flags::CLASS != 0;
             let is_enum = symbol.flags & symbol_flags::REGULAR_ENUM != 0;
             let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
@@ -939,35 +950,33 @@ impl<'a> CheckerState<'a> {
         // Skip ambient declarations — `declare class`/`declare enum` are type-level
         // and have no TDZ. In multi-file mode, search all arenas since decl_idx may
         // point to a node in another file's arena.
-        if is_multi_file {
-            if let Some(arenas) = self.ctx.all_arenas.as_ref() {
-                for arena in arenas.iter() {
-                    if let Some(node) = arena.get(decl_idx) {
-                        if let Some(class) = arena.get_class(node)
-                            && self.has_declare_modifier_in_arena(arena, &class.modifiers)
-                        {
-                            return false;
-                        }
-                        if let Some(enum_decl) = arena.get_enum(node)
-                            && self.has_declare_modifier_in_arena(arena, &enum_decl.modifiers)
-                        {
-                            return false;
-                        }
-                    }
-                }
+        if is_cross_file {
+            if let Some(class) = decl_arena.get_class(decl_node)
+                && self.has_declare_modifier_in_arena(decl_arena, &class.modifiers)
+            {
+                return false;
+            }
+            if let Some(enum_decl) = decl_arena.get_enum(decl_node)
+                && self.has_declare_modifier_in_arena(decl_arena, &enum_decl.modifiers)
+            {
+                return false;
             }
         } else if self.is_ambient_declaration(decl_idx) {
             return false;
         }
 
         // Only flag if usage is before declaration in source order
-        if usage_node.pos >= decl_node.pos {
+        if !is_cross_file && usage_node.pos >= decl_node.pos {
             return false;
         }
 
         // Find the declaration's enclosing function-like container (or source file).
         // This is the scope that "owns" both the declaration and (potentially) the usage.
-        let decl_container = self.find_enclosing_function_or_source_file(decl_idx);
+        let decl_container = if is_cross_file {
+            None // Walk up to source file
+        } else {
+            Some(self.find_enclosing_function_or_source_file(decl_idx))
+        };
 
         // Walk up from usage: if we hit a function-like boundary BEFORE reaching
         // the declaration's container, the usage is in deferred code (a nested
@@ -980,7 +989,7 @@ impl<'a> CheckerState<'a> {
                 break;
             };
             // If we reached the declaration container, stop - same scope means TDZ
-            if current == decl_container {
+            if Some(current) == decl_container {
                 break;
             }
             // If we reach a function-like boundary before the decl container,
