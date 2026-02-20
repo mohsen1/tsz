@@ -1180,6 +1180,21 @@ impl<'a> CheckerState<'a> {
             class_instance_type,
             stmt_idx,
         );
+        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+
+        self.check_class_declaration(stmt_idx);
+
+        self.check_index_signature_compatibility(&class.members.nodes, class_instance_type);
+        self.check_inherited_properties_against_index_signatures(
+            class_instance_type,
+            &class.members.nodes,
+            stmt_idx,
+        );
+
+        // Check for decorator-related global types (TS2318)
+        // When experimentalDecorators is enabled and a method/accessor has decorators,
+        // TypedPropertyDescriptor must be available
+        self.check_decorator_global_types(&class.members.nodes);
 
         // Check for decorator-related global types (TS2318)
         // When experimentalDecorators is enabled and a method/accessor has decorators,

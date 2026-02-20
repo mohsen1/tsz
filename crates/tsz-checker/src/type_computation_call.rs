@@ -143,7 +143,6 @@ impl<'a> CheckerState<'a> {
 
         // Check for dynamic import module resolution (TS2307)
         if self.is_dynamic_import(call) {
-            self.check_dynamic_import_module_options(call, idx);
             self.check_dynamic_import_module_specifier(call);
             // Dynamic imports return Promise<typeof module>
             // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports
