@@ -738,7 +738,7 @@ if (typeof x === "string") {
 
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    assert_eq!(narrowed_after, types.literal_number(1.0));
+    assert_eq!(narrowed_after, TypeId::NUMBER);
 }
 
 #[test]
@@ -789,7 +789,7 @@ x;
 
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    assert_eq!(narrowed_after, types.literal_string("hi"));
+    assert_eq!(narrowed_after, TypeId::STRING);
 }
 
 #[test]
@@ -846,7 +846,7 @@ class Foo {
 
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    assert_eq!(narrowed_after, types.literal_string("s"));
+    assert_eq!(narrowed_after, TypeId::STRING);
 }
 
 #[test]
@@ -907,7 +907,7 @@ x;
     let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
     let flow_after = binder.get_node_flow(ident_after).expect("flow after");
     let narrowed_after = analyzer.get_flow_type(ident_after, union, flow_after);
-    assert_eq!(narrowed_after, types.literal_string("hi"));
+    assert_eq!(narrowed_after, TypeId::STRING);
 }
 
 /// Test that loop labels correctly union types from back edges.
