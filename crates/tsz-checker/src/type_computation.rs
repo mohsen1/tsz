@@ -1679,10 +1679,19 @@ impl<'a> CheckerState<'a> {
             // to primitives (Number → number), which would make our check fail.
             let is_arithmetic_op = matches!(op_str, "+" | "-" | "*" | "/" | "%" | "**");
             if is_arithmetic_op {
+                let left_is_nullish = left_type == TypeId::NULL || left_type == TypeId::UNDEFINED;
+                let right_is_nullish =
+                    right_type == TypeId::NULL || right_type == TypeId::UNDEFINED;
+
                 let left_is_boxed = self.is_boxed_primitive_type(left_type);
                 let right_is_boxed = self.is_boxed_primitive_type(right_type);
 
-                if left_is_boxed || right_is_boxed {
+                // If one operand is null/undefined and strict_null_checks is on, tsc prioritizes TS18050
+                // over the boxed primitive error (TS2362/TS2363/TS2365).
+                let skip_boxed_error = self.ctx.compiler_options.strict_null_checks
+                    && (left_is_nullish || right_is_nullish);
+
+                if (left_is_boxed || right_is_boxed) && !skip_boxed_error {
                     // Emit appropriate error based on operator
                     if op_str == "+" {
                         // TS2365: Operator '+' cannot be applied to types 'T' and 'U'
