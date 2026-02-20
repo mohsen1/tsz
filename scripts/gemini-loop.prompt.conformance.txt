@@ -1,23 +1,24 @@
-You are working in one of the ~/code/tsz-* repositories. The number in your directory name (e.g., tsz-3) out of the total number of available tsz-* directories dictates your chunk (e.g., 3 out of 12). Calculate your chunk's `--offset` and `--max` (assuming ~12584 total tests) and use them in your `scripts/conformance.sh` runs to focus exclusively on your partition.
+You are working in one of the sibling `tsz-*` repositories (for example `tsz-3`). Determine your chunk automatically from the current directory name (`tsz-N`) and all sibling `tsz-*` directories:
+- Build the naturally sorted sibling list (`sort -V`), find your 1-based position, and treat that as `chunk_index`.
+- Let `total_chunks` be the number of sibling `tsz-*` directories.
+- Use `total_tests=12584`, `chunk_size=ceil(total_tests/total_chunks)`, `offset=(chunk_index-1)*chunk_size`, `max=min(chunk_size, total_tests-offset)`.
+Use this computed `--offset` and `--max` in `scripts/conformance.sh` runs so you only work your partition.
 Goal: improve TypeScript conformance parity with small, safe, incremental commits.
+Assume `main` is green (lint/tests passing). Optimize for less work per loop and faster iteration.
 
 Hard requirements for this run:
-1) Verify hooks are active. If `git config --get core.hooksPath` is not `scripts/githooks`, run `./scripts/setup.sh --quick`.
-2) Capture BEFORE baseline and record exact results:
-   - `cargo nextest run --workspace`
-   - `./scripts/conformance.sh run`
-   Save pass/fail totals and conformance pass percentage.
-3) Pick one high-signal failing conformance case.
-4) Implement a minimal targeted fix.
-5) Run targeted conformance for that case.
-6) Run a broader safety slice (using your chunk's --offset and --max) to catch regressions.
-7) Run CI lint parity commands before commit:
-   - `cargo clippy -p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp --all-targets -- -D warnings`
-   - `cargo clippy --all-targets --all-features`
-8) Capture AFTER baseline and compare to BEFORE:
-   - `cargo nextest run --workspace`
-   - `./scripts/conformance.sh run`
-   Do not commit if tests regress or conformance percentage drops.
-9) If improved or fixed without regression, create ONE small commit.
-10) Sync with main using: git pull --rebase origin main, then git push origin main.
-11) Do not ask user questions. Keep going until this run is complete.
+1) Read `docs/architecture/NORTH_STAR.md` before making any code change.
+2) Read additional docs under `docs/` only if needed for the specific failing case.
+3) Verify hooks are active. If `git config --get core.hooksPath` is not `scripts/githooks`, run `./scripts/setup.sh --quick`.
+4) Pick one high-signal failing conformance case from your chunk.
+5) Implement a minimal targeted fix.
+6) Validate with minimal checks:
+   - targeted conformance for the changed case
+   - chunk safety slice using your `--offset` and `--max`
+   - only related crate test(s) if needed for confidence
+7) Do not run full-workspace lint/tests/conformance unless:
+   - the change touches tooling/CI/hook scripts, or
+   - a targeted check indicates broader breakage.
+8) If improved or fixed without regression in your chunk/slice, create ONE small commit.
+9) Sync with main using: `git pull --rebase origin main`, then `git push origin main`.
+10) Do not ask user questions. Keep going until this run is complete.
