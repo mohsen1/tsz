@@ -7,17 +7,6 @@ use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// Check if a type is an object type with index signatures.
-    ///
-    /// Returns true for objects with string or number index signatures.
-    pub fn is_object_with_index(&self, type_id: TypeId) -> bool {
-        if let Some(shape) = object_shape_for_type(self.ctx.types, type_id) {
-            shape.string_index.is_some() || shape.number_index.is_some()
-        } else {
-            false
-        }
-    }
-
     /// Get the type of a property by name.
     ///
     /// Returns the property type if found, or None otherwise.
@@ -57,21 +46,5 @@ impl<'a> CheckerState<'a> {
         } else {
             false
         }
-    }
-
-    /// Get the string index signature type from an object.
-    ///
-    /// Returns the string index type if present, or None otherwise.
-    pub fn get_string_index_type(&self, object_type: TypeId) -> Option<TypeId> {
-        object_shape_for_type(self.ctx.types, object_type)
-            .and_then(|shape| shape.string_index.as_ref().map(|sig| sig.value_type))
-    }
-
-    /// Get the number index signature type from an object.
-    ///
-    /// Returns the number index type if present, or None otherwise.
-    pub fn get_number_index_type(&self, object_type: TypeId) -> Option<TypeId> {
-        object_shape_for_type(self.ctx.types, object_type)
-            .and_then(|shape| shape.number_index.as_ref().map(|sig| sig.value_type))
     }
 }
