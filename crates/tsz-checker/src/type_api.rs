@@ -1,6 +1,6 @@
 //! Type API Module
 
-use crate::query_boundaries::type_api as query;
+use crate::query_boundaries::iterable_checker as query;
 use crate::state::CheckerState;
 use tsz_solver::TypeId;
 

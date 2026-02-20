@@ -11,7 +11,7 @@
 //! These operations are necessary for TypeScript's declaration merging feature
 //! where a class/function and namespace with the same name can be merged.
 
-use crate::query_boundaries::namespace_checker as query;
+use crate::query_boundaries::class_type as query;
 use crate::state::CheckerState;
 use std::sync::Arc;
 use tsz_binder::SymbolId;
