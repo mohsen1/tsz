@@ -1358,6 +1358,12 @@ impl<'a> Printer<'a> {
             self.write(&name);
             self.write(" = {}));");
         }
+        // Emit trailing comment from the namespace's closing brace line
+        // (e.g., `namespace X { ... } // comment` → `})(X || (X = {})); // comment`)
+        if let Some(body_node) = self.arena.get(module.body) {
+            let body_end = self.find_token_end_before_trivia(body_node.pos, body_node.end);
+            self.emit_trailing_comments(body_end);
+        }
         self.write_line();
     }
 
@@ -1502,6 +1508,10 @@ impl<'a> Printer<'a> {
             && let Some(block) = self.arena.get_module_block(body_node)
             && let Some(ref stmts) = block.statements
         {
+            // Find the closing brace position of the body block.
+            // This is used to constrain trailing comment search for the last statement
+            // so that comments on the closing `}` line are not attributed to inner statements.
+            let body_close_pos = self.find_token_end_before_trivia(body_node.pos, body_node.end);
             // Collect exported names for identifier qualification in emit_identifier
             let prev_exported = std::mem::take(&mut self.namespace_exported_names);
             self.namespace_exported_names = self.collect_namespace_exported_names(module);
@@ -1528,12 +1538,14 @@ impl<'a> Printer<'a> {
 
                 // Compute upper bound for trailing comment scan: use the next statement's
                 // position to avoid scanning past the current statement into the next line.
+                // For the last statement, use the body's closing brace position to avoid
+                // picking up comments that belong on the IIFE closing line.
                 let next_pos = stmts
                     .nodes
                     .get(stmt_i + 1)
                     .and_then(|&next_idx| self.arena.get(next_idx))
                     .map(|n| n.pos);
-                let upper_bound = next_pos.unwrap_or(stmt_node.end);
+                let upper_bound = next_pos.unwrap_or(body_close_pos);
 
                 // Emit leading comments before this statement
                 self.emit_comments_before_pos(stmt_node.pos);
@@ -1546,7 +1558,12 @@ impl<'a> Printer<'a> {
 
                         if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
                             // export var x = 10; → ns.x = 10;
-                            self.emit_namespace_exported_variable(inner_idx, &ns_name, stmt_node);
+                            self.emit_namespace_exported_variable(
+                                inner_idx,
+                                &ns_name,
+                                stmt_node,
+                                upper_bound,
+                            );
                         } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                             // export import X = Y; → ns.X = Y;
                             self.emit_namespace_exported_import_alias(inner_idx, &ns_name);
@@ -1571,12 +1588,13 @@ impl<'a> Printer<'a> {
                             let before_len = self.writer.len();
                             self.emit(inner_idx);
                             let emitted = self.writer.len() > before_len;
-                            // Emit trailing comments on the same line
+                            // Emit trailing comments on the same line,
+                            // but don't consume comments past the body's closing brace
                             if emitted && let Some(inner_node) = self.arena.get(inner_idx) {
-                                let inner_upper = next_pos.unwrap_or(inner_node.end);
+                                let inner_upper = next_pos.unwrap_or(body_close_pos);
                                 let token_end =
                                     self.find_token_end_before_trivia(inner_node.pos, inner_upper);
-                                self.emit_trailing_comments(token_end);
+                                self.emit_trailing_comments_before(token_end, body_close_pos);
                             }
 
                             // If the enum absorbed the namespace export into its IIFE,
@@ -1612,16 +1630,17 @@ impl<'a> Printer<'a> {
                     self.emit(stmt_idx);
                     self.in_namespace_iife = prev;
                     let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
-                    self.emit_trailing_comments(token_end);
+                    self.emit_trailing_comments_before(token_end, body_close_pos);
                     self.write_line();
                 } else if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION {
                     // Nested namespace: recurse (emit_namespace_iife adds its own newline)
                     self.emit(stmt_idx);
                 } else {
-                    // Regular statement - emit trailing comments on same line
+                    // Regular statement - emit trailing comments on same line,
+                    // but don't consume comments past the body's closing brace
                     self.emit(stmt_idx);
                     let token_end = self.find_token_end_before_trivia(stmt_node.pos, upper_bound);
-                    self.emit_trailing_comments(token_end);
+                    self.emit_trailing_comments_before(token_end, body_close_pos);
                     self.write_line();
                 }
             }
@@ -1668,6 +1687,7 @@ impl<'a> Printer<'a> {
         var_stmt_idx: NodeIndex,
         ns_name: &str,
         outer_stmt: &Node,
+        comment_upper_bound: u32,
     ) {
         let Some(var_node) = self.arena.get(var_stmt_idx) else {
             return;
@@ -1721,8 +1741,8 @@ impl<'a> Printer<'a> {
                 self.emit_expression(*init);
             }
             self.write(";");
-            let token_end = self.find_token_end_before_trivia(outer_stmt.pos, outer_stmt.end);
-            self.emit_trailing_comments(token_end);
+            let token_end = self.find_token_end_before_trivia(outer_stmt.pos, comment_upper_bound);
+            self.emit_trailing_comments_before(token_end, comment_upper_bound);
             self.write_line();
         }
     }
