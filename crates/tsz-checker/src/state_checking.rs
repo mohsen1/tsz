@@ -208,6 +208,15 @@ impl<'a> CheckerState<'a> {
             // Check for export assignment with other exports (2309)
             self.check_export_assignment(&sf.statements.nodes);
 
+            // Check for TS1148: module none errors
+            if matches!(
+                self.ctx.compiler_options.module,
+                tsz_common::common::ModuleKind::None
+            ) && !is_dts
+            {
+                self.check_module_none_statements(&sf.statements.nodes);
+            }
+
             // Check for duplicate identifiers (2300)
             self.check_duplicate_identifiers();
 
@@ -1238,6 +1247,58 @@ impl<'a> CheckerState<'a> {
                 diagnostic_messages::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS.to_string(),
                 diagnostic_codes::STATEMENTS_ARE_NOT_ALLOWED_IN_AMBIENT_CONTEXTS,
             );
+        }
+    }
+
+    /// Emit TS1148 if module=none and the file contains imports, exports, or module augmentations.
+    fn check_module_none_statements(&mut self, stmts: &[NodeIndex]) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for &stmt_idx in stmts {
+            let Some(node) = self.ctx.arena.get(stmt_idx) else {
+                continue;
+            };
+            let mut is_error = false;
+
+            match node.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                    is_error = true;
+                }
+                syntax_kind_ext::MODULE_DECLARATION => {
+                    if self.is_declaration_exported(self.ctx.arena, stmt_idx) {
+                        is_error = true;
+                    } else if let Some(module) = self.ctx.arena.get_module(node)
+                        && let Some(name_node) = self.ctx.arena.get(module.name)
+                            && name_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                                is_error = true;
+                            }
+                }
+                // Declarations that can have an `export` modifier
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                    || k == syntax_kind_ext::FUNCTION_DECLARATION
+                    || k == syntax_kind_ext::CLASS_DECLARATION
+                    || k == syntax_kind_ext::INTERFACE_DECLARATION
+                    || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || k == syntax_kind_ext::ENUM_DECLARATION =>
+                {
+                    if self.is_declaration_exported(self.ctx.arena, stmt_idx) {
+                        is_error = true;
+                    }
+                }
+                _ => {}
+            }
+
+            if is_error {
+                self.error_at_node(
+                    stmt_idx,
+                    diagnostic_messages::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE,
+                    diagnostic_codes::CANNOT_USE_IMPORTS_EXPORTS_OR_MODULE_AUGMENTATIONS_WHEN_MODULE_IS_NONE,
+                );
+            }
         }
     }
 
