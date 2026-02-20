@@ -267,8 +267,6 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class_data: &tsz_parser::parser::node::ClassData,
     ) {
-        println!("check_implements_clauses called");
-
         let Some(ref heritage_clauses) = class_data.heritage_clauses else {
             return;
         };

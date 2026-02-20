@@ -21,27 +21,29 @@ impl<'a> CheckerState<'a> {
         let mut current_idx = node_idx;
         while let Some(node) = self.ctx.arena.get(current_idx) {
             if node.kind == tsz_parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                && let Some(expr) = self.ctx.arena.get_parenthesized(node) {
-                    current_idx = expr.expression;
-                    continue;
-                }
+                && let Some(expr) = self.ctx.arena.get_parenthesized(node)
+            {
+                current_idx = expr.expression;
+                continue;
+            }
             break;
         }
 
         if let Some(node) = self.ctx.arena.get(current_idx)
             && node.kind == tsz_scanner::SyntaxKind::Identifier as u16
-                && let Some(ident) = self.ctx.arena.get_identifier(node)
-                    && ident.escaped_text == "NaN" {
-                        if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
-                            let is_global = self
-                                .ctx
-                                .binder
-                                .get_symbol(sym_id)
-                                .is_none_or(|s| s.parent.is_none());
-                            return self.ctx.symbol_is_from_lib(sym_id) || is_global;
-                        }
-                        return true; // Unresolved NaN treated as global
-                    }
+            && let Some(ident) = self.ctx.arena.get_identifier(node)
+            && ident.escaped_text == "NaN"
+        {
+            if let Some(sym_id) = self.resolve_identifier_symbol(current_idx) {
+                let is_global = self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_none_or(|s| s.parent.is_none());
+                return self.ctx.symbol_is_from_lib(sym_id) || is_global;
+            }
+            return true; // Unresolved NaN treated as global
+        }
         false
     }
 
