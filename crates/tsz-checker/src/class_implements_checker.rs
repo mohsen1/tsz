@@ -484,6 +484,16 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
+                    if !early_exit {
+                        let mut visited = rustc_hash::FxHashSet::default();
+                        collect_interface_members(
+                            self,
+                            sym_id,
+                            &mut all_interface_members,
+                            &mut visited,
+                        );
+                    }
+
                     if early_exit {
                         continue;
                     }
@@ -499,14 +509,6 @@ impl<'a> CheckerState<'a> {
                     if !is_class && !is_interface {
                         continue;
                     }
-
-                    let mut visited = rustc_hash::FxHashSet::default();
-                    collect_interface_members(
-                        self,
-                        sym_id,
-                        &mut all_interface_members,
-                        &mut visited,
-                    );
 
                     // Check that all interface members are implemented with compatible types
                     let mut missing_members: Vec<String> = Vec::new();
@@ -604,11 +606,6 @@ impl<'a> CheckerState<'a> {
                                 &substitution,
                             );
 
-                            println!(
-                                "Checking member {} type {} vs interface type {}",
-                                member_name, class_member_type.0, interface_member_type.0
-                            );
-
                             // Check type compatibility (class member type must be assignable to interface member type)
                             // Skip if either type is any or error (unresolved types shouldn't cause false positives)
                             if interface_member_type != TypeId::ANY
@@ -659,28 +656,26 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Report error for missing members
-                    let diagnostic_code = if is_class {
-                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
-                    } else if is_interface {
-                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
-                    } else {
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    };
-
                     if !missing_members.is_empty() {
-                        let missing_list = missing_members
+                        let _missing_list = missing_members
                             .iter()
                             .map(|s| format!("'{s}'"))
                             .collect::<Vec<_>>()
                             .join(", ");
 
-                        self.error_at_node(
-                            clause_idx,
-                            &format!(
-                                "Class '{class_name}' incorrectly implements '{interface_name}'. Missing members: {missing_list}."
-                            ),
-                            diagnostic_code,
-                        );
+                        if is_class {
+                            self.error_at_node_msg(
+                                clause_idx,
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+                                &[&class_name, &interface_name],
+                            );
+                        } else {
+                            self.error_at_node_msg(
+                                clause_idx,
+                                diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                &[&class_name, &interface_name],
+                            );
+                        }
                     }
 
                     // Report error for incompatible member types

@@ -332,6 +332,7 @@ impl StatementChecker {
                 };
                 if let Some((condition, statement)) = loop_data {
                     state.get_type_of_node(condition);
+                    state.check_truthy_or_falsy(condition);
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
@@ -364,6 +365,7 @@ impl StatementChecker {
                     }
                     if condition.is_some() {
                         state.get_type_of_node(condition);
+                        state.check_truthy_or_falsy(condition);
                     }
                     if incrementor.is_some() {
                         state.get_type_of_node(incrementor);

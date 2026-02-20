@@ -1563,6 +1563,7 @@ impl<'a> CheckerState<'a> {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
+                self.check_truthy_or_falsy(left_idx);
                 let result = match evaluator.evaluate(left_type, right_type, "&&") {
                     BinaryOpResult::Success(ty) => ty,
                     BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
