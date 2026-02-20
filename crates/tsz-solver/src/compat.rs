@@ -113,7 +113,7 @@ impl<'a, R: TypeResolver> TypeVisitor for ShapeExtractor<'a, R> {
 
     fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
         let symbol_ref = crate::types::SymbolRef(symbol_ref);
-        // Phase 3.4: Prefer DefId resolution if available
+        // Prefer DefId resolution if available
         if let Some(def_id) = self.resolver.symbol_to_def_id(symbol_ref) {
             return self.visit_lazy(def_id.0);
         }

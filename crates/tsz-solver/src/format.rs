@@ -63,7 +63,7 @@ impl<'a> TypeFormatter<'a> {
         }
     }
 
-    /// Add access to definition store for `DefId` name resolution (Phase 4.2.1).
+    /// Add access to definition store for `DefId` name resolution.
     pub const fn with_def_store(mut self, def_store: &'a DefinitionStore) -> Self {
         self.def_store = Some(def_store);
         self
@@ -263,7 +263,7 @@ impl<'a> TypeFormatter<'a> {
             }
             TypeData::TypeParameter(info) => self.atom(info.name).to_string(),
             TypeData::Lazy(def_id) => {
-                // Phase 4.2.1: Try to get the type name from the definition store
+                // Try to get the type name from the definition store
                 if let Some(def_store) = self.def_store {
                     if let Some(def) = def_store.get(*def_id) {
                         // Use the definition name if available
@@ -292,7 +292,7 @@ impl<'a> TypeFormatter<'a> {
                     "Formatting Application"
                 );
 
-                // Phase 4.2.1: Special handling for Application(Lazy(def_id), args)
+                // Special handling for Application(Lazy(def_id), args)
                 // Format as "TypeName<Args>" instead of "Lazy(def_id)<Args>"
                 let base_str = if let Some(TypeData::Lazy(def_id)) = base_key {
                     if let Some(def_store) = self.def_store {

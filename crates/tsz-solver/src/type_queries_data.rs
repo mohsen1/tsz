@@ -178,7 +178,7 @@ where
 }
 
 // =============================================================================
-// Type Extraction Helpers (Phase 5 - Anti-Pattern 8.1 Removal)
+// Type Extraction Helpers
 // =============================================================================
 // These functions extract data from types, avoiding the need for checker code
 // to match on TypeData directly.

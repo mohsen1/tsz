@@ -85,7 +85,7 @@ pub fn compute_conditional_expression_type(
 /// Template literals always produce string type in TypeScript.
 ///
 /// # Arguments
-/// * `_interner` - The type database/interner (unused in Phase 1)
+/// * `_interner` - The type database/interner
 /// * `parts` - Slice of type IDs for each template part
 ///
 /// # Returns
@@ -101,7 +101,7 @@ pub fn compute_template_expression_type(_interner: &dyn TypeDatabase, parts: &[T
         }
     }
 
-    // For Phase 1, template literals always produce string type
+    // Template literals always produce string type
     // The Checker handles type-checking each part's expression
     TypeId::STRING
 }

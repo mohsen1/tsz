@@ -17,8 +17,7 @@ pub trait TypeResolver {
     /// Resolve a symbol reference to its structural type.
     /// Returns None if the symbol cannot be resolved.
     ///
-    /// **Phase 3.4**: Deprecated - use `resolve_lazy` with `DefId` instead.
-    /// This method is being phased out as part of the migration to DefId-based type identity.
+    /// Deprecated: use `resolve_lazy` with `DefId` instead.
     fn resolve_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId>;
 
     /// Resolve a symbol reference to a structural type, preferring DefId-based lazy paths.
@@ -59,7 +58,7 @@ pub trait TypeResolver {
         None
     }
 
-    /// Get the `SymbolId` for a `DefId` (Phase 3.2: bridge for `InheritanceGraph`).
+    /// Get the `SymbolId` for a `DefId` (bridge for `InheritanceGraph`).
     ///
     /// This enables DefId-based types to use the existing O(1) `InheritanceGraph`
     /// by mapping `DefIds` back to their corresponding `SymbolIds`. The mapping is
@@ -70,7 +69,7 @@ pub trait TypeResolver {
         None
     }
 
-    /// Get the `DefId` for a `SymbolRef` (Phase 3.4: Ref -> Lazy migration).
+    /// Get the `DefId` for a `SymbolRef` (Ref -> Lazy migration).
     ///
     /// This enables migrating Ref(SymbolRef) types to Lazy(DefId) resolution logic.
     /// When a `SymbolRef` has a corresponding `DefId`, we should use `resolve_lazy` instead
@@ -245,13 +244,13 @@ pub struct TypeEnvironment {
     array_base_type: Option<TypeId>,
     /// Type parameters for the Array<T> interface (usually just [T]).
     array_base_type_params: Vec<TypeParamInfo>,
-    /// Maps `DefIds` to their resolved structural types (Phase 4.3 migration).
+    /// Maps `DefIds` to their resolved structural types.
     def_types: FxHashMap<u32, TypeId>,
     /// Maps `DefIds` to their type parameters (for generic types with Lazy refs).
     def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
-    /// Maps `DefIds` back to `SymbolIds` for `InheritanceGraph` lookups (Phase 3.2).
+    /// Maps `DefIds` back to `SymbolIds` for `InheritanceGraph` lookups.
     def_to_symbol: FxHashMap<u32, SymbolId>,
-    /// Maps `SymbolIds` to `DefIds` for Ref -> Lazy migration (Phase 3.4).
+    /// Maps `SymbolIds` to `DefIds` for Ref -> Lazy migration.
     symbol_to_def: FxHashMap<u32, DefId>,
     /// Set of `DefIds` that correspond to numeric enums.
     numeric_enums: FxHashSet<u32>,
@@ -384,7 +383,7 @@ impl TypeEnvironment {
     }
 
     // =========================================================================
-    // DefId Resolution (Phase 4.3 migration)
+    // DefId Resolution
     // =========================================================================
 
     /// Register a `DefId`'s resolved type.
@@ -453,12 +452,12 @@ impl TypeEnvironment {
     }
 
     // =========================================================================
-    // DefId <-> SymbolId Bridge (Phase 3.2, 3.4)
+    // DefId <-> SymbolId Bridge
     // =========================================================================
 
     /// Register a mapping from `DefId` to `SymbolId` for `InheritanceGraph` lookups.
     ///
-    /// Phase 3.4: Also registers the reverse mapping (`SymbolId` -> `DefId`).
+    /// Also registers the reverse mapping (`SymbolId` -> `DefId`).
     pub fn register_def_symbol_mapping(&mut self, def_id: DefId, sym_id: SymbolId) {
         self.def_to_symbol.insert(def_id.0, sym_id);
         self.symbol_to_def.insert(sym_id.0, def_id);
