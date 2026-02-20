@@ -28,6 +28,27 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Push parameter names into `typeof_param_scope` so that `typeof paramName`
+    /// in return type annotations can resolve to the parameter's declared type.
+    pub(crate) fn push_typeof_param_scope(&mut self, params: &[tsz_solver::ParamInfo]) {
+        for param in params {
+            if let Some(name_atom) = param.name {
+                let name = self.ctx.types.resolve_atom(name_atom);
+                self.ctx.typeof_param_scope.insert(name, param.type_id);
+            }
+        }
+    }
+
+    /// Remove parameter names from `typeof_param_scope` after return type resolution.
+    pub(crate) fn pop_typeof_param_scope(&mut self, params: &[tsz_solver::ParamInfo]) {
+        for param in params {
+            if let Some(name_atom) = param.name {
+                let name = self.ctx.types.resolve_atom(name_atom);
+                self.ctx.typeof_param_scope.remove(&name);
+            }
+        }
+    }
+
     /// Check for unused type parameters in a declaration and emit TS6133.
     ///
     /// This scans all identifiers within the declaration body for type parameter

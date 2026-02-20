@@ -634,6 +634,15 @@ impl<'a> CheckerState<'a> {
             ty
         };
 
+        // Check typeof_param_scope — resolves `typeof paramName` in return type
+        // annotations where the parameter isn't a file-level binding.
+        if is_identifier
+            && let Some(ref name) = name_text
+            && let Some(&param_type) = self.ctx.typeof_param_scope.get(name.as_str())
+        {
+            return param_type;
+        }
+
         if !has_type_args && let Some(expr_node) = self.ctx.arena.get(type_query.expr_name) {
             // Handle QualifiedName (e.g. `typeof x.p`) by resolving as value property access.
             // QualifiedName in typeof context means value.property, not namespace.member,

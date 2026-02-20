@@ -649,6 +649,31 @@ fn test_await_yield_missing_value_ts1109() {
 }
 
 #[test]
+fn test_duplicate_namespace_declaration_merges() {
+    // TSC allows namespace merging — no duplicate identifier error expected.
+    let source = r#"
+namespace Foo {
+    let x = 1;
+}
+namespace Foo {
+    let y = 2;
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    parser.parse_source_file();
+
+    let diagnostics = parser.get_diagnostics();
+    let has_duplicate_identifier = diagnostics
+        .iter()
+        .any(|d| d.code == diagnostic_codes::DUPLICATE_IDENTIFIER);
+
+    assert!(
+        !has_duplicate_identifier,
+        "Namespace merging should not emit duplicate identifier errors, got: {:?}",
+        diagnostics.iter().map(|d| d.code).collect::<Vec<_>>()
+    );
+}
+#[test]
 fn debug_await_semicolon() {
     let source = r#"async function f() {
     await;

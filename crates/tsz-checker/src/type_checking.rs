@@ -1362,46 +1362,9 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(name) = prop_name {
-            let regexp_match_array_type = self
-                .ctx
-                .binder
-                .get_global_type_with_libs("RegExpMatchArray", &self.get_lib_binders())
-                .map(|sym_id| self.type_reference_symbol_type(sym_id));
-            let no_unchecked_access = self.ctx.compiler_options.no_unchecked_indexed_access;
             let result = self.get_object_property_type(object_type, &name);
 
-            let result = if no_unchecked_access
-                && regexp_match_array_type.is_some()
-                && object_type == regexp_match_array_type.unwrap()
-            {
-                if let Some(property_type) = result {
-                    Some(
-                        self.ctx
-                            .types
-                            .factory()
-                            .union(vec![property_type, TypeId::UNDEFINED]),
-                    )
-                } else {
-                    result
-                }
-            } else {
-                result
-            };
-
-            if let Some(result) = result {
-                // TODO: Check the location, make sure this is in a context which expects `string`
-                if !self.is_assignable_to(result, TypeId::STRING) {
-                    let message = format_message(
-                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                        &[&self.format_type(result), &self.format_type(TypeId::STRING)],
-                    );
-                    self.error_at_node(
-                        data.index_type,
-                        &message,
-                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                    );
-                }
-            } else {
+            if result.is_none() || result == Some(TypeId::ERROR) {
                 if object_type == TypeId::ERROR || index_type == TypeId::ERROR {
                     return;
                 }
