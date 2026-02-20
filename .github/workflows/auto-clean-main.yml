@@ -1,8 +1,8 @@
 name: Auto-clean main
 
 on:
-  push:
-    branches: [main]
+  schedule:
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -15,11 +15,35 @@ concurrency:
 jobs:
   rustfmt:
     name: Auto-format Rust on main
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Fast circuit breaker (schedule)
+        id: circuit
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="repos/${{ github.repository }}/actions/workflows/auto-clean-main.yml/runs?branch=main&event=schedule&per_page=10"
+          previous_sha="$(
+            gh api "$api" --jq '.workflow_runs | map(select(.id != '${{ github.run_id }}' and .status == "completed")) | .[0].head_sha // ""'
+          )"
+          current_sha="${{ github.sha }}"
+
+          echo "current_sha=$current_sha"
+          echo "previous_schedule_sha=${previous_sha:-<none>}"
+
+          if [ -n "$previous_sha" ] && [ "$previous_sha" = "$current_sha" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "No new commits on main since previous scheduled run; exiting early."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "New commit detected on main; continuing."
+          fi
+
       - name: Checkout main
+        if: steps.circuit.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           ref: main
@@ -27,14 +51,17 @@ jobs:
           token: ${{ secrets.GH_PAT != '' && secrets.GH_PAT || github.token }}
 
       - name: Install Rust toolchain with rustfmt
+        if: steps.circuit.outputs.skip != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
 
       - name: Run cargo fmt
+        if: steps.circuit.outputs.skip != 'true'
         run: cargo fmt
 
       - name: Commit and push formatting fixes
+        if: steps.circuit.outputs.skip != 'true'
         run: |
           set -euo pipefail
 
