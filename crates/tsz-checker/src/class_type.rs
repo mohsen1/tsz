@@ -1246,7 +1246,7 @@ impl<'a> CheckerState<'a> {
                     // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
                     // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
                     let has_param_grammar_error =
-                        param_data.map_or(false, |p| p.dot_dot_dot_token || p.question_token);
+                        param_data.is_some_and(|p| p.dot_dot_dot_token || p.question_token);
                     let is_valid_index_type = key_type == TypeId::STRING
                         || key_type == TypeId::NUMBER
                         || key_type == TypeId::SYMBOL

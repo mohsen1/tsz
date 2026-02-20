@@ -656,9 +656,10 @@ impl BinderState {
 
                         // Add to global (root) scope for UMD visibility
                         if let Some(root_scope) = self.scopes.first_mut()
-                            && !root_scope.table.has(name) {
-                                root_scope.table.set(name.to_string(), sym_id);
-                            }
+                            && !root_scope.table.has(name)
+                        {
+                            root_scope.table.set(name.to_string(), sym_id);
+                        }
                     }
                 }
             }
