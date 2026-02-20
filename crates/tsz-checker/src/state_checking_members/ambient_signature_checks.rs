@@ -524,7 +524,12 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 }
-            } else if self.ctx.no_implicit_returns() && has_return && falls_through {
+            } else if self.ctx.no_implicit_returns()
+                && has_return
+                && falls_through
+                && !self
+                    .should_skip_no_implicit_return_check(check_return_type, has_type_annotation)
+            {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::diagnostics::diagnostic_messages;
                 let error_node = if method.name.is_some() {
@@ -1075,7 +1080,14 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                         diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
-                } else if self.ctx.no_implicit_returns() && has_return && falls_through {
+                } else if self.ctx.no_implicit_returns()
+                    && has_return
+                    && falls_through
+                    && !self.should_skip_no_implicit_return_check(
+                        check_return_type,
+                        has_type_annotation,
+                    )
+                {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     use crate::diagnostics::diagnostic_messages;
                     let error_node = if accessor.name.is_some() {

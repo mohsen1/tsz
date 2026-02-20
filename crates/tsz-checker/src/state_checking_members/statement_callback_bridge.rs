@@ -417,10 +417,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Only check if there's an explicit return type annotation
             let is_async = func.is_async;
             let is_generator = func.asterisk_token;
+            let check_return_type =
+                self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
             let check_explicit_return_paths = has_type_annotation && !is_async;
             let requires_return = if check_explicit_return_paths {
-                let check_return_type =
-                    self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
                 self.requires_return_value(check_return_type)
             } else {
                 false
@@ -455,7 +455,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         diagnostic_codes::FUNCTION_LACKS_ENDING_RETURN_STATEMENT_AND_RETURN_TYPE_DOES_NOT_INCLUDE_UNDEFINE,
                     );
                 }
-            } else if check_no_implicit_returns && has_return && falls_through {
+            } else if check_no_implicit_returns
+                && has_return
+                && falls_through
+                && !self
+                    .should_skip_no_implicit_return_check(check_return_type, has_type_annotation)
+            {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                 let error_node = if !func.name.is_none() {
