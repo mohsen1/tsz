@@ -655,11 +655,15 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> bool {
-        self.has_public_api_exports(source_file) && !self.has_public_api_value_exports(source_file)
+        // `export {};` is only needed for import-only modules where all imports
+        // are elided in declaration output. If the file already has any exports
+        // (including type-only exports like `export interface`), those exports
+        // preserve module-ness and we must not append an extra marker.
+        self.has_public_api_exports(source_file) && !self.has_public_api_any_exports(source_file)
     }
 
-    /// Return true if exported declarations include at least one value-side export.
-    pub(crate) fn has_public_api_value_exports(
+    /// Return true if exported declarations include any export (value or type-side).
+    pub(crate) fn has_public_api_any_exports(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> bool {
@@ -678,6 +682,20 @@ impl<'a> DeclarationEmitter<'a> {
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
                     if let Some(class) = self.arena.get_class(stmt_node)
                         && self.has_export_modifier(&class.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if let Some(iface) = self.arena.get_interface(stmt_node)
+                        && self.has_export_modifier(&iface.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if let Some(alias) = self.arena.get_type_alias(stmt_node)
+                        && self.has_export_modifier(&alias.modifiers)
                     {
                         return true;
                     }
@@ -703,29 +721,10 @@ impl<'a> DeclarationEmitter<'a> {
                         return true;
                     }
                 }
-                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                k if k == syntax_kind_ext::EXPORT_DECLARATION
+                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
+                {
                     return true;
-                }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
-                    if let Some(export_decl) = self.arena.get_export_decl(stmt_node) {
-                        if export_decl.is_type_only {
-                            continue;
-                        }
-
-                        if export_decl.export_clause.is_none() {
-                            // `export * from "x"` is value-affecting by default.
-                            return true;
-                        }
-
-                        if let Some(clause_node) = self.arena.get(export_decl.export_clause)
-                            && (clause_node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                                || clause_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION)
-                        {
-                            continue;
-                        }
-
-                        return true;
-                    }
                 }
                 _ => {}
             }

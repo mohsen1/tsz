@@ -8,11 +8,23 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_template_literal_es5(&mut self, node: &Node, idx: NodeIndex) -> bool {
         match node.kind {
             k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => {
-                if let Some(lit) = self.arena.get_literal(node) {
-                    self.emit_string_literal_text(&lit.text);
-                    return true;
+                if self.arena.get_literal(node).is_none() && self.source_text.is_none() {
+                    return false;
                 }
-                false
+
+                let raw_text = self
+                    .get_raw_template_part_text(node)
+                    .or_else(|| self.arena.get_literal(node).map(|lit| lit.text.clone()))
+                    .unwrap_or_default();
+                let quote = if self.ctx.options.single_quote {
+                    '\''
+                } else {
+                    '"'
+                };
+                let downleveled =
+                    self.downlevel_codepoint_escapes_in_literal_text(&raw_text, quote, true);
+                self.emit_raw_string_literal_text(&downleveled);
+                true
             }
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
                 if let Some(tpl) = self.arena.get_template_expr(node) {
@@ -59,16 +71,21 @@ impl<'a> Printer<'a> {
     }
 
     fn emit_template_expression_es5(&mut self, tpl: &TemplateExprData) {
+        let quote = if self.ctx.options.single_quote {
+            '\''
+        } else {
+            '"'
+        };
         let head_text = self
             .arena
             .get(tpl.head)
-            .and_then(|node| self.arena.get_literal(node))
-            .map(|lit| lit.text.clone())
+            .and_then(|node| self.get_raw_template_part_text(node))
+            .map(|raw| self.downlevel_codepoint_escapes_in_literal_text(&raw, quote, true))
             .unwrap_or_default();
 
         // TypeScript 5.x uses .concat() for template literal downleveling:
         // `hello ${name} world` → "hello ".concat(name, " world")
-        self.emit_string_literal_text(&head_text);
+        self.emit_raw_string_literal_text(&head_text);
 
         for &span_idx in &tpl.template_spans.nodes {
             let Some(span_node) = self.arena.get(span_idx) else {
@@ -81,15 +98,15 @@ impl<'a> Printer<'a> {
             let literal_text = self
                 .arena
                 .get(span.literal)
-                .and_then(|node| self.arena.get_literal(node))
-                .map(|lit| lit.text.clone())
+                .and_then(|node| self.get_raw_template_part_text(node))
+                .map(|raw| self.downlevel_codepoint_escapes_in_literal_text(&raw, quote, true))
                 .unwrap_or_default();
 
             self.write(".concat(");
             self.emit_expression(span.expression);
             if !literal_text.is_empty() {
                 self.write(", ");
-                self.emit_string_literal_text(&literal_text);
+                self.emit_raw_string_literal_text(&literal_text);
             }
             self.write(")");
         }
@@ -122,7 +139,9 @@ impl<'a> Printer<'a> {
                     .get_literal(node)
                     .map(|lit| lit.text.clone())
                     .unwrap_or_default();
-                let raw = self.template_raw_text(node, &cooked);
+                let raw = self
+                    .get_raw_template_part_text(node)
+                    .unwrap_or_else(|| cooked.clone());
                 Some(TemplateParts {
                     cooked: vec![cooked],
                     raw: vec![raw],
@@ -141,7 +160,9 @@ impl<'a> Printer<'a> {
                     .get_literal(head_node)
                     .map(|lit| lit.text.clone())
                     .unwrap_or_default();
-                let head_raw = self.template_raw_text(head_node, &head_text);
+                let head_raw = self
+                    .get_raw_template_part_text(head_node)
+                    .unwrap_or_else(|| head_text.clone());
                 cooked.push(head_text);
                 raw.push(head_raw);
 
@@ -156,7 +177,9 @@ impl<'a> Printer<'a> {
                         .get_literal(literal_node)
                         .map(|lit| lit.text.clone())
                         .unwrap_or_default();
-                    let literal_raw = self.template_raw_text(literal_node, &literal_text);
+                    let literal_raw = self
+                        .get_raw_template_part_text(literal_node)
+                        .unwrap_or_else(|| literal_text.clone());
                     cooked.push(literal_text);
                     raw.push(literal_raw);
                 }
@@ -169,49 +192,5 @@ impl<'a> Printer<'a> {
             }
             _ => None,
         }
-    }
-
-    fn template_raw_text(&self, node: &Node, cooked_fallback: &str) -> String {
-        let Some(text) = self.source_text else {
-            return cooked_fallback.to_string();
-        };
-
-        let (skip_leading, allow_dollar_brace, allow_backtick) = match node.kind {
-            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => (1_usize, false, true),
-            k if k == SyntaxKind::TemplateHead as u16 => (1_usize, true, true),
-            k if k == SyntaxKind::TemplateMiddle as u16 => (1_usize, true, true),
-            k if k == SyntaxKind::TemplateTail as u16 => (1_usize, false, true),
-            _ => return cooked_fallback.to_string(),
-        };
-
-        let start = node.pos as usize;
-        if start >= text.len() {
-            return cooked_fallback.to_string();
-        }
-
-        let bytes = text.as_bytes();
-        let mut i = start + skip_leading;
-        while i < bytes.len() {
-            let ch = bytes[i];
-            if ch == b'\\' {
-                i += 1;
-                if i < bytes.len() {
-                    i += 1;
-                }
-                continue;
-            }
-
-            if allow_backtick && ch == b'`' {
-                return text[start + skip_leading..i].to_string();
-            }
-
-            if allow_dollar_brace && ch == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-                return text[start + skip_leading..i].to_string();
-            }
-
-            i += 1;
-        }
-
-        cooked_fallback.to_string()
     }
 }

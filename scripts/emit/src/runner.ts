@@ -222,7 +222,10 @@ function parseModule(moduleStr: string): number {
   if (lower === 'es2022') return 7;
   if (lower === 'esnext') return 99;
   if (lower === 'node16') return 100;
+  if (lower === 'node18') return 100;
+  if (lower === 'node20') return 100;
   if (lower === 'nodenext') return 199;
+  if (lower === 'preserve') return 200;
   return 0;
 }
 

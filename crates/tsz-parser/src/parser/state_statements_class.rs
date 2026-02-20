@@ -795,7 +795,7 @@ impl ParserState {
             }
             SyntaxKind::ExportKeyword => {
                 // Export with decorators: @decorator export class Foo {}
-                self.parse_export_declaration()
+                self.parse_export_declaration_with_decorators(start_pos, decorators)
             }
             SyntaxKind::DefaultKeyword => {
                 // TS1029: `export` must precede `default`.
