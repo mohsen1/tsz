@@ -32,6 +32,7 @@ TIMEOUT_SECONDS="${GEMINI_LOOP_TIMEOUT:-300}"
 SLEEP_SECONDS="${GEMINI_LOOP_SLEEP:-5}"
 CONF_CHUNKS="${GEMINI_LOOP_CONFORMANCE_CHUNKS:-}"
 CONF_TOTAL_TESTS="${GEMINI_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
+PROJECT_DIRECTIVES="${GEMINI_LOOP_PROJECT_DIRECTIVES:-Use tracing infrastructure (spans/events) instead of ad-hoc print debugging. This is a performance-first project: prioritize throughput, latency, and memory, and avoid regressions. The project is pre-release, so no backward compatibility constraints are required; prefer cleaner, faster designs over compatibility shims.}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -193,6 +194,8 @@ build_prompt() {
     fi
     prompt="${prompt} Parallel conformance sharding: you own chunk ${shard_label}/${CONF_CHUNKS}. Focus your test slice with scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max}."
   fi
+
+  prompt="${prompt} Global project directives: ${PROJECT_DIRECTIVES}"
 
   printf '%s
 ' "$prompt"
