@@ -193,14 +193,16 @@ impl<'a> CheckerState<'a> {
             let init_type = self.get_type_of_node(prop.initializer);
             self.ctx.contextual_type = prev_context;
 
-            if declared_type != TypeId::ANY && !self.type_contains_error(declared_type)
-                && self.check_assignable_or_report(init_type, declared_type, prop.initializer) {
-                    self.check_object_literal_excess_properties(
-                        init_type,
-                        declared_type,
-                        prop.initializer,
-                    );
-                }
+            if declared_type != TypeId::ANY
+                && !self.type_contains_error(declared_type)
+                && self.check_assignable_or_report(init_type, declared_type, prop.initializer)
+            {
+                self.check_object_literal_excess_properties(
+                    init_type,
+                    declared_type,
+                    prop.initializer,
+                );
+            }
         } else if prop.initializer.is_some() {
             // Just check the initializer to catch errors within it
             self.get_type_of_node(prop.initializer);

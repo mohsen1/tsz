@@ -9,7 +9,6 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
-
 impl<'a> CheckerState<'a> {
     pub(crate) fn property_assigned_in_enclosing_class_constructor(
         &mut self,

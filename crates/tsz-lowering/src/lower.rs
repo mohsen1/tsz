@@ -1939,5 +1939,4 @@ impl<'a> TypeLowering<'a> {
         }
         false
     }
-
 }
