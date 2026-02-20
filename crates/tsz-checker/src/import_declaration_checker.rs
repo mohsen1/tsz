@@ -237,7 +237,72 @@ impl<'a> CheckerState<'a> {
             // TS2440: Import declaration conflicts with local declaration.
             // The binder can merge non-mergeable declarations into the import symbol,
             // so detect conflicts directly on the import symbol's declarations first.
-            if let Some(import_sym_id) = import_sym_id
+
+            let mut resolved_flags = 0;
+            let mut resolved_decls = Vec::new();
+
+            if let Some(import_decl) = self
+                .ctx
+                .arena
+                .get_import_decl(self.ctx.arena.get(stmt_idx).unwrap())
+            {
+                let target_node = import_decl.module_specifier;
+                let target_sym_id_opt = if let Some(node) = self.ctx.arena.get(target_node) {
+                    if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                        self.resolve_identifier_symbol(target_node)
+                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::QUALIFIED_NAME {
+                        // For qualified names like A.B.C, we need to resolve the whole thing
+                        self.resolve_identifier_symbol(target_node)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(target_sym_id) = target_sym_id_opt {
+                    let mut visited = Vec::new();
+                    if let Some(resolved_id) =
+                        self.resolve_alias_symbol(target_sym_id, &mut visited)
+                        && let Some(resolved_sym) = self
+                            .ctx
+                            .binder
+                            .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
+                    {
+                        resolved_flags = resolved_sym.flags;
+                        resolved_decls = resolved_sym.declarations.clone();
+                    }
+                }
+            }
+
+            let mut has_value = (resolved_flags & tsz_binder::symbol_flags::VALUE) != 0;
+            if has_value
+                && (resolved_flags & tsz_binder::symbol_flags::VALUE_MODULE) != 0
+                && (resolved_flags
+                    & (tsz_binder::symbol_flags::VALUE & !tsz_binder::symbol_flags::VALUE_MODULE))
+                    == 0
+            {
+                let mut any_instantiated = false;
+                for decl_idx in &resolved_decls {
+                    if let Some(decl_node) = self.ctx.arena.get(*decl_idx) {
+                        if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION
+                        {
+                            if self.is_namespace_declaration_instantiated(*decl_idx) {
+                                any_instantiated = true;
+                                break;
+                            }
+                        } else {
+                            any_instantiated = true;
+                            break;
+                        }
+                    }
+                }
+                has_value = any_instantiated;
+            }
+            let import_has_value = has_value;
+
+            if import_has_value
+                && let Some(import_sym_id) = import_sym_id
                 && let Some(import_sym) = self.ctx.binder.symbols.get(import_sym_id)
             {
                 let has_merged_local_non_import_decl =
@@ -332,7 +397,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
                     });
 
-                    if is_value && has_local_declaration {
+                    if import_has_value && is_value && has_local_declaration {
                         let message = format_message(
                             diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
                             &[name],
@@ -690,6 +755,10 @@ impl<'a> CheckerState<'a> {
         // TS1214/TS1212: Check import binding names for strict mode reserved words.
         // Import declarations make the file a module, so it's always strict mode → TS1214.
         self.check_import_binding_reserved_words(import.import_clause);
+
+        if import.import_clause.is_some() {
+            self.check_import_declaration_conflicts(stmt_idx, import.import_clause);
+        }
 
         if !self.ctx.report_unresolved_imports {
             return;
@@ -1169,5 +1238,170 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn check_import_declaration_conflicts(&mut self, stmt_idx: NodeIndex, clause_idx: NodeIndex) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
+            return;
+        };
+        let Some(clause) = self.ctx.arena.get_import_clause(clause_node) else {
+            return;
+        };
+
+        let mut bindings_to_check = Vec::new();
+
+        if clause.name.is_some() {
+            bindings_to_check.push((clause_idx, clause.name));
+        }
+
+        if clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.ctx.arena.get(clause.named_bindings)
+        {
+            if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                if let Some(ns) = self.ctx.arena.get_named_imports(bindings_node)
+                    && ns.name.is_some()
+                {
+                    bindings_to_check.push((clause.named_bindings, ns.name));
+                }
+            } else if bindings_node.kind == syntax_kind_ext::NAMED_IMPORTS
+                && let Some(named) = self.ctx.arena.get_named_imports(bindings_node)
+            {
+                for &spec_idx in &named.elements.nodes {
+                    if let Some(spec_node) = self.ctx.arena.get(spec_idx)
+                        && let Some(spec) = self.ctx.arena.get_specifier(spec_node)
+                    {
+                        let name_idx = if spec.name.is_some() {
+                            spec.name
+                        } else {
+                            spec.property_name
+                        };
+                        if name_idx.is_some() {
+                            bindings_to_check.push((spec_idx, name_idx));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (binding_node_idx, name_idx) in bindings_to_check {
+            if let Some(name_node) = self.ctx.arena.get(name_idx)
+                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            {
+                let name = ident.escaped_text.clone();
+                let sym_id_opt = self
+                    .ctx
+                    .binder
+                    .node_symbols
+                    .get(&binding_node_idx.0)
+                    .copied();
+                if let Some(sym_id) = sym_id_opt {
+                    let mut has_conflict = false;
+                    if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
+                        if sym.is_type_only {
+                            continue;
+                        }
+
+                        let mut import_has_value = false;
+                        let mut visited = Vec::new();
+                        if let Some(resolved_id) = self.resolve_alias_symbol(sym_id, &mut visited)
+                            && let Some(resolved_sym) = self
+                                .ctx
+                                .binder
+                                .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
+                        {
+                            let mut has_value = (resolved_sym.flags & symbol_flags::VALUE) != 0;
+                            if has_value
+                                && (resolved_sym.flags & symbol_flags::VALUE_MODULE) != 0
+                                && (resolved_sym.flags
+                                    & (symbol_flags::VALUE & !symbol_flags::VALUE_MODULE))
+                                    == 0
+                            {
+                                let mut any_instantiated = false;
+                                for &decl_idx in &resolved_sym.declarations {
+                                    if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                        if decl_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
+                                                        if self.is_namespace_declaration_instantiated(decl_idx) {
+                                                            any_instantiated = true;
+                                                            break;
+                                                        }
+                                                    } else {
+                                                        any_instantiated = true;
+                                                        break;
+                                                    }
+                                    }
+                                }
+                                has_value = any_instantiated;
+                            }
+                            import_has_value = has_value;
+                            if (resolved_sym.flags & symbol_flags::ALIAS) != 0
+                                && sym.import_module.is_some()
+                                && sym.import_name.is_none()
+                            {
+                                import_has_value = true;
+                            }
+                        }
+                        if !import_has_value {
+                            continue;
+                        }
+
+                        let import_scope = self
+                            .ctx
+                            .binder
+                            .find_enclosing_scope(self.ctx.arena, binding_node_idx);
+
+                        has_conflict = sym.declarations.iter().any(|&decl_idx| {
+                            if decl_idx == binding_node_idx
+                                || decl_idx == clause_idx
+                                || decl_idx == stmt_idx
+                            {
+                                return false;
+                            }
+
+                            let in_same_scope = if let Some(import_scope_id) = import_scope {
+                                self.ctx
+                                    .binder
+                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
+                                    == Some(import_scope_id)
+                            } else {
+                                true
+                            };
+                            if !in_same_scope {
+                                return false;
+                            }
+
+                            if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                                !matches!(
+                                    decl_node.kind,
+                                    syntax_kind_ext::IMPORT_CLAUSE
+                                        | syntax_kind_ext::NAMESPACE_IMPORT
+                                        | syntax_kind_ext::IMPORT_SPECIFIER
+                                        | syntax_kind_ext::NAMED_IMPORTS
+                                        | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                        | syntax_kind_ext::IMPORT_DECLARATION
+                                )
+                            } else {
+                                false
+                            }
+                        });
+                    }
+
+                    if has_conflict {
+                        let message = format_message(
+                                diagnostic_messages::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                                &[&name],
+                            );
+                        self.error_at_node(
+                                name_idx,
+                                &message,
+                                diagnostic_codes::IMPORT_DECLARATION_CONFLICTS_WITH_LOCAL_DECLARATION_OF,
+                            );
+                    }
+                }
+            }
+        }
     }
 }
