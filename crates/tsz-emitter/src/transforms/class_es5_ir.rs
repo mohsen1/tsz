@@ -376,7 +376,7 @@ impl<'a> ES5ClassTransformer<'a> {
         self.emit_methods_ir(&mut body, class_idx);
 
         // Static members
-        self.emit_static_members_ir(&mut body, class_idx);
+        let deferred_static_blocks = self.emit_static_members_ir(&mut body, class_idx);
 
         // return ClassName;
         body.push(IRNode::ret(Some(IRNode::id(&self.class_name))));
@@ -424,6 +424,7 @@ impl<'a> ES5ClassTransformer<'a> {
             body,
             weakmap_decls,
             weakmap_inits,
+            deferred_static_blocks,
         })
     }
 
@@ -1436,14 +1437,40 @@ impl<'a> ES5ClassTransformer<'a> {
         })
     }
 
-    /// Emit static members as IR
-    fn emit_static_members_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) {
+    /// Emit static members as IR.
+    /// Returns deferred static block IIFEs (for classes with no non-block static members).
+    fn emit_static_members_ir(&self, body: &mut Vec<IRNode>, class_idx: NodeIndex) -> Vec<IRNode> {
         let Some(class_node) = self.arena.get(class_idx) else {
-            return;
+            return Vec::new();
         };
         let Some(class_data) = self.arena.get_class(class_node) else {
-            return;
+            return Vec::new();
         };
+
+        // Check if class has non-block static members (properties, accessors, methods with bodies)
+        // This determines whether static blocks go inline or deferred
+        let has_static_props = class_data.members.nodes.iter().any(|&m_idx| {
+            let Some(m_node) = self.arena.get(m_idx) else {
+                return false;
+            };
+            if m_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop_data) = self.arena.get_property_decl(m_node) {
+                    return has_static_modifier(self.arena, &prop_data.modifiers)
+                        && !has_abstract_modifier(self.arena, &prop_data.modifiers)
+                        && !is_private_identifier(self.arena, prop_data.name)
+                        && prop_data.initializer.is_some();
+                }
+            } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
+                && let Some(acc_data) = self.arena.get_accessor(m_node) {
+                    return has_static_modifier(self.arena, &acc_data.modifiers)
+                        && !has_abstract_modifier(self.arena, &acc_data.modifiers)
+                        && !is_private_identifier(self.arena, acc_data.name);
+                }
+            false
+        });
+
+        let mut deferred_static_blocks = Vec::new();
 
         // First pass: collect static accessors by name to combine getter/setter pairs
         let static_accessor_map = collect_accessor_pairs(self.arena, &class_data.members, true);
@@ -1568,8 +1595,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     )));
                 }
             } else if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                // Static block: emit contents as a Sequence node
-                // The static block node itself has a block structure
+                // Static block: wrap in IIFE to preserve block scoping
                 if let Some(block_data) = self.arena.get_block(member_node) {
                     let statements: Vec<IRNode> = block_data
                         .statements
@@ -1578,8 +1604,13 @@ impl<'a> ES5ClassTransformer<'a> {
                         .map(|&stmt_idx| self.convert_statement(stmt_idx))
                         .collect();
 
-                    if !statements.is_empty() {
-                        body.push(IRNode::Sequence(statements));
+                    let iife = IRNode::StaticBlockIIFE { statements };
+                    if has_static_props {
+                        // Inline: maintain initialization order with other static members
+                        body.push(iife);
+                    } else {
+                        // Deferred: emit after the class IIFE
+                        deferred_static_blocks.push(iife);
                     }
                 }
             } else if member_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -1635,6 +1666,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+
+        deferred_static_blocks
     }
 
     /// Get method name as IR representation

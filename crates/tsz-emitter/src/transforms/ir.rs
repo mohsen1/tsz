@@ -239,7 +239,13 @@ pub enum IRNode {
         weakmap_decls: Vec<String>,
         /// `WeakMap` instantiations (after the IIFE)
         weakmap_inits: Vec<String>,
+        /// Static block IIFEs deferred to after the class IIFE
+        /// (used when the class has no non-block static members)
+        deferred_static_blocks: Vec<Self>,
     },
+
+    /// Static block IIFE: `(function () { ...statements... })();`
+    StaticBlockIIFE { statements: Vec<Self> },
 
     /// __extends helper call: `__extends(ClassName, _super);`
     ExtendsHelper { class_name: String },
