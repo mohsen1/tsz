@@ -317,6 +317,18 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Error 1245: Method '{0}' cannot have an implementation because it is marked abstract.
+        if method.body.is_some() && self.has_abstract_modifier(&method.modifiers) {
+            let name_text = self
+                .get_property_name(method.name)
+                .unwrap_or_else(|| "unknown".to_string());
+            self.error_at_node(
+                member_idx,
+                &format!("Method '{name_text}' cannot have an implementation because it is marked abstract."),
+                diagnostic_codes::METHOD_CANNOT_HAVE_AN_IMPLEMENTATION_BECAUSE_IT_IS_MARKED_ABSTRACT,
+            );
+        }
+
         // Push type parameters (like <U> in `fn<U>(id: U)`) before checking types
         let (_type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
 
