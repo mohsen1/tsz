@@ -67,6 +67,15 @@ pub use crate::type_queries_extended::{
 pub use crate::type_queries_data::*;
 pub use crate::type_queries_flow::*;
 
+pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    get_keyof_inner(db, type_id)
+}
+
+pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
+    let atoms = collect_property_name_atoms_for_diagnostics(db, type_id, 10);
+    atoms.into_iter().map(|a| db.resolve_atom(a)).collect()
+}
+
 // =============================================================================
 // Core Type Queries
 // =============================================================================
