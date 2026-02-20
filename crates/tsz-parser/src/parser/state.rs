@@ -8,9 +8,11 @@
 //!
 //! - Uses `NodeArena` instead of `NodeArena`
 //! - Each node is 16 bytes (vs 208 bytes for fat Node enum)
-
 //! - Node data is stored in separate typed pools
 //! - 4 nodes fit per 64-byte cache line (vs 0.31 for fat nodes)
+
+use tsz_common::diagnostics::diagnostic_codes;
+use tsz_common::limits::MAX_PARSER_RECURSION_DEPTH;
 
 use crate::parser::{
     NodeIndex, NodeList,
@@ -177,15 +179,14 @@ impl ParserState {
 
     /// Check recursion limit - returns true if we can continue, false if limit exceeded
     pub(crate) fn enter_recursion(&mut self) -> bool {
-        self.recursion_depth += 1;
-        if self.recursion_depth > tsz_common::limits::MAX_PARSER_RECURSION_DEPTH {
-            use tsz_common::diagnostics::diagnostic_codes;
+        if self.recursion_depth >= MAX_PARSER_RECURSION_DEPTH {
             self.parse_error_at_current_token(
                 "Maximum recursion depth exceeded",
                 diagnostic_codes::UNEXPECTED_TOKEN,
             );
             false
         } else {
+            self.recursion_depth += 1;
             true
         }
     }

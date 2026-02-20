@@ -14,9 +14,9 @@ tsz-scanner = { workspace = true }
 rustc-hash = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-smallvec = { workspace = true }
 tracing = { workspace = true }
 wasm-bindgen = { workspace = true }
+
 
 [lints]
 workspace = true

@@ -10,8 +10,8 @@ use crate::parser::{
     node::{self},
     syntax_kind_ext,
 };
+use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
 
 impl ParserState {

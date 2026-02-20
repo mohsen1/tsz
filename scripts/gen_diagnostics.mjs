@@ -76,6 +76,7 @@ for (const entry of entries) {
   codeEntries.push({
     ...entry,
     codeName: finalCodeName,
+   codeNameParser: entry.message === "Import statement expects a 'from' clause." ? "IMPORT_EXPECTS_FROM_CLAUSE" : undefined,
   });
 }
 
@@ -137,7 +138,8 @@ pub mod diagnostic_codes {
 
 // Generate code constants
 for (const entry of codeEntries) {
-  output += `    pub const ${entry.codeName}: u32 = ${entry.code};\n`;
+  const constName = entry.codeNameParser || entry.codeName;
+  output += `    pub const ${constName}: u32 = ${entry.code};\n`;
 }
 
 
