@@ -9,6 +9,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn property_assigned_in_enclosing_class_constructor(
         &mut self,
@@ -386,6 +387,9 @@ impl<'a> CheckerState<'a> {
         // Push type parameters BEFORE checking heritage clauses
         // This allows heritage clauses to reference the interface's type parameters
         let (_type_params, type_param_updates) = self.push_type_parameters(&iface.type_parameters);
+
+        // Check for duplicate type parameters
+        self.check_duplicate_type_parameters(&iface.type_parameters);
 
         // Collect interface type parameter names for TS2304 checking in heritage clauses
         let interface_type_param_names: Vec<String> = type_param_updates
