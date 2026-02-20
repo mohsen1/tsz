@@ -247,6 +247,7 @@ impl StatementChecker {
             let Some(node) = arena.get(stmt_idx) else {
                 return;
             };
+            println!("Statement kind: {:?}", node.kind);
             (node.kind, node)
         };
         let kind = node_data.0;
