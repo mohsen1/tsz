@@ -511,6 +511,12 @@ pub fn resolve_compiler_options(
         resolved.checker.no_lib = no_lib;
     }
 
+    if resolved.checker.no_lib && options.lib.is_some() {
+        return Err(anyhow::anyhow!(
+            "Option 'lib' cannot be specified with option 'noLib'."
+        ));
+    }
+
     if let Some(no_types_and_symbols) = options.no_types_and_symbols {
         resolved.checker.no_types_and_symbols = no_types_and_symbols;
     }
