@@ -2115,6 +2115,7 @@ impl ScannerState {
     #[wasm_bindgen(js_name = scanJsxAttributeValue)]
     pub fn scan_jsx_attribute_value(&mut self) -> SyntaxKind {
         self.full_start_pos = self.pos;
+        self.token_flags = 0;
 
         // Skip whitespace
         while self.pos < self.end && is_white_space_single_line(self.char_code_unchecked(self.pos))
