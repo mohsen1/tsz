@@ -218,15 +218,20 @@ impl<'a> CheckerState<'a> {
     /// - Handles object destructuring: { a, b }
     /// - Handles array destructuring: [x, y]
     /// - Emits TS2304 for each duplicate name
-    pub(crate) fn check_duplicate_parameters(&mut self, parameters: &tsz_parser::parser::NodeList) {
+    pub(crate) fn check_duplicate_parameters(
+        &mut self,
+        parameters: &tsz_parser::parser::NodeList,
+        has_body: bool,
+    ) {
         let mut seen_names = rustc_hash::FxHashSet::default();
+
         for &param_idx in &parameters.nodes {
             let Some(param_node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
             // Parameters can be identifiers or binding patterns
             if let Some(param) = self.ctx.arena.get_parameter(param_node) {
-                self.collect_and_check_parameter_names(param.name, &mut seen_names);
+                self.collect_and_check_parameter_names(param.name, &mut seen_names, has_body);
             }
         }
     }
@@ -239,6 +244,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         name_idx: NodeIndex,
         seen: &mut rustc_hash::FxHashSet<String>,
+        has_body: bool,
     ) {
         use crate::diagnostics::{diagnostic_messages, format_message};
         use tsz_scanner::SyntaxKind;
@@ -268,7 +274,7 @@ impl<'a> CheckerState<'a> {
             k if k == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN => {
                 if let Some(pattern) = self.ctx.arena.get_binding_pattern(node) {
                     for &elem_idx in &pattern.elements.nodes {
-                        self.collect_and_check_binding_element(elem_idx, seen);
+                        self.collect_and_check_binding_element(elem_idx, seen, has_body);
                     }
                 }
             }
@@ -276,7 +282,7 @@ impl<'a> CheckerState<'a> {
             k if k == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN => {
                 if let Some(pattern) = self.ctx.arena.get_binding_pattern(node) {
                     for &elem_idx in &pattern.elements.nodes {
-                        self.collect_and_check_binding_element(elem_idx, seen);
+                        self.collect_and_check_binding_element(elem_idx, seen, has_body);
                     }
                 }
             }
@@ -291,6 +297,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         elem_idx: NodeIndex,
         seen: &mut rustc_hash::FxHashSet<String>,
+        has_body: bool,
     ) {
         if elem_idx.is_none() {
             return;
@@ -307,11 +314,33 @@ impl<'a> CheckerState<'a> {
         if let Some(elem) = self.ctx.arena.get_binding_element(node) {
             // Check computed property name expression for unresolved identifiers (TS2304)
             // e.g., in `{[z]: x}` where `z` is undefined
+
             if elem.property_name.is_some() {
                 self.check_computed_property_name(elem.property_name);
+
+                // TS2842: 'b' is an unused renaming of 'a'. Did you intend to use it as a type annotation?
+                // This is emitted when both property_name and name are identifiers, and there's no body.
+                if !has_body
+                    && let Some(prop_node) = self.ctx.arena.get(elem.property_name)
+                        && prop_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                            && let Some(name_node) = self.ctx.arena.get(elem.name)
+                                && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                                    let prop_name_str = self
+                                        .node_text(elem.property_name)
+                                        .unwrap_or_default()
+                                        .trim_end_matches(":")
+                                        .trim()
+                                        .to_string();
+                                    let name_str = self.node_text(elem.name).unwrap_or_default();
+                                    self.error_at_node_msg(
+                                        elem.name,
+                                        crate::diagnostics::diagnostic_codes::IS_AN_UNUSED_RENAMING_OF_DID_YOU_INTEND_TO_USE_IT_AS_A_TYPE_ANNOTATION,
+                                        &[&name_str, &prop_name_str],
+                                    );
+                                }
             }
             // Recurse on the name (which can be an identifier or another pattern)
-            self.collect_and_check_parameter_names(elem.name, seen);
+            self.collect_and_check_parameter_names(elem.name, seen, has_body);
         }
     }
 

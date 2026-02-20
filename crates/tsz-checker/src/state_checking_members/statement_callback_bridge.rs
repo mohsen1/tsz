@@ -152,7 +152,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.check_parameter_properties(&func.parameters.nodes);
 
         // Check for duplicate parameter names (TS2300)
-        self.check_duplicate_parameters(&func.parameters);
+        self.check_duplicate_parameters(&func.parameters, func.body.is_some());
         if !self.has_declare_modifier(&func.modifiers) && !self.ctx.file_name.ends_with(".d.ts") {
             self.check_strict_mode_reserved_parameter_names(
                 &func.parameters.nodes,
