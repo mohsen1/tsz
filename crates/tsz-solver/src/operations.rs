@@ -760,6 +760,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         func: &FunctionShape,
         arg_types: &[TypeId],
     ) -> CallResult {
+        // Handle generic functions FIRST so uninstantiated this_types don't fail assignability
+        if !func.type_params.is_empty() {
+            return self.resolve_generic_call(func, arg_types);
+        }
+
         // Check `this` context if specified by the function shape
         if let Some(expected_this) = func.this_type {
             if let Some(actual_this) = self.actual_this_type {
@@ -801,10 +806,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        // Handle generic functions
-        if !func.type_params.is_empty() {
-            return self.resolve_generic_call(func, arg_types);
-        }
+        // Generic functions handled above
 
         if let Some(result) = self.check_argument_types(&func.params, arg_types, func.is_method) {
             return result;
