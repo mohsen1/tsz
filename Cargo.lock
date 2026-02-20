@@ -1563,7 +1563,6 @@ dependencies = [
  "rustc-hash",
  "serde",
  "serde_json",
- "smallvec",
  "tracing",
  "tsz-common",
  "tsz-scanner",
