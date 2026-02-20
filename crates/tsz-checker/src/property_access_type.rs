@@ -445,12 +445,18 @@ impl<'a> CheckerState<'a> {
                     write_type,
                     from_index_signature,
                 } => {
+                    let union_has_explicit_member = from_index_signature
+                        && self.union_has_explicit_property_member(
+                            object_type_for_access,
+                            property_name,
+                        );
                     // Check for error 4111: property access from index signature
                     if from_index_signature
                         && self
                             .ctx
                             .compiler_options
                             .no_property_access_from_index_signature
+                        && !union_has_explicit_member
                     {
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node(
@@ -1373,6 +1379,27 @@ impl<'a> CheckerState<'a> {
             .expando_properties
             .get(&ident.escaped_text)
             .is_some_and(|props| props.contains(property_name))
+    }
+
+    fn union_has_explicit_property_member(&mut self, object_type: TypeId, prop_name: &str) -> bool {
+        use tsz_solver::operations_property::PropertyAccessResult;
+
+        let Some(members) =
+            crate::query_boundaries::state_checking::union_members(self.ctx.types, object_type)
+        else {
+            return false;
+        };
+
+        members.iter().copied().any(|member| {
+            let resolved_member = self.resolve_type_for_property_access(member);
+            matches!(
+                self.resolve_property_access_with_env(resolved_member, prop_name),
+                PropertyAccessResult::Success {
+                    from_index_signature: false,
+                    ..
+                }
+            )
+        })
     }
 
     fn strict_bind_call_apply_method_type(

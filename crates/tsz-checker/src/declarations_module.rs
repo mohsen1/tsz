@@ -834,7 +834,13 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     );
                 }
             } else {
-                // TS2434: Namespace comes before class/function in the same file
+                // TS2434: Namespace comes before class/function in the same file.
+                // Function-order TS2434 is already handled by the global duplicate-check path;
+                // keep this path for class-order checks to avoid duplicate TS2434 diagnostics.
+                if is_function {
+                    continue;
+                }
+
                 // Compare positions - only emit error if namespace is before class/function
                 let namespace_pos = self.ctx.arena.get(module_idx).map_or(0, |n| n.pos);
                 let class_or_func_pos = self.ctx.arena.get(decl_idx).map_or(0, |n| n.pos);

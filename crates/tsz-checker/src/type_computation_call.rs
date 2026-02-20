@@ -1021,15 +1021,14 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if emit_ts7005
-                && let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node_msg(
-                        idx,
-                        diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
-                        &[&sym.escaped_name, "any"],
-                    );
-                }
+            if emit_ts7005 && let Some(sym) = self.ctx.binder.get_symbol(sym_id) {
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node_msg(
+                    idx,
+                    diagnostic_codes::VARIABLE_IMPLICITLY_HAS_AN_TYPE,
+                    &[&sym.escaped_name, "any"],
+                );
+            }
 
             if self.is_type_only_import_equals_namespace_expr(idx) {
                 self.error_namespace_used_as_value_at(name, idx);
@@ -1130,6 +1129,15 @@ impl<'a> CheckerState<'a> {
                         && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
                     {
                         use tsz_parser::parser::syntax_kind_ext;
+                        if (parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                            || parent_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                            && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
+                            && access.expression == idx
+                        {
+                            // Defer diagnostics for `Ns.Member` to member-access handling so
+                            // type-only member access can report TS2693 at the member site.
+                            return self.get_type_of_symbol(sym_id);
+                        }
                         if parent_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                             || parent_node.kind == syntax_kind_ext::EXPORT_DECLARATION
                         {
