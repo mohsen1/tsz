@@ -283,11 +283,29 @@ impl<'a> FlowAnalyzer<'a> {
         // 1. Check for optional chaining on the call
         let is_optional = self.is_optional_call(condition, call);
 
-        // 2. Resolve callee type (skip parens/assertions to handle (isString as any)(x))
+        // 2. Check for instantiated predicate from generic call resolution first.
+        // Generic functions like `isDefined<T>(value: T | undefined): value is T` need
+        // their predicates instantiated with inferred type args (e.g., T -> string).
+        if let Some(predicates) = self.call_type_predicates
+            && let Some((predicate, params)) = predicates.get(&condition.0)
+        {
+            let target_node = self.predicate_target_expression(call, predicate, params)?;
+            let guard = if let Some(type_id) = predicate.type_id {
+                TypeGuard::Predicate {
+                    type_id: Some(type_id),
+                    asserts: predicate.asserts,
+                }
+            } else {
+                TypeGuard::Truthy
+            };
+            return Some((guard, target_node, is_optional));
+        }
+
+        // 3. Resolve callee type (skip parens/assertions to handle (isString as any)(x))
         let callee_idx = self.skip_parens_and_assertions(call.expression);
         let callee_type = *self.node_types?.get(&callee_idx.0)?;
 
-        // 3. Get the predicate signature from the callee's type
+        // 4. Get the predicate signature from the callee's type
         let signature = self.predicate_signature_for_type(callee_type)?;
 
         // 4. Find the target node (the argument or `this` object being narrowed)

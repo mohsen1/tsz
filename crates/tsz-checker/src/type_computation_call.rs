@@ -521,11 +521,14 @@ impl<'a> CheckerState<'a> {
 
         // super() calls are constructor calls, not function calls.
         // Use resolve_new() which checks construct signatures instead of call signatures.
-        let result = if is_super_call {
-            self.resolve_new_with_checker_adapter(
-                callee_type_for_call,
-                &arg_types,
-                force_bivariant_callbacks,
+        let (result, instantiated_predicate) = if is_super_call {
+            (
+                self.resolve_new_with_checker_adapter(
+                    callee_type_for_call,
+                    &arg_types,
+                    force_bivariant_callbacks,
+                ),
+                None,
             )
         } else {
             self.resolve_call_with_checker_adapter(
@@ -535,6 +538,12 @@ impl<'a> CheckerState<'a> {
                 self.ctx.contextual_type,
             )
         };
+
+        // Store instantiated type predicate from generic call resolution
+        // so flow narrowing can use the correct (inferred) predicate type.
+        if let Some(predicate) = instantiated_predicate {
+            self.ctx.call_type_predicates.insert(idx.0, predicate);
+        }
 
         let call_context = CallResultContext {
             callee_expr: call.expression,

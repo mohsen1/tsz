@@ -276,6 +276,11 @@ pub struct CheckerContext<'a> {
     /// Reused across `FlowAnalyzer` instances within a single file check.
     pub flow_reference_match_cache: RefCell<FxHashMap<(u32, u32), bool>>,
 
+    /// Instantiated type predicates from generic call resolutions.
+    /// Keyed by call expression node index. Used by flow narrowing to get
+    /// predicates with inferred type arguments applied (e.g., `T` -> `string`).
+    pub call_type_predicates: crate::control_flow::CallPredicateMap,
+
     /// `TypeIds` whose application/lazy symbol references are fully resolved in `type_env`.
     /// This avoids repeated deep traversals in assignability hot paths.
     pub application_symbols_resolved: FxHashSet<TypeId>,
