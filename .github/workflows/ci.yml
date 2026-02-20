@@ -564,6 +564,28 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Save conformance metrics artifact
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --arg suite "conformance" \
+            --arg pass_rate "${{ steps.conformance-metrics.outputs.pass_rate }}" \
+            --arg passed "${{ steps.conformance-metrics.outputs.passed }}" \
+            --arg total "${{ steps.conformance-metrics.outputs.total }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, run_id:$run_id, sha:$sha}' \
+            > .ci-metrics/conformance.json
+
+      - name: Upload conformance metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-metrics-conformance
+          path: .ci-metrics/conformance.json
+          retention-days: 14
+
   # ─── Emit parity ───────────────────────────────────────────────────────────
   emit:
     name: Emit Tests
@@ -716,6 +738,31 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Save emit metrics artifact
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --arg suite "emit" \
+            --arg js_pass_rate "${{ steps.emit-metrics.outputs.js_pass_rate }}" \
+            --arg js_passed "${{ steps.emit-metrics.outputs.js_passed }}" \
+            --arg js_total "${{ steps.emit-metrics.outputs.js_total }}" \
+            --arg dts_pass_rate "${{ steps.emit-metrics.outputs.dts_pass_rate }}" \
+            --arg dts_passed "${{ steps.emit-metrics.outputs.dts_passed }}" \
+            --arg dts_total "${{ steps.emit-metrics.outputs.dts_total }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            '{suite:$suite, js_pass_rate:$js_pass_rate, js_passed:$js_passed, js_total:$js_total, dts_pass_rate:$dts_pass_rate, dts_passed:$dts_passed, dts_total:$dts_total, run_id:$run_id, sha:$sha}' \
+            > .ci-metrics/emit.json
+
+      - name: Upload emit metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-metrics-emit
+          path: .ci-metrics/emit.json
+          retention-days: 14
+
   # ─── Fourslash parity ──────────────────────────────────────────────────────
   fourslash:
     name: Fourslash Tests
@@ -839,6 +886,28 @@ jobs:
               echo "| Fourslash | $PASSED | $TOTAL | ${RATE}% |"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save fourslash metrics artifact
+        if: always()
+        run: |
+          mkdir -p .ci-metrics
+          jq -n \
+            --arg suite "fourslash" \
+            --arg pass_rate "${{ steps.fourslash-metrics.outputs.pass_rate }}" \
+            --arg passed "${{ steps.fourslash-metrics.outputs.passed }}" \
+            --arg total "${{ steps.fourslash-metrics.outputs.total }}" \
+            --arg run_id "${{ github.run_id }}" \
+            --arg sha "${{ github.sha }}" \
+            '{suite:$suite, pass_rate:$pass_rate, passed:$passed, total:$total, run_id:$run_id, sha:$sha}' \
+            > .ci-metrics/fourslash.json
+
+      - name: Upload fourslash metrics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-metrics-fourslash
+          path: .ci-metrics/fourslash.json
+          retention-days: 14
 
   # ─── Summary ───────────────────────────────────────────────────────────────
   summary:

@@ -2,48 +2,106 @@ name: Update README
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 */2 * * *'
+    inputs:
+      run_id:
+        description: "Optional CI run id to pull metrics from"
+        required: false
+        type: string
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 permissions:
   contents: write
-  pull-requests: write
-  issues: write
+  actions: read
 
 concurrency:
   group: update-readme
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   update-readme:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
-    permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+    timeout-minutes: 20
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: main
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT != '' && secrets.GH_PAT || github.token }}
 
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Resolve source CI run
+        id: source_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RUN_ID: ${{ github.event.inputs.run_id }}
+        run: |
+          set -euo pipefail
 
-      - name: Cache Cargo
-        uses: Swatinem/rust-cache@v2
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "run_id=${{ github.event.workflow_run.id }}" >> "$GITHUB_OUTPUT"
+            echo "head_sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+            echo "Using triggering workflow_run id=${{ github.event.workflow_run.id }} sha=${{ github.event.workflow_run.head_sha }}"
+            exit 0
+          fi
+
+          if [ -n "${INPUT_RUN_ID:-}" ]; then
+            run_json=$(gh run view "$INPUT_RUN_ID" --json databaseId,headSha,workflowName,conclusion)
+            conclusion=$(echo "$run_json" | jq -r '.conclusion')
+            workflow=$(echo "$run_json" | jq -r '.workflowName')
+            if [ "$workflow" != "CI" ]; then
+              echo "ERROR: run $INPUT_RUN_ID is not a CI workflow run"
+              exit 1
+            fi
+            if [ "$conclusion" != "success" ]; then
+              echo "ERROR: run $INPUT_RUN_ID did not succeed (conclusion=$conclusion)"
+              exit 1
+            fi
+            echo "run_id=$INPUT_RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "head_sha=$(echo "$run_json" | jq -r '.headSha')" >> "$GITHUB_OUTPUT"
+            echo "Using manually provided CI run id=$INPUT_RUN_ID"
+            exit 0
+          fi
+
+          latest_run_id=$(
+            gh run list --workflow CI --branch main --limit 30 --json databaseId,conclusion \
+              --jq 'map(select(.conclusion=="success")) | .[0].databaseId // empty'
+          )
+          if [ -z "$latest_run_id" ]; then
+            echo "ERROR: no successful CI run found on main"
+            exit 1
+          fi
+
+          latest_run_json=$(gh run view "$latest_run_id" --json headSha)
+          echo "run_id=$latest_run_id" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(echo "$latest_run_json" | jq -r '.headSha')" >> "$GITHUB_OUTPUT"
+          echo "Using latest successful CI run id=$latest_run_id"
+
+      - name: Download CI metrics artifacts
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.source_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: ci-metrics-*
+          merge-multiple: true
+          path: .ci-metrics
+          if-no-files-found: warn
 
       - name: Update README metrics
         run: |
-          chmod +x scripts/update-readme.sh
-          ./scripts/update-readme.sh
+          node scripts/update-readme-from-ci-metrics.mjs
 
       - name: Check README changes
         id: check_readme
@@ -55,37 +113,17 @@ jobs:
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Ensure automated PR label exists
+      - name: Commit and push README update to main
         if: steps.check_readme.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh label create automated-readme --color 0E8A16 --description "Automated README metric updates" --force
-
-      - name: Close prior automated README PRs
-        if: steps.check_readme.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          for pr in $(gh pr list --state open --json number,headRefName,labels --jq '.[] | select((.labels | map(.name) | index("automated-readme") != null) or .headRefName == "ci/update-readme-metrics") | .number'); do
-            gh pr close "$pr" --delete-branch --comment "Superseded by a newer automated README update run."
-          done
 
-      - name: Create README update pull request
-        if: steps.check_readme.outputs.changed == 'true'
-        uses: peter-evans/create-pull-request@v6
-        with:
-          token: ${{ github.token }}
-          commit-message: "docs: automated README metrics update"
-          title: "docs: automated README metrics update"
-          body: |
-            Automated update of README metrics (conformance / fourslash / emit).
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-          This PR is generated by the scheduled workflow.
-          base: main
-          labels: automated-readme
-          branch: ci/update-readme-metrics
-          add-paths: |
-            README.md
-          delete-branch: true
+          git add README.md
+          git commit -m "docs: automated README metrics update for ${{ steps.source_run.outputs.head_sha }}"
+
+          # Rebase in case main moved while this workflow was running.
+          git pull --rebase origin main
+          git push origin HEAD:main
