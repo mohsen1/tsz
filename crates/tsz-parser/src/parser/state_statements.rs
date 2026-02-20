@@ -417,10 +417,8 @@ impl ParserState {
             SyntaxKind::ThrowKeyword => self.parse_throw_statement(),
             SyntaxKind::DoKeyword => self.parse_do_statement(),
             SyntaxKind::SwitchKeyword => self.parse_switch_statement(),
-            SyntaxKind::TryKeyword => self.parse_try_statement(),
-            SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => {
-                // Orphan catch/finally block (missing try)
-                self.parse_orphan_catch_or_finally_block()
+            SyntaxKind::TryKeyword | SyntaxKind::CatchKeyword | SyntaxKind::FinallyKeyword => {
+                self.parse_try_statement()
             }
             SyntaxKind::WithKeyword => self.parse_with_statement(),
             SyntaxKind::DebuggerKeyword => self.parse_debugger_statement(),
@@ -993,17 +991,19 @@ impl ParserState {
         }
 
         let start_pos = self.token_pos();
-        self.parse_expected(SyntaxKind::OpenBraceToken);
+        let statements = if self.parse_expected(SyntaxKind::OpenBraceToken) {
+            // Set IN_BLOCK flag so that modifiers like export/declare emit TS1184
+            let saved_flags = self.context_flags;
+            self.context_flags |= CONTEXT_FLAG_IN_BLOCK;
 
-        // Set IN_BLOCK flag so that modifiers like export/declare emit TS1184
-        let saved_flags = self.context_flags;
-        self.context_flags |= CONTEXT_FLAG_IN_BLOCK;
+            let stmts = self.parse_statements();
 
-        let statements = self.parse_statements();
-
-        self.context_flags = saved_flags;
-
-        self.parse_expected(SyntaxKind::CloseBraceToken);
+            self.context_flags = saved_flags;
+            self.parse_expected(SyntaxKind::CloseBraceToken);
+            stmts
+        } else {
+            self.make_node_list(Vec::new())
+        };
         let end_pos = self.token_end();
 
         self.exit_recursion();
