@@ -1034,16 +1034,10 @@ fn rewrite_bare_specifiers(
         })
         .into_owned();
 
-    result = IMPORT_RE
-        .replace_all(&result, |caps: &regex::Captures| {
-            let specifier = &caps[3];
-            if should_rewrite(specifier) {
-                format!("{}{}./{}{}", &caps[1], &caps[2], specifier, &caps[2])
-            } else {
-                caps[0].to_string()
-            }
-        })
-        .into_owned();
+    // NOTE: Side-effect imports (`import "module"`) are intentionally NOT rewritten.
+    // In tsc, bare side-effect imports don't resolve to files in the same directory —
+    // they are treated as external module references and emit TS2882 when unresolvable.
+    // Rewriting them to relative paths would suppress the expected TS2882 error.
 
     result = REQUIRE_RE
         .replace_all(&result, |caps: &regex::Captures| {

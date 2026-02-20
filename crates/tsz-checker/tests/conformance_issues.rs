@@ -53,6 +53,37 @@ fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
 }
 
+/// Helper to compile with report_unresolved_imports enabled (for import-related tests)
+fn compile_imports_and_get_diagnostics(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        options,
+    );
+    checker.ctx.report_unresolved_imports = true;
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 /// Issue: Flow analysis applies narrowing from invalid assignments
 ///
 /// From: derivedClassTransitivity3.ts
@@ -1808,5 +1839,60 @@ function f10() {
     assert!(
         has_error(&diagnostics, 7034),
         "Should emit TS7034 for variable captured by arrow function.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+// =============================================================================
+// TS2882: Cannot find module or type declarations for side-effect import
+// =============================================================================
+
+/// TS2882 should fire for side-effect imports by default (tsc 6.0 default: true).
+#[test]
+fn test_ts2882_side_effect_import_default() {
+    // Default CheckerOptions has no_unchecked_side_effect_imports: true
+    let diagnostics = compile_imports_and_get_diagnostics(
+        r#"import 'nonexistent-module';"#,
+        CheckerOptions::default(),
+    );
+    assert!(
+        has_error(&diagnostics, 2882),
+        "Should emit TS2882 for side-effect import by default.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 for side-effect import (should use TS2882 instead).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// Side-effect imports should NOT emit any error when noUncheckedSideEffectImports is false.
+#[test]
+fn test_ts2882_side_effect_import_option_false() {
+    let mut opts = CheckerOptions::default();
+    opts.no_unchecked_side_effect_imports = false;
+    let diagnostics = compile_imports_and_get_diagnostics(r#"import 'nonexistent-module';"#, opts);
+    assert!(
+        !has_error(&diagnostics, 2882),
+        "Should NOT emit TS2882 when noUncheckedSideEffectImports is false.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 for side-effect import.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// Regular imports should still emit TS2307 even when noUncheckedSideEffectImports is enabled.
+#[test]
+fn test_ts2882_regular_import_still_emits_ts2307() {
+    let diagnostics = compile_imports_and_get_diagnostics(
+        r#"import { foo } from 'nonexistent-module';"#,
+        CheckerOptions::default(),
+    );
+    assert!(
+        has_error(&diagnostics, 2307) || has_error(&diagnostics, 2792),
+        "Should emit TS2307 or TS2792 for regular import.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2882),
+        "Should NOT emit TS2882 for regular import (only for side-effect imports).\nActual errors: {diagnostics:#?}"
     );
 }

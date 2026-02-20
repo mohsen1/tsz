@@ -235,6 +235,9 @@ pub struct CompilerOptions {
     /// Do not report errors on unreachable code
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub allow_unreachable_code: Option<bool>,
+    /// Check side-effect imports for module resolution errors
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub no_unchecked_side_effect_imports: Option<bool>,
     /// Require 'override' modifier on members that override base class members
     #[serde(
         default,
@@ -661,6 +664,9 @@ pub fn resolve_compiler_options(
     if let Some(v) = options.no_implicit_override {
         resolved.checker.no_implicit_override = v;
     }
+    if let Some(v) = options.no_unchecked_side_effect_imports {
+        resolved.checker.no_unchecked_side_effect_imports = v;
+    }
 
     if let Some(no_emit) = options.no_emit {
         resolved.no_emit = no_emit;
@@ -884,6 +890,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_unused_parameters,
             allow_unreachable_code,
             no_resolve,
+            no_unchecked_side_effect_imports,
             no_implicit_override,
         }
     )
