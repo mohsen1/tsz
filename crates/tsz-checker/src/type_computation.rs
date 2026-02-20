@@ -209,8 +209,7 @@ impl<'a> CheckerState<'a> {
             if let Some(contextual) = self.ctx.contextual_type {
                 let resolved = self.resolve_type_for_property_access(contextual);
                 let resolved = self.resolve_lazy_type(resolved);
-                use tsz_solver::types::TypeData;
-                if let Some(TypeData::Tuple(..)) = self.ctx.types.lookup(resolved) {
+                if tsz_solver::type_queries::is_tuple_type(self.ctx.types, resolved) {
                     return factory.tuple(vec![]);
                 } else if let Some(t_elem) =
                     tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved)
