@@ -630,9 +630,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
                     self.check_subtype(target_constraint, source_constraint)
                         .is_true()
-                        || self
-                            .check_subtype(source_constraint, target_constraint)
-                            .is_true()
                 });
 
             if all_constraints_compatible {
