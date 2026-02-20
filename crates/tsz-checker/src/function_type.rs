@@ -334,6 +334,31 @@ impl<'a> CheckerState<'a> {
                     }
                 };
 
+                let mut element_type_from_pattern = None;
+                if let Some(name_node) = self.ctx.arena.get(param.name)
+                    && (name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                {
+                    let pattern_type = self.infer_type_from_binding_pattern(param.name, type_id);
+                    if pattern_type != TypeId::ANY {
+                        element_type_from_pattern = Some(pattern_type);
+                    }
+                }
+
+                let type_id = if let Some(pattern_type) = element_type_from_pattern {
+                    if type_id != TypeId::ANY && type_id != TypeId::UNKNOWN {
+                        if self.is_assignable_to(type_id, pattern_type) {
+                            pattern_type
+                        } else {
+                            self.ctx.types.factory().union(vec![type_id, pattern_type])
+                        }
+                    } else {
+                        pattern_type
+                    }
+                } else {
+                    type_id
+                };
+
                 if is_this_param {
                     if this_type.is_none() {
                         this_type = Some(type_id);

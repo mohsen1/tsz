@@ -314,10 +314,15 @@ impl<'a> CheckerState<'a> {
                 if let Some(info) = self.ctx.arena.node_info(current) {
                     let parent = info.parent;
                     if let Some(parent_node) = self.ctx.arena.get(parent)
+<<<<<<< HEAD
                         && parent_node.kind == syntax_kind_ext::PARAMETER
                     {
                         return false;
                     }
+=======
+                        && parent_node.kind == syntax_kind_ext::PARAMETER {
+                            return false;
+                        }
                     current = parent;
                 } else {
                     break;
