@@ -62,12 +62,30 @@ impl<'a> CheckerState<'a> {
                 && let Some(intrinsic_elements_type) = self.get_intrinsic_elements_type()
             {
                 // Create JSX.IntrinsicElements['tagName'] as an IndexAccess type
+                let tag_atom = self.ctx.types.intern_string(tag);
+                let cache_key = (intrinsic_elements_type, tag_atom);
+
+                // Use cached evaluated props type if available, otherwise evaluate
+                let evaluated_props =
+                    if let Some(&cached) = self.ctx.jsx_intrinsic_props_cache.get(&cache_key) {
+                        cached
+                    } else {
+                        let factory = self.ctx.types.factory();
+                        let tag_literal = factory.literal_string(tag);
+                        let props_type = factory.index_access(intrinsic_elements_type, tag_literal);
+                        let evaluated = self.evaluate_type_with_env(props_type);
+                        self.ctx
+                            .jsx_intrinsic_props_cache
+                            .insert(cache_key, evaluated);
+                        evaluated
+                    };
+
                 let factory = self.ctx.types.factory();
                 let tag_literal = factory.literal_string(tag);
                 let props_type = factory.index_access(intrinsic_elements_type, tag_literal);
 
-                // Check JSX attributes against the expected props type
-                self.check_jsx_attributes_against_props(jsx_opening.attributes, props_type);
+                // Check JSX attributes against the already-evaluated props type
+                self.check_jsx_attributes_against_props(jsx_opening.attributes, evaluated_props);
 
                 return props_type;
             }
@@ -198,18 +216,18 @@ impl<'a> CheckerState<'a> {
         chars.all(|c| c.is_ascii_alphanumeric() || c == '$' || c == '_')
     }
 
-    /// Check JSX attributes against the expected props type.
+    /// Check JSX attributes against an already-evaluated props type.
     ///
     /// For each attribute, checks that the assigned value is assignable to the
     /// expected property type from the props interface. Emits:
     /// - TS2322 for type mismatches and excess properties
     /// - TS2741 for missing required properties
-    pub(crate) fn check_jsx_attributes_against_props(
+    fn check_jsx_attributes_against_props(
         &mut self,
         attributes_idx: NodeIndex,
         props_type: TypeId,
     ) {
-        // Skip checking if props_type is any or error
+        // Skip if evaluation resulted in any or error
         if props_type == TypeId::ANY || props_type == TypeId::ERROR {
             return;
         }
@@ -220,15 +238,6 @@ impl<'a> CheckerState<'a> {
         let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
             return;
         };
-
-        // Evaluate the props type to resolve IndexAccess types like
-        // JSX.IntrinsicElements['tagName'] to the actual props object type
-        let props_type = self.evaluate_type_with_env(props_type);
-
-        // Skip if evaluation resulted in any or error
-        if props_type == TypeId::ANY || props_type == TypeId::ERROR {
-            return;
-        }
 
         // Check if the props type has a string index signature (e.g., [s: string]: any).
         // When it does, any attribute name is valid, so skip excess property checking.

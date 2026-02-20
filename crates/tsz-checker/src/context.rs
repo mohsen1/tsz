@@ -297,6 +297,11 @@ pub struct CheckerContext<'a> {
     /// Avoids repeating private-brand scans on hot miss paths.
     pub class_decl_miss_cache: RefCell<FxHashSet<TypeId>>,
 
+    /// Cache for JSX intrinsic element evaluated props types.
+    /// Maps (`intrinsic_elements_type`, `tag_atom`) -> `evaluated_props_type`.
+    /// Avoids re-evaluating `JSX.IntrinsicElements['div']` for every `<div>` element.
+    pub jsx_intrinsic_props_cache: FxHashMap<(TypeId, tsz_common::interner::Atom), TypeId>,
+
     /// Symbol dependency graph (symbol -> referenced symbols).
     pub symbol_dependencies: FxHashMap<SymbolId, FxHashSet<SymbolId>>,
 
