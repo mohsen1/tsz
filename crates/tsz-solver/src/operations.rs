@@ -82,6 +82,12 @@ pub enum CallResult {
     /// Not a callable type
     NotCallable { type_id: TypeId },
 
+    /// `this` type mismatch
+    ThisTypeMismatch {
+        expected_this: TypeId,
+        actual_this: TypeId,
+    },
+
     /// Argument count mismatch
     ArgumentCountMismatch {
         expected_min: usize,
@@ -143,6 +149,8 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     /// Contextual type for the call expression's expected result
     /// Used for contextual type inference in generic functions
     pub(crate) contextual_type: Option<TypeId>,
+    /// The `this` type provided by the caller (e.g. `obj` in `obj.method()`)
+    pub(crate) actual_this_type: Option<TypeId>,
     /// Current recursion depth for `constrain_types` to prevent infinite loops
     pub(crate) constraint_recursion_depth: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
@@ -160,10 +168,16 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             defaulted_placeholders: FxHashSet::default(),
             force_bivariant_callbacks: false,
             contextual_type: None,
+            actual_this_type: None,
             constraint_recursion_depth: RefCell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
             last_instantiated_predicate: None,
         }
+    }
+
+    /// Set the actual `this` type for the call evaluation.
+    pub const fn set_actual_this_type(&mut self, type_id: Option<TypeId>) {
+        self.actual_this_type = type_id;
     }
 
     /// Set the contextual type for this call evaluation.
@@ -744,6 +758,26 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         func: &FunctionShape,
         arg_types: &[TypeId],
     ) -> CallResult {
+        // Check `this` context if specified by the function shape
+        if let Some(expected_this) = func.this_type {
+            if let Some(actual_this) = self.actual_this_type {
+                if !self.checker.is_assignable_to(actual_this, expected_this) {
+                    return CallResult::ThisTypeMismatch {
+                        expected_this,
+                        actual_this,
+                    };
+                }
+            }
+            // Note: if `actual_this_type` is None, we technically should check if `void` is assignable to `expected_this`.
+            // But TSC behavior for missing `this` might require strict checking. Let's do it:
+            else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
+                return CallResult::ThisTypeMismatch {
+                    expected_this,
+                    actual_this: TypeId::VOID,
+                };
+            }
+        }
+
         // Check argument count
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
 

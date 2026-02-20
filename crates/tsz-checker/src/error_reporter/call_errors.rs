@@ -480,6 +480,28 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Report a "this type mismatch" error using solver diagnostics with source tracking.
+    pub fn error_this_type_mismatch_at(
+        &mut self,
+        expected_this: TypeId,
+        actual_this: TypeId,
+        idx: NodeIndex,
+    ) {
+        if let Some(loc) = self.get_source_location(idx) {
+            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                self.ctx.types,
+                &self.ctx.binder.symbols,
+                self.ctx.file_name.as_str(),
+            )
+            .with_def_store(&self.ctx.definition_store);
+            let diag =
+                builder.this_type_mismatch(expected_this, actual_this, loc.start, loc.length());
+            self.ctx
+                .diagnostics
+                .push(diag.to_checker_diagnostic(&self.ctx.file_name));
+        }
+    }
+
     /// Report a "type is not callable" error using solver diagnostics with source tracking.
     pub fn error_not_callable_at(&mut self, type_id: TypeId, idx: NodeIndex) {
         // Suppress cascade errors from unresolved types

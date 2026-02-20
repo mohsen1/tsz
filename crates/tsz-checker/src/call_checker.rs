@@ -132,6 +132,7 @@ impl<'a> CheckerState<'a> {
         arg_types: &[TypeId],
         force_bivariant_callbacks: bool,
         contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
     ) -> (
         CallResult,
         Option<(tsz_solver::TypePredicate, Vec<tsz_solver::ParamInfo>)>,
@@ -148,6 +149,7 @@ impl<'a> CheckerState<'a> {
             arg_types,
             force_bivariant_callbacks,
             contextual_type,
+            actual_this_type,
         )
     }
 
@@ -450,6 +452,7 @@ impl<'a> CheckerState<'a> {
         args: &[NodeIndex],
         signatures: &[tsz_solver::CallSignature],
         force_bivariant_callbacks: bool,
+        actual_this_type: Option<TypeId>,
     ) -> Option<TypeId> {
         use tsz_solver::FunctionShape;
         use tsz_solver::operations::CallResult;
@@ -534,6 +537,7 @@ impl<'a> CheckerState<'a> {
                 &arg_types,
                 force_bivariant_callbacks,
                 self.ctx.contextual_type,
+                None,
             );
 
             match &result {
@@ -617,6 +621,7 @@ impl<'a> CheckerState<'a> {
                 &sig_arg_types,
                 force_bivariant_callbacks,
                 self.ctx.contextual_type,
+                actual_this_type,
             );
 
             if let CallResult::Success(return_type) = result {

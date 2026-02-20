@@ -270,11 +270,22 @@ impl<'a> CheckerState<'a> {
             )
         );
 
+        let mut actual_this_type = None;
+        if let Some(callee_node) = self.ctx.arena.get(call.expression) {
+            use tsz_parser::parser::syntax_kind_ext;
+            if (callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || callee_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                && let Some(access) = self.ctx.arena.get_access_expr(callee_node) {
+                    actual_this_type = Some(self.get_type_of_node(access.expression));
+                }
+        }
+
         if let Some(signatures) = overload_signatures.as_deref()
             && let Some(return_type) = self.resolve_overloaded_call_with_signatures(
                 args,
                 signatures,
                 force_bivariant_callbacks,
+                actual_this_type,
             )
         {
             trace!(
@@ -536,6 +547,7 @@ impl<'a> CheckerState<'a> {
                 &arg_types,
                 force_bivariant_callbacks,
                 self.ctx.contextual_type,
+                actual_this_type,
             )
         };
 
@@ -737,6 +749,13 @@ impl<'a> CheckerState<'a> {
                 } else {
                     TypeId::ERROR
                 }
+            }
+            CallResult::ThisTypeMismatch {
+                expected_this,
+                actual_this,
+            } => {
+                self.error_this_type_mismatch_at(expected_this, actual_this, callee_expr);
+                TypeId::ERROR
             }
         }
     }
