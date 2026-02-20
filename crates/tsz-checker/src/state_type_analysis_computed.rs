@@ -198,8 +198,11 @@ impl<'a> CheckerState<'a> {
                 .insert(sym_id, interface_type);
         }
 
-        let merged_type = self.merge_namespace_exports_into_object(sym_id, TypeId::ANY);
-        (merged_type, Vec::new())
+        // Keep namespace symbols as Lazy references so namespace member resolution
+        // can differentiate value-vs-type-only members (TS2693/TS2708 paths).
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let factory = self.ctx.types.factory();
+        (factory.lazy(def_id), Vec::new())
     }
 
     fn resolve_export_value_wrapper_target_symbol(

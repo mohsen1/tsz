@@ -53,7 +53,7 @@ fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
 }
 
-/// Helper to compile with report_unresolved_imports enabled (for import-related tests)
+/// Helper to compile with `report_unresolved_imports` enabled (for import-related tests)
 fn compile_imports_and_get_diagnostics(
     source: &str,
     options: CheckerOptions,
@@ -1867,8 +1867,10 @@ fn test_ts2882_side_effect_import_default() {
 /// Side-effect imports should NOT emit any error when noUncheckedSideEffectImports is false.
 #[test]
 fn test_ts2882_side_effect_import_option_false() {
-    let mut opts = CheckerOptions::default();
-    opts.no_unchecked_side_effect_imports = false;
+    let opts = CheckerOptions {
+        no_unchecked_side_effect_imports: false,
+        ..CheckerOptions::default()
+    };
     let diagnostics = compile_imports_and_get_diagnostics(r#"import 'nonexistent-module';"#, opts);
     assert!(
         !has_error(&diagnostics, 2882),

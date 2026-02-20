@@ -650,13 +650,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.len() != 1
+                    if source_shape.call_signatures.is_empty()
                         || !source_shape.construct_signatures.is_empty()
                         || !source_shape.properties.is_empty()
                     {
                         return false;
                     }
-                    let source_sig = &source_shape.call_signatures[0];
+                    let Some(source_sig) = source_shape.call_signatures.last() else {
+                        return false;
+                    };
                     match_params_and_return(
                         source,
                         &source_sig.params,
@@ -681,13 +683,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.len() != 1
+                                if source_shape.call_signatures.is_empty()
                                     || !source_shape.construct_signatures.is_empty()
                                     || !source_shape.properties.is_empty()
                                 {
                                     return false;
                                 }
-                                let source_sig = &source_shape.call_signatures[0];
+                                let Some(source_sig) = source_shape.call_signatures.last() else {
+                                    return false;
+                                };
                                 if !match_params_and_return(
                                     member,
                                     &source_sig.params,
@@ -744,13 +748,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.len() != 1
+                    if source_shape.call_signatures.is_empty()
                         || !source_shape.construct_signatures.is_empty()
                         || !source_shape.properties.is_empty()
                     {
                         return false;
                     }
-                    let source_sig = &source_shape.call_signatures[0];
+                    let Some(source_sig) = source_shape.call_signatures.last() else {
+                        return false;
+                    };
                     match_params(&source_sig.params, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
@@ -765,13 +771,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.len() != 1
+                                if source_shape.call_signatures.is_empty()
                                     || !source_shape.construct_signatures.is_empty()
                                     || !source_shape.properties.is_empty()
                                 {
                                     return false;
                                 }
-                                let source_sig = &source_shape.call_signatures[0];
+                                let Some(source_sig) = source_shape.call_signatures.last() else {
+                                    return false;
+                                };
                                 if !match_params(&source_sig.params, &mut member_bindings) {
                                     return false;
                                 }
@@ -823,13 +831,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return match self.interner().lookup(source) {
                 Some(TypeData::Callable(source_shape_id)) => {
                     let source_shape = self.interner().callable_shape(source_shape_id);
-                    if source_shape.call_signatures.len() != 1
+                    if source_shape.call_signatures.is_empty()
                         || !source_shape.construct_signatures.is_empty()
                         || !source_shape.properties.is_empty()
                     {
                         return false;
                     }
-                    let source_sig = &source_shape.call_signatures[0];
+                    let Some(source_sig) = source_shape.call_signatures.last() else {
+                        return false;
+                    };
                     match_return(source, source_sig.return_type, bindings)
                 }
                 Some(TypeData::Function(source_fn_id)) => {
@@ -844,13 +854,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         match self.interner().lookup(member) {
                             Some(TypeData::Callable(source_shape_id)) => {
                                 let source_shape = self.interner().callable_shape(source_shape_id);
-                                if source_shape.call_signatures.len() != 1
+                                if source_shape.call_signatures.is_empty()
                                     || !source_shape.construct_signatures.is_empty()
                                     || !source_shape.properties.is_empty()
                                 {
                                     return false;
                                 }
-                                let source_sig = &source_shape.call_signatures[0];
+                                let Some(source_sig) = source_shape.call_signatures.last() else {
+                                    return false;
+                                };
                                 if !match_return(
                                     member,
                                     source_sig.return_type,

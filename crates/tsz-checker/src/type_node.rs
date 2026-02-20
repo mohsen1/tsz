@@ -1705,10 +1705,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 syntax_kind_ext::CONSTRUCTOR => {
                     // 'this' type not allowed in constructor parameters or return type,
                     // but it IS allowed in the constructor body.
-                    if let Some(c) = self.ctx.arena.get_constructor(node) {
-                        if child_idx == c.body {
-                            return true; // The body provides a 'this' context
-                        }
+                    if let Some(c) = self.ctx.arena.get_constructor(node)
+                        && child_idx == c.body
+                    {
+                        return true; // The body provides a 'this' context
                     }
                     return false;
                 }
