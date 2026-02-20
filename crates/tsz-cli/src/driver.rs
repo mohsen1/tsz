@@ -1557,6 +1557,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if let Some(val) = args.use_unknown_in_catch_variables {
         options.checker.use_unknown_in_catch_variables = val;
     }
+    if args.no_unchecked_indexed_access {
+        options.checker.no_unchecked_indexed_access = true;
+    }
     if args.no_implicit_returns {
         options.checker.no_implicit_returns = true;
     }

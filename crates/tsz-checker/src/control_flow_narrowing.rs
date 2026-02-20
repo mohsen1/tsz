@@ -894,6 +894,10 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         let be = self.arena.get_binding_element(decl_node)?;
+        // Must not be a rest element (`...rest`)
+        if be.dot_dot_dot_token {
+            return None;
+        }
         // Must not have a default initializer (const { type: alias = "default" } = ...)
         if !be.initializer.is_none() {
             return None;
@@ -914,6 +918,10 @@ impl<'a> FlowAnalyzer<'a> {
         let be_ext = self.arena.get_extended(decl_idx)?;
         let binding_pattern_idx = be_ext.parent;
         if binding_pattern_idx.is_none() {
+            return None;
+        }
+        let binding_pattern_node = self.arena.get(binding_pattern_idx)?;
+        if binding_pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
             return None;
         }
         let bp_ext = self.arena.get_extended(binding_pattern_idx)?;
