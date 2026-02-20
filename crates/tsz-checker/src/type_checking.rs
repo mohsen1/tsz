@@ -888,7 +888,13 @@ impl<'a> CheckerState<'a> {
             stmt_idx
         };
 
-        if expected_type != TypeId::ANY
+        // In constructors, bare `return;` (without expression) is always allowed — TSC
+        // doesn't check assignability for void returns in constructors.
+        let skip_assignability = is_in_constructor && return_data.expression.is_none();
+
+        if !skip_assignability
+            && expected_type != TypeId::ANY
+            && !self.type_contains_error(expected_type)
             && !self.check_assignable_or_report(return_type, expected_type, error_node)
         {
             // TS2409: In constructors, also emit the constructor-specific diagnostic
@@ -905,6 +911,7 @@ impl<'a> CheckerState<'a> {
 
         if expected_type != TypeId::ANY
             && expected_type != TypeId::UNKNOWN
+            && !self.type_contains_error(expected_type)
             && return_data.expression.is_some()
             && let Some(expr_node) = self.ctx.arena.get(return_data.expression)
             && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
