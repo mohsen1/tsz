@@ -1523,10 +1523,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Otherwise fall through to structural check for non-enum union members.
         }
 
-        // BUG FIX: String enums SHOULD be assignable to string (like numeric enums are to number)
-        // The union of string literal types that makes up a string enum is a subtype of string.
-        // Let Case 3 handle this by falling through to structural checking.
-        // Removed incorrect early return that rejected string enum -> string assignments.
+        // String enums are assignable to string (like numeric enums are to number).
+        // Fall through to structural checking for this case.
 
         // Fast path: Check if both are enum types with same DefId but different TypeIds
         // This handles the test case where enum members aren't in the resolver

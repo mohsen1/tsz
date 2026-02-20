@@ -304,7 +304,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
             return false;
         };
 
-        // BUG FIX: Handle ENUM_MEMBER by looking up the parent ENUM symbol
+        // Enum members resolve via their parent ENUM symbol.
         let enum_symbol = if (symbol.flags & symbol_flags::ENUM_MEMBER) != 0 {
             // It's a member, get the parent enum symbol
             let Some(parent) = self.binder.get_symbol(symbol.parent) else {
