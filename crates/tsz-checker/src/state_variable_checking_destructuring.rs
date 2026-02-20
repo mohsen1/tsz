@@ -84,7 +84,6 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
-        let pattern_kind = pattern_node.kind;
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
             if element_idx.is_none() {
                 continue;
@@ -104,7 +103,7 @@ impl<'a> CheckerState<'a> {
             let element_type = if parent_type == TypeId::ANY {
                 TypeId::ANY
             } else {
-                self.get_binding_element_type(pattern_kind, i, parent_type, element_data)
+                self.get_binding_element_type(pattern_idx, i, parent_type, element_data)
             };
 
             let Some(name_node) = self.ctx.arena.get(element_data.name) else {
@@ -244,8 +243,12 @@ impl<'a> CheckerState<'a> {
                 if name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
                     || name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
                 {
-                    let nested_source_type =
-                        self.get_binding_element_type(curr_kind, i, curr_source_type, element_data);
+                    let nested_source_type = self.get_binding_element_type(
+                        curr_pattern_idx,
+                        i,
+                        curr_source_type,
+                        element_data,
+                    );
                     stack.push((
                         element_data.name,
                         nested_source_type,
@@ -260,11 +263,12 @@ impl<'a> CheckerState<'a> {
     /// Get the expected type for a binding element from its parent type.
     pub(crate) fn get_binding_element_type(
         &mut self,
-        pattern_kind: u16,
+        pattern_idx: NodeIndex,
         element_index: usize,
         parent_type: TypeId,
         element_data: &tsz_parser::parser::node::BindingElementData,
     ) -> TypeId {
+        let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
         // Resolve Application/Lazy types to their concrete form so that
         // union members, object shapes, and tuple elements are accessible.
         let parent_type = self.evaluate_type_for_assignability(parent_type);
@@ -458,6 +462,11 @@ impl<'a> CheckerState<'a> {
                 None
             }
         };
+
+        if element_data.dot_dot_dot_token {
+            // TODO: compute actual object rest type omitting non-rest properties
+            return parent_type;
+        }
 
         if parent_type == TypeId::UNKNOWN {
             if let Some(prop_name_str) = property_name.as_deref() {

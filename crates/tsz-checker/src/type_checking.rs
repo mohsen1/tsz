@@ -643,8 +643,6 @@ impl<'a> CheckerState<'a> {
         };
 
         // Traverse binding elements
-        let pattern_kind = pattern_node.kind;
-
         // Note: Array destructuring iterability (TS2488) is checked by the caller
         // (state_checking.rs) via check_destructuring_iterability before invoking
         // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
@@ -667,7 +665,7 @@ impl<'a> CheckerState<'a> {
 
             self.check_binding_element(
                 element_idx,
-                pattern_kind,
+                pattern_idx,
                 i,
                 pattern_type,
                 check_default_assignability,
@@ -682,7 +680,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// ## Parameters:
     /// - `element_idx`: The binding element node index to check
-    /// - `pattern_kind`: The kind of binding pattern (object or array)
+    /// - `pattern_idx`: The binding pattern node index (object or array)
     /// - `element_index`: The index of this element in the pattern
     /// - `parent_type`: The type being destructured
     ///
@@ -693,7 +691,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_binding_element(
         &mut self,
         element_idx: NodeIndex,
-        pattern_kind: u16,
+        pattern_idx: NodeIndex,
         element_index: usize,
         parent_type: TypeId,
         check_default_assignability: bool,
@@ -711,6 +709,8 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let pattern_kind = self.ctx.arena.get(pattern_idx).map_or(0, |n| n.kind);
+
         // Check computed property name expression for unresolved identifiers (TS2304)
         // e.g., in `{[z]: x}` where `z` is undefined
         if element_data.property_name.is_some() {
@@ -721,7 +721,7 @@ impl<'a> CheckerState<'a> {
         let element_type = if parent_type != TypeId::ANY {
             // For object binding patterns, look up the property type
             // For array binding patterns, look up the tuple element type
-            self.get_binding_element_type(pattern_kind, element_index, parent_type, element_data)
+            self.get_binding_element_type(pattern_idx, element_index, parent_type, element_data)
         } else {
             TypeId::ANY
         };

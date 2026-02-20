@@ -212,6 +212,13 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub use_unknown_in_catch_variables: Option<bool>,
+    /// Add 'undefined' to a type when accessed using an index
+    #[serde(
+        default,
+        alias = "noUncheckedIndexedAccess",
+        deserialize_with = "deserialize_bool_or_string"
+    )]
+    pub no_unchecked_indexed_access: Option<bool>,
     /// Check that the arguments for 'bind', 'call', and 'apply' methods match the original function
     #[serde(
         default,
@@ -639,6 +646,9 @@ pub fn resolve_compiler_options(
     if let Some(v) = options.strict_property_initialization {
         resolved.checker.strict_property_initialization = v;
     }
+    if let Some(v) = options.no_unchecked_indexed_access {
+        resolved.checker.no_unchecked_indexed_access = v;
+    }
     if let Some(v) = options.no_implicit_this {
         resolved.checker.no_implicit_this = v;
     }
@@ -869,6 +879,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_implicit_this,
             use_unknown_in_catch_variables,
             strict_bind_call_apply,
+            no_unchecked_indexed_access,
             no_unused_locals,
             no_unused_parameters,
             allow_unreachable_code,
