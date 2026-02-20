@@ -473,14 +473,14 @@ impl<'a> CheckerState<'a> {
         if let Some(keyof_type) = tsz_solver::type_queries::get_keyof_type(self.ctx.types, target)
             && let Some(source_atom) =
                 tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
-            {
-                let source_str = self.ctx.types.resolve_atom(source_atom);
-                let allowed_keys =
-                    tsz_solver::type_queries::get_allowed_keys(self.ctx.types, keyof_type);
-                if !allowed_keys.contains(&source_str) {
-                    return false;
-                }
+        {
+            let source_str = self.ctx.types.resolve_atom(source_atom);
+            let allowed_keys =
+                tsz_solver::type_queries::get_allowed_keys(self.ctx.types, keyof_type);
+            if !allowed_keys.contains(&source_str) {
+                return false;
             }
+        }
 
         result
     }
