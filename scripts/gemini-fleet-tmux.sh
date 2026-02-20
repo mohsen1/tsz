@@ -446,6 +446,10 @@ hard_reset_repo_to_main() {
   git -C "$repo" checkout main >/dev/null 2>&1 || git -C "$repo" checkout -B main origin/main >/dev/null 2>&1 || die "Failed to checkout main for $name"
   git -C "$repo" reset --hard origin/main >/dev/null 2>&1 || die "Failed to reset --hard origin/main for $name"
   git -C "$repo" clean -fd >/dev/null 2>&1 || die "Failed to clean -fd for $name"
+  git -C "$repo" config core.hooksPath scripts/githooks >/dev/null 2>&1 || die "Failed to set core.hooksPath for $name"
+  if [[ -d "$repo/scripts/githooks" ]]; then
+    chmod +x "$repo"/scripts/githooks/* >/dev/null 2>&1 || true
+  fi
 
   if [[ -d "$repo/TypeScript/.git" ]]; then
     git -C "$repo" submodule update --init --force TypeScript >/dev/null 2>&1 || die "Failed to update TypeScript submodule for $name"

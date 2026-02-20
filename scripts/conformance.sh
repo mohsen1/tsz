@@ -658,8 +658,11 @@ check_submodule_clean() {
     fi
 
     echo -e "${YELLOW}Cleaning TypeScript submodule (git checkout + clean -xfd)...${NC}"
-    (cd "$ts_dir" && git checkout -- . 2>/dev/null; git clean -xfd 2>/dev/null)
-    echo -e "${GREEN}✓ TypeScript submodule clean${NC}"
+    if ! (cd "$ts_dir" && git checkout -- . >/dev/null 2>&1 && git clean -xfd >/dev/null 2>&1); then
+        echo -e "${YELLOW}⚠ Could not fully clean TypeScript submodule; continuing.${NC}"
+    else
+        echo -e "${GREEN}✓ TypeScript submodule clean${NC}"
+    fi
     echo ""
 }
 
