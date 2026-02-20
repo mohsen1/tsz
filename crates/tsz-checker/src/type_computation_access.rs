@@ -794,7 +794,22 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 let accessor = self.ctx.arena.get_accessor(elem_node)?;
-                self.get_property_name(accessor.name)
+                self.get_property_name(accessor.name).or_else(|| {
+                    let prop_name_node = self.ctx.arena.get(accessor.name)?;
+                    if prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    {
+                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                    } else {
+                        None
+                    }
+                })
             })
             .collect();
 
@@ -805,7 +820,23 @@ impl<'a> CheckerState<'a> {
 
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
-                if let Some(name) = self.get_property_name(prop.name) {
+                let name_opt = self.get_property_name(prop.name).or_else(|| {
+                    let prop_name_node = self.ctx.arena.get(prop.name)?;
+                    if prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    {
+                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(name) = name_opt.clone() {
                     // Get contextual type for this property.
                     // For mapped/conditional/application types that contain Lazy references
                     // (e.g. { [K in keyof Props]: Props[K] } after generic inference),
@@ -901,6 +932,36 @@ impl<'a> CheckerState<'a> {
                     // E.g., `var o: { [s: string]: (x: string) => number } = { ["" + 0](y) { ... } }`
                     // should contextually type `y` as `string` from the string index signature.
                     self.check_computed_property_name(prop.name);
+
+                    if let Some(prop_name_node) = self.ctx.arena.get(prop.name)
+                        && prop_name_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
+                    {
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        if let Some(atom) = tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        ) {
+                            if !skip_duplicate_check
+                                && explicit_property_names.contains(&atom)
+                                && !self.ctx.has_parse_errors
+                            {
+                                let name = self.ctx.types.resolve_atom(atom).to_string();
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let message = crate::diagnostics::format_message(
+                                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                            &[&name],
+                                        );
+                                self.error_at_node(
+                                            prop.name,
+                                            &message,
+                                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                        );
+                            }
+                            explicit_property_names.insert(atom);
+                        }
+                    }
                     let index_ctx_type = if let Some(ctx_type) = self.ctx.contextual_type {
                         let ctx_type = self.evaluate_contextual_type(ctx_type);
                         // Use a synthetic name that won't match any named property,
@@ -1087,7 +1148,23 @@ impl<'a> CheckerState<'a> {
             }
             // Method shorthand: { foo() {} }
             else if let Some(method) = self.ctx.arena.get_method_decl(elem_node) {
-                if let Some(name) = self.get_property_name(method.name) {
+                let name_opt = self.get_property_name(method.name).or_else(|| {
+                    let prop_name_node = self.ctx.arena.get(method.name)?;
+                    if prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    {
+                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(name) = name_opt.clone() {
                     // Set contextual type for method
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
@@ -1156,6 +1233,36 @@ impl<'a> CheckerState<'a> {
                     // E.g., `var o: { [s: string]: (x: string) => number } = { ["" + 0](y) { ... } }`
                     // should contextually type `y` as `string` from the string index signature.
                     self.check_computed_property_name(method.name);
+
+                    if let Some(prop_name_node) = self.ctx.arena.get(method.name)
+                        && prop_name_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
+                    {
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        if let Some(atom) = tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        ) {
+                            if !skip_duplicate_check
+                                && explicit_property_names.contains(&atom)
+                                && !self.ctx.has_parse_errors
+                            {
+                                let name = self.ctx.types.resolve_atom(atom).to_string();
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let message = crate::diagnostics::format_message(
+                                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                            &[&name],
+                                        );
+                                self.error_at_node(
+                                            method.name,
+                                            &message,
+                                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                        );
+                            }
+                            explicit_property_names.insert(atom);
+                        }
+                    }
                     let prev_context = self.ctx.contextual_type;
                     if let Some(ctx_type) = prev_context {
                         let ctx_type = self.evaluate_contextual_type(ctx_type);
@@ -1183,9 +1290,17 @@ impl<'a> CheckerState<'a> {
                 // When a paired getter exists, the setter parameter type is inferred
                 // from the getter return type (contextually typed, suppress TS7006/7032).
                 if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                    let has_paired_getter = self
-                        .get_property_name(accessor.name)
-                        .is_some_and(|name| obj_getter_names.contains(&name));
+                    let name_opt = self.get_property_name(accessor.name).or_else(|| {
+                        let prop_name_type = self.get_type_of_node(accessor.name);
+                        tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                    });
+                    let has_paired_getter = name_opt
+                        .as_ref()
+                        .is_some_and(|name| obj_getter_names.contains(name));
                     // Check if accessor JSDoc has @param type annotations
                     let accessor_jsdoc = self.get_jsdoc_for_function(elem_idx);
                     let mut first_param_lacks_annotation = false;
@@ -1213,7 +1328,7 @@ impl<'a> CheckerState<'a> {
                     if first_param_lacks_annotation
                         && !has_paired_getter
                         && self.ctx.no_implicit_any()
-                        && let Some(prop_name) = self.get_property_name(accessor.name).as_deref()
+                        && let Some(prop_name) = name_opt.as_deref()
                     {
                         use crate::diagnostics::diagnostic_codes;
                         self.error_at_node_msg(
@@ -1224,7 +1339,23 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                if let Some(name) = self.get_property_name(accessor.name) {
+                let name_opt = self.get_property_name(accessor.name).or_else(|| {
+                    let prop_name_node = self.ctx.arena.get(accessor.name)?;
+                    if prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    {
+                        let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        )
+                        .map(|atom| self.ctx.types.resolve_atom(atom))
+                    } else {
+                        None
+                    }
+                });
+                if let Some(name) = name_opt.clone() {
                     // For non-contextual object literals, TypeScript treats `this` inside
                     // accessors as the object literal under construction. Provide a
                     // lightweight synthetic receiver so property access checks (TS2339)
@@ -1285,7 +1416,7 @@ impl<'a> CheckerState<'a> {
                             })
                             .or_else(|| {
                                 // No annotation — infer from paired getter's type
-                                let setter_name = self.get_property_name(accessor.name)?;
+                                let setter_name = name_opt.clone()?;
                                 let name_atom = self.ctx.types.intern_string(&setter_name);
                                 properties.get(&name_atom).map(|p| p.type_id)
                             })
@@ -1410,6 +1541,44 @@ impl<'a> CheckerState<'a> {
                 } else {
                     // Computed accessor name - still type-check the expression and body
                     self.check_computed_property_name(accessor.name);
+
+                    if let Some(prop_name_node) = self.ctx.arena.get(accessor.name)
+                        && prop_name_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
+                    {
+                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        if let Some(atom) = tsz_solver::type_queries::get_literal_property_name(
+                            self.ctx.types,
+                            prop_name_type,
+                        ) {
+                            let is_getter =
+                                elem_node.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
+                            let is_complementary_pair = if is_getter {
+                                setter_names.contains(&atom) && !getter_names.contains(&atom)
+                            } else {
+                                getter_names.contains(&atom) && !setter_names.contains(&atom)
+                            };
+                            if !skip_duplicate_check
+                                && explicit_property_names.contains(&atom)
+                                && !is_complementary_pair
+                                && !self.ctx.has_parse_errors
+                            {
+                                let name = self.ctx.types.resolve_atom(atom).to_string();
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                let message = crate::diagnostics::format_message(
+                                            diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                            &[&name],
+                                        );
+                                self.error_at_node(
+                                            accessor.name,
+                                            &message,
+                                            diagnostic_codes::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,
+                                        );
+                            }
+                            explicit_property_names.insert(atom);
+                        }
+                    }
                     if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         self.get_type_of_function(elem_idx);
 

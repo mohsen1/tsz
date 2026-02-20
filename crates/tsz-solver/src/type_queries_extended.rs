@@ -669,6 +669,27 @@ pub fn get_string_literal_value(
     }
 }
 
+/// Extract string, numeric, enum, or unique symbol property name from a type.
+pub fn get_literal_property_name(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<tsz_common::interner::Atom> {
+    match db.lookup(type_id) {
+        Some(TypeData::Literal(crate::types::LiteralValue::String(name))) => Some(name),
+        Some(TypeData::Literal(crate::types::LiteralValue::Number(num))) => {
+            // Format number exactly like TS (e.g. 1.0 -> "1")
+            let s = format!("{}", num.0);
+            Some(db.intern_string(&s))
+        }
+        Some(TypeData::UniqueSymbol(sym)) => {
+            let s = format!("__unique_{}", sym.0);
+            Some(db.intern_string(&s))
+        }
+        Some(TypeData::Enum(_, member_type)) => get_literal_property_name(db, member_type),
+        _ => None,
+    }
+}
+
 // =============================================================================
 // Class Declaration from Type
 // =============================================================================

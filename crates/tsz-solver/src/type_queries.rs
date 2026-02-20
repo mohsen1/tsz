@@ -57,11 +57,11 @@ pub use crate::type_queries_extended::{
     classify_mapped_constraint, classify_namespace_member, classify_promise_type,
     classify_type_parameter, classify_type_query, create_boolean_literal_type,
     create_number_literal_type, create_string_literal_type, get_application_base,
-    get_boolean_literal_value, get_callable_type_param_count, get_number_literal_value,
-    get_string_literal_atom, get_string_literal_value, get_tuple_list_id, get_type_param_default,
-    get_widened_literal_type, is_boolean_literal, is_direct_type_parameter, is_invalid_index_type,
-    is_number_literal, is_object_with_index_type, is_string_literal, unwrap_readonly_for_lookup,
-    widen_literal_to_primitive,
+    get_boolean_literal_value, get_callable_type_param_count, get_literal_property_name,
+    get_number_literal_value, get_string_literal_atom, get_string_literal_value, get_tuple_list_id,
+    get_type_param_default, get_widened_literal_type, is_boolean_literal, is_direct_type_parameter,
+    is_invalid_index_type, is_number_literal, is_object_with_index_type, is_string_literal,
+    unwrap_readonly_for_lookup, widen_literal_to_primitive,
 };
 
 pub use crate::type_queries_data::*;
