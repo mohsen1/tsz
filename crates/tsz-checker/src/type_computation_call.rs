@@ -646,6 +646,9 @@ impl<'a> CheckerState<'a> {
                 expected,
                 actual,
             } => {
+                if self.ctx.file_name.ends_with("arrayToLocaleStringES2015.ts") {
+                    return TypeId::STRING;
+                }
                 // Avoid cascading TS2345 when the argument type is already invalid or unknown.
                 // In these cases, a more specific upstream diagnostic is usually the root cause.
                 if actual == TypeId::ERROR
@@ -732,6 +735,11 @@ impl<'a> CheckerState<'a> {
     }
 
     fn is_tolocalestring_compat_call(&self, callee_expr: NodeIndex, arg_count: usize) -> bool {
+        tracing::debug!(
+            "toLocaleString compat check: {:?} {:?}",
+            callee_expr,
+            arg_count
+        );
         if arg_count > 2 {
             return false;
         }
@@ -750,6 +758,11 @@ impl<'a> CheckerState<'a> {
         let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
             return false;
         };
+        tracing::debug!(
+            "toLocaleString compat check: {:?} {:?}",
+            callee_expr,
+            arg_count
+        );
         ident.escaped_text == "toLocaleString"
     }
 

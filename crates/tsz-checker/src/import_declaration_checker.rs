@@ -60,11 +60,22 @@ impl<'a> CheckerState<'a> {
                     };
 
                     // Report error on the alias name (import_clause)
-                    self.error_at_node(
-                        import_decl.import_clause,
-                        &format!("Duplicate identifier '{alias_name}'."),
-                        diagnostic_codes::DUPLICATE_IDENTIFIER,
-                    );
+                    let alias_node = import_decl.import_clause;
+                    let Some(sym_id) = self.resolve_identifier_symbol(alias_node) else {
+                        tracing::trace!("Could not resolve identifier symbol");
+                        continue;
+                    };
+                    let symbol = self.ctx.binder.symbols.get(sym_id).unwrap();
+                    tracing::trace!("Symbol flags: {:?}", symbol.flags);
+                    if self.symbol_is_value_only(sym_id, Some(&alias_name)) {
+                        self.error_value_only_type_at(&alias_name, import_decl.import_clause);
+                    } else {
+                        self.error_at_node(
+                            import_decl.import_clause,
+                            &format!("Duplicate identifier '{alias_name}'."),
+                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                        );
+                    }
                 }
             }
         }
@@ -281,40 +292,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(sym) = self.ctx.binder.symbols.get(sym_id) {
                     // Check if this symbol has value semantics
                     let is_value = (sym.flags & symbol_flags::VALUE) != 0;
-                    let is_alias = (sym.flags & symbol_flags::ALIAS) != 0;
+                    let _is_alias = (sym.flags & symbol_flags::ALIAS) != 0;
                     let is_namespace = (sym.flags & symbol_flags::NAMESPACE_MODULE) != 0;
 
                     // TS2300: duplicate `import =` aliases with the same name in the same scope.
                     // TypeScript reports this as duplicate identifier (not TS2440).
-                    if is_alias {
-                        let alias_in_same_scope = if let Some(import_scope_id) = import_scope {
-                            sym.declarations.iter().any(|&decl_idx| {
-                                self.ctx
-                                    .binder
-                                    .find_enclosing_scope(self.ctx.arena, decl_idx)
-                                    == Some(import_scope_id)
-                            })
-                        } else {
-                            true
-                        };
-
-                        let has_local_alias_decl = sym.declarations.iter().any(|&decl_idx| {
-                            self.ctx.binder.node_symbols.get(&decl_idx.0) == Some(&sym_id)
-                        });
-
-                        if alias_in_same_scope && has_local_alias_decl {
-                            let message =
-                                format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[name]);
-                            self.error_at_node(
-                                import.import_clause,
-                                &message,
-                                diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            );
-                            return;
-                        }
-                        continue;
-                    }
-
                     // Special case: If this is a namespace module, check if it's the enclosing scope
                     // itself. In TypeScript, `namespace A.M { import M = Z.M; }` is allowed - the
                     // import alias `M` shadows the namespace container name `M`.

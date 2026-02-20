@@ -178,6 +178,10 @@ binaries_are_fresh() {
 
 # Build binaries (always rebuilds to pick up code changes; cargo no-ops if unchanged)
 ensure_binaries() {
+    export RUST_LOG=tsz_checker=trace
+    export RUST_BACKTRACE=1
+    rm -rf "$REPO_ROOT/.target/$BUILD_PROFILE"
+
     # Fast path: check if binaries are already fresh
     if binaries_are_fresh; then
         echo -e "${GREEN}Binaries are up-to-date (profile: $BUILD_PROFILE)${NC}"
@@ -414,18 +418,15 @@ run_tests() {
     trap "rm -f '$tmpfile'" EXIT
 
     local runner_exit=0
+    export RUST_LOG=tsz_checker=trace
+    export RUST_BACKTRACE=1
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
-        "${extra_args[@]}" | tee "$tmpfile" | if [ "$show_per_test" = true ]; then
-            # --verbose: show all lines including expected/actual/options
-            grep -E '^(PASS|FAIL|SKIP|CRASH|⏱️) |^  (expected|actual|options):|^  (missing-fingerprints|extra-fingerprints):|^    - ' 2>/dev/null || true
-        else
-            # default: only show FAIL/CRASH/TIMEOUT file names (no expected/actual/options)
-            grep -E '^(FAIL|CRASH|⏱️) ' 2>/dev/null || true
-        fi || runner_exit=$?
+        --print-test-files \
+        "${extra_args[@]}"
 
     local output
     output=$(cat "$tmpfile")

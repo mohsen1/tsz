@@ -249,7 +249,7 @@ pub struct DiscriminantInfo {
 
 /// Narrowing context for type guards and control flow analysis.
 /// Shared across multiple narrowing contexts to persist resolution results.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Debug)]
 pub struct NarrowingCache {
     /// Cache for type resolution (Lazy/App/Template -> Structural)
     pub resolve_cache: RefCell<FxHashMap<TypeId, TypeId>>,

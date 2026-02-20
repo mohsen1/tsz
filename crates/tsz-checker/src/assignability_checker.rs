@@ -766,6 +766,16 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         arg_idx: NodeIndex,
     ) -> bool {
+        println!(
+            "check_argument_assignable_or_report: File name: {}, source: {:?}, target: {:?}",
+            self.ctx.file_name, source, target
+        );
+
+        println!(
+            "check_argument_assignable_or_report: File name: {}",
+            self.ctx.file_name
+        );
+
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
         }

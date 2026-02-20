@@ -861,6 +861,11 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
+        tracing::debug!(
+            "resolve_array_global_augmentation_property: property_name = {:?}, object_type = {:?}",
+            property_name,
+            object_type
+        );
         use rustc_hash::FxHashMap;
         use std::sync::Arc;
         use tsz_lowering::TypeLowering;

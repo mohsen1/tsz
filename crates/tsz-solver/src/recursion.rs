@@ -527,6 +527,7 @@ impl<K: Hash + Eq + Copy> Drop for RecursionGuard<K> {
 /// counter.leave();
 /// result
 /// ```
+#[derive(Debug)]
 pub struct DepthCounter {
     depth: u32,
     max_depth: u32,

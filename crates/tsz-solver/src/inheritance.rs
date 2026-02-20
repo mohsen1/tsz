@@ -24,6 +24,7 @@ struct ClassNode {
     mro: Option<Vec<SymbolId>>,
 }
 
+#[derive(Debug)]
 pub struct InheritanceGraph {
     /// Map from `SymbolId` to graph node data
     nodes: RefCell<FxHashMap<SymbolId, ClassNode>>,

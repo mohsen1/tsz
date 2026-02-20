@@ -179,6 +179,7 @@ impl ModuleAugmentation {
 }
 
 /// Binder state using `NodeArena`.
+#[derive(Debug)]
 pub struct BinderState {
     /// Binder options (ES target, etc.)
     pub options: BinderOptions,

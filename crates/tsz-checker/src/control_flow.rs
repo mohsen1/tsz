@@ -42,6 +42,7 @@ type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 ///
 /// This wraps the `FlowNodeArena` and provides convenient methods for querying
 /// flow information during type checking.
+#[derive(Debug)]
 pub struct FlowGraph<'a> {
     /// Reference to the flow node arena containing all flow nodes
     arena: &'a FlowNodeArena,

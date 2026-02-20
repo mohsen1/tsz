@@ -77,6 +77,7 @@ fn build_filter() -> EnvFilter {
 /// All output goes to stderr so it never interferes with stdout
 /// (compiler diagnostics, `--showConfig`, or LSP JSON-RPC).
 pub fn init_tracing() {
+    println!("RUST_LOG: {:?}", std::env::var("RUST_LOG"));
     // Only pay for tracing when explicitly requested.
     let has_tsz_log = std::env::var("TSZ_LOG").is_ok();
     let has_rust_log = std::env::var("RUST_LOG").is_ok();
