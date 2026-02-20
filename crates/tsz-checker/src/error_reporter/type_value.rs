@@ -295,9 +295,10 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(target_id, &lib_binders)
-                && target_symbol.is_type_only {
-                    return Some(TypeOnlyKind::Export);
-                }
+            && target_symbol.is_type_only
+        {
+            return Some(TypeOnlyKind::Export);
+        }
 
         None
     }

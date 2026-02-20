@@ -359,6 +359,9 @@ pub struct CheckerContext<'a> {
     /// Deferred TS7034 candidates: non-ambient variables with no annotation, no init, and type ANY.
     /// Maps symbol ID → declaration name node. Consumed when a capture is detected.
     pub pending_implicit_any_vars: FxHashMap<SymbolId, NodeIndex>,
+    /// Variables that have already had TS7034 emitted.
+    /// Used to emit TS7005 on subsequent usages.
+    pub reported_implicit_any_vars: FxHashSet<SymbolId>,
 
     /// Inheritance graph tracking class/interface relationships
     pub inheritance_graph: tsz_solver::inheritance::InheritanceGraph,

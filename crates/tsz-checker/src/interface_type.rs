@@ -169,9 +169,10 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_atom) = self.get_member_name_atom(sig.name)
                 {
                     if member_node.kind == METHOD_SIGNATURE
-                        && let Some(ref params) = sig.parameters {
-                            self.check_duplicate_parameters(params, false);
-                        }
+                        && let Some(ref params) = sig.parameters
+                    {
+                        self.check_duplicate_parameters(params, false);
+                    }
                     let type_id = if !sig.type_annotation.is_none() {
                         self.get_type_from_type_node(sig.type_annotation)
                     } else {
@@ -887,9 +888,10 @@ impl<'a> CheckerState<'a> {
                     {
                         if member_node.kind == METHOD_SIGNATURE
                             && std::ptr::eq(arena, self.ctx.arena)
-                            && let Some(ref params) = sig.parameters {
-                                self.check_duplicate_parameters(params, false);
-                            }
+                            && let Some(ref params) = sig.parameters
+                        {
+                            self.check_duplicate_parameters(params, false);
+                        }
                         let type_id = if !sig.type_annotation.is_none()
                             && std::ptr::eq(arena, self.ctx.arena)
                         {
