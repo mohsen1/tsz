@@ -375,12 +375,14 @@ impl<'a> CheckerState<'a> {
                     };
 
                     // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                    // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
+                    let has_param_grammar_error = param.dot_dot_dot_token || param.question_token;
                     let is_valid_index_type = key_type == TypeId::STRING
                         || key_type == TypeId::NUMBER
                         || key_type == TypeId::SYMBOL
                         || is_template_literal_type(self.ctx.types, key_type);
 
-                    if !is_valid_index_type {
+                    if !is_valid_index_type && !has_param_grammar_error {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.error_at_node(
                             param_idx,
@@ -1227,12 +1229,14 @@ impl<'a> CheckerState<'a> {
                         .copied()
                         .unwrap_or(NodeIndex::NONE);
 
-                    let key_type = index_sig
+                    let param_data = index_sig
                         .parameters
                         .nodes
                         .first()
-                        .and_then(|&param_idx| self.ctx.arena.get(param_idx))
-                        .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
+                        .and_then(|&pi| self.ctx.arena.get(pi))
+                        .and_then(|pn| self.ctx.arena.get_parameter(pn));
+
+                    let key_type = param_data
                         .and_then(|param| {
                             (!param.type_annotation.is_none())
                                 .then(|| self.get_type_from_type_node(param.type_annotation))
@@ -1240,12 +1244,15 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or(TypeId::STRING);
 
                     // TS1268: An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type
+                    // Suppress when the parameter already has grammar errors (rest/optional) — matches tsc.
+                    let has_param_grammar_error =
+                        param_data.map_or(false, |p| p.dot_dot_dot_token || p.question_token);
                     let is_valid_index_type = key_type == TypeId::STRING
                         || key_type == TypeId::NUMBER
                         || key_type == TypeId::SYMBOL
                         || is_template_literal_type(self.ctx.types, key_type);
 
-                    if !is_valid_index_type {
+                    if !is_valid_index_type && !has_param_grammar_error {
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         self.error_at_node(
                             param_idx,
