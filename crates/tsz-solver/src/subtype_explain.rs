@@ -222,6 +222,51 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
+        // Array source vs Object target: resolve Array<T> to its interface properties
+        // and find missing members. TSC emits TS2739/TS2741 here.
+        if let Some(s_elem) = array_element_type(self.interner, resolved_source) {
+            let t_shape_id = object_shape_id(self.interner, resolved_target)
+                .or_else(|| object_with_index_shape_id(self.interner, resolved_target));
+            if let Some(t_sid) = t_shape_id
+                && let Some(array_base) = self.resolver.get_array_base_type()
+            {
+                let params = self.resolver.get_array_base_type_params();
+                let instantiated = if params.is_empty() {
+                    array_base
+                } else {
+                    let subst = TypeSubstitution::from_args(self.interner, params, &[s_elem]);
+                    instantiate_type(self.interner, array_base, &subst)
+                };
+                let resolved_inst = self.resolve_ref_type(instantiated);
+                // The Array interface may resolve to an object shape or a callable shape
+                let t_shape = self.interner.object_shape(t_sid);
+                if let Some(s_obj_sid) = object_shape_id(self.interner, resolved_inst)
+                    .or_else(|| object_with_index_shape_id(self.interner, resolved_inst))
+                {
+                    let s_shape = self.interner.object_shape(s_obj_sid);
+                    return self.explain_object_failure(
+                        source,
+                        target,
+                        &s_shape.properties,
+                        Some(s_obj_sid),
+                        &t_shape.properties,
+                    );
+                }
+                if let Some(callable_sid) = callable_shape_id(self.interner, resolved_inst) {
+                    let callable = self.interner.callable_shape(callable_sid);
+                    if !callable.properties.is_empty() {
+                        return self.explain_object_failure(
+                            source,
+                            target,
+                            &callable.properties,
+                            None,
+                            &t_shape.properties,
+                        );
+                    }
+                }
+            }
+        }
+
         if let (Some(s_fn_id), Some(t_fn_id)) = (
             function_shape_id(self.interner, source),
             function_shape_id(self.interner, target),

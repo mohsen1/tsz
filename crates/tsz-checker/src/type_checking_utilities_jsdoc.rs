@@ -348,6 +348,185 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // Narrow support for conformance-critical pattern:
+                //   {[K in keyof T]: (value: T[K]) => void }
+                // which appears in paramTagTypeResolution2.ts
+                tracing::debug!("CHECKING MAPPED TYPE FOR: {type_expr}");
+                if type_expr.starts_with("{[")
+                    && type_expr.contains("in keyof")
+                    && type_expr.contains("=>")
+                {
+                    let expr = type_expr.replace(" ", "");
+                    if expr.starts_with("{[")
+                        && expr.ends_with("}")
+                        && let Some(in_idx) = expr.find("inkeyof")
+                    {
+                        let k_name = &expr[2..in_idx];
+                        if let Some(close_bracket) = expr.find("]:") {
+                            let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
+                            tracing::debug!("K: {k_name}, T: {t_name}");
+
+                            let k_atom = self.ctx.types.intern_string(k_name);
+                            if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
+                                use tsz_solver::{
+                                    FunctionShape, MappedType, ParamInfo, TypeParamInfo,
+                                };
+
+                                let keyof_t_id = factory.keyof(t_id);
+                                let k_param = TypeParamInfo {
+                                    name: k_atom,
+                                    constraint: Some(keyof_t_id),
+                                    default: None,
+                                    is_const: false,
+                                };
+
+                                // Construct template: `(value: T[K]) => void`
+                                let k_id = factory.type_param(k_param.clone());
+                                let t_k_id = factory.index_access(t_id, k_id);
+                                let func_shape = FunctionShape {
+                                    type_params: Vec::new(),
+                                    params: vec![ParamInfo {
+                                        name: Some(self.ctx.types.intern_string("value")),
+                                        type_id: t_k_id,
+                                        optional: false,
+                                        rest: false,
+                                    }],
+                                    this_type: None,
+                                    return_type: TypeId::VOID,
+                                    type_predicate: None,
+                                    is_constructor: false,
+                                    is_method: false,
+                                };
+                                let template_id = factory.function(func_shape);
+
+                                return Some(factory.mapped(MappedType {
+                                    type_param: k_param,
+                                    constraint: keyof_t_id,
+                                    name_type: None,
+                                    template: template_id,
+                                    readonly_modifier: None,
+                                    optional_modifier: None,
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                // Narrow support for conformance-critical pattern:
+                //   {[K in keyof T]: (value: T[K]) => void }
+                // which appears in paramTagTypeResolution2.ts
+                if type_expr.starts_with("{[")
+                    && type_expr.contains("in keyof")
+                    && type_expr.contains("=>")
+                {
+                    let expr = type_expr.replace(" ", "");
+                    if expr.starts_with("{[")
+                        && expr.ends_with("}")
+                        && let Some(in_idx) = expr.find("inkeyof")
+                    {
+                        let k_name = &expr[2..in_idx];
+                        if let Some(close_bracket) = expr.find("]:") {
+                            let t_name = &expr[in_idx + "inkeyof".len()..close_bracket];
+
+                            let k_atom = self.ctx.types.intern_string(k_name);
+                            if let Some(&t_id) = self.ctx.type_parameter_scope.get(t_name) {
+                                use tsz_solver::{
+                                    FunctionShape, MappedType, ParamInfo, TypeParamInfo,
+                                };
+
+                                let keyof_t_id = factory.keyof(t_id);
+                                let k_param = TypeParamInfo {
+                                    name: k_atom,
+                                    constraint: Some(keyof_t_id),
+                                    default: None,
+                                    is_const: false,
+                                };
+
+                                // Construct template: `(value: T[K]) => void`
+                                let k_id = factory.type_param(k_param.clone());
+                                let t_k_id = factory.index_access(t_id, k_id);
+                                let func_shape = FunctionShape {
+                                    type_params: Vec::new(),
+                                    params: vec![ParamInfo {
+                                        name: Some(self.ctx.types.intern_string("value")),
+                                        type_id: t_k_id,
+                                        optional: false,
+                                        rest: false,
+                                    }],
+                                    this_type: None,
+                                    return_type: TypeId::VOID,
+                                    type_predicate: None,
+                                    is_constructor: false,
+                                    is_method: false,
+                                };
+                                let template_id = factory.function(func_shape);
+
+                                return Some(factory.mapped(MappedType {
+                                    type_param: k_param,
+                                    constraint: keyof_t_id,
+                                    name_type: None,
+                                    template: template_id,
+                                    readonly_modifier: None,
+                                    optional_modifier: None,
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                // Narrow support for conformance-critical pattern:
+                //   (param: Type, ...) => ReturnType
+                if type_expr.starts_with('(')
+                    && type_expr.contains("=>")
+                    && let Some(arrow_idx) = type_expr.find("=>")
+                {
+                    let params_str = type_expr[..arrow_idx].trim();
+                    if params_str.starts_with('(') && params_str.ends_with(')') {
+                        let params_inner = params_str[1..params_str.len() - 1].trim();
+                        let return_type_str = type_expr[arrow_idx + 2..].trim();
+                        if let Some(return_type) = self.jsdoc_type_from_expression(return_type_str)
+                        {
+                            use tsz_solver::{FunctionShape, ParamInfo};
+                            let mut params = Vec::new();
+                            let mut ok = true;
+                            if !params_inner.is_empty() {
+                                for p in params_inner.split(',') {
+                                    let p = p.trim();
+                                    let (name, t_str) = if let Some(colon) = p.find(':') {
+                                        (Some(p[..colon].trim()), p[colon + 1..].trim())
+                                    } else {
+                                        (None, p)
+                                    };
+                                    if let Some(p_type) = self.jsdoc_type_from_expression(t_str) {
+                                        let atom = name.map(|n| self.ctx.types.intern_string(n));
+                                        params.push(ParamInfo {
+                                            name: atom,
+                                            type_id: p_type,
+                                            optional: false,
+                                            rest: false,
+                                        });
+                                    } else {
+                                        ok = false;
+                                        break;
+                                    }
+                                }
+                            }
+                            if ok {
+                                let shape = FunctionShape {
+                                    type_params: Vec::new(),
+                                    params,
+                                    this_type: None,
+                                    return_type,
+                                    type_predicate: None,
+                                    is_constructor: false,
+                                    is_method: false,
+                                };
+                                return Some(factory.function(shape));
+                            }
+                        }
+                    }
+                }
+
+                // Narrow support for conformance-critical pattern:
                 //   @type {keyof typeof <identifier>}
                 if let Some(rest) = type_expr.strip_prefix("keyof") {
                     let rest = rest.trim_start();
@@ -830,7 +1009,7 @@ impl<'a> CheckerState<'a> {
             if effective.starts_with('@') {
                 // Process any accumulated @param text
                 if in_param {
-                    if Self::check_param_text(&param_text, param_name) {
+                    if Self::extract_jsdoc_param_type_expr(&param_text, param_name).is_some() {
                         return true;
                     }
                     param_text.clear();
@@ -848,10 +1027,44 @@ impl<'a> CheckerState<'a> {
             }
         }
         // Process the last @param if any
-        if in_param && Self::check_param_text(&param_text, param_name) {
+        if in_param && Self::extract_jsdoc_param_type_expr(&param_text, param_name).is_some() {
             return true;
         }
         false
+    }
+
+    pub(crate) fn get_jsdoc_param_type(&mut self, jsdoc: &str, param_name: &str) -> Option<TypeId> {
+        let mut in_param = false;
+        let mut param_text = String::new();
+
+        for line in jsdoc.lines() {
+            let trimmed = line.trim().trim_start_matches('*').trim();
+            let effective = Self::skip_backtick_quoted(trimmed);
+
+            if effective.starts_with('@') {
+                if in_param {
+                    if let Some(expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name)
+                    {
+                        return self.jsdoc_type_from_expression(expr);
+                    }
+                    param_text.clear();
+                }
+                if let Some(rest) = effective.strip_prefix("@param") {
+                    in_param = true;
+                    param_text = rest.to_string();
+                } else {
+                    in_param = false;
+                }
+            } else if in_param {
+                param_text.push(' ');
+                param_text.push_str(trimmed);
+            }
+        }
+        if in_param && let Some(expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name)
+        {
+            return self.jsdoc_type_from_expression(expr);
+        }
+        None
     }
 
     /// Skip leading backtick-quoted sections in a `JSDoc` line.
@@ -875,55 +1088,39 @@ impl<'a> CheckerState<'a> {
         rest
     }
 
-    /// Helper to check if a @param text (after "@param") matches a parameter name.
+    /// Helper to extract a @param type expression (inside {}) if it matches a parameter name.
     /// Handles nested braces in type expressions like `{{ x: T, y: T}}`.
     /// Also handles alternate `@param name {type}` syntax (name before type).
-    fn check_param_text(text: &str, param_name: &str) -> bool {
+    fn extract_jsdoc_param_type_expr<'b>(text: &'b str, param_name: &str) -> Option<&'b str> {
         let rest = text.trim();
 
         // Handle alternate syntax: @param `name` {type} or @param name {type}
-        // where the name comes before the type
         if !rest.starts_with('{') {
-            // Could be `name` {type} or name {type}
             let name_part = rest.split_whitespace().next().unwrap_or("");
-            let name_part = name_part.trim_matches('`');
-            let decoded = Self::decode_unicode_escapes(name_part);
-            return decoded == param_name;
+            let name_part_stripped = name_part.trim_matches('`');
+            let decoded = Self::decode_unicode_escapes(name_part_stripped);
+            if decoded == param_name {
+                let after_name = rest[name_part.len()..].trim();
+                if let Some((type_expr, _)) = Self::parse_jsdoc_curly_type_expr(after_name) {
+                    return Some(type_expr.trim());
+                }
+            }
+            return None;
         }
 
         // Standard syntax: @param {type} name
-        // Find matching closing brace, handling nesting
-        let mut depth = 0;
-        let mut brace_end = None;
-        for (i, ch) in rest.char_indices() {
-            match ch {
-                '{' => depth += 1,
-                '}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        brace_end = Some(i);
-                        break;
-                    }
-                }
-                _ => {}
+        if let Some((type_expr, after_type)) = Self::parse_jsdoc_curly_type_expr(rest) {
+            let name = after_type.split_whitespace().next().unwrap_or("");
+            let name = name.trim_start_matches('[');
+            let name = name.split('=').next().unwrap_or(name);
+            let name = name.trim_end_matches(']');
+            let name = name.trim_matches('`');
+            let decoded = Self::decode_unicode_escapes(name);
+            if decoded == param_name {
+                return Some(type_expr.trim());
             }
         }
-        let Some(brace_end) = brace_end else {
-            return false;
-        };
-        // Extract name after the type
-        let after_type = rest[brace_end + 1..].trim();
-        // The name is the first word (may be followed by description)
-        let name = after_type.split_whitespace().next().unwrap_or("");
-        // Handle [name] and [name=default] syntax
-        let name = name.trim_start_matches('[');
-        let name = name.split('=').next().unwrap_or(name);
-        let name = name.trim_end_matches(']');
-        // Handle backtick-quoted names like `args`
-        let name = name.trim_matches('`');
-        // Decode unicode escapes in JSDoc param names (e.g. \u0061 -> a)
-        let decoded = Self::decode_unicode_escapes(name);
-        decoded == param_name
+        None
     }
 
     /// Decode unicode escapes (`\uXXXX` and `\u{XXXX}`) in a string.

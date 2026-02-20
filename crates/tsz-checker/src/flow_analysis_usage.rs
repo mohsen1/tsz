@@ -615,7 +615,7 @@ impl<'a> CheckerState<'a> {
         let flow_node = match self.ctx.binder.get_node_flow(idx) {
             Some(flow) => flow,
             None => {
-                println!("No flow info for {idx:?}");
+                tracing::debug!("No flow info for {idx:?}");
                 return true;
             }
         };

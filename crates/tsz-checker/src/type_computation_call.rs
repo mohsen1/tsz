@@ -143,6 +143,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for dynamic import module resolution (TS2307)
         if self.is_dynamic_import(call) {
+            self.check_dynamic_import_module_options(call, idx);
             self.check_dynamic_import_module_specifier(call);
             // Dynamic imports return Promise<typeof module>
             // This creates Promise<ModuleNamespace> where ModuleNamespace contains all exports
@@ -1134,7 +1135,6 @@ impl<'a> CheckerState<'a> {
             let has_other_value = (flags & value_flags_except_module) != 0;
             if is_namespace && !has_other_value {
                 let mut is_instantiated = false;
-                println!("type_computation_call: checking is_instantiated for {name:?}");
                 for decl_idx in &symbol_declarations {
                     if self.is_namespace_declaration_instantiated(*decl_idx) {
                         is_instantiated = true;

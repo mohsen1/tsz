@@ -207,10 +207,16 @@ impl<'a> CheckerState<'a> {
             // TypeScript uses "evolving array types" where [] starts as never[] and widens
             // via control flow.
             if let Some(contextual) = self.ctx.contextual_type {
-                // Resolve lazy types (type aliases) before using the contextual type
                 let resolved = self.resolve_type_for_property_access(contextual);
-                return self.resolve_lazy_type(resolved);
+                let resolved = self.resolve_lazy_type(resolved);
+                use tsz_solver::types::TypeData;
+                if let Some(TypeData::Tuple(..)) = self.ctx.types.lookup(resolved) {
+                    return factory.tuple(vec![]);
+                } else if let Some(t_elem) = tsz_solver::type_queries::get_array_element_type(self.ctx.types, resolved) {
+                    return factory.array(t_elem);
+                }
             }
+            
             // When noImplicitAny is off, empty array literals without contextual type
             // are typed as any[] (matching tsc behavior). With noImplicitAny on, use never[]
             // which is the "evolving array type" starting point.
