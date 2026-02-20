@@ -362,6 +362,12 @@ impl<'a> CheckerState<'a> {
                     };
 
                     if !skip_import_ts6133 && !skip_variable_ts6133 && !skip_destructuring_ts6133 {
+                        // Check if the symbol is referenced in JSDoc tags (e.g. `@link`, `@import`, `@type`).
+                        // If so, consider it used and suppress the unused warning.
+                        if self.is_symbol_used_in_jsdoc(&name) {
+                            continue;
+                        }
+
                         // Check if write-only (assigned but never read)
                         // Destructured variables should NOT get TS6198 - they get TS6133
                         let is_destructured = self.find_parent_binding_pattern(decl_idx).is_some();
@@ -421,6 +427,10 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if is_param {
+                    if self.is_symbol_used_in_jsdoc(&name) {
+                        continue;
+                    }
+
                     let msg = format!("'{name}' is declared but its value is never read.");
                     let start = decl_node.pos;
                     let length = decl_node.end.saturating_sub(decl_node.pos);
@@ -781,5 +791,46 @@ impl<'a> CheckerState<'a> {
         }
 
         (false, None, None)
+    }
+
+    /// Checks if a symbol name appears to be used in a JSDoc comment.
+    /// This uses a fast string search over the file text to suppress false
+    /// positive unused local errors for symbols referenced in JSDoc tags
+    /// like `{@link X}`, `@import { X }`, `@type {X}`, etc.
+    fn is_symbol_used_in_jsdoc(&self, name: &str) -> bool {
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let text: &str = &sf.text;
+
+        let patterns = [
+            format!("{{@link {name}}}"),
+            format!("{{@link {name}."),
+            format!("@import {{{name}}}"),
+            format!("@import {{ {name} }}"),
+            format!("@type {{{name}}}"),
+            format!("@type {{{name}[]}}"),
+            format!("@type {{ {name} }}"),
+            format!("@param {{{name}}}"),
+            format!("@param {{{name}[]}}"),
+            format!("@param {{ {name} }}"),
+            format!("@returns {{{name}}}"),
+            format!("@returns {{{name}[]}}"),
+            format!("@returns {{ {name} }}"),
+            format!("@template {name}"),
+        ];
+
+        for p in &patterns {
+            if text.contains(p) {
+                return true;
+            }
+        }
+
+        // Match JSDoc import with whitespace: `@import { Type } from ...`
+        if text.contains(&format!("{{ {name} }}")) && text.contains("@import") {
+            return true;
+        }
+
+        false
     }
 }

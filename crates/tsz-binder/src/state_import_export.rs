@@ -267,6 +267,10 @@ impl BinderState {
                 // Always bind the exported expression/declaration so inner references are visited.
                 self.bind_node(arena, export.export_clause);
 
+                // Mark the exported declaration (e.g. `function f() {}`) as exported
+                // so it isn't flagged as an unused local (TS6133).
+                self.mark_exported_symbols(arena, export.export_clause);
+
                 // Synthesize a "default" export symbol for cross-file import resolution.
                 // This enables `import X from './file'` to resolve the default export.
                 let default_sym_id = self.symbols.alloc(
