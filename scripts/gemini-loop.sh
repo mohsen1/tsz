@@ -162,7 +162,7 @@ if [[ ! -f "$PROMPT_FILE" ]]; then
   fi
 fi
 
-MODEL="${MODEL_OVERRIDE:-gemini-2.0-flash}"
+MODEL="${MODEL_OVERRIDE:-gemini-3.1-pro-preview}"
 
 mkdir -p logs
 if [[ -n "$SESSION_ID" ]]; then
