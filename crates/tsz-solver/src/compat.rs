@@ -1773,10 +1773,10 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             return true;
         }
 
-        // In tsc, `any` is compatible with everything for redeclaration.
-        // `var x: any; var x: string;` does NOT produce TS2403.
+        // For redeclaration, `any` is only identical to `any`.
+        // `a == b` already caught the `any == any` case above.
         if a == TypeId::ANY || b == TypeId::ANY {
-            return true;
+            return false;
         }
 
         // 4. Enum Nominality Check
