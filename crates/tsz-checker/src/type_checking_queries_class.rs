@@ -533,32 +533,7 @@ impl<'a> CheckerState<'a> {
 
     /// Infer the return type of a getter from its body.
     pub(crate) fn infer_getter_return_type(&mut self, body_idx: NodeIndex) -> TypeId {
-        if body_idx.is_none() {
-            return TypeId::VOID;
-        }
-
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return TypeId::VOID;
-        };
-
-        // If it's a block, look for return statements
-        if body_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.ctx.arena.get_block(body_node)
-        {
-            for &stmt_idx in &block.statements.nodes {
-                if let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
-                    && stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                    && let Some(ret) = self.ctx.arena.get_return_statement(stmt_node)
-                    && ret.expression.is_some()
-                {
-                    return self.get_type_of_node(ret.expression);
-                }
-            }
-        }
-
-        // No return statements with values found - return void (not any)
-        // This prevents false positive TS7010 errors for getters without return statements
-        TypeId::VOID
+        self.infer_return_type_from_body(tsz_parser::parser::NodeIndex::NONE, body_idx, None)
     }
 
     /// Check that all top-level function overload signatures have implementations.

@@ -1347,7 +1347,14 @@ impl<'a> CheckerState<'a> {
         // But `const g: () => "a" = () => "a"` → return type `"a"` (preserved
         // by contextual typing).
         if return_context.is_none() {
-            self.widen_literal_type(result)
+            let widened = self.widen_literal_type(result);
+            if !self.ctx.strict_null_checks()
+                && tsz_solver::type_queries::is_only_null_or_undefined(self.ctx.types, widened)
+            {
+                TypeId::ANY
+            } else {
+                widened
+            }
         } else {
             result
         }
