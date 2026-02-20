@@ -539,6 +539,7 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     /// Check an enum declaration.
     pub fn check_enum_declaration(&mut self, enum_idx: NodeIndex) {
         use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::node::NodeAccess;
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(enum_idx) else {
@@ -549,12 +550,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         };
 
+        // TS2431: Enum name cannot be '{0}'.
+        if let Some(name_text) = self.ctx.arena.get_identifier_text(enum_data.name) {
+            match name_text {
+                "any" | "unknown" | "never" | "number" | "bigint" | "boolean" | "string"
+                | "symbol" | "void" | "object" | "undefined" => {
+                    let name_node = self.ctx.arena.get(enum_data.name).unwrap();
+                    self.ctx.error(
+                        name_node.pos,
+                        name_node.end - name_node.pos,
+                        format!("Enum name cannot be '{name_text}'."),
+                        diagnostic_codes::ENUM_NAME_CANNOT_BE,
+                    );
+                }
+                _ => {}
+            }
+        }
+
         // TS2452: An enum member cannot have a numeric name
         for &member_idx in &enum_data.members.nodes {
             if let Some(member_node) = self.ctx.arena.get(member_idx)
                 && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
                 && let Some(name_node) = self.ctx.arena.get(member_data.name)
-                && name_node.kind == SyntaxKind::NumericLiteral as u16
+                && (name_node.kind == SyntaxKind::NumericLiteral as u16
+                    || name_node.kind == SyntaxKind::BigIntLiteral as u16)
             {
                 self.ctx.error(
                     name_node.pos,
