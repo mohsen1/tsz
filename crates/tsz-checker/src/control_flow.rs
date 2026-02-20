@@ -511,9 +511,9 @@ impl<'a> FlowAnalyzer<'a> {
         while let Some((current_flow, current_type)) = worklist.pop_front() {
             in_worklist.remove(&current_flow);
 
-            // OPTIMIZATION: Check global cache first to avoid redundant traversals
-            // BUG FIX: Skip cache for SWITCH_CLAUSE nodes to ensure proper flow graph traversal
-            // Switch clauses must be processed to schedule antecedents and apply narrowing
+            // Check global cache first to avoid redundant traversals.
+            // Skip cache for SWITCH_CLAUSE nodes — they must be processed to
+            // schedule antecedents and apply narrowing.
             let (is_switch_clause, is_loop_label_node) =
                 if let Some(flow) = self.binder.flow_nodes.get(current_flow) {
                     (

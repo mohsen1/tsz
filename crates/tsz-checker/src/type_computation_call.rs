@@ -1234,10 +1234,9 @@ impl<'a> CheckerState<'a> {
                     constructor_name = %constructor_name,
                     "get_type_of_identifier: looking for *Constructor symbol"
                 );
-                // BUG FIX: Use find_value_symbol_in_libs instead of resolve_global_value_symbol
-                // to ensure we get the correct VALUE symbol, not a type-only or wrong symbol.
-                // resolve_global_value_symbol can return the wrong symbol when there are
-                // name collisions in file_locals (e.g., SymbolConstructor from ES2015 vs DOM types).
+                // Use find_value_symbol_in_libs (not resolve_global_value_symbol) to get
+                // the correct VALUE symbol. resolve_global_value_symbol can return the
+                // wrong symbol when there are name collisions in file_locals.
                 if let Some(constructor_sym_id) = self.find_value_symbol_in_libs(&constructor_name)
                 {
                     trace!(
@@ -1270,10 +1269,8 @@ impl<'a> CheckerState<'a> {
                             current_value_type = ?value_type,
                             "get_type_of_identifier: found *Constructor TYPE"
                         );
-                        // BUG FIX: Only use constructor_type if we don't already have a valid type.
-                        // For "Symbol", value_type=TypeId(8286) is correct (SymbolConstructor),
-                        // but resolve_lib_type_by_name returns TypeId(8282) (DecoratorMetadata).
-                        // Don't let the wrong *Constructor type overwrite the correct direct type.
+                        // Only use constructor_type if we don't already have a valid type.
+                        // Don't let a fallback *Constructor type overwrite a correct direct type.
                         if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                             value_type = constructor_type;
                         }

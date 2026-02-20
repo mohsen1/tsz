@@ -811,11 +811,8 @@ impl<'a> TypeLowering<'a> {
             // always resolve to their primitive types (TypeId::SYMBOL, TypeId::STRING, etc.)
             // and are never shadowed by user-defined or lib-defined symbols.
             //
-            // BUG FIX: Previously, we attempted symbol resolution first, which caused
-            // the "symbol" keyword in lib file type annotations (e.g., `(): symbol`)
-            // to incorrectly resolve to user symbols or lib symbols instead of the
-            // primitive type. This caused Symbol('test') to return DecoratorMetadata
-            // instead of symbol when esnext.decorators was loaded.
+            // Primitive type keywords must be resolved before symbol lookup so
+            // they are never shadowed by user-defined or lib-defined symbols.
             match name.as_ref() {
                 "any" => return TypeId::ANY,
                 "unknown" => return TypeId::UNKNOWN,
