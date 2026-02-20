@@ -1,9 +1,4 @@
 //! Unused declaration checking (TS6133, TS6192) and overload resolution helpers.
-//!
-//! Split from `type_checking_global.rs` to keep file sizes manageable.
-//! Contains:
-//! - Unused declaration checking (variables, functions, classes, imports)
-//! - Import/variable/binding parent node traversal helpers
 //! - Constructor/method/function implementation finders
 
 use crate::state::CheckerState;

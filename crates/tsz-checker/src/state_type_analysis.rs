@@ -1,7 +1,5 @@
-//! Type Analysis & Compatibility Module
-//!
-//! Extracted from state.rs: Methods for type analysis including qualified name
-//! resolution, symbol type computation, type queries, and contextual literal type analysis.
+//! Type analysis: qualified name resolution, symbol type computation,
+//! type queries, and contextual literal type analysis.
 
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;

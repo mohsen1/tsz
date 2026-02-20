@@ -1,7 +1,4 @@
-//! Definite assignment analysis and flow-based type narrowing.
-//!
-//! Extracted from `flow_analysis.rs`: control flow narrowing at identifier usage,
-//! definite assignment checking (TS2454), TDZ analysis, and typeof-based narrowing.
+//! Definite assignment analysis (TS2454), TDZ analysis, and flow-based type narrowing.
 
 use crate::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{

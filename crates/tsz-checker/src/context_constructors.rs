@@ -1,8 +1,4 @@
 //! `CheckerContext` constructor methods.
-//!
-//! Split from `context.rs` to keep file sizes manageable.
-//! Contains `new()`, `new_with_shared_def_store()`, `with_options()`,
-//! `with_cache()`, `with_cache_and_options()`, and `with_parent_cache()`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};

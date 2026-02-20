@@ -1,6 +1,4 @@
 //! Call expression and identifier type computation for `CheckerState`.
-//!
-//! Split from `type_computation_complex.rs` for maintainability.
 
 use crate::query_boundaries::call_checker;
 use crate::query_boundaries::type_computation_complex as query;

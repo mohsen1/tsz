@@ -1,7 +1,4 @@
-//! Parser state - class member parsing
-//!
-//! Extracted from `state_statements.rs`: class member modifiers, class member
-//! dispatch, constructors, accessors, static blocks, and index signatures.
+//! Parser state - class member parsing.
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_CLASS_MEMBER_NAME,

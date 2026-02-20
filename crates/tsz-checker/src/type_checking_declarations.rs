@@ -1,7 +1,5 @@
 //! Type checking: super expression validation, property initialization,
 //! symbol helpers, ambient/namespace checks, interface merge compatibility.
-//!
-//! Split from `type_checking.rs` for maintainability.
 
 use crate::query_boundaries::type_checking as query;
 use crate::state::CheckerState;

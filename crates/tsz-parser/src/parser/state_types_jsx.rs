@@ -1,8 +1,4 @@
-//! Parser state - function type, type assertion, and JSX parsing
-//!
-//! Extracted from `state_types.rs`: property name keywords, function type detection,
-//! type assertion vs JSX disambiguation, JSX elements, attributes, children, and
-//! closing elements.
+//! Parser state - function type, type assertion, and JSX parsing.
 
 use super::state::{ParseDiagnostic, ParserState};
 use crate::parser::{NodeArena, NodeIndex, NodeList, node, syntax_kind_ext};

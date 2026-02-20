@@ -1,7 +1,4 @@
-//! Parser state - class expression and class declaration parsing
-//!
-//! Extracted from `state_statements.rs`: class expressions, class declarations
-//! (regular, abstract, declare), decorators, and heritage clause parsing.
+//! Parser state - class expression and class declaration parsing.
 
 use super::state::{
     CONTEXT_FLAG_AMBIENT, CONTEXT_FLAG_CONSTRUCTOR_PARAMETERS, CONTEXT_FLAG_IN_CLASS,

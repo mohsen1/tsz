@@ -1,8 +1,5 @@
-//! Type Checking Utilities Module
-//!
-//! This module contains parameter type utilities, type construction, and
-//! type resolution methods for `CheckerState`.
-//! Split from `type_checking.rs` for maintainability.
+//! Parameter type utilities, type construction, and type resolution methods
+//! for `CheckerState`.
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::CheckerState;

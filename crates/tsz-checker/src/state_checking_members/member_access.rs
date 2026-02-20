@@ -1,6 +1,4 @@
-//! Member access-resolution helpers.
-//!
-//! Extracted from `state_checking.rs`: class/interface/member utilities.
+//! Member access-resolution helpers (class/interface/member utilities).
 
 use crate::query_boundaries::definite_assignment::constructor_assigned_properties;
 use crate::state::CheckerState;

@@ -1,9 +1,5 @@
-//! Import Declaration Validation
-//!
-//! Split from `import_checker.rs` to keep file sizes manageable.
-//! Contains import alias duplicate checking, import equals declaration
-//! validation, namespace import resolution, import declaration checking,
-//! and re-export chain cycle detection.
+//! Import alias duplicate checking, import equals declaration validation,
+//! namespace import resolution, and re-export chain cycle detection.
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;

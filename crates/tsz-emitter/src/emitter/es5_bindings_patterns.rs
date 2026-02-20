@@ -1,7 +1,4 @@
-//! ES5 destructuring - binding element patterns and parameter bindings
-//!
-//! Extracted from `es5_bindings.rs`: binding element emission, parameter default
-//! assignments, parameter binding patterns, and for-of ES5 iterator/async emission.
+//! ES5 destructuring - binding element patterns and parameter bindings.
 
 use super::{ParamTransformPlan, Printer};
 use tsz_parser::parser::NodeIndex;

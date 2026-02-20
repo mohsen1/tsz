@@ -1,8 +1,4 @@
 //! Lazy type resolution and type environment population.
-//!
-//! Extracted from `state_type_environment.rs`: methods for resolving Lazy(DefId)
-//! types to their concrete types, resolving types for property access, building
-//! type environment entries, and application symbol resolution.
 
 use crate::query_boundaries::state_type_environment as query;
 use crate::state::CheckerState;

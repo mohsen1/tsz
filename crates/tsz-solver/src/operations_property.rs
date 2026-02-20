@@ -1,9 +1,5 @@
-//! Property Access Resolution
-//!
-//! This module contains the `PropertyAccessEvaluator` and related types for
-//! resolving property access on types (obj.prop, obj["key"], etc.).
-//!
-//! Extracted from operations.rs to keep file sizes manageable.
+//! Property access resolution (`PropertyAccessEvaluator`) for resolving
+//! property access on types (obj.prop, obj["key"], etc.).
 
 use crate::db::QueryDatabase;
 use crate::subtype::TypeResolver;

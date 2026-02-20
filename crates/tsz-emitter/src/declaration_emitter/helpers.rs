@@ -1,8 +1,4 @@
-//! Declaration emitter - type emission and utility helpers
-//!
-//! Extracted from `mod.rs`: type emission, entity name emission, expression
-//! emission, node emission, public API checks, source mapping, auto-imports,
-//! and path resolution.
+//! Declaration emitter - type emission and utility helpers.
 
 use super::DeclarationEmitter;
 use crate::emitter::type_printer::TypePrinter;

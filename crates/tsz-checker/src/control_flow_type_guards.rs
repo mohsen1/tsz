@@ -1,9 +1,5 @@
-//! Control Flow Type Guard Extraction
-//!
-//! Split from `control_flow_narrowing.rs` to keep file sizes manageable.
-//! Contains mutable/captured variable checks and type guard extraction
-//! for flow-based type narrowing (typeof, instanceof, discriminants,
-//! type predicates, Array.isArray, array.every).
+//! Type guard extraction for flow-based narrowing (typeof, instanceof,
+//! discriminants, type predicates, Array.isArray, array.every).
 
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};

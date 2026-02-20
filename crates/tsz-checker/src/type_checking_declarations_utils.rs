@@ -1,7 +1,5 @@
 //! Interface merge compatibility, declaration name matching, property name
 //! utilities, and node containment checks.
-//!
-//! Extracted from `type_checking_declarations.rs` for maintainability.
 
 use crate::state::{CheckerState, ComputedKey, MAX_TREE_WALK_ITERATIONS, PropertyKey};
 use tsz_parser::parser::NodeIndex;

@@ -1,7 +1,4 @@
 //! AST node binding, hoisting, and scope management.
-//!
-//! This module contains the node-level binding logic extracted from //! for maintainability. It includes AST traversal, declaration hoisting,
-//! scope management, and modifier/symbol utilities.
 
 use crate::{ContainerKind, ScopeContext, SymbolId, SymbolTable, flow_flags, symbol_flags};
 use rustc_hash::FxHashSet;

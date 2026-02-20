@@ -1,6 +1,4 @@
 //! Enum helpers, type overlap checking, readonly properties, and class/function utility methods.
-//!
-//! Split from `type_checking_utilities_jsdoc.rs` to keep file sizes manageable.
 
 use crate::query_boundaries::type_checking_utilities as query;
 use crate::state::{CheckerState, EnumKind, MemberAccessLevel};

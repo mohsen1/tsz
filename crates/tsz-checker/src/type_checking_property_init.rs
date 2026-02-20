@@ -1,8 +1,4 @@
 //! Property initialization order checking (TS2729) and property attribute detection.
-//!
-//! Extracted from `type_checking_declarations.rs`: property initialization order
-//! validation for both instance and static properties, including `this` property
-//! access collection and static member access analysis.
 
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;

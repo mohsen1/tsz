@@ -1,8 +1,5 @@
-//! Property access resolution helpers.
-//!
-//! Contains mapped-type resolution, primitive/array/function/application property
-//! resolution, and related utility methods extracted from `operations_property.rs`
-//! to keep file sizes manageable.
+//! Property access resolution helpers: mapped-type resolution,
+//! primitive/array/function/application property resolution.
 
 use super::*;
 use crate::apparent_primitive_member_kind;

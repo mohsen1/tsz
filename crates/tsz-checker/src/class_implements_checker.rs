@@ -1,9 +1,4 @@
-//! Class interface and implements checking.
-//!
-//! Split from `class_checker.rs` to keep file sizes manageable.
-//! Contains:
-//! - Abstract member implementation checks (TS2515, TS2654)
-//! - Implements clause validation (TS2420, TS2720)
+//! Class interface and implements checking (TS2420, TS2515, TS2654, TS2720).
 //! - Interface-extends-class accessibility checks
 
 use crate::diagnostics::diagnostic_codes;

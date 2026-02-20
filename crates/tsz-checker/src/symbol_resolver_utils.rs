@@ -1,8 +1,5 @@
-//! Symbol Resolution Utilities
-//!
-//! Split from `symbol_resolver.rs` to keep file sizes manageable.
-//! Contains lib symbol lookup, global value resolution, heritage
-//! symbol resolution, test option parsing, and access class resolution.
+//! Lib symbol lookup, global value resolution, heritage symbol resolution,
+//! test option parsing, and access class resolution.
 
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tracing::trace;
