@@ -108,6 +108,7 @@ impl<'a> CheckerState<'a> {
                     &[&name_text],
                 );
                 // Avoid duplicate emission
+
                 if !self.ctx.diagnostics.iter().any(|d| d.code == diagnostic_codes::IS_REFERENCED_DIRECTLY_OR_INDIRECTLY_IN_ITS_OWN_BASE_EXPRESSION && d.start == self.ctx.arena.get(error_node).map_or(0, |n| n.pos)) {
                     self.error_at_node(
                         error_node,
@@ -670,6 +671,9 @@ impl<'a> CheckerState<'a> {
                 // Check for circular inheritance using node index tracking (for cross-file cycles)
                 // CRITICAL: Return immediately to prevent infinite recursion, not just break
                 if visited_nodes.contains(&base_class_idx) {
+                    if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                        self.ctx.class_instance_resolution_set.remove(&sym_id);
+                    }
                     return TypeId::ANY; // Cycle detected - break recursion
                 }
                 let Some(base_node) = self.ctx.arena.get(base_class_idx) else {
@@ -689,6 +693,9 @@ impl<'a> CheckerState<'a> {
                     {
                         // Base class is already being resolved up the call stack
                         // Return ANY to break the cycle and stop recursion
+                        if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                            self.ctx.class_instance_resolution_set.remove(&sym_id);
+                        }
                         return TypeId::ANY;
                     }
                 } else {
@@ -697,6 +704,9 @@ impl<'a> CheckerState<'a> {
                     // This handles cases like: class C extends E {} where E doesn't exist yet
                     // but will be declared later with extends D, and D extends C
                     if visited_nodes.contains(&base_class_idx) {
+                        if did_insert_into_global_set && let Some(sym_id) = current_sym {
+                            self.ctx.class_instance_resolution_set.remove(&sym_id);
+                        }
                         return TypeId::ANY; // Forward reference cycle - break recursion
                     }
                     // Otherwise, continue - the forward reference might resolve later
@@ -739,6 +749,11 @@ impl<'a> CheckerState<'a> {
                     let base_sym = base_sym_id;
                     if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
                         if base_symbol.flags & symbol_flags::CLASS != 0 {
+                            // Ensure the class is tracked in symbol_resolution_stack to prevent
+                            // infinite recursion when evaluating base class properties.
+                            // get_type_of_symbol returns the constructor type, but also caches
+                            // the instance type as a side-effect.
+                            let _ = self.get_type_of_symbol(base_sym);
                             // Use class_instance_type_from_symbol to get the instance type
                             self.class_instance_type_from_symbol(base_sym)
                                 .unwrap_or(TypeId::ANY)
