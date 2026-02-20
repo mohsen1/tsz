@@ -455,7 +455,33 @@ impl<'a> CheckerState<'a> {
                 continue; // Skip circular references
             }
 
-            let type_id = self.get_type_of_symbol(*member_id);
+            let Some(member_symbol) = self.ctx.binder.get_symbol(*member_id) else {
+                continue;
+            };
+            use tsz_binder::symbol_flags;
+            if member_symbol.flags & symbol_flags::VALUE == 0 {
+                continue;
+            }
+
+            let mut type_id = self.get_type_of_symbol(*member_id);
+            if member_symbol.flags & symbol_flags::INTERFACE != 0 {
+                let mut candidate = self.type_of_value_declaration_for_symbol(
+                    *member_id,
+                    member_symbol.value_declaration,
+                );
+                if candidate == TypeId::UNKNOWN || candidate == TypeId::ERROR {
+                    for &decl_idx in &member_symbol.declarations {
+                        let cand = self.type_of_value_declaration_for_symbol(*member_id, decl_idx);
+                        if cand != TypeId::UNKNOWN && cand != TypeId::ERROR {
+                            candidate = cand;
+                            break;
+                        }
+                    }
+                }
+                if candidate != TypeId::UNKNOWN && candidate != TypeId::ERROR {
+                    type_id = candidate;
+                }
+            }
             let name_atom = self.ctx.types.intern_string(name);
             props.entry(name_atom).or_insert(PropertyInfo {
                 name: name_atom,
@@ -470,6 +496,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let properties: Vec<PropertyInfo> = props.into_values().collect();
-        self.ctx.types.factory().object(properties)
+        self.ctx.types.factory().object_with_flags_and_symbol(
+            properties,
+            tsz_solver::ObjectFlags::empty(),
+            Some(sym_id),
+        )
     }
 }

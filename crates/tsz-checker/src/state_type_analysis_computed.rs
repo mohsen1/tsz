@@ -188,11 +188,18 @@ impl<'a> CheckerState<'a> {
     fn compute_namespace_symbol_type(
         &mut self,
         sym_id: SymbolId,
+        flags: u32,
     ) -> (TypeId, Vec<tsz_solver::TypeParamInfo>) {
-        // Create DefId and use Lazy type
-        let def_id = self.ctx.get_or_create_def_id(sym_id);
-        let factory = self.ctx.types.factory();
-        (factory.lazy(def_id), Vec::new())
+        use tsz_binder::symbol_flags;
+        if flags & symbol_flags::INTERFACE != 0 {
+            let interface_type = self.compute_interface_type_from_declarations(sym_id);
+            self.ctx
+                .symbol_instance_types
+                .insert(sym_id, interface_type);
+        }
+
+        let merged_type = self.merge_namespace_exports_into_object(sym_id, TypeId::ANY);
+        (merged_type, Vec::new())
     }
 
     fn resolve_export_value_wrapper_target_symbol(
@@ -450,7 +457,7 @@ impl<'a> CheckerState<'a> {
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
         {
-            return self.compute_namespace_symbol_type(sym_id);
+            return self.compute_namespace_symbol_type(sym_id, flags);
         }
 
         // Enum member - determine type from parent enum
