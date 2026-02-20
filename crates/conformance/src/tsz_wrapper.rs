@@ -544,7 +544,7 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
     // etc.) default to `true` when not specified.
     let strict_value = match opts.get("strict") {
         Some(serde_json::Value::Bool(strict)) => *strict,
-        _ => true, // tsc 6.0+ defaults to strict: true when not specified
+        _ => false, // Cache generated with tsc 5.9.3 where strict defaults to false
     };
     for key in [
         "noImplicitAny",
