@@ -301,15 +301,22 @@ impl BinderState {
         self.enter_scope(ContainerKind::Function, idx);
         self.declare_arguments_symbol();
 
-        self.with_fresh_flow(|binder| {
-            for &param_idx in &parameters.nodes {
-                binder.bind_parameter(arena, param_idx);
-            }
+        // Capture enclosing flow so that const variables narrowed in an outer scope
+        // preserve their narrowing inside method/accessor/constructor bodies.
+        // The flow graph walker (check_flow at START nodes) uses `is_mutable_variable`
+        // to decide whether to reset narrowing or traverse outward.
+        self.with_fresh_flow_inner(
+            |binder| {
+                for &param_idx in &parameters.nodes {
+                    binder.bind_parameter(arena, param_idx);
+                }
 
-            if body.is_some() {
-                binder.bind_node(arena, body);
-            }
-        });
+                if body.is_some() {
+                    binder.bind_node(arena, body);
+                }
+            },
+            true,
+        );
 
         self.exit_scope(arena);
     }
