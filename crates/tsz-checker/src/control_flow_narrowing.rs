@@ -185,6 +185,13 @@ impl<'a> FlowAnalyzer<'a> {
             return true;
         }
 
+        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && let Some(prop) = self.arena.get_property_assignment(node)
+            && self.assignment_targets_reference_internal(prop.initializer, target)
+        {
+            return true;
+        }
+
         if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
             && let Some(prop) = self.arena.get_shorthand_property(node)
             && self.assignment_targets_reference_internal(prop.name, target)
@@ -1717,6 +1724,18 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let node = self.arena.get(idx)?;
+
+        if node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+            && let Some(prop) = self.arena.get_property_assignment(node)
+        {
+            return self.reference_symbol_inner(prop.initializer, visited);
+        }
+
+        if node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            && let Some(prop) = self.arena.get_shorthand_property(node)
+        {
+            return self.reference_symbol_inner(prop.name, visited);
+        }
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION
             && let Some(decl) = self.arena.get_variable_declaration(node)
         {

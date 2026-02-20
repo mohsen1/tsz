@@ -295,7 +295,7 @@ impl<'a> CheckerState<'a> {
             )
         {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-            let var_type = self.get_type_of_node(initializer);
+            let var_type = self.get_type_of_assignment_target(initializer);
             // The LHS type must be string, any, or a type assignable to string
             if var_type != TypeId::STRING
                 && var_type != TypeId::ANY
@@ -311,7 +311,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the type of the initializer expression (this evaluates `v`, `v++`, `obj.prop`, etc.)
-        let var_type = self.get_type_of_node(initializer);
+        let var_type = self.get_type_of_assignment_target(initializer);
         let target_type = if is_for_of
             && let Some(init_node) = self.ctx.arena.get(initializer)
             && init_node.kind == SyntaxKind::Identifier as u16

@@ -211,3 +211,26 @@ fn test_definite_assignment_ts2454_control_flow_join() {
         "Expected TS2454 at control-flow join for f1, got: {diags:?}"
     );
 }
+
+#[test]
+fn test_for_of47_definite_assignment() {
+    let source = "
+var x: string, y: number;
+var array = [{ x: \"\", y: true }]
+enum E { x }
+for ({x, y: y = E.x} of array) {
+    x;
+    y;
+}
+";
+    let diags = diagnostics_with_options(
+        source,
+        crate::context::CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    for d in &diags {
+        println!("DIAG: {} - {}", d.0, d.1);
+    }
+}

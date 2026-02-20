@@ -590,6 +590,16 @@ impl<'a> CheckerState<'a> {
                     }
                     return false;
                 }
+                k if k == syntax_kind_ext::FOR_IN_STATEMENT
+                    || k == syntax_kind_ext::FOR_OF_STATEMENT =>
+                {
+                    if let Some(for_node) = self.ctx.arena.get_for_in_of(parent_node)
+                        && for_node.initializer == current
+                    {
+                        return true;
+                    }
+                    return false;
+                }
                 _ => return false,
             }
         }
