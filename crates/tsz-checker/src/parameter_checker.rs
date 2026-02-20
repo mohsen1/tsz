@@ -250,7 +250,7 @@ impl<'a> CheckerState<'a> {
         name_idx: NodeIndex,
         seen: &mut rustc_hash::FxHashSet<String>,
     ) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use crate::diagnostics::{diagnostic_messages, format_message};
         use tsz_scanner::SyntaxKind;
 
         let Some(node) = self.ctx.arena.get(name_idx) else {
@@ -269,7 +269,7 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_messages::DUPLICATE_IDENTIFIER,
                                 &[&name_str],
                             ),
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
+                            crate::diagnostics::diagnostic_codes::DUPLICATE_IDENTIFIER,
                         );
                     }
                 }

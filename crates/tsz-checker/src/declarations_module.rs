@@ -22,18 +22,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         if let Some(module) = self.ctx.arena.get_module(node)
             && let Some(name_node) = self.ctx.arena.get(module.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && let Some(module_exports) =
-                        self.ctx.binder.module_exports.get(&self.ctx.file_name)
-                        && module_exports.has(&ident.escaped_text) {
-                            self.ctx.error(
-                                name_node.pos,
-                                name_node.end - name_node.pos,
-                                diagnostic_messages::DUPLICATE_IDENTIFIER.to_string(),
-                                diagnostic_codes::DUPLICATE_IDENTIFIER,
-                            );
-                            return;
-                        };
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && let Some(module_exports) = self.ctx.binder.module_exports.get(&self.ctx.file_name)
+            && module_exports.has(&ident.escaped_text)
+        {
+            self.ctx.error(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                diagnostic_messages::DUPLICATE_IDENTIFIER.to_string(),
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+            return;
+        };
 
         let Some(_node) = self.ctx.arena.get(module_idx) else {
             return;
@@ -45,16 +45,17 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         if let Some(module) = self.ctx.arena.get_module(node)
             && let Some(name_node) = self.ctx.arena.get(module.name)
-                && let Some(ident) = self.ctx.arena.get_identifier(name_node)
-                    && self.ctx.binder.file_locals.has(&ident.escaped_text) {
-                        self.ctx.error(
-                            name_node.pos,
-                            name_node.end - name_node.pos,
-                            diagnostic_messages::DUPLICATE_IDENTIFIER.to_string(),
-                            diagnostic_codes::DUPLICATE_IDENTIFIER,
-                        );
-                        return;
-                    }
+            && let Some(ident) = self.ctx.arena.get_identifier(name_node)
+            && self.ctx.binder.file_locals.has(&ident.escaped_text)
+        {
+            self.ctx.error(
+                name_node.pos,
+                name_node.end - name_node.pos,
+                diagnostic_messages::DUPLICATE_IDENTIFIER.to_string(),
+                diagnostic_codes::DUPLICATE_IDENTIFIER,
+            );
+            return;
+        }
 
         let Some(node) = self.ctx.arena.get(module_idx) else {
             return;
