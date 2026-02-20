@@ -18,7 +18,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// Compatibility hook for call-site checks; concrete validation rules are
     /// handled in dedicated module-option logic.
-    pub(crate) fn check_dynamic_import_module_options(
+    pub(crate) const fn check_dynamic_import_module_options(
         &mut self,
         _call: &tsz_parser::parser::node::CallExprData,
         _idx: NodeIndex,
