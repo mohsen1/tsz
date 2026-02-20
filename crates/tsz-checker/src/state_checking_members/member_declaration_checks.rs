@@ -358,6 +358,7 @@ impl<'a> CheckerState<'a> {
                         self.push_missing_name_type_parameters(&func_type.type_parameters);
                     self.check_type_parameters_for_missing_names(&func_type.type_parameters);
                     self.check_duplicate_type_parameters(&func_type.type_parameters);
+                    self.check_duplicate_parameters(&func_type.parameters, false);
                     for &param_idx in &func_type.parameters.nodes {
                         self.check_parameter_type_for_missing_names(param_idx);
                     }
@@ -634,6 +635,7 @@ impl<'a> CheckerState<'a> {
             self.check_type_parameters_for_missing_names(&sig.type_parameters);
             self.check_duplicate_type_parameters(&sig.type_parameters);
             if let Some(ref params) = sig.parameters {
+                self.check_duplicate_parameters(params, false);
                 for &param_idx in &params.nodes {
                     self.check_parameter_type_for_missing_names(param_idx);
                 }

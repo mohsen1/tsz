@@ -113,7 +113,6 @@ impl<'a> CheckerState<'a> {
         // Note: Methods and constructors are checked in check_method_declaration and check_constructor_declaration
         // Function declarations are checked in check_statement
         if !is_function_declaration && !is_method_or_constructor {
-            self.check_duplicate_parameters(parameters, body.is_some());
             // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters);
             // Check that rest parameters have array types (TS2370)
