@@ -913,8 +913,10 @@ impl<'a> CheckerState<'a> {
             let base_type = instantiate_type(self.ctx.types, base_info.type_id, &substitution);
 
             // TS2610/TS2611: Check accessor/property kind mismatch
-            // Only applies to non-method members. Fires regardless of types (even ANY).
+            // Only applies to non-method, non-static members. Fires regardless of types (even ANY).
+            // Static members are allowed to override accessors with properties and vice versa.
             if !is_method
+                && !is_static
                 && !base_info.is_method
                 && !base_info.is_abstract
                 && !accessor_mismatch_reported.contains(&member_name)
