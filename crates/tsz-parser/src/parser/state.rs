@@ -385,10 +385,7 @@ impl ParserState {
         }
 
         // No explicit separator and not at a boundary that permits implicit recovery.
-        if self.scanner.has_preceding_line_break()
-            || self.is_token(SyntaxKind::CloseBraceToken)
-            || self.is_token(SyntaxKind::EndOfFileToken)
-        {
+        if self.scanner.has_preceding_line_break() || self.is_token(SyntaxKind::CloseBraceToken) {
             return;
         }
 
@@ -541,8 +538,7 @@ impl ParserState {
         while !(self.is_token(SyntaxKind::OpenBraceToken)
             || self.is_token(SyntaxKind::SemicolonToken)
             || self.is_token(SyntaxKind::CommaToken)
-            || self.is_token(SyntaxKind::CloseBraceToken)
-            || self.is_token(SyntaxKind::EndOfFileToken))
+            || self.is_token(SyntaxKind::CloseBraceToken))
         {
             self.next_token();
         }
@@ -618,8 +614,7 @@ impl ParserState {
             // This bypasses the should_report_error() distance check.
             let force_emit = kind == SyntaxKind::CloseParenToken
                 && (self.is_token(SyntaxKind::OpenBraceToken)
-                    || self.is_token(SyntaxKind::CloseBraceToken)
-                    || self.is_token(SyntaxKind::EndOfFileToken));
+                    || self.is_token(SyntaxKind::CloseBraceToken));
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
@@ -711,6 +706,7 @@ impl ParserState {
             SyntaxKind::EqualsGreaterThanToken => "=>",
             SyntaxKind::DotDotDotToken => "...",
             SyntaxKind::Identifier => "identifier",
+            SyntaxKind::TryKeyword => "try",
             _ => "token",
         }
     }
@@ -1731,6 +1727,8 @@ impl ParserState {
                 | SyntaxKind::DoKeyword
                 | SyntaxKind::SwitchKeyword
                 | SyntaxKind::TryKeyword
+                | SyntaxKind::CatchKeyword
+                | SyntaxKind::FinallyKeyword
                 | SyntaxKind::WithKeyword
                 | SyntaxKind::DebuggerKeyword
                 | SyntaxKind::ReturnKeyword
@@ -1801,9 +1799,7 @@ impl ParserState {
         allow_statement_starts: bool,
     ) {
         // If we're already at a sync point or EOF, no need to resync
-        if self.is_resync_sync_point_with_statement_starts(allow_statement_starts)
-            || self.is_token(SyntaxKind::EndOfFileToken)
-        {
+        if self.is_resync_sync_point_with_statement_starts(allow_statement_starts) {
             return;
         }
 
@@ -2063,7 +2059,7 @@ impl ParserState {
     /// Returns a placeholder expression if recovery is possible.
     pub(crate) fn try_recover_binary_rhs(&mut self) -> NodeIndex {
         // If we're at an expression boundary after an operator, create a placeholder
-        if self.is_expression_boundary() || self.is_token(SyntaxKind::EndOfFileToken) {
+        if self.is_expression_boundary() || self.is_statement_start() {
             self.create_missing_expression()
         } else {
             NodeIndex::NONE

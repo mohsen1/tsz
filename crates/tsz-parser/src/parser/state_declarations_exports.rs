@@ -1527,59 +1527,6 @@ impl ParserState {
     // Parse try statement
     // Parse orphan catch/finally block (missing try)
     // Emits TS1005: 'try' expected
-    // Special case: if catch is followed by finally, absorb both with one error
-    pub(crate) fn parse_orphan_catch_or_finally_block(&mut self) -> NodeIndex {
-        // Emit TS1005: 'try' expected
-        self.parse_error_at_current_token("'try' expected.", diagnostic_codes::EXPECTED);
-
-        let start_pos = self.token_pos();
-
-        // Skip the catch/finally keyword
-        let is_catch = self.is_token(SyntaxKind::CatchKeyword);
-        self.next_token();
-
-        // Skip the catch binding if present: catch(x)
-        if is_catch && self.is_token(SyntaxKind::OpenParenToken) {
-            self.next_token();
-            // Skip everything until closing paren
-            let mut depth = 1;
-            while depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
-                if self.is_token(SyntaxKind::OpenParenToken) {
-                    depth += 1;
-                } else if self.is_token(SyntaxKind::CloseParenToken) {
-                    depth -= 1;
-                }
-                if depth > 0 {
-                    self.next_token();
-                }
-            }
-            if self.is_token(SyntaxKind::CloseParenToken) {
-                self.next_token();
-            }
-        }
-
-        // Skip the block if present
-        if self.is_token(SyntaxKind::OpenBraceToken) {
-            self.parse_block();
-        }
-
-        // TypeScript error recovery: if this was catch and next is finally, absorb it
-        // This prevents duplicate errors for "catch { } finally { }" pattern
-        if is_catch && self.is_token(SyntaxKind::FinallyKeyword) {
-            self.next_token(); // skip 'finally' keyword
-            // Skip the finally block if present
-            if self.is_token(SyntaxKind::OpenBraceToken) {
-                self.parse_block();
-            }
-        }
-
-        let end_pos = self.token_end();
-
-        // Return an empty statement as recovery
-        self.arena
-            .add_token(syntax_kind_ext::EMPTY_STATEMENT, start_pos, end_pos)
-    }
-
     pub(crate) fn parse_try_statement(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         self.parse_expected(SyntaxKind::TryKeyword);
