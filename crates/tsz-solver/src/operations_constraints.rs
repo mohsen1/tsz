@@ -683,6 +683,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     true,
                     priority,
                 );
+                self.constrain_properties(
+                    ctx,
+                    var_map,
+                    &s_callable.properties,
+                    &t_callable.properties,
+                    priority,
+                );
+                if let (Some(s_idx), Some(t_idx)) = (&s_callable.string_index, &t_callable.string_index) {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_idx.value_type,
+                        t_idx.value_type,
+                        priority,
+                    );
+                }
+                if let (Some(s_idx), Some(t_idx)) = (&s_callable.number_index, &t_callable.number_index) {
+                    self.constrain_types(
+                        ctx,
+                        var_map,
+                        s_idx.value_type,
+                        t_idx.value_type,
+                        priority,
+                    );
+                }
             }
             (Some(TypeData::Callable(s_callable_id)), Some(TypeData::Function(t_fn_id))) => {
                 let s_callable = self.interner.callable_shape(s_callable_id);
