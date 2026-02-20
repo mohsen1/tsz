@@ -618,7 +618,19 @@ impl<'a> CheckerState<'a> {
     ) -> Option<(bool, Option<String>)> {
         // Check if the symbol exists in the binder's file-level symbol table
         // (not just the arena, which doesn't include all declarations)
-        let symbol_exists = binder.file_locals.has(import_name);
+        let mut symbol_exists = binder.file_locals.has(import_name);
+        if symbol_exists {
+            if let Some(sym_id) = binder.file_locals.get(import_name) {
+                if let Some(sym) = self.get_symbol_globally(sym_id) {
+                    if let Some(augs) = self.ctx.binder.global_augmentations.get(import_name) {
+                        let all_are_global = sym.declarations.iter().all(|d| augs.iter().any(|a| a.node == *d));
+                        if all_are_global {
+                            symbol_exists = false;
+                        }
+                    }
+                }
+            }
+        }
         tracing::trace!(symbol_exists, "Checked if symbol exists in binder");
 
         if !symbol_exists {

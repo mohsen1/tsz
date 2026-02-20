@@ -160,6 +160,14 @@ impl BinderState {
                         is_exported = true;
                     }
                 }
+                
+                if self.in_global_augmentation {
+                    self.global_augmentations
+                        .entry(name.clone())
+                        .or_default()
+                        .push(crate::state::GlobalAugmentation::new(idx));
+                }
+
                 let flags = symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE;
                 module_symbol_id = self.declare_symbol(&name, flags, idx, is_exported);
                 prior_exports = self
