@@ -1184,7 +1184,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
                 // Check if symbol already exists in globals (cross-file merging)
                 // IMPORTANT: Only merge symbols from ROOT scope (ScopeId(0))
                 // Nested scope symbols should NEVER be merged across scopes
-                let new_id = if !is_nested_symbol {
+                let new_id = if !is_nested_symbol && !result.is_external_module {
                     let name_atom = name_interner.intern(&sym.escaped_name);
                     if let Some(&existing_id) = merged_symbols.get(&name_atom) {
                         // Symbol exists - check if we can merge
