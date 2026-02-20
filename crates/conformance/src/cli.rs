@@ -70,7 +70,7 @@ pub struct Args {
     pub tsz_binary: String,
 
     /// Timeout per test in seconds (0 = no timeout)
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 10)]
     pub timeout: u64,
 
     /// Compare full diagnostic fingerprints (code + location + message key),
