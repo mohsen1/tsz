@@ -1351,25 +1351,26 @@ impl<'a> CheckerState<'a> {
                 }
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_decl) = self.ctx.arena.get_export_decl(statement_node)
-                        && let Some(clause) = self.ctx.arena.get(export_decl.export_clause) {
-                            match clause.kind {
-                                k if k == syntax_kind_ext::VARIABLE_STATEMENT
-                                    || k == syntax_kind_ext::FUNCTION_DECLARATION
-                                    || k == syntax_kind_ext::CLASS_DECLARATION
-                                    || k == syntax_kind_ext::ENUM_DECLARATION =>
-                                {
+                        && let Some(clause) = self.ctx.arena.get(export_decl.export_clause)
+                    {
+                        match clause.kind {
+                            k if k == syntax_kind_ext::VARIABLE_STATEMENT
+                                || k == syntax_kind_ext::FUNCTION_DECLARATION
+                                || k == syntax_kind_ext::CLASS_DECLARATION
+                                || k == syntax_kind_ext::ENUM_DECLARATION =>
+                            {
+                                return true;
+                            }
+                            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                                if self.is_namespace_declaration_instantiated(
+                                    export_decl.export_clause,
+                                ) {
                                     return true;
                                 }
-                                k if k == syntax_kind_ext::MODULE_DECLARATION => {
-                                    if self.is_namespace_declaration_instantiated(
-                                        export_decl.export_clause,
-                                    ) {
-                                        return true;
-                                    }
-                                }
-                                _ => {}
                             }
+                            _ => {}
                         }
+                    }
                 }
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
                     if self.is_namespace_declaration_instantiated(statement_idx) {
