@@ -49,6 +49,22 @@ fn make_animal_and_dog(interner: &TypeInterner) -> (TypeId, TypeId) {
     (animal, dog)
 }
 
+fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+    let entries = fs::read_dir(dir)
+        .unwrap_or_else(|_| panic!("failed to read checker source directory {}", dir.display()));
+    for entry in entries {
+        let entry = entry.expect("failed to read checker source directory entry");
+        let path = entry.path();
+        if path.is_dir() {
+            collect_checker_rs_files_recursive(&path, files);
+            continue;
+        }
+        if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
 #[test]
 fn test_pack_relation_flags_tracks_checker_strict_options() {
     let arena = NodeArena::new();
@@ -186,9 +202,28 @@ fn test_no_implicit_any_scope_inference_for_js_files() {
 
 #[test]
 fn test_array_helpers_avoid_direct_typekey_interning() {
-    // array_type.rs was removed; its logic is now inlined elsewhere.
-    // The architectural constraint (no direct TypeData::Array) is enforced
-    // by the broader guardrail checks.
+    let mut checker_rs_files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut checker_rs_files);
+
+    let mut array_type_violations = Vec::new();
+    for path in checker_rs_files {
+        if path
+            .components()
+            .any(|component| component.as_os_str() == "tests")
+        {
+            continue;
+        }
+        let source = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        if source.contains("TypeData::Array") {
+            array_type_violations.push(path.display().to_string());
+        }
+    }
+    assert!(
+        array_type_violations.is_empty(),
+        "checker helpers should use solver array constructor APIs, not TypeData::Array; violations: {}",
+        array_type_violations.join(", ")
+    );
 
     let type_literal_src = fs::read_to_string("src/type_literal_checker.rs")
         .expect("failed to read src/type_literal_checker.rs for architecture guard");

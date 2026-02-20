@@ -1294,24 +1294,43 @@ good2({ when: value => false });
 #[test]
 #[ignore = "requires generic constraint checking (TS2344)"]
 fn test_ts2344_no_duplicate_errors() {
-    let diagnostics = compile_and_get_diagnostics(
+    let diagnostics = compile_and_get_diagnostics_with_options(
         r"
-interface Box<T extends string> {
-    value: T;
-}
-type BadBox = Box<number>;
-type IsString<T extends string> = T extends string ? true : false;
-type Test2 = IsString<number>;
-type Keys<T extends object> = keyof T;
-type Test4 = Keys<string>;
+interface Array<T> {}
+interface Boolean {}
+interface Function {}
+interface IArguments {}
+interface Number {}
+interface Object {}
+interface RegExp {}
+interface String {}
+
+function one<T extends string>() {}
+one<number>();
+
+function two<T extends object>() {}
+two<string>();
+
+function three<T extends { value: string }>() {}
+three<number>();
         ",
+        CheckerOptions {
+            no_implicit_any: true,
+            ..Default::default()
+        },
     );
 
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+
     // Count TS2344 errors - each should appear exactly once
-    let ts2344_count = diagnostics.iter().filter(|(code, _)| *code == 2344).count();
+    let ts2344_count = relevant.iter().filter(|(code, _)| *code == 2344).count();
     assert_eq!(
         ts2344_count, 3,
-        "Should emit exactly 3 TS2344 errors (one per bad type arg), not duplicates.\nActual errors: {diagnostics:#?}"
+        "Should emit exactly 3 TS2344 errors (one per bad type arg), not duplicates.\nActual errors: {relevant:#?}"
     );
 }
 
