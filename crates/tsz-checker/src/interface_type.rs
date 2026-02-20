@@ -91,8 +91,8 @@ impl<'a> CheckerState<'a> {
             if member_node.kind == CALL_SIGNATURE {
                 // Extract call signature
                 if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    if let Some(ref params) = sig.parameters {
-                        self.check_duplicate_parameters(params, false);
+                    if let Some(ref _params) = sig.parameters {
+                        
                     }
                     let (type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
@@ -128,8 +128,8 @@ impl<'a> CheckerState<'a> {
             } else if member_node.kind == CONSTRUCT_SIGNATURE {
                 // Extract construct signature
                 if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    if let Some(ref params) = sig.parameters {
-                        self.check_duplicate_parameters(params, false);
+                    if let Some(ref _params) = sig.parameters {
+                        
                     }
                     let (type_params, type_param_updates) =
                         self.push_type_parameters(&sig.type_parameters);
@@ -169,9 +169,9 @@ impl<'a> CheckerState<'a> {
                     && let Some(name_atom) = self.get_member_name_atom(sig.name)
                 {
                     if member_node.kind == METHOD_SIGNATURE
-                        && let Some(ref params) = sig.parameters
+                        && let Some(ref _params) = sig.parameters
                     {
-                        self.check_duplicate_parameters(params, false);
+                        
                     }
                     let type_id = if !sig.type_annotation.is_none() {
                         self.get_type_from_type_node(sig.type_annotation)
@@ -888,9 +888,9 @@ impl<'a> CheckerState<'a> {
                     {
                         if member_node.kind == METHOD_SIGNATURE
                             && std::ptr::eq(arena, self.ctx.arena)
-                            && let Some(ref params) = sig.parameters
+                            && let Some(ref _params) = sig.parameters
                         {
-                            self.check_duplicate_parameters(params, false);
+                            
                         }
                         let type_id = if !sig.type_annotation.is_none()
                             && std::ptr::eq(arena, self.ctx.arena)
