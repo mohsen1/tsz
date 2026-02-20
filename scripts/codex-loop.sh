@@ -32,7 +32,7 @@ WORKDIR="$(pwd)"
 TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-120}"
 SLEEP_SECONDS="${CODEX_LOOP_SLEEP:-2}"
 CONF_QUARTERS="${CODEX_LOOP_CONFORMANCE_QUARTERS:-4}"
-CONF_TOTAL_FAILURES="${CODEX_LOOP_CONFORMANCE_TOTAL_FAILURES:-3101}"
+CONF_TOTAL_TESTS="${CODEX_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -141,14 +141,14 @@ build_prompt() {
     local shard_index shard_label shard_size shard_offset remaining shard_max
     shard_index=$(( (SESSION_ID - 1) % CONF_QUARTERS ))
     shard_label=$(( shard_index + 1 ))
-    shard_size=$(( (CONF_TOTAL_FAILURES + CONF_QUARTERS - 1) / CONF_QUARTERS ))
+    shard_size=$(( (CONF_TOTAL_TESTS + CONF_QUARTERS - 1) / CONF_QUARTERS ))
     shard_offset=$(( shard_index * shard_size ))
-    remaining=$(( CONF_TOTAL_FAILURES - shard_offset ))
+    remaining=$(( CONF_TOTAL_TESTS - shard_offset ))
     shard_max="$shard_size"
     if (( remaining < shard_max )); then
       shard_max=$remaining
     fi
-    prompt="${prompt} Parallel conformance sharding: you own quarter ${shard_label}/${CONF_QUARTERS}. Focus failures with scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max}."
+    prompt="${prompt} Parallel conformance sharding: you own quarter ${shard_label}/${CONF_QUARTERS}. Focus your test slice with scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max}."
   fi
 
   printf '%s\n' "$prompt"
