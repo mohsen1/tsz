@@ -78,12 +78,6 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             let suppress_did_you_mean =
                 self.has_syntax_parse_errors() || self.class_extends_any_base(type_id);
-            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
-                self.ctx.types,
-                &self.ctx.binder.symbols,
-                self.ctx.file_name.as_str(),
-            )
-            .with_def_store(&self.ctx.definition_store);
 
             // On files with syntax parse errors, TypeScript generally avoids TS2551
             // suggestion diagnostics and sticks with TS2339 to reduce cascades.
@@ -92,6 +86,13 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.find_similar_property(prop_name, type_id)
             };
+
+            let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                self.ctx.types,
+                &self.ctx.binder.symbols,
+                self.ctx.file_name.as_str(),
+            )
+            .with_def_store(&self.ctx.definition_store);
 
             let diag = if let Some(ref suggestion) = suggestion {
                 builder.property_not_exist_did_you_mean(
