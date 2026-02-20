@@ -121,6 +121,10 @@ impl ParserState {
     ) -> NodeIndex {
         self.parse_expected(SyntaxKind::ExportKeyword);
 
+        if self.is_token(SyntaxKind::DefaultKeyword) {
+            return self.parse_export_default_with_decorators(start_pos, decorators);
+        }
+
         let declaration = match self.token() {
             SyntaxKind::ClassKeyword => {
                 self.parse_class_declaration_with_decorators(decorators, self.token_pos())
@@ -144,6 +148,82 @@ impl ParserState {
                 is_type_only: false,
                 is_default_export: false,
                 export_clause: declaration,
+                module_specifier: NodeIndex::NONE,
+                attributes: NodeIndex::NONE,
+            },
+        )
+    }
+
+    pub(crate) fn parse_export_default_with_decorators(
+        &mut self,
+        start_pos: u32,
+        decorators: Option<crate::parser::NodeList>,
+    ) -> NodeIndex {
+        self.parse_expected(SyntaxKind::DefaultKeyword);
+
+        let expression = match self.token() {
+            SyntaxKind::ClassKeyword => {
+                self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+            }
+            SyntaxKind::AbstractKeyword => {
+                self.parse_abstract_class_declaration_with_decorators(decorators, self.token_pos())
+            }
+            SyntaxKind::FunctionKeyword => {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
+                self.parse_function_declaration_with_async_optional_name(false, None)
+            }
+            SyntaxKind::AsyncKeyword if self.look_ahead_is_async_function() => {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
+                self.next_token(); // consume 'async'
+                self.parse_function_declaration_with_async_optional_name(true, None)
+            }
+            SyntaxKind::InterfaceKeyword => {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
+                self.parse_interface_declaration()
+            }
+            _ => {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    start_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
+                let expr = self.parse_assignment_expression();
+                self.parse_semicolon();
+                expr
+            }
+        };
+
+        let end_pos = self.token_end();
+        // Use export assignment for default exports
+        self.arena.add_export_decl(
+            syntax_kind_ext::EXPORT_DECLARATION,
+            start_pos,
+            end_pos,
+            ExportDeclData {
+                modifiers: None,
+                is_type_only: false,
+                is_default_export: true,
+                export_clause: expression,
                 module_specifier: NodeIndex::NONE,
                 attributes: NodeIndex::NONE,
             },
