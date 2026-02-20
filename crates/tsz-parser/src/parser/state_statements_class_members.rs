@@ -926,7 +926,9 @@ impl ParserState {
 
         // Handle index signatures: [key: Type]: ValueType
         if self.is_token(SyntaxKind::OpenBracketToken) && self.look_ahead_is_index_signature() {
-            return self.parse_index_signature_with_modifiers(modifiers, start_pos);
+            let sig = self.parse_index_signature_with_modifiers(modifiers, start_pos);
+            self.parse_semicolon();
+            return sig;
         }
 
         // Recovery: Handle 'function' keyword used as a modifier in class members
