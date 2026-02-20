@@ -783,8 +783,7 @@ impl<'a> TypeLowering<'a> {
 
     /// Lower a qualified name type (A.B).
     pub(super) fn lower_qualified_name_type(&self, node_idx: NodeIndex) -> TypeId {
-        // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
-        // The def_id_resolver closure must be provided and must return valid DefIds
+        // Must resolve to DefId; def_id_resolver must be provided.
         if let Some(def_id) = self.resolve_def_id(node_idx) {
             return self.interner.lazy(def_id);
         }
@@ -829,7 +828,7 @@ impl<'a> TypeLowering<'a> {
                 _ => {}
             }
 
-            // Phase 4.2: Must resolve to DefId - no fallback to SymbolRef
+            // Must resolve to DefId
             //
             // Try name-based resolution — it's reliable for cross-arena
             // lowering because it uses the identifier text (extracted from the

@@ -22,8 +22,7 @@ pub trait TypeResolver {
 
     /// Resolve a symbol reference to a structural type, preferring DefId-based lazy paths.
     ///
-    /// This helper keeps compatibility with legacy `Ref`-based flows while ensuring all
-    /// migration-capable resolvers use `resolve_lazy` when a corresponding `DefId` exists.
+    /// Prefers `resolve_lazy` via `DefId` when available, falling back to `resolve_ref`.
     fn resolve_symbol_ref(&self, symbol: SymbolRef, interner: &dyn TypeDatabase) -> Option<TypeId> {
         if let Some(def_id) = self.symbol_to_def_id(symbol) {
             self.resolve_lazy(def_id, interner)

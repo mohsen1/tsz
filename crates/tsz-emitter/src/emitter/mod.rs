@@ -626,7 +626,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        // Phase 2 Architecture: Check transform directives first
+        // Check transform directives first
         let has_transform = !self.transforms.is_empty()
             && Self::kind_may_have_transform(node.kind)
             && self.transforms.has_transform(idx);

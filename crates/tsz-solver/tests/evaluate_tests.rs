@@ -14713,7 +14713,7 @@ fn test_application_ref_expansion_recursive() {
     };
     let t_type = interner.intern(TypeData::TypeParameter(t_param.clone()));
 
-    // Phase 4.2: Create Lazy(DefId) for List type alias (self-reference)
+    // Create Lazy(DefId) for List type alias (self-reference)
     let list_def_id = DefId(1);
     let list_ref = interner.intern(TypeData::Lazy(list_def_id));
 
