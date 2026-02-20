@@ -35,19 +35,19 @@ impl<'a> CheckerState<'a> {
         if let Some(keyof_type) = tsz_solver::type_queries::get_keyof_type(db, type_id)
             && let Some(key_type) =
                 tsz_solver::type_queries::keyof_object_properties(db, keyof_type)
-                && let Some(members) = tsz_solver::type_queries::get_union_members(db, key_type) {
-                    return members
-                        .into_iter()
-                        .filter_map(|m| {
-                            if let Some(str_lit) =
-                                tsz_solver::type_queries::get_string_literal_value(db, m)
-                            {
-                                return Some(str_lit);
-                            }
-                            None
-                        })
-                        .collect();
-                }
+            && let Some(members) = tsz_solver::type_queries::get_union_members(db, key_type)
+        {
+            return members
+                .into_iter()
+                .filter_map(|m| {
+                    if let Some(str_lit) = tsz_solver::type_queries::get_string_literal_value(db, m)
+                    {
+                        return Some(str_lit);
+                    }
+                    None
+                })
+                .collect();
+        }
         FxHashSet::default()
     }
 
@@ -737,15 +737,15 @@ impl<'a> CheckerState<'a> {
         if tsz_solver::type_queries::is_keyof_type(self.ctx.types, target)
             && let Some(str_lit) =
                 tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
-            {
-                let keyof_type =
-                    tsz_solver::type_queries::get_keyof_type(self.ctx.types, target).unwrap();
-                let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
-                if !allowed_keys.contains(&str_lit) {
-                    self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
-                    return false;
-                }
+        {
+            let keyof_type =
+                tsz_solver::type_queries::get_keyof_type(self.ctx.types, target).unwrap();
+            let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
+            if !allowed_keys.contains(&str_lit) {
+                self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
+                return false;
             }
+        }
 
         if self.is_assignable_to(source, target)
             || self.should_skip_weak_union_error(source, target, source_idx)
