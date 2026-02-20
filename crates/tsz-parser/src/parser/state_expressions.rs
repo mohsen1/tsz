@@ -1,4 +1,6 @@
-//! Parser state - expression parsing methods
+use tsz_common::diagnostics::diagnostic_codes;
+
+/// Parser state - expression parsing methods
 use super::state::{
     CONTEXT_FLAG_ARROW_PARAMETERS, CONTEXT_FLAG_ASYNC, CONTEXT_FLAG_GENERATOR,
     CONTEXT_FLAG_IN_CONDITIONAL_TRUE, ParserState,
@@ -19,7 +21,7 @@ impl ParserState {
     // Parse Methods - Expressions
     // =========================================================================
 
-    /// Parse an expression (including comma operator)
+    // Parse an expression (including comma operator)
     pub fn parse_expression(&mut self) -> NodeIndex {
         // Clear the decorator context when parsing Expression, as it should be
         // unambiguous when parsing a decorator's parenthesized sub-expression.
@@ -58,7 +60,7 @@ impl ParserState {
         left
     }
 
-    /// Parse assignment expression
+    // Parse assignment expression
     pub(crate) fn parse_assignment_expression(&mut self) -> NodeIndex {
         // Check for arrow function first (including async arrow)
         let lookahead_token = self.current_token;
@@ -88,13 +90,13 @@ impl ParserState {
         self.parse_binary_expression(2)
     }
 
-    /// Parse async arrow function: async (x) => ... or async x => ...
+    // Parse async arrow function: async (x) => ... or async x => ...
     pub(crate) fn parse_async_arrow_function_expression(&mut self) -> NodeIndex {
         self.parse_expected(SyntaxKind::AsyncKeyword);
         self.parse_arrow_function_expression_with_async(true)
     }
 
-    /// Check if we're at the start of an arrow function
+    // Check if we're at the start of an arrow function
     pub(crate) fn is_start_of_arrow_function(&mut self) -> bool {
         match self.token() {
             // (params) => ...
@@ -131,7 +133,7 @@ impl ParserState {
         }
     }
 
-    /// Look ahead to see if < starts a generic arrow function: <T>(x) => or <T, U>() =>
+    // Look ahead to see if < starts a generic arrow function: <T>(x) => or <T, U>() =>
     pub(crate) fn look_ahead_is_generic_arrow_function(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -165,11 +167,11 @@ impl ParserState {
         result
     }
 
-    /// Look ahead after async to see if it's an arrow function: async (x) => or async x => or async <T>(x) =>
-    ///
-    /// ASI Rule: If there's a line break after 'async', it's NOT an async arrow function.
-    /// The line break prevents 'async' from being treated as a modifier.
-    /// Example: `async\nx => x` parses as `async; (x => x);` not as an async arrow function.
+    // Look ahead after async to see if it's an arrow function: async (x) => or async x => or async <T>(x) =>
+    //
+    // ASI Rule: If there's a line break after 'async', it's NOT an async arrow function.
+    // The line break prevents 'async' from being treated as a modifier.
+    // Example: `async\nx => x` parses as `async; (x => x);` not as an async arrow function.
     pub(crate) fn look_ahead_is_arrow_function_after_async(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -200,10 +202,10 @@ impl ParserState {
         result
     }
 
-    /// Look ahead to see if ( starts an arrow function: () => or (x) => or (x, y) =>
-    ///
-    /// ASI Rule: If there's a line break between ) and =>, it's NOT an arrow function.
-    /// Example: `(x)\n=> y` should NOT be parsed as an arrow function.
+    // Look ahead to see if ( starts an arrow function: () => or (x) => or (x, y) =>
+    //
+    // ASI Rule: If there's a line break between ) and =>, it's NOT an arrow function.
+    // Example: `(x)\n=> y` should NOT be parsed as an arrow function.
     pub(crate) fn look_ahead_is_arrow_function(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -318,11 +320,11 @@ impl ParserState {
         is_arrow
     }
 
-    /// Look ahead to see if identifier is followed by => (simple arrow function)
-    ///
-    /// If there's a line break between the identifier and =>, this is still
-    /// recognized as an arrow function but TS1200 will be emitted during parsing.
-    /// `=>` cannot start a statement, so there is no ASI ambiguity.
+    // Look ahead to see if identifier is followed by => (simple arrow function)
+    //
+    // If there's a line break between the identifier and =>, this is still
+    // recognized as an arrow function but TS1200 will be emitted during parsing.
+    // `=>` cannot start a statement, so there is no ASI ambiguity.
     pub(crate) fn look_ahead_is_simple_arrow_function(&mut self) -> bool {
         let snapshot = self.scanner.save_state();
         let current = self.current_token;
@@ -358,7 +360,7 @@ impl ParserState {
         is_arrow
     }
 
-    /// Parse arrow function expression: (params) => body or x => body or <T>(x) => body
+    // Parse arrow function expression: (params) => body or x => body or <T>(x) => body
     pub(crate) fn parse_arrow_function_expression_with_async(
         &mut self,
         is_async: bool,
@@ -430,7 +432,6 @@ impl ParserState {
         if self.scanner.has_preceding_line_break()
             && self.is_token(SyntaxKind::EqualsGreaterThanToken)
         {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Line terminator not permitted before arrow.",
                 diagnostic_codes::LINE_TERMINATOR_NOT_PERMITTED_BEFORE_ARROW,
@@ -440,7 +441,6 @@ impl ParserState {
         // Recovery: Handle missing fat arrow - common typo: (a, b) { return a; }
         // If we see { immediately after parameters/return type, the user forgot =>
         if self.is_token(SyntaxKind::OpenBraceToken) {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token("'=>' expected.", diagnostic_codes::EXPECTED);
             // Don't consume the {, just continue to body parsing
             // The arrow is logically present but missing
@@ -450,7 +450,6 @@ impl ParserState {
             if self.scanner.has_preceding_line_break()
                 && self.is_token(SyntaxKind::EqualsGreaterThanToken)
             {
-                use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Line terminator not permitted before arrow.",
                     diagnostic_codes::LINE_TERMINATOR_NOT_PERMITTED_BEFORE_ARROW,
@@ -513,7 +512,7 @@ impl ParserState {
         )
     }
 
-    /// Parse type parameters: <T, U extends Foo, V = `DefaultType`>
+    // Parse type parameters: <T, U extends Foo, V = `DefaultType`>
     pub(crate) fn parse_type_parameters(&mut self) -> NodeList {
         let mut params = Vec::new();
 
@@ -522,7 +521,6 @@ impl ParserState {
         // Check for empty type parameter list: <>
         // TypeScript reports TS1098: "Type parameter list cannot be empty"
         if self.is_token(SyntaxKind::GreaterThanToken) {
-            use tsz_common::diagnostics::diagnostic_codes;
             self.parse_error_at_current_token(
                 "Type parameter list cannot be empty.",
                 diagnostic_codes::TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY,
@@ -543,8 +541,8 @@ impl ParserState {
         self.make_node_list(params)
     }
 
-    /// Parse a single type parameter: T or T extends U or T = Default or T extends U = Default
-    /// Also supports modifiers: `const T`, `in T`, `out T`, `in out T`, `const in T`, etc.
+    // Parse a single type parameter: T or T extends U or T = Default or T extends U = Default
+    // Also supports modifiers: `const T`, `in T`, `out T`, `in out T`, `const in T`, etc.
     pub(crate) fn parse_type_parameter(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
 
@@ -583,7 +581,7 @@ impl ParserState {
         )
     }
 
-    /// Parse type parameter modifiers: `const`, `in`, `out`
+    // Parse type parameter modifiers: `const`, `in`, `out`
     fn parse_type_parameter_modifiers(&mut self) -> Option<NodeList> {
         let mut modifiers = Vec::new();
 
@@ -624,7 +622,7 @@ impl ParserState {
         }
     }
 
-    /// Parse binary expression with precedence climbing
+    // Parse binary expression with precedence climbing
     pub(crate) fn parse_binary_expression(&mut self, min_precedence: u8) -> NodeIndex {
         let start_pos = self.token_pos();
         if !self.enter_recursion() {
@@ -850,8 +848,8 @@ impl ParserState {
         right
     }
 
-    /// Parse as/satisfies expression: expr as Type, expr satisfies Type
-    /// Also handles const assertion: expr as const
+    // Parse as/satisfies expression: expr as Type, expr satisfies Type
+    // Also handles const assertion: expr as const
     pub(crate) fn parse_as_or_satisfies_expression(
         &mut self,
         expression: NodeIndex,
@@ -895,7 +893,7 @@ impl ParserState {
         result
     }
 
-    /// Parse unary expression
+    // Parse unary expression
     pub(crate) fn parse_unary_expression(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::PlusToken
@@ -922,7 +920,7 @@ impl ParserState {
                         // unconditionally. Bypass should_report_error() because `++;`
                         // is a distinct syntactic unit — the TS1109 must not be
                         // suppressed by a prior TS1005 for `';' expected` at `++`.
-                        use tsz_common::diagnostics::diagnostic_codes;
+
                         self.parse_error_at_current_token(
                             "Expression expected.",
                             diagnostic_codes::EXPRESSION_EXPECTED,
@@ -986,7 +984,6 @@ impl ParserState {
                     && !self.in_async_context()
                     && has_following_expression
                 {
-                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'await' expression cannot be used inside a class static block.",
                         diagnostic_codes::AWAIT_EXPRESSION_CANNOT_BE_USED_INSIDE_A_CLASS_STATIC_BLOCK,
@@ -1005,7 +1002,7 @@ impl ParserState {
                     // Examples:
                     //   - `async (a = await foo)` → emit TS2524
                     //   - `async (a = await)` → emit TS2524 + TS1109 (expression expected)
-                    use tsz_common::diagnostics::diagnostic_codes;
+
                     self.parse_error_at_current_token(
                         "'await' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
@@ -1048,7 +1045,6 @@ impl ParserState {
                         // In static blocks, 'await' used as a bare identifier should emit TS1359
                         // (reserved word cannot be used here) to match TSC behavior
                         if self.in_static_block_context() {
-                            use tsz_common::diagnostics::diagnostic_codes;
                             self.parse_error_at_current_token(
                                 "Identifier expected. 'await' is a reserved word that cannot be used here.",
                                 diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
@@ -1151,7 +1147,6 @@ impl ParserState {
                 // where `yield foo;` should report "yield is only allowed in a generator body"
                 // rather than falling through to TS1434 "Unexpected keyword or identifier".
                 if !self.in_generator_context() && (has_following_expression || has_asterisk) {
-                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "A 'yield' expression is only allowed in a generator body.",
                         diagnostic_codes::A_YIELD_EXPRESSION_IS_ONLY_ALLOWED_IN_A_GENERATOR_BODY,
@@ -1184,7 +1179,6 @@ impl ParserState {
                 // Check if 'yield' is used in a parameter default context
                 // TS2523: 'yield' expressions cannot be used in a parameter initializer
                 if self.in_generator_context() && self.in_parameter_default_context() {
-                    use tsz_common::diagnostics::diagnostic_codes;
                     self.parse_error_at_current_token(
                         "'yield' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::YIELD_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
@@ -1234,7 +1228,7 @@ impl ParserState {
         }
     }
 
-    /// Parse postfix expression
+    // Parse postfix expression
     pub(crate) fn parse_postfix_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut expr = self.parse_left_hand_side_expression();
@@ -1262,7 +1256,7 @@ impl ParserState {
         expr
     }
 
-    /// Parse left-hand side expression (member access, call, etc.)
+    // Parse left-hand side expression (member access, call, etc.)
     pub(crate) fn parse_left_hand_side_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let mut expr = self.parse_primary_expression();
@@ -1500,7 +1494,6 @@ impl ParserState {
 
                         // TS18030: Optional chain cannot contain private identifiers
                         if is_private_identifier && let Some(name_node) = self.arena.get(name) {
-                            use tsz_common::diagnostics::diagnostic_codes;
                             self.parse_error_at(
                                     name_node.pos,
                                     name_node.end - name_node.pos,
@@ -1607,7 +1600,7 @@ impl ParserState {
         expr
     }
 
-    /// Parse argument list
+    // Parse argument list
     pub(crate) fn parse_argument_list(&mut self) -> NodeList {
         let mut args = Vec::new();
 
@@ -1669,8 +1662,8 @@ impl ParserState {
         self.make_node_list(args)
     }
 
-    /// Returns true for statement-only keywords that should stop argument parsing
-    /// during recovery to avoid cascading diagnostics.
+    // Returns true for statement-only keywords that should stop argument parsing
+    // during recovery to avoid cascading diagnostics.
     const fn is_argument_list_recovery_boundary(&self) -> bool {
         matches!(
             self.token(),
@@ -1698,7 +1691,7 @@ impl ParserState {
         )
     }
 
-    /// Parse primary expression
+    // Parse primary expression
     pub(crate) fn parse_primary_expression(&mut self) -> NodeIndex {
         match self.token() {
             SyntaxKind::Identifier => self.parse_identifier(),
@@ -1764,7 +1757,7 @@ impl ParserState {
             SyntaxKind::AsKeyword | SyntaxKind::SatisfiesKeyword => self.parse_identifier_name(),
             SyntaxKind::Unknown => {
                 // TS1127: Invalid character - emit specific error for invalid characters
-                use tsz_common::diagnostics::diagnostic_codes;
+
                 self.parse_error_at_current_token(
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
@@ -1835,8 +1828,8 @@ impl ParserState {
         }
     }
 
-    /// Parse a decorated class expression: `@dec class C { }`
-    /// Used when `@` is encountered in expression position.
+    // Parse a decorated class expression: `@dec class C { }`
+    // Used when `@` is encountered in expression position.
     fn parse_decorated_class_expression(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         let decorators = self.parse_decorators();
@@ -1845,7 +1838,7 @@ impl ParserState {
         } else {
             // Decorators not followed by class - emit error and create error token
             self.error_expression_expected();
-            use tsz_common::diagnostics::diagnostic_codes;
+
             self.parse_error_at(
                 self.token_pos(),
                 1,
@@ -1858,8 +1851,8 @@ impl ParserState {
         }
     }
 
-    /// Parse identifier
-    /// Uses zero-copy accessor and only clones when storing
+    // Parse identifier
+    // Uses zero-copy accessor and only clones when storing
     pub(crate) fn parse_identifier(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
@@ -1911,9 +1904,9 @@ impl ParserState {
         )
     }
 
-    /// Parse identifier name - allows keywords to be used as identifiers
-    /// This is used in contexts where keywords are valid identifier names
-    /// (e.g., class names, property names, function names)
+    // Parse identifier name - allows keywords to be used as identifiers
+    // This is used in contexts where keywords are valid identifier names
+    // (e.g., class names, property names, function names)
     pub(crate) fn parse_identifier_name(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
@@ -1942,7 +1935,7 @@ impl ParserState {
         )
     }
 
-    /// Parse private identifier (#name)
+    // Parse private identifier (#name)
     pub(crate) fn parse_private_identifier(&mut self) -> NodeIndex {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
