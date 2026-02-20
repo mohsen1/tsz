@@ -305,6 +305,25 @@ impl<'a> CheckerState<'a> {
             decl_id_to_check = info.parent;
         }
 
+        // If the declaration is a binding element that is ultimately a parameter,
+        // we should not perform definite assignment checking. Parameters are
+        // always definitely assigned.
+        if decl_node.kind == syntax_kind_ext::BINDING_ELEMENT {
+            let mut current = decl_id_to_check;
+            for _ in 0..10 {
+                if let Some(info) = self.ctx.arena.node_info(current) {
+                    let parent = info.parent;
+                    if let Some(parent_node) = self.ctx.arena.get(parent) {
+                        if parent_node.kind == syntax_kind_ext::PARAMETER {
+                            return false;
+                        }
+                    }
+                    current = parent;
+                } else {
+                    break;
+                }
+            }
+        }
         let (has_initializer, has_exclamation) =
             if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 let Some(var_data) = self.ctx.arena.get_variable_declaration(decl_node) else {
