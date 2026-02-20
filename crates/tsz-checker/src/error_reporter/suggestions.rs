@@ -11,8 +11,13 @@ impl<'a> CheckerState<'a> {
 
     /// Find a similar property name on a type for "did you mean?" suggestions (TS2551).
     /// Uses the same algorithm as tsc's `getSpellingSuggestion`.
-    pub(super) fn find_similar_property(&self, prop_name: &str, type_id: TypeId) -> Option<String> {
-        let property_names = self.collect_type_property_names(type_id);
+    pub(super) fn find_similar_property(
+        &mut self,
+        prop_name: &str,
+        type_id: TypeId,
+    ) -> Option<String> {
+        let evaluated_type = self.evaluate_type_for_assignability(type_id);
+        let property_names = self.collect_type_property_names(evaluated_type);
         if property_names.is_empty() {
             return None;
         }

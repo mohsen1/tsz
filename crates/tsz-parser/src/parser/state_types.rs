@@ -805,6 +805,24 @@ impl ParserState {
         // Parse the import call: import("./module")
         let argument = self.parse_import_expression();
 
+        // Check that the argument is a string literal (TS1141)
+        if let Some(call_node) = self.arena.get(argument)
+            && call_node.kind == syntax_kind_ext::CALL_EXPRESSION
+            && let Some(call_data) = self.arena.get_call_expr(call_node)
+            && let Some(args) = &call_data.arguments
+            && let Some(&first_arg) = args.nodes.first()
+            && let Some(arg_node) = self.arena.get(first_arg)
+            && arg_node.kind != SyntaxKind::StringLiteral as u16
+        {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at(
+                arg_node.pos,
+                arg_node.end.saturating_sub(arg_node.pos),
+                diagnostic_messages::STRING_LITERAL_EXPECTED,
+                diagnostic_codes::STRING_LITERAL_EXPECTED,
+            );
+        }
+
         // Parse member access after import: import("./a").Type.SubType
         let mut qualifier = argument;
         while self.is_token(SyntaxKind::DotToken) {
