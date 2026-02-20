@@ -1616,8 +1616,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    // Flow analysis functions moved to checker/flow_analysis.rs
-
     /// Check for decorator-related global types (TS2318).
     ///
     /// When experimentalDecorators is enabled and a method or accessor has decorators,

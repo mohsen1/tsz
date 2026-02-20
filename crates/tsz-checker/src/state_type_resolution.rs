@@ -1424,7 +1424,4 @@ impl<'a> CheckerState<'a> {
         let type_params = self.get_type_params_for_symbol(sym_id);
         (body_type, type_params)
     }
-
-    // NOTE: merge_namespace_exports_into_constructor, merge_namespace_exports_into_function,
-    // resolve_reexported_member moved to namespace_checker.rs
 }

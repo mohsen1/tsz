@@ -848,14 +848,6 @@ impl<'a> CheckerState<'a> {
         callee.kind == tsz_scanner::SyntaxKind::ImportKeyword as u16
     }
 
-    // Get type of a JSX opening element.
-    // NOTE: get_type_of_jsx_opening_element, get_jsx_namespace_type,
-    // get_intrinsic_elements_type, get_jsx_element_type moved to jsx_checker.rs
-
-    // NOTE: get_type_from_type_node_in_type_literal, get_type_from_type_reference_in_type_literal,
-    // extract_params_from_signature_in_type_literal, get_type_from_type_literal
-    // moved to type_literal_checker.rs
-
     /// Push type parameters into scope for generic type resolution.
     ///
     /// This is a critical function for handling generic types (classes, interfaces,

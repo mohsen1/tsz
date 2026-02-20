@@ -124,12 +124,6 @@ impl<'a> CheckerState<'a> {
     // now returns None for enum cases, delegating all enumeration logic to the Solver.
     // See commit 5b8c56551 and Phase 5 (Anti-Pattern 8.1 Removal) in session file.
 
-    // NOTE: abstract_constructor_assignability_override, constructor_access_level,
-    // constructor_access_level_for_type, constructor_accessibility_mismatch,
-    // constructor_accessibility_override, constructor_accessibility_mismatch_for_assignment,
-    // constructor_accessibility_mismatch_for_var_decl, resolve_type_env_symbol,
-    // is_abstract_constructor_type moved to constructor_checker.rs
-
     /// Evaluate complex type constructs for assignability checking.
     ///
     /// This function pre-processes types before assignability checking to ensure

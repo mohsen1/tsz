@@ -663,9 +663,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    // 23. Import and Private Brand Utilities (moved to symbol_resolver.rs)
-
-    // 25. AST Traversal Utilities (11 functions)
+    // AST Traversal Utilities
 
     /// Find the enclosing function-like node for a given node.
     ///
