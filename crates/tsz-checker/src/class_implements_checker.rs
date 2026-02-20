@@ -376,9 +376,9 @@ impl<'a> CheckerState<'a> {
                                             // Recurse into base interfaces
                                             if let Some(ref heritage_clauses) = interface_decl.heritage_clauses {
                                                 for &clause_idx in &heritage_clauses.nodes {
-                                                    if let Some(clause_node) = checker.ctx.arena.get(clause_idx) {
-                                                        if let Some(heritage) = checker.ctx.arena.get_heritage_clause(clause_node) {
-                                                            if heritage.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                                                    if let Some(clause_node) = checker.ctx.arena.get(clause_idx)
+                                                        && let Some(heritage) = checker.ctx.arena.get_heritage_clause(clause_node)
+                                                            && heritage.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
                                                                 for &base_type_idx in &heritage.types.nodes {
                                                                     if let Some(base_type_node) = checker.ctx.arena.get(base_type_idx) {
                                                                         let expr_idx = if let Some(expr_type_args) = checker.ctx.arena.get_expr_type_args(base_type_node) {
@@ -392,13 +392,11 @@ impl<'a> CheckerState<'a> {
                                                                     }
                                                                 }
                                                             }
-                                                        }
-                                                    }
                                                 }
                                             }
                                         }
-                                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
-                                        if let Some(class_decl) = checker.ctx.arena.get_class(node) {
+                                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
+                                        && let Some(class_decl) = checker.ctx.arena.get_class(node) {
                                             for &member_idx in &class_decl.members.nodes {
                                                 if checker.ctx.arena.get(member_idx).is_none() {
                                                     continue;
@@ -420,9 +418,9 @@ impl<'a> CheckerState<'a> {
                                             // Recurse into base classes
                                             if let Some(ref heritage_clauses) = class_decl.heritage_clauses {
                                                 for &clause_idx in &heritage_clauses.nodes {
-                                                    if let Some(clause_node) = checker.ctx.arena.get(clause_idx) {
-                                                        if let Some(heritage) = checker.ctx.arena.get_heritage_clause(clause_node) {
-                                                            if heritage.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
+                                                    if let Some(clause_node) = checker.ctx.arena.get(clause_idx)
+                                                        && let Some(heritage) = checker.ctx.arena.get_heritage_clause(clause_node)
+                                                            && heritage.token == tsz_scanner::SyntaxKind::ExtendsKeyword as u16 {
                                                                 for &base_type_idx in &heritage.types.nodes {
                                                                     if let Some(base_type_node) = checker.ctx.arena.get(base_type_idx) {
                                                                         let expr_idx = if let Some(expr_type_args) = checker.ctx.arena.get_expr_type_args(base_type_node) {
@@ -436,12 +434,9 @@ impl<'a> CheckerState<'a> {
                                                                     }
                                                                 }
                                                             }
-                                                        }
-                                                    }
                                                 }
                                             }
                                         }
-                                    }
                                 }
                             }
                         }
