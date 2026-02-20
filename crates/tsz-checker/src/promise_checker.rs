@@ -43,7 +43,7 @@ impl<'a> CheckerState<'a> {
     pub fn type_ref_is_promise_like(&self, type_id: TypeId) -> bool {
         match query::classify_promise_type(self.ctx.types, type_id) {
             query::PromiseTypeKind::Lazy(def_id) => {
-                // Phase 4.2: Use DefId -> SymbolId bridge
+                // Use DefId -> SymbolId bridge
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
@@ -82,7 +82,7 @@ impl<'a> CheckerState<'a> {
                 // all Object types are Promise-like, which causes false negatives for TS2705
                 match query::classify_promise_type(self.ctx.types, base) {
                     query::PromiseTypeKind::Lazy(def_id) => {
-                        // Phase 4.2: Use DefId -> SymbolId bridge
+                        // Use DefId -> SymbolId bridge
                         if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                         {
@@ -98,7 +98,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             query::PromiseTypeKind::Lazy(def_id) => {
-                // Phase 4.2: Use DefId -> SymbolId bridge
+                // Use DefId -> SymbolId bridge
                 // Check for direct Promise or PromiseLike reference (this also handles type aliases)
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
@@ -185,7 +185,7 @@ impl<'a> CheckerState<'a> {
             if let query::PromiseTypeKind::Lazy(def_id) =
                 query::classify_promise_type(self.ctx.types, base)
             {
-                // Phase 4.2: Use DefId -> SymbolId bridge
+                // Use DefId -> SymbolId bridge
                 if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     && self.is_promise_like_name(symbol.escaped_name.as_str())
@@ -213,7 +213,7 @@ impl<'a> CheckerState<'a> {
         args: &[TypeId],
         visited_aliases: &mut Vec<SymbolId>,
     ) -> Option<TypeId> {
-        // Phase 4.2: Handle Lazy variant properly
+        // Handle Lazy variant properly
         let sym_id = match query::classify_promise_type(self.ctx.types, base) {
             query::PromiseTypeKind::Lazy(def_id) => {
                 // Use DefId -> SymbolId bridge

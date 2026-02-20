@@ -1541,7 +1541,7 @@ impl<'a> CheckerState<'a> {
 
     /// Get the type of an await expression with contextual typing support.
     ///
-    /// Phase 6 Task 3: Propagate contextual type to await operand.
+    /// Propagate contextual type to await operand.
     ///
     /// When awaiting with a contextual type T (e.g., `const x: T = await expr`),
     /// the operand should receive T | `PromiseLike`<T> as its contextual type.
@@ -1586,7 +1586,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::ANY;
         }
 
-        // Phase 6 Task 3: Propagate contextual type to await operand
+        // Propagate contextual type to await operand
         // If we have a contextual type T, transform it to T | PromiseLike<T>
         let prev_context = self.ctx.contextual_type;
         if let Some(contextual) = prev_context {
@@ -1615,7 +1615,7 @@ impl<'a> CheckerState<'a> {
         // Restore the original contextual type
         self.ctx.contextual_type = prev_context;
 
-        // Phase 6 Task 3: Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
+        // Recursively unwrap Promise<T> to get T (simulating Awaited<T>)
         // TypeScript's await recursively unwraps nested Promises.
         // For example: await Promise<Promise<number>> should have type `number`
         let mut current_type = expr_type;

@@ -1375,7 +1375,7 @@ impl<'a> CheckerState<'a> {
     /// This is used for merged class+namespace symbols where namespace exports
     /// are stored as properties on the Callable type.
     fn is_type_only_type(&self, type_id: TypeId) -> bool {
-        // Phase 4.2: Use resolve_type_to_symbol_id instead of get_ref_symbol
+        // Use resolve_type_to_symbol_id instead of get_ref_symbol
         if let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id)
             && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
         {

@@ -192,7 +192,7 @@ impl<'a, 'b> CheckerOverrideProvider<'a, 'b> {
 
 impl<'a, 'b> tsz_solver::AssignabilityOverrideProvider for CheckerOverrideProvider<'a, 'b> {
     fn enum_assignability_override(&self, _source: TypeId, _target: TypeId) -> Option<bool> {
-        // Phase 5 (Anti-Pattern 8.1): Delegate to Solver's enumeration assignability override.
+        // Delegate to Solver's enumeration assignability override.
         // The Solver's CompatChecker now has complete enumeration logic:
         // - Parent identity checks (E.A -> E)
         // - String enumeration opacity (StringEnum -> string rejected)
