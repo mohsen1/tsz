@@ -477,6 +477,30 @@ impl<'a> CheckerState<'a> {
                                     computed
                                 };
 
+                                // Check visibility (TS2420)
+                                let sym_flags = self.ctx.binder.get_node_symbol(class_member_idx)
+                                    .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                                    .map(|s| s.flags)
+                                    .unwrap_or(0);
+                                let is_class_member_private = (sym_flags & tsz_binder::symbol_flags::PRIVATE) != 0;
+                                let is_class_member_protected = (sym_flags & tsz_binder::symbol_flags::PROTECTED) != 0;
+                                if is_class_member_private {
+                                    self.error_at_node(
+                                        class_idx,
+                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  Property '{member_name}' is private in type '{class_name}' but not in type '{interface_name}'."),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                    continue;
+                                }
+                                if is_class_member_protected {
+                                    self.error_at_node(
+                                        class_idx,
+                                        &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  Property '{member_name}' is protected in type '{class_name}' but not in type '{interface_name}'."),
+                                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
+                                    );
+                                    continue;
+                                }
+
                                 // Check type compatibility
                                 if interface_member_type != tsz_solver::TypeId::ANY
                                     && class_member_type != tsz_solver::TypeId::ANY
