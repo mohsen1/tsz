@@ -583,7 +583,14 @@ impl ParserState {
             }
             parsed_type
         } else {
-            NodeIndex::NONE
+            // Emit TS1005 for missing equals token
+            self.error_token_expected("=");
+            // If the next token looks like a type, continue parsing anyway
+            if self.can_token_start_type() {
+                self.parse_type()
+            } else {
+                NodeIndex::NONE
+            }
         };
 
         self.parse_optional(SyntaxKind::SemicolonToken);

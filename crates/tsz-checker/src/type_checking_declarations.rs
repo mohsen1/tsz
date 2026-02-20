@@ -1230,10 +1230,12 @@ impl<'a> CheckerState<'a> {
                     || parent_is_export_decl()
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                arena
-                    .get_type_alias(node)
-                    .is_some_and(|alias| has_export(&alias.modifiers))
-                    || parent_is_export_decl()
+                arena.get_type_alias(node).is_some_and(|alias| {
+                    has_export(&alias.modifiers) && alias.type_node != NodeIndex::NONE
+                }) || (parent_is_export_decl()
+                    && arena
+                        .get_type_alias(node)
+                        .is_some_and(|alias| alias.type_node != NodeIndex::NONE))
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 arena
