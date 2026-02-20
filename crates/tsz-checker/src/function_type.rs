@@ -483,8 +483,46 @@ impl<'a> CheckerState<'a> {
         // Push this_type BEFORE parameter initializer checks so that default
         // values like `a = this.getNumber()` see the correct `this` type and
         // don't trigger false TS2683.
+        let implicit_this = this_type.or_else(|| {
+            if is_arrow_function {
+                outer_this_type
+            } else {
+                ctx_helper.as_ref().and_then(|h| h.get_this_type())
+                    .or_else(|| {
+                        // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
+                        let mut current = idx;
+                        for _ in 0..3 {
+                            let parent = self.ctx.arena.get_extended(current)?.parent;
+                            let parent_node = self.ctx.arena.get(parent)?;
+                            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
+                                if let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
+                                    && binary.right == current && self.is_assignment_operator(binary.operator_token) {
+                                        let left = binary.left;
+                                        if let Some(left_node) = self.ctx.arena.get(left)
+                                            && (left_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                                                || left_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+                                                && let Some(access) = self.ctx.arena.get_access_expr(left_node) {
+                                                    let receiver = self.get_type_of_node(access.expression);
+                                                    if receiver != tsz_solver::TypeId::ERROR && receiver != tsz_solver::TypeId::ANY {
+                                                        return Some(receiver);
+                                                    }
+                                                }
+                                    }
+                                break; // Only check immediate assignment parent
+                            } else if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                                current = parent; // Skip parens
+                                continue;
+                            } else {
+                                break;
+                            }
+                        }
+                        None
+                    })
+            }
+        });
+
         let mut pushed_this_type_early = false;
-        if let Some(tt) = this_type {
+        if let Some(tt) = implicit_this {
             self.ctx.this_type_stack.push(tt);
             pushed_this_type_early = true;
         }
