@@ -369,27 +369,31 @@ discover_repos() {
   fi
 }
 
-ensure_main_branch_if_clean() {
+hard_reset_repo_to_main() {
   local repo="$1"
   local name
-  local branch
-  local dirty
+  local head
 
   name="$(basename "$repo")"
-  branch="$(git -C "$repo" branch --show-current 2>/dev/null || true)"
-  [[ -n "$branch" ]] || return
-  [[ "$branch" == "main" ]] && return
+  log "Hard syncing $name to origin/main"
 
-  dirty="$(git -C "$repo" status --porcelain 2>/dev/null || true)"
-  if [[ -n "$dirty" ]]; then
-    log "WARN: $name stays on $branch (has local changes)"
-    return
+  git -C "$repo" fetch origin main --prune >/dev/null 2>&1 || die "Failed to fetch origin/main for $name"
+  git -C "$repo" checkout main >/dev/null 2>&1 || git -C "$repo" checkout -B main origin/main >/dev/null 2>&1 || die "Failed to checkout main for $name"
+  git -C "$repo" reset --hard origin/main >/dev/null 2>&1 || die "Failed to reset --hard origin/main for $name"
+  git -C "$repo" clean -fd >/dev/null 2>&1 || die "Failed to clean -fd for $name"
+
+  if [[ -d "$repo/TypeScript/.git" ]]; then
+    git -C "$repo" submodule update --init --force TypeScript >/dev/null 2>&1 || die "Failed to update TypeScript submodule for $name"
+    git -C "$repo/TypeScript" checkout -- . >/dev/null 2>&1 || die "Failed to checkout TypeScript submodule files for $name"
+    git -C "$repo/TypeScript" clean -xfd >/dev/null 2>&1 || die "Failed to clean TypeScript submodule for $name"
+    log "Cleaned $name/TypeScript submodule"
   fi
 
-  if git -C "$repo" checkout main >/dev/null 2>&1; then
-    log "Switched $name from $branch to main"
+  head="$(git -C "$repo" rev-parse --short HEAD 2>/dev/null || true)"
+  if [[ -n "$head" ]]; then
+    log "Synced $name at $head"
   else
-    log "WARN: failed to switch $name from $branch to main"
+    log "Synced $name"
   fi
 }
 
@@ -463,7 +467,7 @@ log "Ctrl+C stops all workers and kills session"
 log "Supervisor log: $SUPERVISOR_LOG"
 
 for repo in "${REPOS[@]}"; do
-  ensure_main_branch_if_clean "$repo"
+  hard_reset_repo_to_main "$repo"
 done
 
 WINDOW_NAMES=()
