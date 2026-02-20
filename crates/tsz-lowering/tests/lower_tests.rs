@@ -477,7 +477,7 @@ fn test_lower_array_type_reference_respects_resolver() {
     let (arena, type_idx) = parse_type_alias_type_node("type T = MyArray<string>;");
     let interner = TypeInterner::new();
 
-    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    // Use def_id_resolver for type identity
     let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
@@ -507,7 +507,7 @@ fn test_lower_array_type_reference_respects_resolver() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeData::Lazy(_def_id)) => {} // Uses Lazy(DefId)
                 other => panic!("Expected Lazy base type, got {other:?}"),
             }
         }
@@ -523,7 +523,7 @@ fn test_lower_readonly_array_type_reference_respects_resolver() {
     let (arena, type_idx) = parse_type_alias_type_node("type T = MyReadonlyArray<string>;");
     let interner = TypeInterner::new();
 
-    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    // Use def_id_resolver for type identity
     let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
@@ -553,7 +553,7 @@ fn test_lower_readonly_array_type_reference_respects_resolver() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeData::Lazy(_def_id)) => {} // Uses Lazy(DefId)
                 other => panic!("Expected Lazy base type, got {other:?}"),
             }
         }
@@ -1510,7 +1510,7 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
     let (arena, func_type_idx) = parse_type_alias("type F = <T>(x: T) => Box<T>;");
     let interner = TypeInterner::new();
 
-    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    // Use def_id_resolver for type identity
     let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
@@ -1546,7 +1546,7 @@ fn test_lower_generic_type_reference_uses_type_parameter_args() {
                     let app = interner.type_application(app_id);
                     let base_key = interner.lookup(app.base).expect("Type should exist");
                     match base_key {
-                        TypeData::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                        TypeData::Lazy(_def_id) => {} // Uses Lazy(DefId)
                         _ => panic!("Expected lazy base type, got {base_key:?}"),
                     }
 
@@ -1573,7 +1573,7 @@ fn test_lower_type_reference_with_arguments() {
     let (arena, type_ref_idx) = parse_type_reference("type T = Box<string>;", "Box");
     let interner = TypeInterner::new();
 
-    // Phase 4.2: Use def_id_resolver instead of type_resolver
+    // Use def_id_resolver for type identity
     let def_id_resolver = |node_idx: NodeIndex| {
         arena
             .get(node_idx)
@@ -1603,7 +1603,7 @@ fn test_lower_type_reference_with_arguments() {
             let app = interner.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
             match interner.lookup(app.base) {
-                Some(TypeData::Lazy(_def_id)) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                Some(TypeData::Lazy(_def_id)) => {} // Uses Lazy(DefId)
                 other => panic!("Expected Lazy base type, got {other:?}"),
             }
         }
@@ -1618,7 +1618,7 @@ fn test_lower_type_query_uses_value_resolver() {
     let (arena, type_idx) = parse_type_alias_type_node("type T = Foo | typeof Foo;");
     let interner = TypeInterner::new();
 
-    // Phase 4.2: Use def_id_resolver for Foo reference
+    // Use def_id_resolver for Foo reference
     let def_id_resolver = |_node_idx: NodeIndex| Some(DefId(1));
     let type_resolver = |_node_idx: NodeIndex| None; // Not needed with def_id_resolver
     let value_resolver = |_node_idx: NodeIndex| Some(2);
@@ -1642,7 +1642,7 @@ fn test_lower_type_query_uses_value_resolver() {
             for &member in members.iter() {
                 match interner.lookup(member) {
                     Some(TypeData::Lazy(_def_id)) => {
-                        // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
+                        // Uses Lazy(DefId)
                         saw_lazy = true;
                     }
                     Some(TypeData::TypeQuery(SymbolRef(sym_id))) => {

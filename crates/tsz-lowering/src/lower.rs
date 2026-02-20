@@ -42,7 +42,7 @@ pub struct TypeLowering<'a> {
     /// If provided, this enables correct abstract class detection.
     type_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
     /// Optional `DefId` resolver - resolves identifier nodes to `DefIds`.
-    /// Phase 1 migration path from `SymbolRef` to `DefId` for type identity.
+    /// Resolves identifier nodes to `DefId`s for type identity.
     def_id_resolver: Option<&'a NodeIndexResolver<'a, DefId>>,
     /// Optional value resolver for typeof queries.
     value_resolver: Option<&'a NodeIndexResolver<'a, u32>>,
@@ -449,7 +449,6 @@ impl<'a> TypeLowering<'a> {
 
     /// Resolve a node to a `DefId` if a `DefId` resolver is provided.
     ///
-    /// Phase 1: This is the migration path from `SymbolRef` to `DefId`.
     /// `DefIds` are Solver-owned identifiers that don't require Binder context.
     fn resolve_def_id(&self, node_idx: NodeIndex) -> Option<DefId> {
         self.def_id_resolver.and_then(|resolver| resolver(node_idx))
