@@ -629,11 +629,7 @@ impl<'a> CheckerState<'a> {
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {
-            let error_idx = if init_expr.is_some() {
-                init_expr
-            } else {
-                pattern_idx
-            };
+            let error_idx = pattern_idx;
             if let Some((start, end)) = self.get_node_span(error_idx) {
                 let type_str = self.format_type(pattern_type);
                 let message = format_message(
@@ -670,12 +666,8 @@ impl<'a> CheckerState<'a> {
             if self.is_array_or_tuple_type(resolved_type) {
                 return true;
             }
-            // Use the initializer expression for error location if available
-            let error_idx = if init_expr.is_some() {
-                init_expr
-            } else {
-                pattern_idx
-            };
+            // For destructuring diagnostics, anchor to the binding pattern.
+            let error_idx = pattern_idx;
             if let Some((start, end)) = self.get_node_span(error_idx) {
                 let type_str = self.format_type(pattern_type);
                 // Check if the type has Symbol.iterator (iterable but not usable in ES5
@@ -720,12 +712,8 @@ impl<'a> CheckerState<'a> {
 
         // Not iterable - emit TS2488
 
-        // Use the initializer expression for error location if available
-        let error_idx = if init_expr.is_some() {
-            init_expr
-        } else {
-            pattern_idx
-        };
+        // For destructuring diagnostics, anchor to the binding pattern.
+        let error_idx = pattern_idx;
 
         if let Some((start, end)) = self.get_node_span(error_idx) {
             let type_str = self.format_type(pattern_type);
