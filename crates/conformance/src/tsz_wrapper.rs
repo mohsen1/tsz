@@ -38,6 +38,7 @@ pub fn prepare_test_dir(
     filenames: &[(String, String)],
     options: &HashMap<String, String>,
     original_extension: Option<&str>,
+    key_order: &[String],
 ) -> anyhow::Result<PreparedTest> {
     use tempfile::TempDir;
 
@@ -160,7 +161,7 @@ pub fn prepare_test_dir(
         ])
     };
     if !has_tsconfig_file {
-        let mut compiler_options = convert_options_to_tsconfig(options);
+        let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
             if check_js {
                 // checkJs implies allowJs in tsc test harness behavior, even when
@@ -248,7 +249,7 @@ pub fn prepare_binary_test_dir(
         };
 
         let tsconfig_content = serde_json::json!({
-            "compilerOptions": convert_options_to_tsconfig(options),
+            "compilerOptions": convert_options_to_tsconfig(options, &[]),
             "include": include,
             "exclude": ["node_modules"]
         });
@@ -538,10 +539,36 @@ const LIST_OPTIONS: &[&str] = &[
 /// - List options (comma-separated values like @lib: es6,dom)
 /// - String/enum options (target, module, etc.)
 /// - Filters out test harness-specific directives
-fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json::Value {
+///
+/// `key_order` controls JSON key ordering to match the cache generator's output.
+/// When provided, keys are emitted in this order (matching test directive order),
+/// which ensures diagnostic fingerprint line numbers match the cache.
+fn convert_options_to_tsconfig(
+    options: &HashMap<String, String>,
+    key_order: &[String],
+) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
 
-    for (key, value) in options {
+    // Iterate in key_order first to preserve directive declaration order,
+    // then process any remaining keys not in the order list.
+    let ordered_keys: Vec<&String> = if key_order.is_empty() {
+        options.keys().collect()
+    } else {
+        let mut keys: Vec<&String> = key_order
+            .iter()
+            .filter(|k| options.contains_key(k.as_str()))
+            .collect();
+        // Add any keys present in options but missing from key_order
+        for k in options.keys() {
+            if !key_order.contains(k) {
+                keys.push(k);
+            }
+        }
+        keys
+    };
+
+    for key in ordered_keys {
+        let value = &options[key];
         // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
         if HARNESS_ONLY_DIRECTIVES
@@ -573,11 +600,11 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             // For non-list options, take only the first comma-separated value
             // to match the cache generator behavior.
             let effective_value = value.split(',').next().unwrap_or(value).trim();
-            if effective_value == "true" {
-                serde_json::Value::Bool(true)
-            } else if effective_value == "false" {
-                serde_json::Value::Bool(false)
-            } else if let Ok(num) = effective_value.parse::<i64>() {
+            // NOTE: Do NOT convert effective_value "true"/"false" to Bool here.
+            // The cache generator keeps split results as strings (e.g.,
+            // "strictNullChecks": "true"), which triggers TS5024 in tsc.
+            // We must produce the same tsconfig to match expected diagnostics.
+            if let Ok(num) = effective_value.parse::<i64>() {
                 // Handle numeric options (e.g., maxNodeModuleJsDepth)
                 serde_json::Value::Number(num.into())
             } else {
@@ -716,7 +743,7 @@ fn copy_tsconfig_to_root_if_needed(
         .trim_start_matches('/')
         .to_string();
     let is_root_tsconfig = sanitized_source == "tsconfig.json";
-    let directive_opts = convert_options_to_tsconfig(options);
+    let directive_opts = convert_options_to_tsconfig(options, &[]);
     let has_directive_opts = if let serde_json::Value::Object(ref opts) = directive_opts {
         !opts.is_empty()
     } else {

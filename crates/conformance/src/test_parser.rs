@@ -18,6 +18,9 @@ static DIRECTIVE_RE: Lazy<Regex> =
 pub struct TestDirectives {
     /// Compiler options (strict, target, module, etc.)
     pub options: HashMap<String, String>,
+    /// Key insertion order (preserves directive declaration order from the test file).
+    /// Used to generate tsconfig.json with keys in the same order as the cache generator.
+    pub option_order: Vec<String>,
     /// Additional files defined by @filename directives
     pub filenames: Vec<(String, String)>, // (filename, content)
 }
@@ -76,6 +79,9 @@ pub fn parse_test_file(content: &str) -> anyhow::Result<ParsedTest> {
                 current_filename = Some(value.to_string());
                 current_content = Vec::new();
             } else {
+                if !directives.options.contains_key(&key_lower) {
+                    directives.option_order.push(key_lower.clone());
+                }
                 directives.options.insert(key_lower, value.to_string());
             }
         } else {

@@ -547,6 +547,7 @@ impl Runner {
                         let filenames = parsed.directives.filenames.clone();
                         let variant_clone = variant.clone();
                         let ext_clone = original_ext.clone();
+                        let key_order = parsed.directives.option_order.clone();
 
                         let prepared = tokio::task::spawn_blocking(move || {
                             tsz_wrapper::prepare_test_dir(
@@ -554,6 +555,7 @@ impl Runner {
                                 &filenames,
                                 &variant_clone,
                                 ext_clone.as_deref(),
+                                &key_order,
                             )
                         })
                         .await??;

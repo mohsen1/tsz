@@ -854,6 +854,49 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 compiler_opts.insert(new_key, value);
             }
         }
+
+        // Check compiler option value types (TS5024)
+        // Collect keys that have type mismatches so we can remove them after iteration.
+        let keys_after_rename: Vec<String> = compiler_opts.keys().cloned().collect();
+        let mut bad_keys: Vec<String> = Vec::new();
+        for key in &keys_after_rename {
+            let expected_type = compiler_option_expected_type(key);
+            if expected_type.is_empty() {
+                continue; // Unknown option or no type constraint
+            }
+            let Some(value) = compiler_opts.get(key) else {
+                continue;
+            };
+            let type_ok = match expected_type {
+                "boolean" => value.is_boolean(),
+                "string" => value.is_string(),
+                "number" => value.is_number(),
+                "list" => value.is_array(),
+                "string or Array" => value.is_string() || value.is_array(),
+                "object" => value.is_object(),
+                _ => true,
+            };
+            if !type_ok {
+                let start = find_value_offset_in_source(&stripped, key);
+                let value_len = estimate_json_value_len(value);
+                let msg = format_message(
+                    diagnostic_messages::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+                    &[key, expected_type],
+                );
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    value_len,
+                    msg,
+                    diagnostic_codes::COMPILER_OPTION_REQUIRES_A_VALUE_OF_TYPE,
+                ));
+                bad_keys.push(key.clone());
+            }
+        }
+        // Remove invalid values so serde defaults them to None
+        for key in &bad_keys {
+            compiler_opts.remove(key);
+        }
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
@@ -875,6 +918,138 @@ fn find_key_offset_in_source(source: &str, key: &str) -> u32 {
         (compiler_opts_pos + pos) as u32
     } else {
         0
+    }
+}
+
+/// Find the byte offset of a JSON value within the source text.
+/// Searches for `"key":` after `compilerOptions`, then finds the value start.
+fn find_value_offset_in_source(source: &str, key: &str) -> u32 {
+    let search = format!("\"{key}\"");
+    let compiler_opts_pos = source.find("compilerOptions").unwrap_or(0);
+    if let Some(key_pos) = source[compiler_opts_pos..].find(&search) {
+        let after_key = compiler_opts_pos + key_pos + search.len();
+        // Skip whitespace and colon to find value start
+        let rest = &source[after_key..];
+        if let Some(colon_pos) = rest.find(':') {
+            let after_colon = after_key + colon_pos + 1;
+            let value_rest = &source[after_colon..];
+            // Skip whitespace to find value
+            let trimmed_offset = value_rest.len() - value_rest.trim_start().len();
+            return (after_colon + trimmed_offset) as u32;
+        }
+    }
+    0
+}
+
+/// Estimate the display length of a JSON value for diagnostic span.
+fn estimate_json_value_len(value: &serde_json::Value) -> u32 {
+    match value {
+        serde_json::Value::String(s) => s.len() as u32 + 2, // include quotes
+        serde_json::Value::Bool(b) => {
+            if *b {
+                4
+            } else {
+                5
+            }
+        }
+        serde_json::Value::Number(n) => n.to_string().len() as u32,
+        serde_json::Value::Null => 4,
+        serde_json::Value::Array(_) | serde_json::Value::Object(_) => serde_json::to_string(value)
+            .map(|s| s.len() as u32)
+            .unwrap_or(2),
+    }
+}
+
+/// Return the expected JSON value type for a compiler option.
+/// Returns "" for unknown/unvalidated options.
+fn compiler_option_expected_type(key: &str) -> &'static str {
+    match key {
+        // Boolean options
+        "allowArbitraryExtensions"
+        | "allowImportingTsExtensions"
+        | "allowJs"
+        | "allowSyntheticDefaultImports"
+        | "allowUmdGlobalAccess"
+        | "allowUnreachableCode"
+        | "allowUnusedLabels"
+        | "alwaysStrict"
+        | "checkJs"
+        | "composite"
+        | "declaration"
+        | "declarationMap"
+        | "disableReferencedProjectLoad"
+        | "disableSizeLimit"
+        | "disableSolutionSearching"
+        | "disableSourceOfProjectReferenceRedirect"
+        | "downlevelIteration"
+        | "emitBOM"
+        | "emitDeclarationOnly"
+        | "emitDecoratorMetadata"
+        | "esModuleInterop"
+        | "exactOptionalPropertyTypes"
+        | "experimentalDecorators"
+        | "forceConsistentCasingInFileNames"
+        | "importHelpers"
+        | "incremental"
+        | "inlineSourceMap"
+        | "inlineSources"
+        | "isolatedDeclarations"
+        | "isolatedModules"
+        | "keyofStringsOnly"
+        | "noEmit"
+        | "noEmitHelpers"
+        | "noEmitOnError"
+        | "noErrorTruncation"
+        | "noFallthroughCasesInSwitch"
+        | "noImplicitAny"
+        | "noImplicitOverride"
+        | "noImplicitReturns"
+        | "noImplicitThis"
+        | "noImplicitUseStrict"
+        | "noLib"
+        | "noPropertyAccessFromIndexSignature"
+        | "noResolve"
+        | "noStrictGenericChecks"
+        | "noUncheckedIndexedAccess"
+        | "noUncheckedSideEffectImports"
+        | "noUnusedLocals"
+        | "noUnusedParameters"
+        | "preserveConstEnums"
+        | "preserveSymlinks"
+        | "preserveValueImports"
+        | "pretty"
+        | "removeComments"
+        | "resolveJsonModule"
+        | "resolvePackageJsonExports"
+        | "resolvePackageJsonImports"
+        | "rewriteRelativeImportExtensions"
+        | "skipDefaultLibCheck"
+        | "skipLibCheck"
+        | "sourceMap"
+        | "strict"
+        | "strictBindCallApply"
+        | "strictBuiltinIteratorReturn"
+        | "strictFunctionTypes"
+        | "strictNullChecks"
+        | "strictPropertyInitialization"
+        | "stripInternal"
+        | "suppressExcessPropertyErrors"
+        | "suppressImplicitAnyIndexErrors"
+        | "useDefineForClassFields"
+        | "useUnknownInCatchVariables"
+        | "verbatimModuleSyntax" => "boolean",
+        // String options
+        "baseUrl" | "charset" | "declarationDir" | "jsx" | "jsxFactory" | "jsxFragmentFactory"
+        | "jsxImportSource" | "mapRoot" | "module" | "moduleDetection" | "moduleResolution"
+        | "newLine" | "outDir" | "outFile" | "reactNamespace" | "rootDir" | "sourceRoot"
+        | "target" | "tsBuildInfoFile" | "ignoreDeprecations" => "string",
+        // List options (arrays)
+        "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions" => {
+            "list"
+        }
+        // Object options
+        "paths" => "object",
+        _ => "",
     }
 }
 
