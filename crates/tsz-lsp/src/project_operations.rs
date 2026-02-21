@@ -2390,6 +2390,7 @@ impl Project {
         from_file: &str,
         target_file: &str,
     ) -> Vec<String> {
+        let additional_targets = self.package_import_target_alternatives(from_file, target_file);
         let mut current = Path::new(from_file).parent();
         while let Some(dir) = current {
             let package_json_path = normalize_path(&dir.join("package.json"));
@@ -2410,7 +2411,76 @@ impl Project {
                 &package_dir,
                 target_file,
                 self.allow_importing_ts_extensions,
+                &additional_targets,
             );
+        }
+
+        Vec::new()
+    }
+
+    fn package_import_target_alternatives(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Vec<String> {
+        let mut current = Path::new(from_file).parent();
+        while let Some(dir) = current {
+            let tsconfig_path = normalize_path(&dir.join("tsconfig.json"));
+            let tsconfig_key = path_to_string(&tsconfig_path).replace('\\', "/");
+            let Some(tsconfig_text) = self
+                .files
+                .get(&tsconfig_key)
+                .map(|f| f.source_text().to_string())
+                .or_else(|| std::fs::read_to_string(&tsconfig_key).ok())
+            else {
+                current = dir.parent();
+                continue;
+            };
+
+            let Some(tsconfig) = serde_json::from_str::<serde_json::Value>(&tsconfig_text).ok()
+            else {
+                return Vec::new();
+            };
+            let Some(compiler_options) = tsconfig
+                .get("compilerOptions")
+                .and_then(serde_json::Value::as_object)
+            else {
+                return Vec::new();
+            };
+
+            let root_dir = compiler_options
+                .get("rootDir")
+                .and_then(serde_json::Value::as_str);
+            let out_dir = compiler_options
+                .get("outDir")
+                .and_then(serde_json::Value::as_str);
+            let declaration_dir = compiler_options
+                .get("declarationDir")
+                .and_then(serde_json::Value::as_str);
+
+            let Some(root_dir) = root_dir else {
+                return Vec::new();
+            };
+
+            let config_dir = normalize_path(dir);
+            let root_dir = normalize_path(&config_dir.join(root_dir));
+            let target_path = strip_js_ts_extension(&normalize_path(Path::new(target_file)));
+            let Ok(relative) = target_path.strip_prefix(&root_dir) else {
+                return Vec::new();
+            };
+
+            let mut alternatives = Vec::new();
+            if let Some(out_dir) = out_dir {
+                let out_dir = normalize_path(&config_dir.join(out_dir));
+                alternatives.push(path_to_string(&out_dir.join(relative)).replace('\\', "/"));
+            }
+            if let Some(declaration_dir) = declaration_dir {
+                let declaration_dir = normalize_path(&config_dir.join(declaration_dir));
+                alternatives
+                    .push(path_to_string(&declaration_dir.join(relative)).replace('\\', "/"));
+            }
+
+            return alternatives;
         }
 
         Vec::new()
@@ -2509,6 +2579,14 @@ impl Project {
         let package_root = normalize_node_modules_package_specifier(&package_root);
         let package_prefix = &normalized[..marker_idx + marker.len()];
         let package_json_path = format!("{package_prefix}{package_root}/package.json");
+        if let Some(specifier) = self.package_specifier_from_package_exports(
+            &normalized,
+            &package_root,
+            package_prefix,
+            &package_json_path,
+        ) {
+            return Some(specifier);
+        }
         if self.package_has_root_only_exports(&package_json_path) {
             return Some(package_root);
         }
@@ -2539,6 +2617,77 @@ impl Project {
         }
 
         if spec.is_empty() { None } else { Some(spec) }
+    }
+
+    fn package_specifier_from_package_exports(
+        &self,
+        normalized_target: &str,
+        package_root: &str,
+        package_prefix: &str,
+        package_json_path: &str,
+    ) -> Option<String> {
+        let package_json_text = if let Some(file) = self.files.get(package_json_path) {
+            Some(file.source_text().to_string())
+        } else {
+            std::fs::read_to_string(package_json_path).ok()
+        }?;
+
+        let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
+        let exports_value = package_json.get("exports")?;
+        let exports_object = exports_value.as_object()?;
+
+        let package_dir = format!("{package_prefix}{package_root}");
+        let package_dir_prefix = format!("{package_dir}/");
+        let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
+        let target_relative =
+            path_to_string(&strip_js_ts_extension(Path::new(target_relative))).replace('\\', "/");
+        let target_lower = target_relative.to_ascii_lowercase();
+
+        for (export_key, export_target) in exports_object {
+            let key_pattern = if export_key == "." {
+                ""
+            } else if let Some(rest) = export_key.strip_prefix("./") {
+                rest
+            } else {
+                continue;
+            };
+
+            let (type_targets, default_targets) = collect_exports_targets(export_target);
+            let should_append_js = key_pattern.contains('*')
+                && !has_source_extension(key_pattern)
+                && default_targets
+                    .iter()
+                    .any(|target| !has_source_extension(target));
+
+            for target_pattern in type_targets.iter().chain(default_targets.iter()) {
+                let target_pattern = target_pattern.replace('\\', "/");
+                let target_pattern = target_pattern.strip_prefix("./").unwrap_or(&target_pattern);
+                let target_pattern =
+                    path_to_string(&strip_js_ts_extension(Path::new(target_pattern)))
+                        .replace('\\', "/");
+
+                let Some(capture) =
+                    wildcard_capture_case_insensitive(&target_pattern, &target_lower)
+                else {
+                    continue;
+                };
+
+                if export_key == "." {
+                    return Some(package_root.to_string());
+                }
+
+                let mut subpath = apply_wildcard_capture(key_pattern, &capture)?;
+                if should_append_js && !has_source_extension(&subpath) {
+                    subpath.push_str(".js");
+                }
+                if subpath.is_empty() {
+                    return Some(package_root.to_string());
+                }
+                return Some(format!("{package_root}/{subpath}"));
+            }
+        }
+
+        None
     }
 
     fn package_has_root_only_exports(&self, package_json_path: &str) -> bool {
@@ -2738,6 +2887,7 @@ fn package_import_specifiers_for_target(
     package_dir: &str,
     target_file: &str,
     allow_importing_ts_extensions: bool,
+    additional_targets: &[String],
 ) -> Vec<String> {
     let Some(package_json) = serde_json::from_str::<serde_json::Value>(package_json_text).ok()
     else {
@@ -2750,11 +2900,19 @@ fn package_import_specifiers_for_target(
     else {
         return Vec::new();
     };
+    let package_type_module = package_json
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|v| v == "module");
 
     let package_dir = normalize_path(Path::new(package_dir));
     let target_path = strip_js_ts_extension(Path::new(target_file));
     let target_normalized = path_to_string(&target_path).replace('\\', "/");
     let target_lower = target_normalized.to_ascii_lowercase();
+    let additional_targets: Vec<String> = additional_targets
+        .iter()
+        .map(|target| target.to_ascii_lowercase())
+        .collect();
 
     let mut specs = Vec::new();
 
@@ -2774,9 +2932,13 @@ fn package_import_specifiers_for_target(
             let resolved_stripped =
                 path_to_string(&strip_js_ts_extension(&resolved)).replace('\\', "/");
 
-            let Some(capture) =
-                wildcard_capture_case_insensitive(&resolved_stripped, &target_lower)
-            else {
+            let capture = wildcard_capture_case_insensitive(&resolved_stripped, &target_lower)
+                .or_else(|| {
+                    additional_targets.iter().find_map(|candidate| {
+                        wildcard_capture_case_insensitive(&resolved_stripped, candidate)
+                    })
+                });
+            let Some(capture) = capture else {
                 continue;
             };
 
@@ -2789,7 +2951,10 @@ fn package_import_specifiers_for_target(
                 && !specifier_pattern.ends_with(".ts")
                 && !has_source_extension(&target_pattern)
             {
-                if allow_importing_ts_extensions || specifier_pattern.contains('/') {
+                let prefer_ts_extension = allow_importing_ts_extensions
+                    || specifier_pattern.contains('/')
+                    || (package_type_module && resolved_stripped.contains("/src/"));
+                if prefer_ts_extension {
                     if let Some(ext) = ts_source_extension(target_file) {
                         specifier.push_str(ext);
                     } else {
@@ -2816,6 +2981,46 @@ fn collect_import_targets(value: &serde_json::Value) -> Vec<String> {
         serde_json::Value::Array(items) => items.iter().flat_map(collect_import_targets).collect(),
         serde_json::Value::Object(map) => map.values().flat_map(collect_import_targets).collect(),
         _ => Vec::new(),
+    }
+}
+
+fn collect_exports_targets(value: &serde_json::Value) -> (Vec<String>, Vec<String>) {
+    let mut types = Vec::new();
+    let mut defaults = Vec::new();
+    collect_exports_targets_inner(value, false, &mut types, &mut defaults);
+    (types, defaults)
+}
+
+fn collect_exports_targets_inner(
+    value: &serde_json::Value,
+    is_types_branch: bool,
+    types: &mut Vec<String>,
+    defaults: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::String(text) => {
+            if is_types_branch {
+                types.push(text.to_string());
+            } else {
+                defaults.push(text.to_string());
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                collect_exports_targets_inner(item, is_types_branch, types, defaults);
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, item) in map {
+                collect_exports_targets_inner(
+                    item,
+                    is_types_branch || key == "types",
+                    types,
+                    defaults,
+                );
+            }
+        }
+        _ => {}
     }
 }
 
