@@ -1548,8 +1548,10 @@ impl<'a> CheckerState<'a> {
             // then check parameter-only assignability (ignoring return types).
             // This matches tsc's isImplementationCompatibleWithOverload.
             if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
+                // TSC anchors the error at the function/method name, not the whole declaration.
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                 self.error_at_node(
-                    decl_idx,
+                    error_node,
                     diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                     diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                 );
