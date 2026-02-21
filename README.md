@@ -23,9 +23,12 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [███████████████░░░░░] 73.2% (9,210/12,574 tests)
+Progress: [███████████░░░░░░░░░] 56.2% (7,067/12,574 tests)
 ```
 <!-- CONFORMANCE_END -->
+
+Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match tsc in
+error code, file, line, column, and message.
 
 ### Emitter
 

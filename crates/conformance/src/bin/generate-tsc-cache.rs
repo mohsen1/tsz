@@ -701,12 +701,89 @@ fn parse_diagnostic_fingerprints(text: &str, project_root: &Path) -> Vec<Diagnos
 }
 
 fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
-    let mut normalized = raw.trim().replace('\\', "/");
-    let root = project_root.to_string_lossy().replace('\\', "/");
-    if normalized.starts_with(&root) {
-        normalized = normalized[root.len()..].trim_start_matches('/').to_string();
+    let normalized = raw.trim().replace('\\', "/");
+    if normalized.is_empty() {
+        return normalized;
     }
+
+    // Build equivalent root prefixes (handles /private/var vs /var on macOS)
+    let mut roots = Vec::new();
+    roots.push(project_root.to_string_lossy().replace('\\', "/"));
+    if let Ok(canon_root) = project_root.canonicalize() {
+        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
+    }
+
+    let mut expanded_roots = Vec::new();
+    for root in roots {
+        if root.is_empty() {
+            continue;
+        }
+        expanded_roots.push(root.clone());
+        if let Some(stripped) = root.strip_prefix("/private") {
+            if stripped.starts_with("/var/") {
+                expanded_roots.push(stripped.to_string());
+            }
+        }
+        if root.starts_with("/var/") {
+            expanded_roots.push(format!("/private{}", root));
+        }
+    }
+
+    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
+    expanded_roots.dedup();
+
+    // Try stripping absolute prefix directly
+    for root in &expanded_roots {
+        if normalized.starts_with(root) {
+            return normalized[root.len()..].trim_start_matches('/').to_string();
+        }
+    }
+
+    // Handle relative paths with ../ that escape the project root (e.g.,
+    // "../../../var/folders/.../file.tsx"). Resolve against project_root.
+    if normalized.contains("../") {
+        let resolved = project_root.join(&normalized);
+        // Use a simple path component resolver instead of canonicalize (file may not exist)
+        let resolved_str = resolve_path_components(&resolved);
+        for root in &expanded_roots {
+            let root_slash = if root.ends_with('/') {
+                root.to_string()
+            } else {
+                format!("{}/", root)
+            };
+            if resolved_str.starts_with(&root_slash) {
+                return resolved_str[root_slash.len()..].to_string();
+            }
+            if resolved_str.starts_with(root) {
+                return resolved_str[root.len()..]
+                    .trim_start_matches('/')
+                    .to_string();
+            }
+        }
+        // If the resolved path doesn't match any root, return it as-is but resolved
+        return resolved_str;
+    }
+
     normalized
+}
+
+/// Resolve `.` and `..` components in a path string without filesystem access.
+fn resolve_path_components(path: &Path) -> String {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::ParentDir => {
+                // Don't pop past the root component
+                if components.len() > 1 {
+                    components.pop();
+                }
+            }
+            std::path::Component::CurDir => {}
+            _ => components.push(component),
+        }
+    }
+    let resolved: std::path::PathBuf = components.iter().collect();
+    resolved.to_string_lossy().replace('\\', "/")
 }
 
 /// Strip the project root from any file paths embedded in diagnostic messages.
@@ -715,14 +792,45 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
 /// `/tmp/xyz/lib.ts` in the error message. We strip the temp dir prefix so
 /// the cache stores portable relative paths (e.g., `File 'lib.ts' not found.`).
 fn normalize_message_paths(message: &str, project_root: &Path) -> String {
-    let root = project_root.to_string_lossy().replace('\\', "/");
-    let root_slash = if root.ends_with('/') {
-        root.to_string()
-    } else {
-        format!("{}/", root)
-    };
-    // Replace occurrences of the project root path inside the message
-    message.replace(&*root_slash, "").replace(&*root, "")
+    // Build equivalent root prefixes (handles /private/var vs /var on macOS)
+    let mut roots = Vec::new();
+    roots.push(project_root.to_string_lossy().replace('\\', "/"));
+    if let Ok(canon_root) = project_root.canonicalize() {
+        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
+    }
+
+    let mut expanded_roots = Vec::new();
+    for root in roots {
+        if root.is_empty() {
+            continue;
+        }
+        expanded_roots.push(root.clone());
+        if let Some(stripped) = root.strip_prefix("/private") {
+            if stripped.starts_with("/var/") {
+                expanded_roots.push(stripped.to_string());
+            }
+        }
+        if root.starts_with("/var/") {
+            expanded_roots.push(format!("/private{}", root));
+        }
+    }
+
+    // Sort longest first so we strip the most specific prefix
+    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
+    expanded_roots.dedup();
+
+    let mut result = message.to_string();
+    for root in &expanded_roots {
+        let root_slash = if root.ends_with('/') {
+            root.to_string()
+        } else {
+            format!("{}/", root)
+        };
+        result = result.replace(&root_slash, "");
+        // Also strip root without trailing slash (e.g., paths at end of message)
+        result = result.replace(root.as_str(), "");
+    }
+    result
 }
 
 /// Strip @ directive comments from test file content
@@ -750,7 +858,27 @@ fn write_cache(path: &str, cache: &HashMap<String, TscCacheEntry>) -> Result<()>
 }
 
 fn resolve_tsc_version() -> Result<String> {
-    let script = "const fs = require('fs'); const p = require.resolve('typescript/package.json'); const pkg = JSON.parse(fs.readFileSync(p, 'utf8')); console.log(pkg.version || 'unknown');";
+    // First, try reading the pinned version from typescript-versions.json
+    let script = r#"
+        const fs = require('fs');
+        const path = require('path');
+        // Try typescript-versions.json first (pinned version)
+        const versionsPath = path.join(process.cwd(), 'scripts', 'typescript-versions.json');
+        try {
+            const cfg = JSON.parse(fs.readFileSync(versionsPath, 'utf8'));
+            const current = cfg.current;
+            const mapping = current && cfg.mappings && cfg.mappings[current] && cfg.mappings[current].npm;
+            const fallback = cfg.default && cfg.default.npm;
+            const version = mapping || fallback;
+            if (version) { console.log(version); process.exit(0); }
+        } catch {}
+        // Fall back to installed TypeScript version
+        try {
+            const p = require.resolve('typescript/package.json');
+            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'));
+            console.log(pkg.version || 'unknown');
+        } catch { console.log('unknown'); }
+    "#;
     let output = Command::new("node").args(["-e", script]).output()?;
 
     if !output.status.success() {

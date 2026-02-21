@@ -99,13 +99,77 @@ if (inputFiles.length === 0) {
 const program = new TsProgram();
 program.setCompilerOptions(JSON.stringify(options));
 
+// ─── Load TypeScript lib files ────────────────────────────────────────────────
+// Lib .d.ts files (lib.es5.d.ts, lib.dom.d.ts, etc.) provide global type
+// definitions (Array, String, Promise, console, document, etc.).
+// They are bundled in the package under lib-assets/ with a manifest.
+const libDir = path.join(pkgDir, 'lib-assets');
+const manifestPath = path.join(libDir, 'lib_manifest.json');
+
+if (fs.existsSync(manifestPath)) {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const libs = manifest.libs || {};
+
+  // Resolve the default root lib based on target (matches tsc's getDefaultLibFileName).
+  // Default target is ES5 → root lib is "es5.full" (equivalent to tsc's "lib.d.ts").
+  const targetLibMap = {
+    es5: 'es5.full', es2015: 'es6', es2016: 'es2016.full',
+    es2017: 'es2017.full', es2018: 'es2018.full', es2019: 'es2019.full',
+    es2020: 'es2020.full', es2021: 'es2021.full', es2022: 'es2022.full',
+    es2023: 'esnext.full', es2024: 'esnext.full', esnext: 'esnext.full',
+  };
+  const rootLib = targetLibMap[(options.target || 'es5').toLowerCase()] || 'es5.full';
+
+  // BFS to resolve all transitive lib references
+  const visited = new Set();
+  const queue = [rootLib];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (!name || visited.has(name)) continue;
+    visited.add(name);
+    const entry = libs[name];
+    if (!entry) continue;
+    const filePath = path.join(libDir, entry.fileName);
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      // Use canonical name (lib.es5.d.ts) so tsc-compatible lookups work
+      program.addLibFile(entry.canonicalFileName || entry.fileName, content);
+    } catch { /* skip missing files */ }
+    // Follow references
+    if (entry.references) {
+      for (const ref of entry.references) queue.push(ref);
+    }
+  }
+}
+
+// Map from absolute path → source text, used for offset→line/col conversion.
+const sourceTexts = new Map();
+
 for (const file of inputFiles) {
   try {
     const text = fs.readFileSync(file, 'utf8');
     program.addSourceFile(file, text);
+    sourceTexts.set(file, text);
   } catch (err) {
     console.error(`tsz: cannot read ${file}: ${err.message}`);
   }
+}
+
+/**
+ * Convert a 0-based UTF-16 character offset to { line, character } (0-based).
+ * This matches the position model used by tsc.
+ */
+function offsetToLineChar(text, offset) {
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  let line = 0;
+  let lineStart = 0;
+  for (let i = 0; i < clamped; i++) {
+    if (text[i] === '\n') {
+      line++;
+      lineStart = i + 1;
+    }
+  }
+  return { line, character: clamped - lineStart };
 }
 
 let diagnostics;
@@ -121,17 +185,29 @@ try {
 let errorCount = 0;
 let warningCount = 0;
 
+// tsc diagnostic category codes: 0=warning, 1=error, 2=suggestion, 3=message
+const CATEGORY_NAMES = { 0: 'warning', 1: 'error', 2: 'suggestion', 3: 'message' };
+
 for (const d of diagnostics) {
-  const category = String(d.category || 'error').toLowerCase();
+  const category = CATEGORY_NAMES[d.category] || 'error';
   if (category === 'error') errorCount++;
   else if (category === 'warning') warningCount++;
 
   const file = d.file || '<unknown>';
   const relFile = path.relative(process.cwd(), file);
-  const line = (d.line != null ? d.line + 1 : '?');
-  const col  = (d.character != null ? d.character + 1 : '?');
-  const code = d.code ? `TS${d.code}` : '';
 
+  // Compute 1-based line/character from byte offset if available
+  let line = '?', col = '?';
+  if (typeof d.start === 'number') {
+    const src = sourceTexts.get(file);
+    if (src != null) {
+      const pos = offsetToLineChar(src, d.start);
+      line = pos.line + 1;
+      col  = pos.character + 1;
+    }
+  }
+
+  const code = d.code ? `TS${d.code}` : '';
   console.error(`${relFile}(${line},${col}): ${category} ${code}: ${d.messageText || d.message || ''}`);
 }
 

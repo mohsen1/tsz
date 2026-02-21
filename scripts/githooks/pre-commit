@@ -278,7 +278,7 @@ CLIPPY_OUTPUT=$(cargo clippy $CLIPPY_PKGS $CLIPPY_TARGETS -- -D warnings 2>&1) |
 
 # Also lint root crate lib if root files changed (--lib only to avoid test fixture noise)
 if [ "$ROOT_CHANGED" = "true" ]; then
-    ROOT_OUTPUT=$(cargo clippy -p tsz --lib -- -D warnings 2>&1) || {
+    ROOT_OUTPUT=$(cargo clippy -p tsz-core --lib -- -D warnings 2>&1) || {
         echo ""
         echo "ERROR: Clippy warnings in root crate. Please fix manually:"
         echo "$ROOT_OUTPUT" | tail -20
@@ -290,7 +290,7 @@ if [ "$SKIP_LINT_PARITY" = "1" ]; then
     echo "  CI lint parity checks skipped (TSZ_SKIP_LINT_PARITY=1)"
 else
     # Match CI lint commands exactly to prevent local-vs-CI drift.
-    CI_CLIPPY_PKGS="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp"
+    CI_CLIPPY_PKGS="-p tsz-core-common -p tsz-core-scanner -p tsz-core-parser -p tsz-core-binder -p tsz-core-solver -p tsz-core-checker -p tsz-core-emitter -p tsz-core-lowering -p tsz-core-lsp"
     CI_CLIPPY_OUTPUT=$(cargo clippy $CI_CLIPPY_PKGS --all-targets -- -D warnings 2>&1) || {
         echo ""
         echo "ERROR: CI parity lint failed (workspace crates deny warnings):"
@@ -332,16 +332,16 @@ done
 # Also test root crate if root changed
 if [ "$ROOT_CHANGED" = "true" ]; then
     if [ -z "$NEXTEST_FILTER" ]; then
-        NEXTEST_FILTER="package(tsz)"
+        NEXTEST_FILTER="package(tsz-core)"
     else
-        NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz)"
+        NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz-core)"
     fi
 fi
 
 # Only include root tsz crate if root files or core crates changed.
 if [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; then
-    if ! echo "$NEXTEST_FILTER" | grep -q "package(tsz)"; then
-        NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz)"
+    if ! echo "$NEXTEST_FILTER" | grep -q "package(tsz-core)"; then
+        NEXTEST_FILTER="$NEXTEST_FILTER | package(tsz-core)"
     fi
 fi
 
@@ -359,7 +359,7 @@ else
         TEST_PKGS="$TEST_PKGS -p $crate"
     done
     if [ "$ROOT_CHANGED" = "true" ] || [ "$ROOT_TEST_RELEVANT_CHANGED" = "true" ]; then
-        TEST_PKGS="$TEST_PKGS -p tsz"
+        TEST_PKGS="$TEST_PKGS -p tsz-core"
     fi
     TEST_OUTPUT=$(cargo test $TEST_PKGS 2>&1) || {
         echo "$TEST_OUTPUT" | tail -20

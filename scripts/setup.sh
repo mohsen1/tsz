@@ -152,7 +152,7 @@ else
 
   # Clean up stale symlinks / old hooks that might conflict
   if [ -d "$GIT_HOOKS_DIR" ]; then
-    for hook in pre-commit prepare-commit-msg commit-msg post-commit pre-push; do
+    for hook in pre-commit prepare-commit-msg commit-msg post-commit pre-push post-merge post-rewrite; do
       hook_path="$GIT_HOOKS_DIR/$hook"
       if [ -L "$hook_path" ]; then
         rm -f "$hook_path"
@@ -163,9 +163,11 @@ else
   fi
 
   git config core.hooksPath scripts/githooks
-  chmod +x "$GITHOOKS_DIR"/* 2>/dev/null || true
   echo "  $(green "Hooks installed (core.hooksPath = scripts/githooks).")"
 fi
+
+# Ensure all managed hooks are executable, including newly added ones.
+chmod +x "$ROOT_DIR/scripts/githooks"/* 2>/dev/null || true
 
 # ── 6. Cargo check ──────────────────────────────────────────────────────────
 if [ "$QUICK" = true ]; then

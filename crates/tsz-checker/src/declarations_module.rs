@@ -947,16 +947,22 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     fn get_source_file_of_node(&self, node_idx: NodeIndex) -> String {
         // Walk up to find the source file
         let mut current = node_idx;
+        let mut fuel = 10000;
         while let Some(ext) = self.ctx.arena.get_extended(current) {
+            if fuel == 0 {
+                break;
+            }
+            fuel -= 1;
+
             let parent = ext.parent;
             if parent.is_none() {
                 break;
             }
             if let Some(parent_node) = self.ctx.arena.get(parent)
                 && parent_node.kind == syntax_kind_ext::SOURCE_FILE
+                && let Some(source_file) = self.ctx.arena.get_source_file(parent_node)
             {
-                // Found the source file - return the file name from context
-                return self.ctx.file_name.clone();
+                return source_file.file_name.clone();
             }
             current = parent;
         }
