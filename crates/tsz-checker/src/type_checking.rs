@@ -741,22 +741,12 @@ impl<'a> CheckerState<'a> {
             TypeId::ANY
         };
 
-        // Check if there's a default value (initializer)
-        // TypeScript only checks default value assignability in function parameter
-        // destructuring, not in variable declaration destructuring.
-        if check_default_assignability
-            && element_data.initializer.is_some()
-            && element_type != TypeId::ANY
-            // For object binding patterns, a default initializer is only reachable when
-            // the property can be missing/undefined. Skip assignability checks for required
-            // properties to match TypeScript's control-flow behavior.
-            && (pattern_kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
-                || tsz_solver::type_queries::type_includes_undefined(self.ctx.types, element_type))
-        {
-            // Set contextual type when the initializer is a function expression or arrow
-            // so that parameter types can be inferred from the expected element type.
-            // Only do this for function-like initializers to avoid changing how non-function
-            // defaults (object literals, primitives) are typed.
+        // Set contextual type for default initializers that are function-like, so
+        // parameter types can be inferred from the expected element type. This must
+        // happen unconditionally (not gated on assignability checks) because the
+        // initializer's type is computed and cached on first access — if contextual
+        // type isn't set here, the arrow's parameters will be typed as `any`.
+        if element_data.initializer.is_some() && element_type != TypeId::ANY {
             let prev_context = self.ctx.contextual_type;
             if let Some(init_node) = self.ctx.arena.get(element_data.initializer) {
                 let k = init_node.kind;
@@ -767,11 +757,25 @@ impl<'a> CheckerState<'a> {
             }
             let default_value_type = self.get_type_of_node(element_data.initializer);
             self.ctx.contextual_type = prev_context;
-            let _ = self.check_assignable_or_report(
-                default_value_type,
-                element_type,
-                element_data.initializer,
-            );
+
+            // TypeScript only checks default value assignability in function parameter
+            // destructuring, not in variable declaration destructuring.
+            // For object binding patterns, a default initializer is only reachable when
+            // the property can be missing/undefined. Skip assignability checks for required
+            // properties to match TypeScript's control-flow behavior.
+            if check_default_assignability
+                && (pattern_kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    || tsz_solver::type_queries::type_includes_undefined(
+                        self.ctx.types,
+                        element_type,
+                    ))
+            {
+                let _ = self.check_assignable_or_report(
+                    default_value_type,
+                    element_type,
+                    element_data.initializer,
+                );
+            }
         }
 
         // If the name is a nested binding pattern, recursively check it
