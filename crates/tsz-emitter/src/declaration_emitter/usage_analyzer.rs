@@ -83,7 +83,7 @@ pub struct UsageAnalyzer<'a> {
     /// Visited `TypeIds` (for cycle detection)
     visited_types: FxHashSet<tsz_solver::TypeId>,
     /// Memoized transitive symbol usages per `TypeId`.
-    type_symbol_cache: FxHashMap<tsz_solver::TypeId, Vec<(SymbolId, UsageKind)>>,
+    type_symbol_cache: FxHashMap<tsz_solver::TypeId, Arc<[(SymbolId, UsageKind)]>>,
     /// TypeIds currently being memoized (cycle guard).
     memoizing_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
@@ -1046,7 +1046,7 @@ impl<'a> UsageAnalyzer<'a> {
     fn collect_symbol_usages_for_type(
         &mut self,
         type_id: tsz_solver::TypeId,
-    ) -> Vec<(SymbolId, UsageKind)> {
+    ) -> Arc<[(SymbolId, UsageKind)]> {
         if let Some(cached) = self.type_symbol_cache.get(&type_id) {
             return cached.clone();
         }
@@ -1056,13 +1056,17 @@ impl<'a> UsageAnalyzer<'a> {
                 .type_symbol_cache
                 .get(&type_id)
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_else(|| Arc::from([]));
         }
 
         let mut usages = FxHashMap::default();
         self.collect_direct_symbol_usages(type_id, &mut usages);
 
-        let mut result: Vec<(SymbolId, UsageKind)> = usages.iter().map(|(&k, &v)| (k, v)).collect();
+        let mut result: Arc<[(SymbolId, UsageKind)]> = Arc::from_iter(
+            usages
+                .iter()
+                .map(|(&sym_id, &usage_kind)| (sym_id, usage_kind)),
+        );
         self.type_symbol_cache.insert(type_id, result.clone());
 
         let mut children = Vec::new();
@@ -1073,14 +1077,14 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         for child in children {
-            for (sym_id, usage_kind) in self.collect_symbol_usages_for_type(child) {
+            for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(child).iter() {
                 Self::add_symbol_usage(&mut usages, sym_id, usage_kind);
             }
         }
 
         self.memoizing_types.remove(&type_id);
 
-        result = usages.into_iter().collect();
+        result = Arc::from_iter(usages);
         self.type_symbol_cache.insert(type_id, result.clone());
         result
     }
@@ -1091,7 +1095,7 @@ impl<'a> UsageAnalyzer<'a> {
             return;
         }
 
-        for (sym_id, usage_kind) in self.collect_symbol_usages_for_type(type_id) {
+        for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(type_id).iter() {
             self.mark_symbol_used(sym_id, usage_kind);
         }
     }
