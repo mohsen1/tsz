@@ -118,3 +118,7 @@ session.sh
 
 # Gemini fleet manager marker
 /.gemini-fleet-manager
+
+# npm packages and editor extensions (assembled by scripts/build-npm-packages.sh)
+npm/
+editors/
