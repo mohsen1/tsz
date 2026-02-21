@@ -377,12 +377,30 @@ impl<'a> HoverProvider<'a> {
         }
 
         if f & symbol_flags::FUNCTION != 0 {
-            // Convert arrow notation "(params) => ret" to "(params): ret"
-            // for named function display
-            let sig = Self::arrow_to_colon(type_string);
+            let merged_with_namespace = self.symbol_has_namespace_merge(symbol);
+            let sig = if merged_with_namespace {
+                self.function_signature_from_symbol(symbol)
+                    .unwrap_or_else(|| Self::arrow_to_colon(type_string))
+            } else {
+                // Convert arrow notation "(params) => ret" to "(params): ret"
+                // for named function display
+                Self::arrow_to_colon(type_string)
+            };
+            if merged_with_namespace {
+                return format!(
+                    "function {}{}\nnamespace {}",
+                    symbol.escaped_name, sig, symbol.escaped_name
+                );
+            }
             return format!("function {}{}", symbol.escaped_name, sig);
         }
         if f & symbol_flags::CLASS != 0 {
+            if self.symbol_has_namespace_merge(symbol) {
+                return format!(
+                    "class {}\nnamespace {}",
+                    symbol.escaped_name, symbol.escaped_name
+                );
+            }
             return format!("class {}", symbol.escaped_name);
         }
         if f & symbol_flags::INTERFACE != 0 {
@@ -432,6 +450,9 @@ impl<'a> HoverProvider<'a> {
             return format!("namespace {}", symbol.escaped_name);
         }
         if f & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
+            let type_string = self
+                .merged_function_initializer_display_type(decl_node_idx)
+                .unwrap_or_else(|| type_string.to_string());
             let keyword = self.get_variable_keyword(decl_node_idx);
             if self.is_local_variable(decl_node_idx) {
                 return format!(
@@ -442,6 +463,9 @@ impl<'a> HoverProvider<'a> {
             return format!("{} {}: {}", keyword, symbol.escaped_name, type_string);
         }
         if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
+            let type_string = self
+                .merged_function_initializer_display_type(decl_node_idx)
+                .unwrap_or_else(|| type_string.to_string());
             if self.is_parameter_declaration(decl_node_idx) {
                 return format!("(parameter) {}: {}", symbol.escaped_name, type_string);
             }
@@ -478,6 +502,163 @@ impl<'a> HoverProvider<'a> {
             }
         }
         None
+    }
+
+    fn symbol_has_namespace_merge(&self, symbol: &tsz_binder::Symbol) -> bool {
+        use tsz_binder::symbol_flags;
+        if symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) != 0 {
+            return true;
+        }
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|node| node.kind == tsz_parser::syntax_kind_ext::MODULE_DECLARATION)
+        })
+    }
+
+    fn function_signature_from_symbol(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
+        for &decl_idx in &symbol.declarations {
+            let Some(node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(func) = self.arena.get_function(node) else {
+                continue;
+            };
+            let Some(name_node) = self.arena.get(func.name) else {
+                continue;
+            };
+            let Some(name_ident) = self.arena.get_identifier(name_node) else {
+                continue;
+            };
+            let name = self.arena.resolve_identifier_text(name_ident);
+            if name != symbol.escaped_name.as_str() {
+                continue;
+            }
+
+            let start = node.pos as usize;
+            let end = node.end.min(self.source_text.len() as u32) as usize;
+            if start >= end {
+                continue;
+            }
+            let text = &self.source_text[start..end];
+            let Some(open) = text.find('(') else {
+                continue;
+            };
+            let mut depth = 0i32;
+            let mut close = None;
+            for (i, ch) in text[open..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = Some(open + i);
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let Some(close_pos) = close else {
+                continue;
+            };
+            let params = &text[open..=close_pos];
+            let after = text[close_pos + 1..].trim_start();
+            if let Some(rest) = after.strip_prefix(':') {
+                let ret = rest
+                    .trim_start()
+                    .split(['{', ';', '\n'])
+                    .next()
+                    .unwrap_or("")
+                    .trim();
+                if !ret.is_empty() {
+                    return Some(format!("{params}: {ret}"));
+                }
+            }
+            return Some(format!("{params}: void"));
+        }
+        None
+    }
+
+    fn merged_function_initializer_display_type(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        use tsz_binder::symbol_flags;
+
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        if decl_node.kind != tsz_parser::syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        if !var_decl.initializer.is_some() {
+            return None;
+        }
+        let init_node = self.arena.get(var_decl.initializer)?;
+        if init_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let init_sym_id = self
+            .binder
+            .node_symbols
+            .get(&var_decl.initializer.0)
+            .copied()
+            .or_else(|| {
+                self.binder
+                    .resolve_identifier(self.arena, var_decl.initializer)
+            })?;
+        let init_symbol = self.binder.get_symbol(init_sym_id)?;
+        if (init_symbol.flags & symbol_flags::FUNCTION) == 0
+            || !self.symbol_has_namespace_merge(init_symbol)
+        {
+            return None;
+        }
+
+        if self.namespace_has_value_exports(init_symbol) {
+            Some(format!("typeof {}", init_symbol.escaped_name))
+        } else {
+            self.function_signature_from_symbol(init_symbol)
+                .map(|sig| Self::colon_to_arrow_signature(&sig))
+        }
+    }
+
+    fn namespace_has_value_exports(&self, symbol: &tsz_binder::Symbol) -> bool {
+        use tsz_binder::symbol_flags;
+
+        symbol.exports.as_ref().is_some_and(|exports| {
+            exports.iter().any(|(_, sym_id)| {
+                self.binder
+                    .get_symbol(*sym_id)
+                    .is_some_and(|export_symbol| (export_symbol.flags & symbol_flags::VALUE) != 0)
+            })
+        })
+    }
+
+    fn colon_to_arrow_signature(signature: &str) -> String {
+        let trimmed = signature.trim();
+        if !trimmed.starts_with('(') {
+            return trimmed.to_string();
+        }
+        let bytes = trimmed.as_bytes();
+        let mut depth = 0i32;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        let after = trimmed[i + 1..].trim_start();
+                        if let Some(rest) = after.strip_prefix(':') {
+                            return format!("{} => {}", &trimmed[..=i], rest.trim_start());
+                        }
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        trimmed.to_string()
     }
 
     /// Convert arrow notation `(params) => ret` to colon notation `(params): ret`.

@@ -1071,6 +1071,9 @@ impl<'a> UsageAnalyzer<'a> {
         });
 
         for child in children {
+            if child == type_id {
+                continue;
+            }
             for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(child).iter() {
                 Self::add_symbol_usage(&mut usages, sym_id, usage_kind);
             }
