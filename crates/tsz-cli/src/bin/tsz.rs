@@ -15,41 +15,30 @@ const EXIT_DIAGNOSTICS_OUTPUTS_SKIPPED: i32 = 1;
 const EXIT_DIAGNOSTICS_OUTPUTS_GENERATED: i32 = 2;
 
 fn main() -> Result<()> {
-    // Configure rayon thread pool with 8MB stacks (default is 2MB).
-    // Type-checking can recurse deeply (e.g., circular class inheritance across files),
-    // so worker threads need stack sizes comparable to the main thread.
-    if let Err(e) = rayon::ThreadPoolBuilder::new()
-        .stack_size(8 * 1024 * 1024)
-        .build_global()
-    {
-        println!("Warning: Could not configure rayon thread pool: {e}");
-    }
-
     // Initialize tracing if TSZ_LOG or RUST_LOG is set (zero cost otherwise).
     // Supports TSZ_LOG_FORMAT=tree|json|text (see src/tracing_config.rs).
     tsz_cli::tracing_config::init_tracing();
 
-    // Run on a thread with a larger stack to handle deep cross-arena type resolution.
-    // The default 8MB main thread stack can overflow when build_type_environment
-    // resolves interdependent lib types that require cross-arena delegation.
-    const MAIN_STACK_SIZE: usize = 64 * 1024 * 1024;
-
-    std::thread::Builder::new()
-        .stack_size(MAIN_STACK_SIZE)
-        .spawn(actual_main)
-        .expect("failed to spawn main thread")
-        .join()
-        .expect("main thread panicked")
-}
-
-fn actual_main() -> Result<()> {
-    // Preprocess args for tsc compatibility:
-    // - Convert -v to -V (tsc uses lowercase -v for version, clap uses -V)
-    // - Expand @file response files
     let preprocessed = preprocess_args(std::env::args_os().collect());
     let args = CliArgs::parse_from(preprocessed);
     let cwd = std::env::current_dir().context("failed to resolve current directory")?;
 
+    // Run on a larger stack for project-sized and multi-file workflows.
+    // Single-file CLI probes avoid this extra thread hop for lower startup overhead.
+    if should_use_large_stack_thread(&args) {
+        const MAIN_STACK_SIZE: usize = 64 * 1024 * 1024;
+        std::thread::Builder::new()
+            .stack_size(MAIN_STACK_SIZE)
+            .spawn(move || actual_main(args, cwd))
+            .expect("failed to spawn main thread")
+            .join()
+            .expect("main thread panicked")
+    } else {
+        actual_main(args, cwd)
+    }
+}
+
+fn actual_main(args: CliArgs, cwd: std::path::PathBuf) -> Result<()> {
     // Initialize locale for i18n message translation
     locale::init_locale(args.locale.as_deref());
 
@@ -223,6 +212,10 @@ fn actual_main() -> Result<()> {
     }
 
     std::process::exit(EXIT_SUCCESS);
+}
+
+fn should_use_large_stack_thread(args: &CliArgs) -> bool {
+    args.project.is_some() || args.build || args.watch || args.batch || args.files.len() != 1
 }
 
 /// Batch compilation mode: read project directory paths from stdin (one per line),

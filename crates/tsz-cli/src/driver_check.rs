@@ -460,29 +460,56 @@ pub(super) fn collect_diagnostics(
                 IndexedParallelIterator, IntoParallelIterator, IntoParallelRefIterator,
                 ParallelIterator,
             };
-            work_items
-                .par_iter()
-                .zip(per_file_binders.into_par_iter())
-                .map(|(&file_idx, binder)| {
-                    let context = CheckFileForParallelContext {
-                        file_idx,
-                        binder,
-                        program,
-                        query_cache: &query_cache,
-                        compiler_options: &compiler_options,
-                        lib_contexts: &lib_ctx_for_parallel,
-                        all_arenas: &all_arenas,
-                        all_binders: &all_binders,
-                        resolved_module_paths: &resolved_module_paths,
-                        resolved_module_specifiers: &resolved_module_specifiers,
-                        resolved_module_errors: &resolved_module_errors,
-                        is_external_module_by_file: &is_external_module_by_file,
-                        no_check,
-                        check_js,
-                    };
-                    check_file_for_parallel(context)
-                })
-                .collect()
+            if work_items.len() <= 1 {
+                work_items
+                    .iter()
+                    .zip(per_file_binders.into_iter())
+                    .map(|(&file_idx, binder)| {
+                        let context = CheckFileForParallelContext {
+                            file_idx,
+                            binder,
+                            program,
+                            query_cache: &query_cache,
+                            compiler_options: &compiler_options,
+                            lib_contexts: &lib_ctx_for_parallel,
+                            all_arenas: &all_arenas,
+                            all_binders: &all_binders,
+                            resolved_module_paths: &resolved_module_paths,
+                            resolved_module_specifiers: &resolved_module_specifiers,
+                            resolved_module_errors: &resolved_module_errors,
+                            is_external_module_by_file: &is_external_module_by_file,
+                            no_check,
+                            check_js,
+                        };
+                        check_file_for_parallel(context)
+                    })
+                    .collect()
+            } else {
+                tsz::parallel::ensure_rayon_global_pool();
+                work_items
+                    .par_iter()
+                    .zip(per_file_binders.into_par_iter())
+                    .map(|(&file_idx, binder)| {
+                        let context = CheckFileForParallelContext {
+                            file_idx,
+                            binder,
+                            program,
+                            query_cache: &query_cache,
+                            compiler_options: &compiler_options,
+                            lib_contexts: &lib_ctx_for_parallel,
+                            all_arenas: &all_arenas,
+                            all_binders: &all_binders,
+                            resolved_module_paths: &resolved_module_paths,
+                            resolved_module_specifiers: &resolved_module_specifiers,
+                            resolved_module_errors: &resolved_module_errors,
+                            is_external_module_by_file: &is_external_module_by_file,
+                            no_check,
+                            check_js,
+                        };
+                        check_file_for_parallel(context)
+                    })
+                    .collect()
+            }
         };
 
         #[cfg(target_arch = "wasm32")]
