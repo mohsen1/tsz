@@ -1578,8 +1578,11 @@ impl<'a> Printer<'a> {
                 continue;
             };
             let inner_kind = self.arena.get(export.export_clause).map_or(0, |n| n.kind);
-            // Only collect variable names - classes/functions/enums keep their local bindings
-            if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            // Collect names that are emitted only as namespace property assignments.
+            // These references must be qualified inside namespace IIFEs (`ns.x`).
+            if inner_kind == syntax_kind_ext::VARIABLE_STATEMENT
+                || inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            {
                 let export_names = self.get_export_names_from_clause(export.export_clause);
                 for name in export_names {
                     names.insert(name);
@@ -2099,6 +2102,14 @@ impl<'a> Printer<'a> {
                     && let Some(ident) = self.arena.get_identifier(name_node)
                 {
                     return vec![ident.escaped_text.clone()];
+                }
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import_decl) = self.arena.get_import_decl(node) {
+                    let name = self.get_identifier_text_idx(import_decl.import_clause);
+                    if !name.is_empty() {
+                        return vec![name];
+                    }
                 }
             }
             _ => {}
