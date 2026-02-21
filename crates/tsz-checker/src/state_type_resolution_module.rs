@@ -1087,17 +1087,37 @@ impl<'a> CheckerState<'a> {
             (0, 0)
         };
 
+        let has_default =
+            if let Some(exports_table) = self.resolve_effective_module_exports(module_specifier) {
+                exports_table.has("default") || exports_table.has("export=")
+            } else {
+                false
+            };
+
         use crate::diagnostics::{diagnostic_messages, format_message};
-        let message = format_message(
-            diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-            &[module_specifier, member_name],
-        );
-        self.error(
-            start,
-            length,
-            message,
-            diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-        );
+        if has_default && member_name != "default" {
+            let message = format_message(
+                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                &[module_specifier, member_name],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+            );
+        } else {
+            let message = format_message(
+                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                &[module_specifier, member_name],
+            );
+            self.error(
+                start,
+                length,
+                message,
+                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+            );
+        }
     }
 
     /// Check if a module exists for cross-file resolution.

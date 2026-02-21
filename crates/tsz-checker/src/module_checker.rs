@@ -384,16 +384,29 @@ impl<'a> CheckerState<'a> {
 
             // Check if this name is exported from the source module
             if !module_exports.has(&export_name) {
-                // TS2305: Module has no exported member
-                let message = format_message(
-                    diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                    &[module_name, &export_name],
-                );
-                self.error_at_node(
-                    specifier_idx,
-                    &message,
-                    diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
-                );
+                if module_exports.has("default") || module_exports.has("export=") {
+                    // TS2614: Symbol doesn't exist but a default export does
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                        &[module_name, &export_name],
+                    );
+                    self.error_at_node(
+                        specifier_idx,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                    );
+                } else {
+                    // TS2305: Module has no exported member
+                    let message = format_message(
+                        diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
+                        &[module_name, &export_name],
+                    );
+                    self.error_at_node(
+                        specifier_idx,
+                        &message,
+                        diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER,
+                    );
+                }
             }
         }
     }
