@@ -513,3 +513,24 @@ fn type_only_named_import_is_elided_in_ir_commonjs_transform() {
         "type-only named imports should be erased in CommonJS IR transform"
     );
 }
+
+#[test]
+fn ir_commonjs_does_not_preinit_function_exports_with_void_zero() {
+    let source = "export function f() {}";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root node must exist");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file must exist");
+    let mut transform = CommonJsTransformContext::new(&parser.arena);
+    let nodes = transform.transform_source_file(&source_file.statements.nodes);
+
+    assert!(
+        !nodes
+            .iter()
+            .any(|n| matches!(n, IRNode::Raw(s) if s.contains("void 0"))),
+        "hoisted function exports should not be in CommonJS void 0 preinit"
+    );
+}
