@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 500
+Count: 501
+- 501: run.sh optimization loop
 - 500: run.sh optimization loop
 - 499: run.sh optimization loop
 - 498: run.sh optimization loop
