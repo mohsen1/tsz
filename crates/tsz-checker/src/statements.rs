@@ -283,8 +283,10 @@ impl StatementChecker {
                 // Extract expression index before mutable operations
                 let expr_idx = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
-                    arena.get_expression_statement(node).map(|e| e.expression)
+                    arena
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_expression_statement(node))
+                        .map(|e| e.expression)
                 };
                 if let Some(expression) = expr_idx {
                     // TS1359: Check for await expressions outside async function
@@ -297,14 +299,16 @@ impl StatementChecker {
                 // Extract all needed data before mutable operations
                 let if_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
-                    arena.get_if_statement(node).map(|if_stmt| {
-                        (
-                            if_stmt.expression,
-                            if_stmt.then_statement,
-                            if_stmt.else_statement,
-                        )
-                    })
+                    arena
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_if_statement(node))
+                        .map(|if_stmt| {
+                            (
+                                if_stmt.expression,
+                                if_stmt.then_statement,
+                                if_stmt.else_statement,
+                            )
+                        })
                 };
                 if let Some((expression, then_stmt, else_stmt)) = if_data {
                     // Check condition
@@ -349,8 +353,10 @@ impl StatementChecker {
                 // Extract statements before mutable operations
                 let stmts = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
-                    arena.get_block(node).map(|b| b.statements.nodes.clone())
+                    arena
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_block(node))
+                        .map(|b| b.statements.nodes.clone())
                 };
                 if let Some(stmts) = stmts {
                     let prev_unreachable = state.is_unreachable();
@@ -376,8 +382,10 @@ impl StatementChecker {
                 // Extract loop data before mutable operations
                 let loop_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
-                    arena.get_loop(node).map(|l| (l.condition, l.statement))
+                    arena
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_loop(node))
+                        .map(|l| (l.condition, l.statement))
                 };
                 if let Some((condition, statement)) = loop_data {
                     state.get_type_of_node(condition);
@@ -406,9 +414,9 @@ impl StatementChecker {
                 // Extract loop data before mutable operations
                 let loop_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
                     arena
-                        .get_loop(node)
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_loop(node))
                         .map(|l| (l.initializer, l.condition, l.incrementor, l.statement))
                 };
                 if let Some((initializer, condition, incrementor, statement)) = loop_data {
@@ -456,9 +464,9 @@ impl StatementChecker {
                 // Extract for-in/of data before mutable operations
                 let for_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
                     arena
-                        .get_for_in_of(node)
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_for_in_of(node))
                         .map(|f| (f.expression, f.initializer, f.await_modifier, f.statement))
                 };
                 let is_for_of = kind == syntax_kind_ext::FOR_OF_STATEMENT;
@@ -566,8 +574,10 @@ impl StatementChecker {
                 // Extract switch data before mutable operations
                 let switch_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
-                    arena.get_switch(node).map(|s| (s.expression, s.case_block))
+                    arena
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_switch(node))
+                        .map(|s| (s.expression, s.case_block))
                 };
 
                 if let Some((expression, case_block)) = switch_data {
@@ -653,9 +663,9 @@ impl StatementChecker {
                 // Extract try data before mutable operations
                 let try_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
                     arena
-                        .get_try(node)
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_try(node))
                         .map(|t| (t.try_block, t.catch_clause, t.finally_block))
                 };
 
@@ -691,8 +701,10 @@ impl StatementChecker {
                 // Extract operand before mutable operations
                 let operand = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
-                    arena.get_unary_expr(node).map(|u| u.operand)
+                    arena
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_unary_expr(node))
+                        .map(|u| u.operand)
                 };
                 if let Some(operand) = operand {
                     state.get_type_of_node(operand);
@@ -767,9 +779,9 @@ impl StatementChecker {
                 // Extract labeled statement data before mutable operations
                 let labeled_data = {
                     let arena = state.arena();
-                    let node = arena.get(stmt_idx).unwrap();
                     arena
-                        .get_labeled_statement(node)
+                        .get(stmt_idx)
+                        .and_then(|node| arena.get_labeled_statement(node))
                         .map(|l| (l.label, l.statement))
                 };
 
