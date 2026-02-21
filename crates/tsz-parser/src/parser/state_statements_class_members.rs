@@ -721,7 +721,15 @@ impl ParserState {
         {
             let member = self.parse_class_member();
             if member.is_some() {
-                self.parse_optional(SyntaxKind::SemicolonToken);
+                // Don't consume trailing semicolon if the member itself is a
+                // SemicolonClassElement — that would eat the next standalone `;`.
+                let is_semi_element = self
+                    .arena
+                    .get(member)
+                    .is_some_and(|n| n.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT);
+                if !is_semi_element {
+                    self.parse_optional(SyntaxKind::SemicolonToken);
+                }
                 members.push(member);
 
                 // After a successfully parsed member without a trailing semicolon,
