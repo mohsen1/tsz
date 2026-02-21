@@ -44,43 +44,8 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return TypeId::ERROR;
-        };
-
-        let Some(data) = self.ctx.arena.get_tagged_template(node) else {
-            return TypeId::ERROR;
-        };
-
-        let tag_node = data.tag;
-        // let template_node = data.template;
-
-        let parent_idx = self
-            .ctx
-            .arena
-            .get_extended(idx)
-            .map_or(NodeIndex::NONE, |ext| ext.parent);
-        let parent_kind = self.ctx.arena.get(parent_idx).map(|p| p.kind);
-
-        if parent_kind == Some(tsz_parser::parser::syntax_kind_ext::ARRAY_LITERAL_EXPRESSION) {
-            let tag_kind = self.ctx.arena.get(tag_node).map(|t| t.kind);
-            if tag_kind == Some(tsz_parser::parser::syntax_kind_ext::TEMPLATE_EXPRESSION)
-                || tag_kind == Some(tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16)
-            {
-                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    tag_node,
-                    diagnostic_messages::IT_IS_LIKELY_THAT_YOU_ARE_MISSING_A_COMMA_TO_SEPARATE_THESE_TWO_TEMPLATE_EXPRESS,
-                    diagnostic_codes::IT_IS_LIKELY_THAT_YOU_ARE_MISSING_A_COMMA_TO_SEPARATE_THESE_TWO_TEMPLATE_EXPRESS,
-                );
-                return TypeId::ERROR;
-            }
-        }
-
-        // For full correctness, this should resolve the callable signatures of `tag_node`.
-        // For now, evaluate tag and arguments to avoid type evaluation holes, and return ANY.
-        let _tag_type = self.get_type_of_node(tag_node);
-        TypeId::ANY
+        // Defined at end of impl block (merged version)
+        self.get_type_of_tagged_template_expression_impl(idx)
     }
 
     /// Inner implementation of call expression type resolution.
@@ -1784,7 +1749,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This computes the return type of the tag function and ensures
     /// the template substitution expressions are type-checked.
-    pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
+    fn get_type_of_tagged_template_expression_impl(&mut self, idx: NodeIndex) -> TypeId {
         use crate::query_boundaries::iterable_checker::{
             call_signatures_for_type, function_shape_for_type,
         };
@@ -1796,6 +1761,28 @@ impl<'a> CheckerState<'a> {
         let Some(tagged) = self.ctx.arena.get_tagged_template(node).cloned() else {
             return TypeId::ERROR;
         };
+
+        // Check for missing comma between template expressions in array literals
+        let parent_idx = self
+            .ctx
+            .arena
+            .get_extended(idx)
+            .map_or(NodeIndex::NONE, |ext| ext.parent);
+        let parent_kind = self.ctx.arena.get(parent_idx).map(|p| p.kind);
+        if parent_kind == Some(syntax_kind_ext::ARRAY_LITERAL_EXPRESSION) {
+            let tag_kind = self.ctx.arena.get(tagged.tag).map(|t| t.kind);
+            if tag_kind == Some(syntax_kind_ext::TEMPLATE_EXPRESSION)
+                || tag_kind == Some(tsz_scanner::SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+            {
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.error_at_node(
+                    tagged.tag,
+                    diagnostic_messages::IT_IS_LIKELY_THAT_YOU_ARE_MISSING_A_COMMA_TO_SEPARATE_THESE_TWO_TEMPLATE_EXPRESS,
+                    diagnostic_codes::IT_IS_LIKELY_THAT_YOU_ARE_MISSING_A_COMMA_TO_SEPARATE_THESE_TWO_TEMPLATE_EXPRESS,
+                );
+                return TypeId::ERROR;
+            }
+        }
 
         // Get the type of the tag function
         let tag_type = self.get_type_of_node(tagged.tag);
