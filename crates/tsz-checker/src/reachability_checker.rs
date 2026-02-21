@@ -39,7 +39,10 @@ impl<'a> CheckerState<'a> {
         };
 
         match node.kind {
-            syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT => false,
+            syntax_kind_ext::RETURN_STATEMENT
+            | syntax_kind_ext::THROW_STATEMENT
+            | syntax_kind_ext::BREAK_STATEMENT
+            | syntax_kind_ext::CONTINUE_STATEMENT => false,
             syntax_kind_ext::BLOCK => self
                 .ctx
                 .arena
