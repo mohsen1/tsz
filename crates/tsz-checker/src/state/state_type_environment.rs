@@ -505,18 +505,19 @@ impl<'a> CheckerState<'a> {
         // Lib symbols from file_locals are NOT included here — they are resolved
         // lazily on demand during statement checking. This avoids the O(N) upfront
         // cost of eagerly resolving ~2000 lib symbols, saving ~30-50ms per file.
-        let mut symbols: Vec<SymbolId> = Vec::with_capacity(self.ctx.binder.node_symbols.len());
+        let mut symbols_with_flags: Vec<(SymbolId, u32)> =
+            Vec::with_capacity(self.ctx.binder.node_symbols.len());
         let mut seen: FxHashSet<SymbolId> = FxHashSet::default();
         for &sym_id in self.ctx.binder.node_symbols.values() {
             if seen.insert(sym_id) {
-                symbols.push(sym_id);
+                let flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
+                symbols_with_flags.push((sym_id, flags));
             }
         }
 
         // Sort symbols so type-defining symbols (functions, classes, interfaces, type aliases)
         // are processed BEFORE variable/parameter symbols.
-        symbols.sort_by_key(|&sym_id| {
-            let flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
+        symbols_with_flags.sort_by_key(|&(sym_id, flags)| {
             let is_type_defining = flags
                 & (symbol_flags::FUNCTION
                     | symbol_flags::CLASS
@@ -532,10 +533,9 @@ impl<'a> CheckerState<'a> {
         // Resolve each symbol and add to the environment.
         // Skip variable/parameter symbols — their types are computed lazily during
         // statement checking when proper enclosing_class context is available.
-        for sym_id in symbols {
+        for (sym_id, flags) in symbols_with_flags {
             // Skip variable and parameter symbols - their types will be computed
             // lazily during statement checking with proper class context
-            let flags = self.ctx.binder.get_symbol(sym_id).map_or(0, |s| s.flags);
             if flags
                 & (symbol_flags::FUNCTION_SCOPED_VARIABLE | symbol_flags::BLOCK_SCOPED_VARIABLE)
                 != 0
