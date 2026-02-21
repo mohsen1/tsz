@@ -8,6 +8,58 @@ use super::es5_helpers::ArraySegment;
 use super::*;
 
 impl<'a> Printer<'a> {
+    fn get_class_expression_name(&self, class_node: NodeIndex) -> Option<String> {
+        let mut current = class_node;
+        let mut hops = 0;
+
+        while hops < 8 {
+            let parent = self.arena.get_extended(current)?.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+
+            match parent_node.kind {
+                // Parenthesized class expressions can be unwrapped.
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                    current = parent;
+                    hops += 1;
+                    continue;
+                }
+                // `const C = class {}`
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let decl = self.arena.get_variable_declaration(parent_node)?;
+                    if decl.initializer != current {
+                        return None;
+                    }
+                    let name = self.get_identifier_text(decl.name);
+                    if name.is_empty() || !is_valid_identifier_name(&name) {
+                        return None;
+                    }
+                    return Some(name);
+                }
+                // `C = class {}`
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let binary = self.arena.get_binary_expr(parent_node)?;
+                    if binary.right != current {
+                        return None;
+                    }
+                    if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+                        return None;
+                    }
+                    let name = self.get_identifier_text(binary.left);
+                    if name.is_empty() || !is_valid_identifier_name(&name) {
+                        return None;
+                    }
+                    return Some(name);
+                }
+                _ => return None,
+            }
+        }
+
+        None
+    }
+
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(super) fn emit_async_function_es5(
         &mut self,
@@ -469,7 +521,9 @@ impl<'a> Printer<'a> {
         let (class_name, es5_output) = if class_data.name.is_some() {
             let candidate = self.get_identifier_text(class_data.name);
             if candidate.is_empty() || !is_valid_identifier_name(&candidate) {
-                let temp_name = self.get_temp_var_name();
+                let temp_name = self
+                    .get_class_expression_name(class_node)
+                    .unwrap_or_else(|| self.get_temp_var_name());
                 let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
                 (temp_name, output)
             } else {
@@ -477,7 +531,9 @@ impl<'a> Printer<'a> {
                 (candidate, output)
             }
         } else {
-            let temp_name = self.get_temp_var_name();
+            let temp_name = self
+                .get_class_expression_name(class_node)
+                .unwrap_or_else(|| self.get_temp_var_name());
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)
         };

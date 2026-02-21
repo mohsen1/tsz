@@ -696,9 +696,7 @@ impl<'a> CheckerState<'a> {
         // var and function are hoisted, so they don't have TDZ issues in this context.
         // Imports (ALIAS) are also hoisted or handled differently.
         let is_block_scoped = (symbol.flags
-            & (symbol_flags::BLOCK_SCOPED_VARIABLE
-                | symbol_flags::CLASS
-                | symbol_flags::REGULAR_ENUM))
+            & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM))
             != 0;
 
         if !is_block_scoped {
@@ -773,9 +771,7 @@ impl<'a> CheckerState<'a> {
 
         // 2. Check if it is a block-scoped variable (let, const, class, enum)
         let is_block_scoped = (symbol.flags
-            & (symbol_flags::BLOCK_SCOPED_VARIABLE
-                | symbol_flags::CLASS
-                | symbol_flags::REGULAR_ENUM))
+            & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM))
             != 0;
 
         if !is_block_scoped {
@@ -836,9 +832,7 @@ impl<'a> CheckerState<'a> {
 
         // 2. Check if it is a block-scoped variable (let, const, class, enum)
         let is_block_scoped = (symbol.flags
-            & (symbol_flags::BLOCK_SCOPED_VARIABLE
-                | symbol_flags::CLASS
-                | symbol_flags::REGULAR_ENUM))
+            & (symbol_flags::BLOCK_SCOPED_VARIABLE | symbol_flags::CLASS | symbol_flags::ENUM))
             != 0;
 
         if !is_block_scoped {
@@ -905,9 +899,7 @@ impl<'a> CheckerState<'a> {
 
         // Applies to block-scoped declarations: class, enum, let/const
         let is_block_scoped = (symbol.flags
-            & (symbol_flags::CLASS
-                | symbol_flags::REGULAR_ENUM
-                | symbol_flags::BLOCK_SCOPED_VARIABLE))
+            & (symbol_flags::CLASS | symbol_flags::ENUM | symbol_flags::BLOCK_SCOPED_VARIABLE))
             != 0;
         if !is_block_scoped {
             return false;
@@ -972,7 +964,7 @@ impl<'a> CheckerState<'a> {
         // arena and should not be compared.
         if is_multi_file && !is_cross_file {
             let is_class = symbol.flags & symbol_flags::CLASS != 0;
-            let is_enum = symbol.flags & symbol_flags::REGULAR_ENUM != 0;
+            let is_enum = symbol.flags & symbol_flags::ENUM != 0;
             let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
             let kind_ok = (is_class
                 && (decl_node.kind == syntax_kind_ext::CLASS_DECLARATION

@@ -276,6 +276,50 @@ fn test_commonjs_module_temp_vars_do_not_collide() {
 }
 
 #[test]
+fn test_es5_class_expression_uses_variable_declaration_name() {
+    let source = "const C = class { method() { return 1; } };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("var C = /** @class */"),
+        "Expected class expression to use surrounding variable name.\nOutput: {output}"
+    );
+}
+
+#[test]
+fn test_es5_class_expression_uses_assignment_lhs_name() {
+    let source = "let C;\nC = class { method() { return 1; } };";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("var C = /** @class */"),
+        "Expected class expression to use assignment lhs name.\nOutput: {output}"
+    );
+}
+
+#[test]
 fn test_commonjs_void_zero_exports_are_emitted_in_reverse_declaration_order() {
     let source = "const a = 1;\nconst b = 2;\nexport { a, b };\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
