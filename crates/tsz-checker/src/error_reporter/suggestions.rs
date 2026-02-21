@@ -17,7 +17,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
     ) -> Option<String> {
         let evaluated_type = self.evaluate_type_for_assignability(type_id);
-        let property_names = self.collect_type_property_names(evaluated_type);
+        let property_names = self.collect_accessible_type_property_names(evaluated_type);
         if property_names.is_empty() {
             return None;
         }
@@ -122,10 +122,8 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Collect all property names from a type, handling objects, callables, unions,
-    /// and intersections.
-    fn collect_type_property_names(&self, type_id: TypeId) -> Vec<String> {
-        crate::query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(
+    fn collect_accessible_type_property_names(&self, type_id: TypeId) -> Vec<String> {
+        crate::query_boundaries::diagnostics::collect_accessible_property_names_for_suggestion(
             self.ctx.types,
             type_id,
             5,
