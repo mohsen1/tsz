@@ -136,7 +136,10 @@ jobs:
   publish-crates:
     name: Publish crates to crates.io
     needs: check-version
-    if: needs.check-version.outputs.version_changed == 'true'
+    if: >
+      always() &&
+      needs.check-version.result == 'success' &&
+      needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     environment: publish
     steps:
@@ -169,7 +172,10 @@ jobs:
   publish-npm:
     name: Publish WASM package to npm
     needs: check-version
-    if: needs.check-version.outputs.version_changed == 'true'
+    if: >
+      always() &&
+      needs.check-version.result == 'success' &&
+      needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     environment: publish
     steps:
