@@ -945,12 +945,12 @@ impl<'a> CheckerState<'a> {
         if is_function {
             // Check all parameters of this function for TS7006
             if let Some(func) = self.ctx.arena.get_function(node) {
-                for &param_idx in &func.parameters.nodes {
+                for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     {
                         // Nested functions in default values don't have contextual types
-                        self.maybe_report_implicit_any_parameter(param, false);
+                        self.maybe_report_implicit_any_parameter(param, false, pi);
                     }
                 }
             }

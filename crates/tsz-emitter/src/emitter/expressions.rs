@@ -1102,7 +1102,7 @@ impl<'a> Printer<'a> {
 
         if self.emit_parenthesized_object_literal_access(access.expression, |this| {
             this.write(".");
-            this.emit(access.name_or_argument);
+            this.emit_property_name_without_import_substitution(access.name_or_argument);
         }) {
             return;
         }
@@ -1133,19 +1133,19 @@ impl<'a> Printer<'a> {
                         self.write(".");
                         self.write_line();
                         self.increase_indent();
-                        self.emit(access.name_or_argument);
+                        self.emit_property_name_without_import_substitution(access.name_or_argument);
                         self.decrease_indent();
                     } else {
                         // Newline before dot: `expr\n    .name`
                         self.write_line();
                         self.increase_indent();
                         self.write(".");
-                        self.emit(access.name_or_argument);
+                        self.emit_property_name_without_import_substitution(access.name_or_argument);
                         self.decrease_indent();
                     }
                 } else {
                     self.write(".");
-                    self.emit(access.name_or_argument);
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
                 }
                 return;
             }
@@ -1156,7 +1156,7 @@ impl<'a> Printer<'a> {
             self.map_token_after(expr_node.end, node.end, b'.');
         }
         self.write(".");
-        self.emit(access.name_or_argument);
+        self.emit_property_name_without_import_substitution(access.name_or_argument);
     }
 
     pub(super) fn emit_element_access(&mut self, node: &Node) {
@@ -1237,13 +1237,13 @@ impl<'a> Printer<'a> {
                     self.write(token);
                     self.write_line();
                     self.increase_indent();
-                    self.emit(access.name_or_argument);
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
                     self.decrease_indent();
                     return;
                 } else {
                     self.emit(access.expression);
                     self.write(token);
-                    self.emit(access.name_or_argument);
+                    self.emit_property_name_without_import_substitution(access.name_or_argument);
                     return;
                 }
             }
@@ -1251,7 +1251,7 @@ impl<'a> Printer<'a> {
 
         self.emit(access.expression);
         self.write(token);
-        self.emit(access.name_or_argument);
+        self.emit_property_name_without_import_substitution(access.name_or_argument);
     }
 
     fn emit_optional_property_access_downlevel(&mut self, access: &AccessExprData) {
@@ -1263,7 +1263,7 @@ impl<'a> Printer<'a> {
             self.write(" === void 0 ? void 0 : ");
             self.emit(access.expression);
             self.write(".");
-            self.emit(access.name_or_argument);
+            self.emit_property_name_without_import_substitution(access.name_or_argument);
             return;
         }
 
@@ -1278,7 +1278,7 @@ impl<'a> Printer<'a> {
         self.write(" === void 0 ? void 0 : ");
         self.write(&base_temp);
         self.write(".");
-        self.emit(access.name_or_argument);
+        self.emit_property_name_without_import_substitution(access.name_or_argument);
     }
 
     fn emit_optional_element_access_downlevel(&mut self, access: &AccessExprData) {
@@ -1308,6 +1308,13 @@ impl<'a> Printer<'a> {
         self.write("[");
         self.emit(access.name_or_argument);
         self.write("]");
+    }
+
+    fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
+        let prev = self.suppress_commonjs_named_import_substitution;
+        self.suppress_commonjs_named_import_substitution = true;
+        self.emit(node);
+        self.suppress_commonjs_named_import_substitution = prev;
     }
 
     pub(super) fn emit_parenthesized(&mut self, node: &Node) {

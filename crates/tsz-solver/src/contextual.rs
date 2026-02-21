@@ -1180,12 +1180,31 @@ impl<'a> ContextualTypeContext<'a> {
             return collect_single_or_union(self.interner, elem_types);
         }
 
-        // Handle Application explicitly - evaluate to resolve type aliases
-        if let Some(TypeData::Application(_)) = self.interner.lookup(expected) {
+        // Handle Application explicitly - evaluate to resolve type aliases.
+        // For generic iterable-like types (Iterable<T>, ReadonlyArray<T>, ArrayLike<T>, etc.),
+        // try to extract the element type from the first type argument, since these types
+        // all use T as their element type.
+        if let Some(TypeData::Application(app_id)) = self.interner.lookup(expected) {
+            let app = self.interner.type_application(app_id);
+            // First try evaluating to see if it resolves to an array type
             let evaluated = crate::evaluate::evaluate_type(self.interner, expected);
             if evaluated != expected {
                 let ctx = ContextualTypeContext::with_expected(self.interner, evaluated);
-                return ctx.get_array_element_type();
+                if let Some(elem) = ctx.get_array_element_type() {
+                    return Some(elem);
+                }
+                // Check if the evaluated type has iterable-like structure
+                if !app.args.is_empty() && self.is_iterable_like_object(evaluated) {
+                    return Some(app.args[0]);
+                }
+            }
+            // If evaluation didn't change the type (e.g., Lazy(DefId) base that can't
+            // be resolved without TypeEnvironment), use the first type argument as
+            // the element type. This is a reasonable heuristic because assigning an
+            // array literal to a generic type like Iterable<T> or ArrayLike<T> means
+            // T is the expected element type.
+            if !app.args.is_empty() && evaluated == expected {
+                return Some(app.args[0]);
             }
         }
 
@@ -1222,6 +1241,37 @@ impl<'a> ContextualTypeContext<'a> {
 
         let mut extractor = ArrayElementExtractor::new(self.interner);
         extractor.extract(expected)
+    }
+
+    /// Check if a type looks like an iterable or array-like object type.
+    /// This is used as a heuristic to determine whether the first type argument
+    /// of an Application is the element type (for contextual typing of array literals).
+    fn is_iterable_like_object(&self, type_id: TypeId) -> bool {
+        use crate::types::TypeData;
+
+        // Check if type is an object with properties suggesting iterable/array-like behavior
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                // Has number index → array-like (ArrayLike<T>, ReadonlyArray<T>)
+                if shape.number_index.is_some() {
+                    return true;
+                }
+                // Has Symbol.iterator property → iterable (Iterable<T>)
+                for prop in &shape.properties {
+                    let name = self.interner.resolve_atom(prop.name);
+                    if name == "__@iterator" || name == "[Symbol.iterator]" {
+                        return true;
+                    }
+                }
+                false
+            }
+            Some(TypeData::Intersection(members)) => {
+                let members = self.interner.type_list(members);
+                members.iter().any(|&m| self.is_iterable_like_object(m))
+            }
+            _ => false,
+        }
     }
 
     /// Get the contextual type for a specific tuple element.

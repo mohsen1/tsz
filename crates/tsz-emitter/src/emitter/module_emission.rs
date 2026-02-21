@@ -328,6 +328,7 @@ impl<'a> Printer<'a> {
 
         // Generate module var name: "./foo" -> "foo_1"
         let module_var = self.next_commonjs_module_var(&module_spec);
+        self.register_commonjs_named_import_substitutions(node, &module_var);
 
         // Check if this is a namespace-only import (import * as ns from "mod")
         // to inline: var ns = __importStar(require("mod"));
@@ -415,6 +416,67 @@ impl<'a> Printer<'a> {
                 self.write(&binding);
                 self.write_line();
             }
+        }
+    }
+
+    fn register_commonjs_named_import_substitutions(&mut self, node: &Node, module_var: &str) {
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return;
+        };
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return;
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return;
+        };
+        if !clause.named_bindings.is_some() {
+            return;
+        }
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return;
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return;
+        };
+
+        // Skip namespace imports (`import * as ns from "x"`).
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            return;
+        }
+
+        for &spec_idx in &named_imports.elements.nodes {
+            let Some(spec_node) = self.arena.get(spec_idx) else {
+                continue;
+            };
+            let Some(spec) = self.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            if spec.is_type_only {
+                continue;
+            }
+            let Some(local_name_node) = self.arena.get(spec.name) else {
+                continue;
+            };
+            let Some(local_ident) = self.arena.get_identifier(local_name_node) else {
+                continue;
+            };
+            let import_name = if spec.property_name.is_some() {
+                if let Some(prop_name_node) = self.arena.get(spec.property_name) {
+                    if let Some(prop_ident) = self.arena.get_identifier(prop_name_node) {
+                        prop_ident.escaped_text.as_str()
+                    } else {
+                        local_ident.escaped_text.as_str()
+                    }
+                } else {
+                    local_ident.escaped_text.as_str()
+                }
+            } else {
+                local_ident.escaped_text.as_str()
+            };
+            self.commonjs_named_import_substitutions.insert(
+                local_ident.escaped_text.to_string(),
+                format!("{module_var}.{import_name}"),
+            );
         }
     }
 

@@ -8,7 +8,7 @@
 //! - Serialization overhead (critical for JS boundary)
 
 use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
-use tsz::parser::ParserState;
+use tsz_core::parser::ParserState;
 
 /// Small TypeScript source
 const SMALL_SOURCE: &str = r#"

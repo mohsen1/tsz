@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
                     let pname = self.parameter_name_for_error(param.name);
                     Self::jsdoc_has_param_type(jsdoc, &pname) || Self::jsdoc_has_type_tag(jsdoc)
                 });
-            self.maybe_report_implicit_any_parameter(param, has_jsdoc);
+            self.maybe_report_implicit_any_parameter(param, has_jsdoc, 0);
 
             // Also report TS7032 on the setter name if the parameter implicitly has type any.
             if param.type_annotation.is_none()
