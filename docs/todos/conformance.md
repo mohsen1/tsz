@@ -15,16 +15,18 @@
   - Fix: Either stop adding strict defaults to tsconfig (let tsz handle internally) or
     match the cache generator's exact tsconfig format including strict defaults placement.
 
-## TS5025: Remaining tsconfig property ordering mismatch (32 tests)
+## TS5025: Canonical option name mapping (Fixed)
 
-**Error code:** TS5025 ("Unknown compiler option … Did you mean …?")
-**Test files:** 32 remaining tests with TS5025-only fingerprint mismatches
-**Reason:** The tsc cache was generated with non-deterministic `HashMap` iteration
-order for tsconfig properties. The conformance runner now sorts properties
-alphabetically, but the existing cache has different orderings for these 32 tests.
-**Fix:** Regenerate the tsc cache (`./scripts/conformance.sh generate`) after the
-cache generator's `sort_keys()` change lands. This will align line numbers for all
-TS5025 diagnostics. Expected to fix ~32 additional tests.
+**Status**: Fixed. Added 53 missing entries to `canonical_option_name()` across
+all 3 Rust copies (tsz_wrapper.rs, generate-tsc-cache.rs, generate-tsc-cache-tsserver.rs)
+and regenerated the TSC cache. This eliminated 262 false TS5025 diagnostic entries
+that were caused by lowercase option names in tsconfig.json not being mapped to
+canonical camelCase. Result: +23 tests passing.
+
+### Remaining fingerprint-level TS5025 mismatches
+Some tests still fail at the fingerprint level due to tsconfig property ordering
+differences affecting TS5025 diagnostic line/column positions. These are not
+error-code-level failures.
 
 ## TS7006: Contextual typing gaps causing spurious implicit-any errors (16 tests)
 
