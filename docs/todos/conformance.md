@@ -71,3 +71,8 @@ start at the beginning of the statement.
 ## TS2322/TS2339/TS2345 — Type mismatch/property access (partial)
 - **Reason**: These are the core type-checking error codes. Improvements are ongoing
   in solver/checker. Each individual fix is complex and requires careful tsc parity analysis.
+
+## Deferred issues from this run (not fixed)
+
+- **TS5057**: `TypeScript/tests/cases/compiler/commonSourceDir1.ts` — requires project/tsconfig discovery and compiler option plumbing that is not yet wired into the current checker flow.
+- **TS5095**: `TypeScript/tests/cases/compiler/declarationEmitBundleWithAmbientReferences.ts` — requires moduleResolution validation against module-kind constraints, which is still outside current scope.
