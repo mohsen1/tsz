@@ -644,7 +644,48 @@ impl<'a> CheckerState<'a> {
 
         // TS1212/1213/1214: Identifier expected. '{0}' is a reserved word in strict mode.
         // Check if variable name is a strict-mode reserved word used in strict context.
-        if self.is_strict_mode_for_node(var_decl.name)
+
+        let mut is_ambient = self.ctx.file_name.ends_with(".d.ts");
+        if !is_ambient {
+            let mut current = decl_idx;
+            let mut guard = 0;
+            while current.is_some() {
+                guard += 1;
+                if guard > 256 {
+                    break;
+                }
+                if let Some(node) = self.ctx.arena.get(current) {
+                    if node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
+                        if let Some(module) = self.ctx.arena.get_module(node)
+                            && self.ctx.has_modifier(
+                                &module.modifiers,
+                                tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+                            ) {
+                                is_ambient = true;
+                                break;
+                            }
+                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
+                        if let Some(var_stmt) = self.ctx.arena.get_variable(node)
+                            && self.ctx.has_modifier(
+                                &var_stmt.modifiers,
+                                tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+                            ) {
+                                is_ambient = true;
+                                break;
+                            }
+                    } else if node.kind == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE {
+                        break;
+                    }
+                }
+                if let Some(ext) = self.ctx.arena.get_extended(current) {
+                    current = ext.parent;
+                } else {
+                    break;
+                }
+            }
+        }
+        if !is_ambient
+            && self.is_strict_mode_for_node(var_decl.name)
             && let Some(ref name) = var_name
             && crate::state_checking::is_strict_mode_reserved_name(name)
         {
