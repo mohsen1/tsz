@@ -1054,10 +1054,18 @@ impl<'a> CheckerState<'a> {
 
         // Rest parameters use TS7019, regular parameters use TS7006
         let report_node = self.param_node_for_implicit_any_diagnostic(param);
+
+        // TS7051 only applies to parameters WITHOUT modifiers (public/private/protected/readonly).
+        // When a parameter has a modifier, the name is clearly a parameter name, not a type.
+        let has_parameter_modifiers = param
+            .modifiers
+            .as_ref()
+            .is_some_and(|m| !m.nodes.is_empty());
+
         if param.dot_dot_dot_token {
             // TS7051: Check if rest parameter name looks like a type keyword
             // e.g., `m(...string)` where `string` is likely meant as `...args: string[]`
-            if Self::is_type_keyword_name(&param_name) {
+            if !has_parameter_modifiers && Self::is_type_keyword_name(&param_name) {
                 let suggested_name = format!("arg{}", param_index);
                 self.error_at_node_msg(
                     report_node,
@@ -1076,11 +1084,13 @@ impl<'a> CheckerState<'a> {
             // e.g., `(string, number)` where the user likely meant `(arg0: string, arg1: number)`
             // TypeScript emits TS7051 for type keyword names and uppercase-starting names
             // (which conventionally refer to classes/interfaces).
-            if Self::is_type_keyword_name(&param_name)
-                || param_name
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_uppercase())
+            // Only when the parameter has NO modifiers (public A is clearly a parameter name).
+            if !has_parameter_modifiers
+                && (Self::is_type_keyword_name(&param_name)
+                    || param_name
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_uppercase()))
             {
                 let suggested_name = format!("arg{}", param_index);
                 self.error_at_node_msg(
