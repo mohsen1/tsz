@@ -276,6 +276,30 @@ impl<'a> CheckerState<'a> {
         self.check_constructor_accessibility_for_new(idx, constructor_type);
 
         if constructor_type == TypeId::ANY {
+            if let Some(ref type_args_list) = new_expr.type_arguments
+                && !type_args_list.nodes.is_empty()
+            {
+                self.error_at_node(
+                    idx,
+                    crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                    crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
+                );
+            }
+
+            // Still need to check arguments for definite assignment and other errors
+            let args = match new_expr.arguments.as_ref() {
+                Some(a) => a.nodes.as_slice(),
+                None => &[],
+            };
+            let _ctx_helper = tsz_solver::ContextualTypeContext::new(self.ctx.types);
+            let check_excess_properties = false;
+            self.collect_call_argument_types_with_context(
+                args,
+                |_i, _arg_count| None, // No parameter type info for ANY callee
+                check_excess_properties,
+                None, // No skipping needed
+            );
+
             return TypeId::ANY;
         }
         if constructor_type == TypeId::ERROR {
