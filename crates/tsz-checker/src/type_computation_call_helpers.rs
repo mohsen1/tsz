@@ -44,7 +44,7 @@ impl<'a> CheckerState<'a> {
                         diagnostic_messages::CLASS_USED_BEFORE_ITS_DECLARATION,
                         diagnostic_codes::CLASS_USED_BEFORE_ITS_DECLARATION,
                     )
-                } else if sym.flags & tsz_binder::symbol_flags::REGULAR_ENUM != 0 {
+                } else if sym.flags & tsz_binder::symbol_flags::ENUM != 0 {
                     (
                         diagnostic_messages::ENUM_USED_BEFORE_ITS_DECLARATION,
                         diagnostic_codes::ENUM_USED_BEFORE_ITS_DECLARATION,
@@ -83,8 +83,7 @@ impl<'a> CheckerState<'a> {
                 && self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
                     sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
                         && sym.flags
-                            & (tsz_binder::symbol_flags::CLASS
-                                | tsz_binder::symbol_flags::REGULAR_ENUM)
+                            & (tsz_binder::symbol_flags::CLASS | tsz_binder::symbol_flags::ENUM)
                             == 0
                 })
                 && let Some(usage_node) = self.ctx.arena.get(idx)
