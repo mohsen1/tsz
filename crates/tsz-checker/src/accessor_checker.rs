@@ -146,18 +146,21 @@ impl<'a> CheckerState<'a> {
             self.maybe_report_implicit_any_parameter(param, has_jsdoc);
 
             // Also report TS7032 on the setter name if the parameter implicitly has type any.
-            if param.type_annotation.is_none() && !has_jsdoc && self.ctx.no_implicit_any()
-                && let Some(name_idx) = accessor_name {
-                    let prop_name = self.parameter_name_for_error(name_idx);
-                    let message = format!(
-                        "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
-                    );
-                    self.error_at_node(
+            if param.type_annotation.is_none()
+                && !has_jsdoc
+                && self.ctx.no_implicit_any()
+                && let Some(name_idx) = accessor_name
+            {
+                let prop_name = self.parameter_name_for_error(name_idx);
+                let message = format!(
+                    "Property '{prop_name}' implicitly has type 'any', because its set accessor lacks a parameter type annotation."
+                );
+                self.error_at_node(
                         name_idx,
                         &message,
                         diagnostic_codes::PROPERTY_IMPLICITLY_HAS_TYPE_ANY_BECAUSE_ITS_SET_ACCESSOR_LACKS_A_PARAMETER_TYPE,
                     );
-                }
+            }
         }
     }
 

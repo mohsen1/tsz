@@ -749,6 +749,14 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // For CLASS symbols: if the usage is inside the class body (usage_node.pos > decl_node.pos),
+        // the reference is a self-reference within the class's own static block and is NOT a TDZ
+        // violation. For example, inside `static {}` of class C, referencing C itself is valid.
+        // The class name is accessible within its own body.
+        if symbol.flags & symbol_flags::CLASS != 0 && usage_node.pos > decl_node.pos {
+            return false;
+        }
+
         // 5. Check if usage is inside a static block
         // Use find_enclosing_static_block which walks up the AST and stops at function boundaries.
         // This ensures we only catch immediate usage, not usage inside a closure/function
