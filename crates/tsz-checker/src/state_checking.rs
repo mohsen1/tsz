@@ -914,10 +914,10 @@ impl<'a> CheckerState<'a> {
                 Some(flags)
             }
             syntax_kind_ext::CONSTRUCTOR => Some(symbol_flags::CONSTRUCTOR),
-            syntax_kind_ext::IMPORT_CLAUSE
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+            | syntax_kind_ext::IMPORT_CLAUSE
             | syntax_kind_ext::NAMESPACE_IMPORT
-            | syntax_kind_ext::IMPORT_SPECIFIER
-            | syntax_kind_ext::IMPORT_EQUALS_DECLARATION => Some(symbol_flags::ALIAS),
+            | syntax_kind_ext::IMPORT_SPECIFIER => Some(symbol_flags::ALIAS),
             syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => {
                 // 'export as namespace' creates a global alias to the module.
                 // It behaves like a global value module alias.

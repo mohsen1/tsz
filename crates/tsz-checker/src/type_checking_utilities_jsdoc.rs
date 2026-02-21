@@ -303,6 +303,17 @@ impl<'a> CheckerState<'a> {
                     return Some(*tp);
                 }
 
+                if let Some((module_specifier, member_name)) =
+                    Self::parse_jsdoc_import_type(type_expr)
+                    && let Some(sym_id) =
+                        self.resolve_cross_file_export(&module_specifier, &member_name)
+                {
+                    let resolved = self.type_reference_symbol_type(sym_id);
+                    if resolved != TypeId::ERROR {
+                        return Some(resolved);
+                    }
+                }
+
                 // Narrow support for conformance-critical pattern:
                 //   @type {Object.<K, V>} or @type {Object<K, V>}
                 let obj_map_inner = type_expr
@@ -713,6 +724,32 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            if let Some(rest) = line.strip_prefix("@import") {
+                for (local_name, specifier, import_name) in Self::parse_jsdoc_import_tag(rest) {
+                    let import_type = if import_name == "*" || import_name == "default" {
+                        format!("import(\"{specifier}\")")
+                    } else {
+                        format!("import(\"{specifier}\").{import_name}")
+                    };
+
+                    if let Some(previous_name) = current_name.take() {
+                        typedefs.push((previous_name, current_info));
+                        current_info = JsdocTypedefInfo {
+                            base_type: None,
+                            properties: Vec::new(),
+                        };
+                    }
+                    typedefs.push((
+                        local_name,
+                        JsdocTypedefInfo {
+                            base_type: Some(import_type),
+                            properties: Vec::new(),
+                        },
+                    ));
+                }
+                continue;
+            }
+
             if let Some(rest) = line.strip_prefix("@typedef") {
                 if let Some((name, base_type)) = Self::parse_jsdoc_typedef_definition(rest) {
                     if let Some(previous_name) = current_name.take() {
@@ -740,6 +777,56 @@ impl<'a> CheckerState<'a> {
             typedefs.push((previous_name, current_info));
         }
         typedefs
+    }
+
+    fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
+        let rest = rest.trim();
+        let mut results = Vec::new();
+
+        if let Some(from_idx) = rest.rfind("from") {
+            let before_from = rest[..from_idx].trim();
+            let after_from = rest[from_idx + 4..].trim();
+
+            let quote = after_from.chars().next().unwrap_or(' ');
+            if quote == '"' || quote == '\'' || quote == '`' {
+                let specifier = after_from[1..]
+                    .split(quote)
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
+
+                if before_from.starts_with('{') && before_from.ends_with('}') {
+                    let inner = &before_from[1..before_from.len() - 1];
+                    for part in inner.split(',') {
+                        let part = part.trim();
+                        if part.is_empty() {
+                            continue;
+                        }
+                        let parts: Vec<&str> = part.split(" as ").collect();
+                        if parts.len() == 2 {
+                            results.push((
+                                parts[1].trim().to_string(),
+                                specifier.clone(),
+                                parts[0].trim().to_string(),
+                            ));
+                        } else {
+                            results.push((part.to_string(), specifier.clone(), part.to_string()));
+                        }
+                    }
+                } else if let Some(ns_name) = before_from.strip_prefix("* as ") {
+                    let ns_name = ns_name.trim().to_string();
+                    if !ns_name.is_empty() {
+                        results.push((ns_name, specifier, "*".to_string()));
+                    }
+                } else {
+                    let default_name = before_from.to_string();
+                    if !default_name.is_empty() {
+                        results.push((default_name, specifier, "default".to_string()));
+                    }
+                }
+            }
+        }
+        results
     }
 
     fn parse_jsdoc_typedef_definition(line: &str) -> Option<(String, Option<String>)> {

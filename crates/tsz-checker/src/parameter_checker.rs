@@ -619,15 +619,29 @@ impl<'a> CheckerState<'a> {
 
             // In malformed signatures like `(...arg?) => {}`, TypeScript still
             // reports TS2370 in addition to TS1047/TS7019.
+            // However, this is only reported for function expressions and arrow functions,
+            // not for methods or function declarations.
             if param.question_token
                 && param.type_annotation.is_none()
                 && param.initializer.is_none()
             {
-                self.error_at_node(
-                    param.name,
-                    "A rest parameter must be of an array type.",
-                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
-                );
+                let is_arrow_or_expr = if let Some(ext) = self.ctx.arena.get_extended(param_idx)
+                    && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                {
+                    parent_node.kind == tsz_parser::parser::syntax_kind_ext::ARROW_FUNCTION
+                        || parent_node.kind
+                            == tsz_parser::parser::syntax_kind_ext::FUNCTION_EXPRESSION
+                } else {
+                    false
+                };
+
+                if is_arrow_or_expr {
+                    self.error_at_node(
+                        param.name,
+                        "A rest parameter must be of an array type.",
+                        diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                    );
+                }
                 continue;
             }
 
@@ -645,7 +659,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if !self.is_array_like_type(declared_type) {
+                let factory = self.ctx.types.factory();
+                let any_array = factory.array(TypeId::ANY);
+                let readonly_any_array = factory.readonly_type(any_array);
+
+                if !self.is_assignable_to(declared_type, readonly_any_array) {
                     self.error_at_node(
                         param.type_annotation,
                         "A rest parameter must be of an array type.",
@@ -656,10 +674,13 @@ impl<'a> CheckerState<'a> {
                 // No type annotation, but has initializer (e.g., `...bar = 0`).
                 // Infer the type from the initializer.
                 let init_type = self.get_type_of_node(param.initializer);
+                let factory = self.ctx.types.factory();
+                let any_array = factory.array(TypeId::ANY);
+                let readonly_any_array = factory.readonly_type(any_array);
                 if init_type != TypeId::ANY
                     && init_type != TypeId::UNKNOWN
                     && init_type != TypeId::ERROR
-                    && !self.is_array_like_type(init_type)
+                    && !self.is_assignable_to(init_type, readonly_any_array)
                 {
                     self.error_at_node(
                         param_idx,
