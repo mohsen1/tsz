@@ -279,6 +279,8 @@ pub enum SubtypeFailureReason {
         source_value_type: TypeId,
         target_value_type: TypeId,
     },
+    /// Missing index signature.
+    MissingIndexSignature { index_kind: &'static str },
     /// No union member matches.
     NoUnionMemberMatches {
         source_type: TypeId,
@@ -523,6 +525,7 @@ pub mod codes {
     pub use dc::TYPE_IS_MISSING_THE_FOLLOWING_PROPERTIES_FROM_TYPE as MISSING_PROPERTIES;
     pub use dc::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE as TYPE_NOT_ASSIGNABLE;
 
+    pub use dc::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE as MISSING_INDEX_SIGNATURE;
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
     // Function/call errors
@@ -914,6 +917,7 @@ impl SubtypeFailureReason {
             | Self::TupleElementTypeMismatch { .. }
             | Self::ArrayElementMismatch { .. }
             | Self::IndexSignatureMismatch { .. }
+            | Self::MissingIndexSignature { .. }
             | Self::NoUnionMemberMatches { .. }
             | Self::NoIntersectionMemberMatches { .. }
             | Self::TypeMismatch { .. }
@@ -1124,6 +1128,15 @@ impl SubtypeFailureReason {
             .with_related(PendingDiagnostic::error(
                 codes::TYPE_NOT_ASSIGNABLE,
                 vec![(*source_value_type).into(), (*target_value_type).into()],
+            )),
+
+            Self::MissingIndexSignature { index_kind } => PendingDiagnostic::error(
+                codes::TYPE_NOT_ASSIGNABLE,
+                vec![source.into(), target.into()],
+            )
+            .with_related(PendingDiagnostic::error(
+                codes::MISSING_INDEX_SIGNATURE,
+                vec![index_kind.to_string().into(), source.into()],
             )),
 
             Self::NoUnionMemberMatches {

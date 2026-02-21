@@ -1711,6 +1711,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                             return SubtypeResult::False;
                         }
                     }
+                    if let Some(ref str_idx) = t_shape.string_index {
+                        // Arrays do not have string index signatures, unless target value is ANY.
+                        if str_idx.value_type != TypeId::ANY {
+                            if let Some(tracer) = &mut self.tracer
+                                && !tracer.on_mismatch_dyn(
+                                    SubtypeFailureReason::MissingIndexSignature {
+                                        index_kind: "string",
+                                    },
+                                )
+                            {
+                                return SubtypeResult::False;
+                            }
+                            return SubtypeResult::False;
+                        }
+                    }
                     return SubtypeResult::True;
                 }
                 // Target has non-empty properties + index signature.
