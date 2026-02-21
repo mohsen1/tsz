@@ -763,6 +763,11 @@ const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bo
         return true;
     }
 
+    // Variable can merge with variable cross-file (so we can detect and report cross-file redeclarations of let/const)
+    if (existing_flags & symbol_flags::VARIABLE) != 0 && (new_flags & symbol_flags::VARIABLE) != 0 {
+        return true;
+    }
+
     // Namespace can merge with class, function, enum, or variable
     if (existing_flags & symbol_flags::MODULE) != 0
         && (new_flags
@@ -798,26 +803,7 @@ const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bo
 /// Small declaration lists are common, so use linear scans there to avoid
 /// hash set allocation overhead. Switch to a set only for larger collections.
 fn append_unique_declarations(existing: &mut Vec<NodeIndex>, incoming: &[NodeIndex]) {
-    if incoming.is_empty() {
-        return;
-    }
-
-    const SMALL_DECL_THRESHOLD: usize = 16;
-    if existing.len() + incoming.len() <= SMALL_DECL_THRESHOLD {
-        for &decl in incoming {
-            if !existing.contains(&decl) {
-                existing.push(decl);
-            }
-        }
-        return;
-    }
-
-    let mut seen: FxHashSet<NodeIndex> = existing.iter().copied().collect();
-    for &decl in incoming {
-        if seen.insert(decl) {
-            existing.push(decl);
-        }
-    }
+    existing.extend_from_slice(incoming);
 }
 
 /// Merge bind results into a unified program state
@@ -1391,8 +1377,7 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             };
             if let Some(new_sym) = global_symbols.get_mut(new_id) {
                 // Check if this is a cross-file merge (same symbol already has data)
-                let is_cross_file_merge = !new_sym.declarations.is_empty()
-                    && new_sym.declarations != old_sym.declarations;
+                let is_cross_file_merge = !new_sym.declarations.is_empty();
 
                 if is_cross_file_merge {
                     // Cross-file merge: append declarations and merge flags
