@@ -725,26 +725,18 @@ impl<'a> CheckerState<'a> {
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
-                    println!(
-                        "Calling map_expanded: args[index]={:?} arg_idx={:?}",
-                        args.get(index),
-                        arg_idx
-                    );
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                     {
-                        println!("NOT suppressing weak key!");
                         // Try to elaborate: for object literal arguments, report TS2322
                         // on specific mismatched properties instead of TS2345 on the
                         // whole argument. This matches tsc behavior.
                         if !self.try_elaborate_object_literal_arg_error(arg_idx, expected) {
-                            println!("Calling check_argument_assignable_or_report!");
                             let _ =
                                 self.check_argument_assignable_or_report(actual, expected, arg_idx);
                         }
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
-                    println!("Calling check_argument_assignable_or_report (last_arg)!");
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                         && !self.try_elaborate_object_literal_arg_error(last_arg, expected)
                     {
@@ -1782,6 +1774,68 @@ impl<'a> CheckerState<'a> {
         }
         self.error_cannot_find_name_at(name, idx);
         TypeId::ERROR
+    }
+
+    /// Get the type of a tagged template expression (e.g., tag`hello ${x}`).
+    ///
+    /// Tagged templates are function calls where:
+    /// - First argument is `TemplateStringsArray`
+    /// - Remaining arguments are the template substitution expressions
+    ///
+    /// This computes the return type of the tag function and ensures
+    /// the template substitution expressions are type-checked.
+    pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
+        use crate::query_boundaries::iterable_checker::{
+            call_signatures_for_type, function_shape_for_type,
+        };
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return TypeId::ERROR;
+        };
+
+        let Some(tagged) = self.ctx.arena.get_tagged_template(node).cloned() else {
+            return TypeId::ERROR;
+        };
+
+        // Get the type of the tag function
+        let tag_type = self.get_type_of_node(tagged.tag);
+
+        // Visit the template to ensure substitution expressions are type-checked.
+        // The template is either a NoSubstitutionTemplateLiteral or a TemplateExpression.
+        if let Some(template_node) = self.ctx.arena.get(tagged.template)
+            && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+        {
+            // Type-check each substitution expression in the template spans
+            if let Some(templ_data) = self.ctx.arena.get_template_expr(template_node).cloned() {
+                for &span_idx in &templ_data.template_spans.nodes {
+                    if let Some(span_node) = self.ctx.arena.get(span_idx)
+                        && let Some(span_data) =
+                            self.ctx.arena.get_template_span(span_node).cloned()
+                    {
+                        // Type-check the substitution expression
+                        self.get_type_of_node(span_data.expression);
+                    }
+                }
+            }
+        }
+
+        // If tag type is `any`, result is `any`
+        if tag_type == TypeId::ANY || tag_type == TypeId::ERROR {
+            return tag_type;
+        }
+
+        // Get the return type from the tag function's call signature
+        if let Some(sig) = function_shape_for_type(self.ctx.types, tag_type) {
+            return sig.return_type;
+        }
+        if let Some(call_sigs) = call_signatures_for_type(self.ctx.types, tag_type)
+            && let Some(first_sig) = call_sigs.first()
+        {
+            return first_sig.return_type;
+        }
+
+        // If tag is Function type, return any
+        TypeId::ANY
     }
 }
 
