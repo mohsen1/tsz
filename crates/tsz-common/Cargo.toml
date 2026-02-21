@@ -7,6 +7,9 @@ autotests = false
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 serde = { workspace = true }

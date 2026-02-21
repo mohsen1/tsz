@@ -99,6 +99,7 @@ impl TsCompilerOptions {
             check_js: self.check_js.unwrap_or(false),
             no_resolve: self.no_resolve.unwrap_or(false),
             no_implicit_override: false,
+            jsx_mode: tsz_common::checker_options::JsxMode::None,
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
         }

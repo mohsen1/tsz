@@ -3,6 +3,7 @@ name = "tsz-conformance"
 version = "0.1.0"
 edition = "2021"
 autotests = false
+publish = false
 
 [dependencies.tsz]
 path = "../.."

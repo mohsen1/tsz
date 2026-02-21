@@ -7,8 +7,12 @@ resolver = "3"
 version = "0.1.0"
 edition = "2024"
 repository = "https://github.com/mohsenazimi/tsz"
-license = "Apache"
+homepage = "https://github.com/mohsenazimi/tsz"
+license = "Apache-2.0"
 authors = ["Mohsen Azimi <mohsen@users.noreply.github.com>"]
+keywords = ["typescript", "type-checker", "compiler", "language", "tsz"]
+categories = ["development-tools", "compilers", "parser-implementations"]
+readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
@@ -85,6 +89,10 @@ description = "Core TypeScript compiler and type checker library"
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme.workspace = true
 
 [lib]
 crate-type = ["rlib"]

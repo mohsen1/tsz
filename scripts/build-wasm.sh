@@ -1,14 +1,16 @@
 #!/bin/bash
-# Build WASM for nodejs and copy to local pkg directory
+# Build WASM for Node.js (CJS) and bundler (ESM) targets, then assemble the
+# unified @mohsen-azimi/tsz-dev package in pkg/.
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PKG="$PROJECT_ROOT/pkg"
 
-echo "Building WASM for Node.js..."
-
-# Check for wasm-pack
+# ---------------------------------------------------------------------------
+# Preflight
+# ---------------------------------------------------------------------------
 if ! command -v wasm-pack &>/dev/null; then
     echo "Error: wasm-pack is not installed."
     echo "Install with: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh"
@@ -17,8 +19,60 @@ fi
 
 cd "$PROJECT_ROOT"
 
-wasm-pack build --target nodejs --out-dir pkg
+# wasm-pack expects a LICENSE file in the crate directory it builds
+cp "$PROJECT_ROOT/LICENSE.txt" "$PROJECT_ROOT/crates/tsz-wasm/LICENSE.txt"
 
-# Note: Lib files are loaded at runtime from the TypeScript submodule's built/local/ directory.
+# ---------------------------------------------------------------------------
+# Build Node.js target  (CommonJS, synchronous WASM init)
+# ---------------------------------------------------------------------------
+echo "Building WASM for Node.js (CJS)..."
+wasm-pack build crates/tsz-wasm --target nodejs  --out-dir "$PKG/node"
 
-echo "WASM built successfully to $PROJECT_ROOT/pkg/"
+# ---------------------------------------------------------------------------
+# Build bundler target  (ESM, for webpack / Vite / Rollup)
+# ---------------------------------------------------------------------------
+echo "Building WASM for bundler (ESM)..."
+wasm-pack build crates/tsz-wasm --target bundler --out-dir "$PKG/bundler"
+
+# ---------------------------------------------------------------------------
+# Write unified package.json  (overwrites whatever wasm-pack left at pkg/)
+# ---------------------------------------------------------------------------
+
+# wasm-pack writes a `.gitignore` with `*` into each output dir, which causes
+# `npm publish` to exclude all files inside those directories.  Remove them.
+rm -f "$PKG/node/.gitignore" "$PKG/bundler/.gitignore"
+
+echo "Writing unified package.json..."
+cat > "$PKG/package.json" <<'EOF'
+{
+  "name": "@mohsen-azimi/tsz-dev",
+  "version": "0.1.0",
+  "description": "WebAssembly bindings for the tsz TypeScript compiler",
+  "license": "Apache-2.0",
+  "author": "Mohsen Azimi <mohsen@users.noreply.github.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mohsenazimi/tsz.git"
+  },
+  "keywords": ["typescript", "type-checker", "compiler", "wasm"],
+  "main": "node/tsz_wasm.js",
+  "types": "node/tsz_wasm.d.ts",
+  "exports": {
+    ".": {
+      "require": "./node/tsz_wasm.js",
+      "import": "./bundler/tsz_wasm.js",
+      "types": "./node/tsz_wasm.d.ts"
+    }
+  },
+  "files": ["node/", "bundler/", "LICENSE.txt"]
+}
+EOF
+
+# Copy root LICENSE into pkg/ so it is included in the npm tarball
+cp "$PROJECT_ROOT/LICENSE.txt" "$PKG/LICENSE.txt"
+
+# Note: TypeScript stdlib lib files (lib.es5.d.ts, lib.dom.d.ts, etc.) are
+# passed to TsProgram at runtime via addLibFile() — they are NOT bundled in
+# this package.  See crates/tsz-wasm/src/wasm_api/program.rs for details.
+
+echo "WASM built successfully.  Package assembled in $PKG/"
