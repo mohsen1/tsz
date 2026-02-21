@@ -16,7 +16,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
-tsz = { path = ".", version = "0.1.5" }
+tsz = { path = ".", version = "0.1.5", package = "tsz-core" }
 tsz-common = { path = "crates/tsz-common", version = "0.1.5" }
 tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.5" }
 tsz-parser = { path = "crates/tsz-parser", version = "0.1.5" }
@@ -82,7 +82,7 @@ complexity = { level = "deny", priority = -1 }
 # Allow some that may be too noisy for this codebase
 
 [package]
-name = "tsz"
+name = "tsz-core"
 version.workspace = true
 edition.workspace = true
 autotests = false

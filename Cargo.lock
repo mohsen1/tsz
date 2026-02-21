@@ -1380,39 +1380,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tsz"
-version = "0.1.5"
-dependencies = [
- "anyhow",
- "bitflags 2.11.0",
- "criterion",
- "dashmap",
- "ena",
- "fixedbitset",
- "indexmap",
- "memchr",
- "once_cell",
- "rayon",
- "rustc-hash",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "smallvec",
- "tempfile",
- "tracing",
- "tsz-binder",
- "tsz-checker",
- "tsz-common",
- "tsz-emitter",
- "tsz-lowering",
- "tsz-lsp",
- "tsz-parser",
- "tsz-scanner",
- "tsz-solver",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "tsz-binder"
 version = "0.1.5"
 dependencies = [
@@ -1462,10 +1429,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tree",
- "tsz",
  "tsz-binder",
  "tsz-checker",
  "tsz-common",
+ "tsz-core",
  "tsz-emitter",
  "tsz-lsp",
  "tsz-parser",
@@ -1506,8 +1473,41 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "tsz",
+ "tsz-core",
  "walkdir",
+]
+
+[[package]]
+name = "tsz-core"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.0",
+ "criterion",
+ "dashmap",
+ "ena",
+ "fixedbitset",
+ "indexmap",
+ "memchr",
+ "once_cell",
+ "rayon",
+ "rustc-hash",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "smallvec",
+ "tempfile",
+ "tracing",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-emitter",
+ "tsz-lowering",
+ "tsz-lsp",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+ "wasm-bindgen",
 ]
 
 [[package]]
@@ -1607,10 +1607,10 @@ dependencies = [
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "tsz",
  "tsz-binder",
  "tsz-checker",
  "tsz-common",
+ "tsz-core",
  "tsz-emitter",
  "tsz-lsp",
  "tsz-parser",

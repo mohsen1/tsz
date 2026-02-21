@@ -8,7 +8,7 @@
 #
 # Publish order respects the dependency graph:
 #   tsz-common -> tsz-scanner -> tsz-parser -> tsz-binder -> tsz-solver
-#   -> tsz-lowering -> tsz-emitter -> tsz-checker -> tsz-lsp -> tsz -> tsz-cli
+#   -> tsz-lowering -> tsz-emitter -> tsz-checker -> tsz-lsp -> tsz-core -> tsz-cli
 
 set -euo pipefail
 
@@ -25,7 +25,7 @@ CRATES=(
     tsz-emitter
     tsz-checker
     tsz-lsp
-    tsz
+    tsz-core
     tsz-cli
 )
 
