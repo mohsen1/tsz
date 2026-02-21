@@ -640,10 +640,10 @@ const y = "hello" satisfies number;
     checker.check_source_file(root);
 
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
-    // First satisfies emits 2741 (missing property 'b') or 2322, second emits 2322
+    // First satisfies emits 1360 (missing property 'b'), second emits 1360
     let assignability_error_count = codes
         .iter()
-        .filter(|&&code| code == 2322 || code == 2741)
+        .filter(|&&code| code == 2322 || code == 2741 || code == 1360)
         .count();
     assert_eq!(
         assignability_error_count, 2,

@@ -18,6 +18,72 @@ impl<'a> CheckerState<'a> {
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         self.diagnose_assignment_failure(source, target, idx);
     }
+    pub fn error_type_does_not_satisfy_the_expected_type(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        idx: NodeIndex,
+    ) {
+        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return;
+        }
+
+        let reason = self
+            .analyze_assignability_failure(source, target)
+            .failure_reason;
+
+        let mut base_diag = match reason {
+            Some(reason) => self.render_failure_reason(&reason, source, target, anchor_idx, 0),
+            None => {
+                let Some(loc) = self.get_source_location(anchor_idx) else {
+                    return;
+                };
+                let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
+                    self.ctx.types,
+                    &self.ctx.binder.symbols,
+                    self.ctx.file_name.as_str(),
+                )
+                .with_def_store(&self.ctx.definition_store);
+                let diag = builder.type_not_assignable(source, target, loc.start, loc.length());
+                diag.to_checker_diagnostic(&self.ctx.file_name)
+            }
+        };
+
+        // Mutate the top-level diagnostic to be TS1360
+        let src_str = self.format_type(source);
+        let tgt_str = self.format_type(target);
+        use tsz_common::diagnostics::data::diagnostic_codes;
+        use tsz_common::diagnostics::data::diagnostic_messages;
+        use tsz_common::diagnostics::format_message;
+
+        let msg = format_message(
+            diagnostic_messages::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE,
+            &[&src_str, &tgt_str],
+        );
+
+        if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
+            let mut new_related = vec![];
+
+            new_related.push(tsz_common::diagnostics::DiagnosticRelatedInformation {
+                category: tsz_common::diagnostics::DiagnosticCategory::Error,
+                code: base_diag.code,
+                file: base_diag.file.clone(),
+                start: base_diag.start,
+                length: base_diag.length,
+                message_text: base_diag.message_text.clone(),
+            });
+
+            new_related.extend(base_diag.related_information);
+
+            base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
+            base_diag.message_text = msg;
+            base_diag.related_information = new_related;
+        }
+
+        self.ctx.diagnostics.push(base_diag);
+    }
 
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
