@@ -1423,6 +1423,7 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(decl_idx)?;
 
         match node.kind {
+            k if k == tsz_scanner::SyntaxKind::Identifier as u16 => Some(decl_idx),
             syntax_kind_ext::VARIABLE_DECLARATION => {
                 let var_decl = self.ctx.arena.get_variable_declaration(node)?;
                 Some(var_decl.name)
