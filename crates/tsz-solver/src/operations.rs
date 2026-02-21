@@ -131,6 +131,7 @@ pub enum CallResult {
         func_type: TypeId,
         arg_types: Vec<TypeId>,
         failures: Vec<PendingDiagnostic>,
+        fallback_return: TypeId,
     },
 }
 
@@ -1554,7 +1555,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // When there is a single "count-compatible" overload that fails only on types,
         // tsc reports TS2345 (the inner type error) rather than TS2769 (no overload matched).
         let mut type_mismatch_count: usize = 0;
-        let mut sole_type_mismatch: Option<(usize, TypeId, TypeId)> = None; // (index, expected, actual)
+        let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None; // (index, expected, actual)
+        let mut all_mismatches_identical = true;
         let mut has_non_count_non_type_failure = false;
 
         for sig in &callable.call_signatures {
@@ -1585,7 +1587,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     all_arg_count_mismatches = false;
                     type_mismatch_count += 1;
                     if type_mismatch_count == 1 {
-                        sole_type_mismatch = Some((index, expected, actual));
+                        first_type_mismatch = Some((index, expected, actual));
+                    } else if first_type_mismatch != Some((index, expected, actual)) {
+                        all_mismatches_identical = false;
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
@@ -1655,13 +1659,13 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             };
         }
 
-        // If exactly one overload had a type mismatch (all others failed on arg count),
-        // report TS2345 (the inner type error) instead of TS2769. This matches tsc's
-        // "best candidate" behavior: when one overload clearly matches by arity but
-        // fails on types, that overload's type error is surfaced directly.
+        // If all type mismatches are identical (or there's exactly one), and no other failures occurred,
+        // report TS2345 (the inner type error) instead of TS2769. This handles duplicate signatures
+        // or overloads where the failing parameter has the exact same type in all matching overloads.
         if !has_non_count_non_type_failure
-            && type_mismatch_count == 1
-            && let Some((index, expected, actual)) = sole_type_mismatch
+            && type_mismatch_count > 0
+            && all_mismatches_identical
+            && let Some((index, expected, actual)) = first_type_mismatch
         {
             return CallResult::ArgumentTypeMismatch {
                 index,
@@ -1675,6 +1679,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             func_type: self.interner.callable(callable.clone()),
             arg_types: arg_types.to_vec(),
             failures,
+            fallback_return: callable
+                .call_signatures
+                .first()
+                .map(|s| s.return_type)
+                .unwrap_or(TypeId::ANY),
         }
     }
 }

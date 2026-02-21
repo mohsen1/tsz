@@ -768,6 +768,11 @@ const fn can_merge_symbols_cross_file(existing_flags: u32, new_flags: u32) -> bo
         return true;
     }
 
+    // Class can merge with Class cross-file (invalid, but merged to report duplicate)
+    if (existing_flags & symbol_flags::CLASS) != 0 && (new_flags & symbol_flags::CLASS) != 0 {
+        return true;
+    }
+
     // Class can merge with Type Alias (invalid, but merged to report duplicate)
     if ((existing_flags & symbol_flags::CLASS) != 0 && (new_flags & symbol_flags::TYPE_ALIAS) != 0)
         || ((existing_flags & symbol_flags::TYPE_ALIAS) != 0
@@ -1407,6 +1412,15 @@ pub fn merge_bind_results_ref(results: &[&BindResult]) -> MergedProgram {
             let Some(old_sym) = result.symbols.get(*old_id) else {
                 continue;
             };
+
+            // CRITICAL: Populate declaration_arenas for user symbols
+            for &decl_idx in &old_sym.declarations {
+                declaration_arenas
+                    .entry((new_id, decl_idx))
+                    .or_default()
+                    .push(Arc::clone(&result.arena));
+            }
+
             if let Some(new_sym) = global_symbols.get_mut(new_id) {
                 // Check if this is a cross-file merge (same symbol already has data)
                 let is_cross_file_merge = !new_sym.declarations.is_empty();

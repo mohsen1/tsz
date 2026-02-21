@@ -685,18 +685,26 @@ impl<'a> CheckerState<'a> {
 
                 let arg_idx = self.map_expanded_arg_index_to_original(args, index);
                 if let Some(arg_idx) = arg_idx {
+                    println!(
+                        "Calling map_expanded: args[index]={:?} arg_idx={:?}",
+                        args.get(index),
+                        arg_idx
+                    );
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                     {
+                        println!("NOT suppressing weak key!");
                         // Try to elaborate: for object literal arguments, report TS2322
                         // on specific mismatched properties instead of TS2345 on the
                         // whole argument. This matches tsc behavior.
                         if !self.try_elaborate_object_literal_arg_error(arg_idx, expected) {
+                            println!("Calling check_argument_assignable_or_report!");
                             let _ =
                                 self.check_argument_assignable_or_report(actual, expected, arg_idx);
                         }
                     }
                 } else if !args.is_empty() {
                     let last_arg = args[args.len() - 1];
+                    println!("Calling check_argument_assignable_or_report (last_arg)!");
                     if !self.should_suppress_weak_key_arg_mismatch(callee_expr, args, index, actual)
                         && !self.try_elaborate_object_literal_arg_error(last_arg, expected)
                     {
@@ -721,8 +729,8 @@ impl<'a> CheckerState<'a> {
                 return_type
             }
             CallResult::NoOverloadMatch {
-                func_type,
                 failures,
+                fallback_return,
                 ..
             } => {
                 // Compatibility fallback: built-in toLocaleString supports
@@ -740,20 +748,7 @@ impl<'a> CheckerState<'a> {
                 // This improves error recovery for chained calls (e.g. [].concat().map())
                 // by allowing subsequent calls to see a typed object rather than ERROR.
                 // For Array.concat, this returns T[] (e.g. never[]) matching TSC behavior.
-                use tsz_solver::type_queries;
-                if let Some(shape) = type_queries::get_function_shape(self.ctx.types, func_type) {
-                    shape.return_type
-                } else if let Some(shape) =
-                    type_queries::get_callable_shape(self.ctx.types, func_type)
-                {
-                    shape
-                        .call_signatures
-                        .first()
-                        .map(|s| s.return_type)
-                        .unwrap_or(TypeId::ERROR)
-                } else {
-                    TypeId::ERROR
-                }
+                fallback_return
             }
             CallResult::ThisTypeMismatch {
                 expected_this,

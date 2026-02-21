@@ -852,14 +852,19 @@ impl<'a> CheckerState<'a> {
         arg_idx: NodeIndex,
     ) -> bool {
         if self.should_suppress_assignability_diagnostic(source, target) {
+            println!("suppress: should_suppress_assignability_diagnostic");
             return true;
         }
         if self.should_suppress_assignability_for_parse_recovery(arg_idx, arg_idx) {
+            println!("suppress: should_suppress_assignability_for_parse_recovery");
             return true;
         }
-        if self.is_assignable_to(source, target)
-            || self.should_skip_weak_union_error(source, target, arg_idx)
-        {
+        if self.is_assignable_to(source, target) {
+            println!("suppress: is_assignable_to");
+            return true;
+        }
+        if self.should_skip_weak_union_error(source, target, arg_idx) {
+            println!("suppress: should_skip_weak_union_error");
             return true;
         }
         self.error_argument_not_assignable_at(source, target, arg_idx);
