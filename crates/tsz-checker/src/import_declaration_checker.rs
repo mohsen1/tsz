@@ -251,6 +251,7 @@ impl<'a> CheckerState<'a> {
                         return;
                     }
                 }
+                self.check_export_target_is_module(import.module_specifier, imported_module);
             }
         }
 

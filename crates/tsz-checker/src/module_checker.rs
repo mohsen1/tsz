@@ -263,7 +263,7 @@ impl<'a> CheckerState<'a> {
         self.ctx.import_resolution_stack.pop();
     }
 
-    fn check_export_target_is_module(
+    pub(crate) fn check_export_target_is_module(
         &mut self,
         module_specifier_idx: NodeIndex,
         module_name: &str,

@@ -834,6 +834,7 @@ impl<'a> CheckerState<'a> {
     /// type E = { [key: string]: number };  // Index signature, not array-like
     /// ```
     pub(crate) fn is_array_like_type(&self, object_type: TypeId) -> bool {
+        let object_type = self.ctx.types.evaluate_type(object_type);
         // Check for array/tuple types directly
         if crate::query_boundaries::iterable_checker::is_array_type(self.ctx.types, object_type) {
             return true;
