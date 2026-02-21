@@ -1063,10 +1063,16 @@ impl<'a> CheckerState<'a> {
             let has_paired_getter = self.setter_has_paired_getter(member_idx, accessor);
             // Get accessor-level JSDoc to suppress TS7006 for @param annotations
             let accessor_jsdoc = self.get_jsdoc_for_function(member_idx);
+            let accessor_name = if !accessor.name.is_none() {
+                Some(accessor.name)
+            } else {
+                None
+            };
             self.check_setter_parameter(
                 &accessor.parameters.nodes,
                 has_paired_getter || skip_implicit_any_accessor,
                 accessor_jsdoc.as_deref(),
+                accessor_name,
             );
         }
 
