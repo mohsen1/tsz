@@ -2320,15 +2320,26 @@ impl Project {
             return Vec::new();
         };
 
+        let root_dirs_relative =
+            self.root_dirs_relative_specifier_from_files(from_file, target_file);
+        let path_mappings = self.path_mapping_specifiers_from_files(from_file, target_file);
         let package_imports = self.package_import_specifiers_from_files(from_file, target_file);
         let pref = self.import_module_specifier_preference.as_deref();
         let mut candidates = Vec::new();
 
         if pref == Some("non-relative") {
+            candidates.extend(path_mappings);
             candidates.extend(package_imports);
             candidates.push(relative);
+            if let Some(root_dirs_relative) = root_dirs_relative {
+                candidates.push(root_dirs_relative);
+            }
         } else {
             candidates.push(relative);
+            if let Some(root_dirs_relative) = root_dirs_relative {
+                candidates.push(root_dirs_relative);
+            }
+            candidates.extend(path_mappings);
             candidates.extend(package_imports);
         }
 
@@ -2348,6 +2359,167 @@ impl Project {
         }
 
         candidates
+    }
+
+    fn path_mapping_specifiers_from_files(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Vec<String> {
+        let Some((config_dir, compiler_options)) =
+            self.nearest_compiler_options_for_file(from_file)
+        else {
+            return Vec::new();
+        };
+
+        let Some(paths) = compiler_options
+            .get("paths")
+            .and_then(serde_json::Value::as_object)
+        else {
+            return Vec::new();
+        };
+
+        let base_url = compiler_options
+            .get("baseUrl")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(".");
+        let base_dir = normalize_path(&config_dir.join(base_url));
+        let target_file = path_to_string(&strip_js_ts_extension(&normalize_path(Path::new(
+            target_file,
+        ))))
+        .replace('\\', "/");
+
+        let mut specifiers = Vec::new();
+        for (alias_pattern, mapped_targets) in paths {
+            let Some(mapped_targets) = mapped_targets.as_array() else {
+                continue;
+            };
+            for mapped_target in mapped_targets {
+                let Some(mapped_target) = mapped_target.as_str() else {
+                    continue;
+                };
+                let mapped_target = mapped_target.replace('\\', "/");
+                let mapped_target = if let Some(rest) = mapped_target.strip_prefix("${configDir}/")
+                {
+                    path_to_string(&normalize_path(&config_dir.join(rest))).replace('\\', "/")
+                } else {
+                    path_to_string(&normalize_path(&base_dir.join(&mapped_target)))
+                        .replace('\\', "/")
+                };
+                let mapped_target =
+                    path_to_string(&strip_js_ts_extension(Path::new(&mapped_target)))
+                        .replace('\\', "/");
+
+                let Some(capture) = wildcard_capture_case_insensitive(&mapped_target, &target_file)
+                else {
+                    continue;
+                };
+                let Some(specifier) = apply_wildcard_capture(alias_pattern, &capture) else {
+                    continue;
+                };
+                specifiers.push(specifier);
+            }
+        }
+
+        let mut seen = FxHashSet::default();
+        specifiers.retain(|specifier| seen.insert(specifier.clone()));
+        specifiers
+    }
+
+    fn root_dirs_relative_specifier_from_files(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Option<String> {
+        let (config_dir, compiler_options) = self.nearest_compiler_options_for_file(from_file)?;
+        let root_dirs = compiler_options
+            .get("rootDirs")
+            .and_then(serde_json::Value::as_array)?;
+        if root_dirs.is_empty() {
+            return None;
+        }
+
+        let roots: Vec<PathBuf> = root_dirs
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(|root| normalize_path(&config_dir.join(root)))
+            .collect();
+        if roots.is_empty() {
+            return None;
+        }
+
+        let from_path = strip_ts_extension(&normalize_path(Path::new(from_file)));
+        let target_path = strip_ts_extension(&normalize_path(Path::new(target_file)));
+
+        for from_root in &roots {
+            let Ok(from_rel) = from_path.strip_prefix(from_root) else {
+                continue;
+            };
+            let from_rel_dir = from_rel.parent().unwrap_or_else(|| Path::new(""));
+            for target_root in &roots {
+                let Ok(target_rel) = target_path.strip_prefix(target_root) else {
+                    continue;
+                };
+
+                let relative = relative_path(from_rel_dir, target_rel);
+                let mut spec = path_to_string(&relative).replace('\\', "/");
+                if spec.is_empty() {
+                    continue;
+                }
+                if !spec.starts_with('.') {
+                    spec = format!("./{spec}");
+                }
+
+                // Preserve existing extension style behavior for relative imports.
+                match self.relative_import_style(from_file) {
+                    RelativeImportStyle::Minimal => {}
+                    RelativeImportStyle::Ts => {
+                        if let Some(ext) = ts_source_extension(target_file) {
+                            spec.push_str(ext);
+                        }
+                    }
+                    RelativeImportStyle::Js => spec.push_str(".js"),
+                }
+                return Some(spec);
+            }
+        }
+
+        None
+    }
+
+    fn nearest_compiler_options_for_file(
+        &self,
+        from_file: &str,
+    ) -> Option<(PathBuf, serde_json::Map<String, serde_json::Value>)> {
+        let mut current = Path::new(from_file).parent();
+        while let Some(dir) = current {
+            for config_name in ["tsconfig.json", "jsconfig.json"] {
+                let config_path = normalize_path(&dir.join(config_name));
+                let config_key = path_to_string(&config_path).replace('\\', "/");
+                let config_text = self
+                    .files
+                    .get(&config_key)
+                    .map(|f| f.source_text().to_string())
+                    .or_else(|| std::fs::read_to_string(&config_key).ok());
+                let Some(config_text) = config_text else {
+                    continue;
+                };
+                let Ok(config_json) = serde_json::from_str::<serde_json::Value>(&config_text)
+                else {
+                    continue;
+                };
+                let Some(compiler_options) = config_json
+                    .get("compilerOptions")
+                    .and_then(serde_json::Value::as_object)
+                    .cloned()
+                else {
+                    continue;
+                };
+                return Some((normalize_path(dir), compiler_options));
+            }
+            current = dir.parent();
+        }
+        None
     }
 
     fn relative_module_specifier_from_files(
@@ -2641,7 +2813,6 @@ impl Project {
         let target_relative = normalized_target.strip_prefix(&package_dir_prefix)?;
         let target_relative =
             path_to_string(&strip_js_ts_extension(Path::new(target_relative))).replace('\\', "/");
-        let target_lower = target_relative.to_ascii_lowercase();
 
         for (export_key, export_target) in exports_object {
             let key_pattern = if export_key == "." {
@@ -2667,7 +2838,7 @@ impl Project {
                         .replace('\\', "/");
 
                 let Some(capture) =
-                    wildcard_capture_case_insensitive(&target_pattern, &target_lower)
+                    wildcard_capture_case_insensitive(&target_pattern, &target_relative)
                 else {
                     continue;
                 };
@@ -2876,8 +3047,11 @@ fn path_to_string(path: &Path) -> String {
 fn compare_module_specifier_candidates(a: &String, b: &String) -> Ordering {
     let a_segments = a.matches('/').count();
     let b_segments = b.matches('/').count();
+    let a_relative = a.starts_with('.');
+    let b_relative = b.starts_with('.');
     a_segments
         .cmp(&b_segments)
+        .then_with(|| a_relative.cmp(&b_relative))
         .then_with(|| a.len().cmp(&b.len()))
         .then_with(|| a.cmp(b))
 }
@@ -2908,11 +3082,6 @@ fn package_import_specifiers_for_target(
     let package_dir = normalize_path(Path::new(package_dir));
     let target_path = strip_js_ts_extension(Path::new(target_file));
     let target_normalized = path_to_string(&target_path).replace('\\', "/");
-    let target_lower = target_normalized.to_ascii_lowercase();
-    let additional_targets: Vec<String> = additional_targets
-        .iter()
-        .map(|target| target.to_ascii_lowercase())
-        .collect();
 
     let mut specs = Vec::new();
 
@@ -2932,7 +3101,7 @@ fn package_import_specifiers_for_target(
             let resolved_stripped =
                 path_to_string(&strip_js_ts_extension(&resolved)).replace('\\', "/");
 
-            let capture = wildcard_capture_case_insensitive(&resolved_stripped, &target_lower)
+            let capture = wildcard_capture_case_insensitive(&resolved_stripped, &target_normalized)
                 .or_else(|| {
                     additional_targets.iter().find_map(|candidate| {
                         wildcard_capture_case_insensitive(&resolved_stripped, candidate)
@@ -3040,21 +3209,33 @@ fn apply_wildcard_capture(specifier_pattern: &str, capture: &str) -> Option<Stri
     None
 }
 
-fn wildcard_capture_case_insensitive(pattern: &str, target_lower: &str) -> Option<String> {
-    let pattern = pattern.replace('\\', "/");
-    let pattern_lower = pattern.to_ascii_lowercase();
-    let target = target_lower.to_ascii_lowercase();
-
-    if let Some((prefix, suffix)) = pattern_lower.split_once('*') {
-        if !target.starts_with(prefix) || !target.ends_with(suffix) {
-            return None;
+fn wildcard_capture_case_insensitive(pattern: &str, target: &str) -> Option<String> {
+    fn capture(pattern: &str, target: &str) -> Option<String> {
+        let pattern_lower = pattern.to_ascii_lowercase();
+        let target_lower = target.to_ascii_lowercase();
+        if let Some((prefix, suffix)) = pattern_lower.split_once('*') {
+            if !target_lower.starts_with(prefix) || !target_lower.ends_with(suffix) {
+                return None;
+            }
+            let start = prefix.len();
+            let end = target_lower.len().saturating_sub(suffix.len());
+            return Some(target[start..end].to_string());
         }
-        let start = prefix.len();
-        let end = target.len().saturating_sub(suffix.len());
-        return Some(target[start..end].to_string());
+        (pattern_lower == target_lower).then_some(String::new())
     }
 
-    (pattern_lower == target).then_some(String::new())
+    let pattern = pattern.replace('\\', "/");
+    let target = target.replace('\\', "/");
+
+    capture(&pattern, &target)
+        .or_else(|| pattern.strip_prefix('/').and_then(|p| capture(p, &target)))
+        .or_else(|| target.strip_prefix('/').and_then(|t| capture(&pattern, t)))
+        .or_else(|| {
+            pattern
+                .strip_prefix('/')
+                .zip(target.strip_prefix('/'))
+                .and_then(|(p, t)| capture(p, t))
+        })
 }
 
 fn strip_js_ts_extension(path: &Path) -> PathBuf {

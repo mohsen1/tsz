@@ -639,7 +639,7 @@ impl Server {
     ) {
         let mut current = std::path::Path::new(file_path).parent();
         while let Some(dir) = current {
-            for config_name in ["package.json", "tsconfig.json"] {
+            for config_name in ["package.json", "tsconfig.json", "jsconfig.json"] {
                 let config_path = dir.join(config_name);
                 let key = config_path.to_string_lossy().to_string();
                 if files.contains_key(&key) {
