@@ -52,8 +52,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Mutate the top-level diagnostic to be TS1360
-        let src_str = self.format_type(source);
-        let tgt_str = self.format_type(target);
+        let src_str = self.format_type_for_assignability_message(source);
+        let tgt_str = self.format_type_for_assignability_message(target);
         use tsz_common::diagnostics::data::diagnostic_codes;
         use tsz_common::diagnostics::data::diagnostic_messages;
         use tsz_common::diagnostics::format_message;
