@@ -23,5 +23,7 @@ pub(crate) mod type_computation_access;
 pub(crate) mod type_computation_call;
 pub(crate) mod type_computation_call_helpers;
 pub(crate) mod type_computation_complex;
+pub(crate) mod type_computation_identifier;
+pub(crate) mod type_computation_tagged_template;
 pub mod type_literal_checker;
 pub mod type_node;
