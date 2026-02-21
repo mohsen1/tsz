@@ -50,7 +50,9 @@ impl<'a> Printer<'a> {
         // Emit ${expression}
         self.write("${");
         self.emit(span.expression);
-        self.write("}");
+        if self.template_span_has_closing_brace(span) {
+            self.write("}");
+        }
         // Emit the literal part (middle or tail)
         self.emit(span.literal);
     }
@@ -81,7 +83,9 @@ impl<'a> Printer<'a> {
             .unwrap_or_default();
         // Template tail ends with `
         self.write(&text);
-        self.write("`");
+        if self.template_tail_has_backtick(node) {
+            self.write("`");
+        }
     }
 
     pub(super) fn get_raw_template_part_text(&self, node: &Node) -> Option<String> {
@@ -131,5 +135,42 @@ impl<'a> Printer<'a> {
         }
 
         Some(cooked_fallback)
+    }
+
+    fn template_span_has_closing_brace(
+        &self,
+        span: &tsz_parser::parser::node::TemplateSpanData,
+    ) -> bool {
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let Some(expr_node) = self.arena.get(span.expression) else {
+            return true;
+        };
+        let Some(lit_node) = self.arena.get(span.literal) else {
+            return false;
+        };
+
+        let start = std::cmp::min(expr_node.end as usize, text.len());
+        let end = std::cmp::min(lit_node.pos as usize, text.len());
+        if start >= end {
+            return false;
+        }
+
+        text[start..end].contains('}')
+    }
+
+    fn template_tail_has_backtick(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let start = std::cmp::min(node.pos as usize, text.len());
+        let end = std::cmp::min(node.end as usize, text.len());
+
+        if start < end && text[start..end].contains('`') {
+            return true;
+        }
+
+        end < text.len() && text.as_bytes()[end] == b'`'
     }
 }
