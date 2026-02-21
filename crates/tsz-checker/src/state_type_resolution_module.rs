@@ -396,14 +396,20 @@ impl<'a> CheckerState<'a> {
 
     fn merge_export_equals_members(
         &self,
-        binder: &tsz_binder::BinderState,
+        _binder: &tsz_binder::BinderState,
         exports: &tsz_binder::SymbolTable,
         combined: &mut tsz_binder::SymbolTable,
     ) {
-        let Some(export_equals_sym_id) = exports.get("export=") else {
+        let Some(mut export_equals_sym_id) = exports.get("export=") else {
             return;
         };
-        let Some(export_equals_symbol) = binder.get_symbol(export_equals_sym_id) else {
+
+        let mut visited = Vec::new();
+        if let Some(resolved) = self.resolve_alias_symbol(export_equals_sym_id, &mut visited) {
+            export_equals_sym_id = resolved;
+        }
+
+        let Some(export_equals_symbol) = self.get_symbol_globally(export_equals_sym_id) else {
             return;
         };
 
@@ -1089,7 +1095,7 @@ impl<'a> CheckerState<'a> {
 
         let has_default =
             if let Some(exports_table) = self.resolve_effective_module_exports(module_specifier) {
-                exports_table.has("default") || exports_table.has("export=")
+                exports_table.has("default")
             } else {
                 false
             };
