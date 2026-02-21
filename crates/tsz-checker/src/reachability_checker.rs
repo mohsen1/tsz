@@ -26,54 +26,6 @@ impl<'a> CheckerState<'a> {
         true
     }
 
-    /// Check for unreachable code after return/throw statements in a block.
-    ///
-    /// Emits TS7027 for any statements that come after a return or throw,
-    /// or after expressions of type 'never'.
-    pub(crate) fn check_unreachable_code_in_block(&mut self, statements: &[NodeIndex]) {
-        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-
-        // TS7027 is only emitted as an error when allowUnreachableCode is explicitly false.
-        // When undefined (None), tsc emits it as a suggestion (not captured in conformance).
-        // When true (Some(true)), it's fully suppressed.
-        if self.ctx.compiler_options.allow_unreachable_code != Some(false) {
-            return;
-        }
-
-        let mut unreachable = false;
-        for &stmt_idx in statements {
-            if unreachable {
-                // Skip statements that don't trigger TS7027 in TypeScript:
-                // - empty statements
-                // - function declarations (hoisted)
-                // - type/interface declarations (no runtime effect)
-                // - const enum declarations (no runtime effect when preserveConstEnums is off)
-                // - var declarations without initializers (hoisted, no runtime effect)
-                let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
-                    node.kind == syntax_kind_ext::EMPTY_STATEMENT
-                        || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                        || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
-                        || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                        || node.kind == syntax_kind_ext::MODULE_DECLARATION
-                        || self.is_var_without_initializer(stmt_idx, node)
-                } else {
-                    false
-                };
-                if !should_skip {
-                    self.error_at_node(
-                        stmt_idx,
-                        diagnostic_messages::UNREACHABLE_CODE_DETECTED,
-                        diagnostic_codes::UNREACHABLE_CODE_DETECTED,
-                    );
-                    // TypeScript only reports TS7027 for the first unreachable statement
-                    return;
-                }
-            } else if !self.statement_falls_through(stmt_idx) {
-                unreachable = true;
-            }
-        }
-    }
-
     // =========================================================================
     // Statement Analysis
     // =========================================================================
@@ -304,6 +256,14 @@ impl<'a> CheckerState<'a> {
         node.kind == SyntaxKind::TrueKeyword as u16
     }
 
+    /// Check if a condition is always false.
+    pub(crate) fn is_false_condition(&self, condition_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(condition_idx) else {
+            return false;
+        };
+        node.kind == SyntaxKind::FalseKeyword as u16
+    }
+
     /// Check if a statement contains a break statement.
     pub(crate) fn contains_break_statement(&self, stmt_idx: NodeIndex) -> bool {
         let Some(node) = self.ctx.arena.get(stmt_idx) else {
@@ -350,7 +310,7 @@ impl<'a> CheckerState<'a> {
     /// Check if a statement is a `var` declaration without any initializers.
     /// `var t;` after a throw/return is hoisted and has no runtime effect,
     /// so TypeScript doesn't report TS7027 for it.
-    fn is_var_without_initializer(
+    pub(crate) fn is_var_without_initializer(
         &self,
         _stmt_idx: NodeIndex,
         node: &tsz_parser::parser::node::Node,

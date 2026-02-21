@@ -1241,13 +1241,17 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
                 // Static blocks contain statements that must be type-checked
                 if let Some(block) = self.ctx.arena.get_block(node) {
-                    // Check for unreachable code in the static block
-                    self.check_unreachable_code_in_block(&block.statements.nodes);
-
+                    let prev_unreachable = self.ctx.is_unreachable;
+                    let prev_reported = self.ctx.has_reported_unreachable;
                     // Check each statement in the block
                     for &stmt_idx in &block.statements.nodes {
                         self.check_statement(stmt_idx);
+                        if !self.statement_falls_through(stmt_idx) {
+                            self.ctx.is_unreachable = true;
+                        }
                     }
+                    self.ctx.is_unreachable = prev_unreachable;
+                    self.ctx.has_reported_unreachable = prev_reported;
                 }
             }
             syntax_kind_ext::INDEX_SIGNATURE => {

@@ -585,6 +585,12 @@ pub struct CheckerContext<'a> {
     /// Used to detect when labeled jumps cross function boundaries.
     pub function_depth: u32,
 
+    /// Track whether current code path is syntactically unreachable.
+    pub is_unreachable: bool,
+
+    /// Track whether we have already reported an unreachable error in this block/scope.
+    pub has_reported_unreachable: bool,
+
     /// Stack of labels in scope.
     /// Each entry contains (`label_name`, `is_iteration`, `function_depth_when_defined`).
     /// Used for labeled break/continue validation.

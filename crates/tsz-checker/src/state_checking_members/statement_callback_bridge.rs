@@ -43,10 +43,6 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_return_statement(self, stmt_idx);
     }
 
-    fn check_unreachable_code_in_block(&mut self, stmts: &[NodeIndex]) {
-        CheckerState::check_unreachable_code_in_block(self, stmts);
-    }
-
     fn check_function_implementations(&mut self, stmts: &[NodeIndex]) {
         CheckerState::check_function_implementations(self, stmts);
     }
@@ -793,6 +789,45 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         CheckerState::check_truthy_or_falsy(self, node_idx);
     }
 
+    fn is_true_condition(&self, condition_idx: NodeIndex) -> bool {
+        CheckerState::is_true_condition(self, condition_idx)
+    }
+
+    fn is_false_condition(&self, condition_idx: NodeIndex) -> bool {
+        CheckerState::is_false_condition(self, condition_idx)
+    }
+
+    fn report_unreachable_statement(&mut self, stmt_idx: NodeIndex) {
+        if !self.ctx.is_unreachable {
+            return;
+        }
+
+        // Delegate to a helper that checks should_skip
+        let should_skip = if let Some(node) = self.ctx.arena.get(stmt_idx) {
+            node.kind == syntax_kind_ext::EMPTY_STATEMENT
+                || node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || node.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                || node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                || node.kind == syntax_kind_ext::MODULE_DECLARATION
+                || node.kind == syntax_kind_ext::BLOCK
+                || CheckerState::is_var_without_initializer(self, stmt_idx, node)
+        } else {
+            false
+        };
+
+        if !should_skip && !self.ctx.has_reported_unreachable {
+            if self.ctx.compiler_options.allow_unreachable_code != Some(false) {
+                return;
+            }
+            self.error_at_node(
+                stmt_idx,
+                crate::diagnostics::diagnostic_messages::UNREACHABLE_CODE_DETECTED,
+                crate::diagnostics::diagnostic_codes::UNREACHABLE_CODE_DETECTED,
+            );
+            self.ctx.has_reported_unreachable = true;
+        }
+    }
+
     fn check_for_in_expression_type(&mut self, expr_type: TypeId, expression: NodeIndex) {
         CheckerState::check_for_in_expression_type(self, expr_type, expression);
     }
@@ -972,6 +1007,26 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
     fn check_continue_statement(&mut self, stmt_idx: NodeIndex) {
         CheckerState::check_continue_statement(self, stmt_idx);
+    }
+
+    fn is_unreachable(&self) -> bool {
+        self.ctx.is_unreachable
+    }
+
+    fn set_unreachable(&mut self, value: bool) {
+        self.ctx.is_unreachable = value;
+    }
+
+    fn has_reported_unreachable(&self) -> bool {
+        self.ctx.has_reported_unreachable
+    }
+
+    fn set_reported_unreachable(&mut self, value: bool) {
+        self.ctx.has_reported_unreachable = value;
+    }
+
+    fn statement_falls_through(&mut self, stmt_idx: NodeIndex) -> bool {
+        CheckerState::statement_falls_through(self, stmt_idx)
     }
 
     fn enter_iteration_statement(&mut self) {
