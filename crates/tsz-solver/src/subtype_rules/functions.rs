@@ -521,7 +521,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 .infer_source_type_param_substitution(&source_instantiated, &target_instantiated)
             {
                 Ok(sub) => sub,
-                Err(_) => return SubtypeResult::False,
+                Err(_) => {
+                    // Inference failed (e.g., bounds violation). Fall back to tsc's
+                    // `getErasedSignature` behavior: replace type params with their
+                    // constraints (or `unknown` if unconstrained).
+                    let mut constraint_sub = TypeSubstitution::new();
+                    for tp in &source_instantiated.type_params {
+                        constraint_sub.insert(tp.name, tp.constraint.unwrap_or(TypeId::UNKNOWN));
+                    }
+                    constraint_sub
+                }
             };
             source_instantiated =
                 self.instantiate_function_shape(&source_instantiated, &substitution);
