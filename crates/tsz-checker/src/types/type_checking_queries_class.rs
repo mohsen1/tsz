@@ -160,7 +160,8 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if let Some(name_node) = self.ctx.arena.get(*decl_idx) {
-                let start = name_node.pos;
+                // Match tsc: TS6133 on unused type parameters anchors at the '<' token.
+                let start = name_node.pos.saturating_sub(1);
                 let length = name_node.end.saturating_sub(name_node.pos);
                 self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
                     file: file_name.clone(),
