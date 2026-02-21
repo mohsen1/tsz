@@ -24,6 +24,8 @@ impl<'a> CheckerState<'a> {
     /// - Lowercase tags (e.g., `<div>`) look up `JSX.IntrinsicElements['div']`
     /// - Uppercase tags (e.g., `<MyComponent>`) resolve as variable expressions
     pub(crate) fn get_type_of_jsx_opening_element(&mut self, idx: NodeIndex) -> TypeId {
+        self.check_jsx_factory_in_scope(idx);
+
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ANY;
         };
@@ -171,6 +173,8 @@ impl<'a> CheckerState<'a> {
     ///
     /// Rule #36: Fragments resolve to JSX.Element type.
     pub(crate) fn get_jsx_element_type(&mut self, node_idx: NodeIndex) -> TypeId {
+        self.check_jsx_factory_in_scope(node_idx);
+
         // Try to resolve JSX.Element from the JSX namespace
         if let Some(jsx_sym_id) = self.get_jsx_namespace_type() {
             let lib_binders = self.get_lib_binders();
@@ -410,5 +414,32 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             );
         }
+    }
+
+    // =========================================================================
+    // JSX Factory Check
+    // =========================================================================
+
+    /// Check that the JSX factory is in scope.
+    /// Emits TS2874 if the factory cannot be found.
+    pub(crate) fn check_jsx_factory_in_scope(&mut self, node_idx: NodeIndex) {
+        let factory = self.ctx.compiler_options.jsx_factory.clone();
+        let root_ident = factory.split('.').next().unwrap_or(&factory);
+
+        if root_ident.is_empty() {
+            return;
+        }
+
+        if self.resolve_global_value_symbol(root_ident).is_some() {
+            return;
+        }
+
+        // If not found, emit TS2874
+        use crate::diagnostics::diagnostic_codes;
+        self.error_at_node_msg(
+            node_idx,
+            diagnostic_codes::THIS_JSX_TAG_REQUIRES_TO_BE_IN_SCOPE_BUT_IT_COULD_NOT_BE_FOUND,
+            &[root_ident],
+        );
     }
 }

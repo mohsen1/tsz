@@ -84,6 +84,10 @@ pub struct CheckerOptions {
     pub no_unchecked_side_effect_imports: bool,
     /// When true, require 'override' modifier on members that override base class members (TS4114).
     pub no_implicit_override: bool,
+    /// JSX factory function (e.g. `React.createElement`)
+    pub jsx_factory: String,
+    /// JSX fragment factory function (e.g. `React.Fragment`)
+    pub jsx_fragment_factory: String,
 }
 
 impl Default for CheckerOptions {
@@ -121,6 +125,8 @@ impl Default for CheckerOptions {
             no_resolve: false,
             no_unchecked_side_effect_imports: true,
             no_implicit_override: false,
+            jsx_factory: "React.createElement".to_string(),
+            jsx_fragment_factory: "React.Fragment".to_string(),
         }
     }
 }

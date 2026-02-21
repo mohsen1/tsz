@@ -99,6 +99,16 @@ pub struct CompilerOptions {
     #[serde(default)]
     pub jsx: Option<String>,
     #[serde(default)]
+    #[serde(rename = "jsxFactory")]
+    pub jsx_factory: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "jsxFragmentFactory")]
+    pub jsx_fragment_factory: Option<String>,
+    #[serde(default)]
+    #[serde(rename = "reactNamespace")]
+    pub react_namespace: Option<String>,
+
+    #[serde(default)]
     pub lib: Option<Vec<String>>,
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub no_lib: Option<bool>,
@@ -513,6 +523,15 @@ pub fn resolve_compiler_options(
         resolved.type_roots = Some(roots);
     }
 
+    if let Some(factory) = options.jsx_factory.as_deref() {
+        resolved.checker.jsx_factory = factory.to_string();
+    } else if let Some(ns) = options.react_namespace.as_deref() {
+        resolved.checker.jsx_factory = format!("{ns}.createElement");
+    }
+    if let Some(frag) = options.jsx_fragment_factory.as_deref() {
+        resolved.checker.jsx_fragment_factory = frag.to_string();
+    }
+
     if let Some(jsx) = options.jsx.as_deref() {
         resolved.jsx = Some(parse_jsx_emit(jsx)?);
     }
@@ -850,6 +869,10 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             types,
             type_roots,
             jsx,
+            jsx_factory,
+            jsx_fragment_factory,
+            react_namespace,
+
             lib,
             no_lib,
             no_types_and_symbols,

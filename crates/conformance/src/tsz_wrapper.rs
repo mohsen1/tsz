@@ -608,6 +608,8 @@ fn canonical_option_name(key_lower: &str) -> &str {
         "isolatedmodules" => "isolatedModules",
         "jsx" => "jsx",
         "jsxfactory" => "jsxFactory",
+        "reactnamespace" => "reactNamespace",
+
         "jsxfragmentfactory" => "jsxFragmentFactory",
         "jsximportsource" => "jsxImportSource",
         "keyofstringsonly" => "keyofStringsOnly",
