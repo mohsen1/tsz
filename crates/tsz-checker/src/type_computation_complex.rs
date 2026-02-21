@@ -467,6 +467,10 @@ impl<'a> CheckerState<'a> {
 
         match result {
             CallResult::Success(return_type) => return_type,
+            CallResult::NonVoidFunctionCalledWithNew => {
+                self.error_non_void_function_called_with_new_at(idx);
+                TypeId::ANY
+            }
             CallResult::NotCallable { .. } => {
                 // In circular class-resolution scenarios, class constructor targets can
                 // transiently lose construct signatures. TypeScript suppresses TS2351

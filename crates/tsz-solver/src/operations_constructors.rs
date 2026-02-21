@@ -28,9 +28,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     self.resolve_function_call(shape.as_ref(), arg_types)
                 } else {
                     // In TypeScript, `new f()` on a regular function (not arrow)
-                    // is allowed and returns `any`. This matches the JS semantics
-                    // where any function can be used as a constructor.
-                    CallResult::Success(TypeId::ANY)
+                    // is allowed and returns `any`, BUT only if it returns void.
+                    // This matches TS2350 semantics.
+                    match self.resolve_function_call(shape.as_ref(), arg_types) {
+                        CallResult::Success(ret_type) => {
+                            let ret_type = crate::evaluate::evaluate_type(self.interner, ret_type);
+                            if ret_type != TypeId::VOID {
+                                CallResult::NonVoidFunctionCalledWithNew
+                            } else {
+                                CallResult::Success(TypeId::ANY)
+                            }
+                        }
+                        err => err,
+                    }
                 }
             }
             TypeData::Callable(c_id) => {
@@ -75,10 +85,20 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn resolve_callable_new(&mut self, shape: &CallableShape, arg_types: &[TypeId]) -> CallResult {
         if shape.construct_signatures.is_empty() {
             // If there are call signatures but no construct signatures (e.g. a method
-            // accessed as a property), TypeScript allows `new` and returns `any`,
-            // matching JS semantics where any function can be used as a constructor.
+            // accessed as a property), TypeScript allows `new` and returns `any`
+            // matching JS semantics where any function can be used as a constructor,
+            // BUT ONLY if it resolves to a signature that returns `void`. (TS2350)
             if !shape.call_signatures.is_empty() {
-                return CallResult::Success(TypeId::ANY);
+                match self.resolve_callable_call(shape, arg_types) {
+                    CallResult::Success(ret_type) => {
+                        let ret_type = crate::evaluate::evaluate_type(self.interner, ret_type);
+                        if ret_type != TypeId::VOID {
+                            return CallResult::NonVoidFunctionCalledWithNew;
+                        }
+                        return CallResult::Success(TypeId::ANY);
+                    }
+                    err => return err,
+                }
             }
             return CallResult::NotCallable {
                 type_id: self.interner.callable(shape.clone()),

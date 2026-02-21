@@ -110,6 +110,9 @@ pub enum CallResult {
         actual: TypeId,
     },
 
+    /// TS2350: Only a void function can be called with the 'new' keyword.
+    NonVoidFunctionCalledWithNew,
+
     /// Type parameter constraint violation (TS2322, not TS2345).
     /// Used when inference from callback return types produces a type that
     /// violates the type parameter's constraint. tsc reports TS2322 on the
@@ -1512,7 +1515,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     }
 
     /// Resolve a call to a callable type (with overloads).
-    fn resolve_callable_call(
+    pub(crate) fn resolve_callable_call(
         &mut self,
         callable: &CallableShape,
         arg_types: &[TypeId],

@@ -569,4 +569,20 @@ impl<'a> CheckerState<'a> {
             diagnostic_codes::VALUE_OF_TYPE_IS_NOT_CALLABLE_DID_YOU_MEAN_TO_INCLUDE_NEW,
         ));
     }
+
+    /// Report TS2350: "Only a void function can be called with the 'new' keyword."
+    pub fn error_non_void_function_called_with_new_at(&mut self, idx: NodeIndex) {
+        let Some(loc) = self.get_source_location(idx) else {
+            return;
+        };
+
+        self.ctx.diagnostics.push(Diagnostic::error(
+            self.ctx.file_name.clone(),
+            loc.start,
+            loc.length(),
+            diagnostic_messages::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD
+                .to_string(),
+            diagnostic_codes::ONLY_A_VOID_FUNCTION_CAN_BE_CALLED_WITH_THE_NEW_KEYWORD,
+        ));
+    }
 }
