@@ -6,7 +6,9 @@ usage() {
 Usage:
   scripts/codex-loop.sh [--conformance|--emit|--lsp|--arch|--spark]
                         [--session N|--session=N] [--prompt-file FILE]
-                        [--workdir DIR] [--model MODEL] [--help]
+                        [--workdir DIR] [--model MODEL]
+                        [--sandbox MODE] [--approval POLICY] [--bypass]
+                        [--help]
 
 Modes:
   --conformance   Continuous conformance loop (default)
@@ -20,6 +22,10 @@ Options:
   --prompt-file   Override prompt file path
   --workdir DIR   Root directory to run codex from (default: repo root)
   --model MODEL   Override model passed to `codex exec --model`
+  --sandbox MODE  Codex sandbox mode: read-only|workspace-write|danger-full-access
+                  (default: danger-full-access)
+  --approval POL  Codex approval policy: untrusted|on-failure|on-request|never (default: never)
+  --bypass        Pass --dangerously-bypass-approvals-and-sandbox to codex exec
   -h, --help      Show help
 EOF
 }
@@ -29,10 +35,14 @@ SESSION_ID=""
 MODEL_OVERRIDE=""
 PROMPT_FILE=""
 WORKDIR="$(pwd)"
-TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-120}"
+SANDBOX_MODE="${CODEX_LOOP_SANDBOX:-danger-full-access}"
+APPROVAL_POLICY="${CODEX_LOOP_APPROVAL:-never}"
+BYPASS_APPROVALS_AND_SANDBOX="${CODEX_LOOP_BYPASS:-0}"
+TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-300}"
 SLEEP_SECONDS="${CODEX_LOOP_SLEEP:-2}"
-CONF_QUARTERS="${CODEX_LOOP_CONFORMANCE_QUARTERS:-4}"
+CONF_QUARTERS="${CODEX_LOOP_CONFORMANCE_QUARTERS:-}"
 CONF_TOTAL_TESTS="${CODEX_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
+LOG_ROOT="${CODEX_LOOP_LOG_ROOT:-logs/loops/codex}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +74,26 @@ while [[ $# -gt 0 ]]; do
       MODEL_OVERRIDE="${1#*=}"
       shift
       ;;
+    --sandbox)
+      SANDBOX_MODE="${2:-}"
+      shift 2
+      ;;
+    --sandbox=*)
+      SANDBOX_MODE="${1#*=}"
+      shift
+      ;;
+    --approval)
+      APPROVAL_POLICY="${2:-}"
+      shift 2
+      ;;
+    --approval=*)
+      APPROVAL_POLICY="${1#*=}"
+      shift
+      ;;
+    --bypass)
+      BYPASS_APPROVALS_AND_SANDBOX=1
+      shift
+      ;;
     -h|--help)
       usage
       exit 0
@@ -90,6 +120,55 @@ if [[ -n "$SESSION_ID" ]] && ! [[ "$SESSION_ID" =~ ^[0-9]+$ ]]; then
   echo "Invalid session id: $SESSION_ID (expected integer)" >&2
   exit 1
 fi
+
+if [[ -z "$SESSION_ID" ]]; then
+  parent_dir="$(dirname "$WORKDIR")"
+  base_name="$(basename "$WORKDIR")"
+  if [[ "$base_name" =~ ^tsz-[0-9]+$ ]]; then
+    if command -v sort >/dev/null 2>&1 && sort -V </dev/null >/dev/null 2>&1; then
+      sort_cmd="sort -V"
+    else
+      sort_cmd="sort"
+    fi
+
+    IFS=$'\n' read -r -d '' -a siblings < <(find "$parent_dir" -maxdepth 1 -type d -name "tsz-[0-9]*" -exec basename {} \; | $sort_cmd && printf '\0')
+    total_shards=${#siblings[@]}
+    my_index=-1
+    for i in "${!siblings[@]}"; do
+      if [[ "${siblings[$i]}" == "$base_name" ]]; then
+        my_index=$i
+        break
+      fi
+    done
+    if [[ $my_index -ge 0 ]]; then
+      SESSION_ID=$((my_index + 1))
+      if [[ -z "$CONF_QUARTERS" ]]; then
+        CONF_QUARTERS="$total_shards"
+      fi
+      echo "Auto-detected sharding: Session $SESSION_ID of $CONF_QUARTERS (based on $base_name among $total_shards siblings)"
+    fi
+  fi
+fi
+
+if [[ -z "$CONF_QUARTERS" ]]; then
+  CONF_QUARTERS=4
+fi
+
+case "$SANDBOX_MODE" in
+  read-only|workspace-write|danger-full-access) ;;
+  *)
+    echo "Invalid sandbox mode: $SANDBOX_MODE" >&2
+    exit 1
+    ;;
+esac
+
+case "$APPROVAL_POLICY" in
+  untrusted|on-failure|on-request|never) ;;
+  *)
+    echo "Invalid approval policy: $APPROVAL_POLICY" >&2
+    exit 1
+    ;;
+esac
 
 if ! command -v codex >/dev/null 2>&1; then
   echo "codex CLI not found in PATH" >&2
@@ -122,12 +201,12 @@ else
   REASONING_EFFORT="low"
 fi
 
-mkdir -p logs
+mkdir -p "$LOG_ROOT"
 if [[ -n "$SESSION_ID" ]]; then
-  LOG_FILE="logs/codex-loop.session-${SESSION_ID}.${MODE}.log"
+  LOG_FILE="${LOG_ROOT}/session-${SESSION_ID}.${MODE}.log"
   SESSION_TAG=" session=$SESSION_ID"
 else
-  LOG_FILE="logs/codex-loop.${MODE}.log"
+  LOG_FILE="${LOG_ROOT}/${MODE}.log"
   SESSION_TAG=""
 fi
 
@@ -210,7 +289,7 @@ Mandatory completion gate for this iteration:
   printf '%s\n' "$prompt"
 }
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting mode=$MODE${SESSION_TAG} workdir=$WORKDIR log=$LOG_FILE model=$MODEL reasoning=$REASONING_EFFORT" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting mode=$MODE${SESSION_TAG} workdir=$WORKDIR log=$LOG_FILE model=$MODEL reasoning=$REASONING_EFFORT sandbox=$SANDBOX_MODE approval=$APPROVAL_POLICY bypass=$BYPASS_APPROVALS_AND_SANDBOX" | tee -a "$LOG_FILE"
 
 iteration=0
 while true; do
@@ -219,7 +298,10 @@ while true; do
 
   ITERATION_START_HEAD="$(git -C "$WORKDIR" rev-parse HEAD 2>/dev/null || true)"
   PROMPT_TEXT="$(build_prompt)"
-  CMD=( "$CODEX_BIN" exec --model "$MODEL" -c "model_reasoning_effort=$REASONING_EFFORT" -C "$WORKDIR" )
+  CMD=( "$CODEX_BIN" exec --model "$MODEL" -s "$SANDBOX_MODE" -c "approval_policy=\"$APPROVAL_POLICY\"" -c "model_reasoning_effort=$REASONING_EFFORT" -C "$WORKDIR" )
+  if [[ "$BYPASS_APPROVALS_AND_SANDBOX" == "1" ]]; then
+    CMD+=( --dangerously-bypass-approvals-and-sandbox )
+  fi
   # The OpenAI Responses API rejects web_search with minimal reasoning effort.
   if [[ "$REASONING_EFFORT" == "minimal" ]]; then
     CMD+=( -c 'web_search="disabled"' )
@@ -242,8 +324,12 @@ while true; do
     if [[ -z "$ITERATION_START_HEAD" ]]; then
       echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration completion_gate=failed reason=start_head_unavailable" | tee -a "$LOG_FILE"
       status=40
-    elif ! verify_iteration_completion "$WORKDIR" "$ITERATION_START_HEAD" "$iteration"; then
-      status=$?
+    else
+      completion_status=0
+      verify_iteration_completion "$WORKDIR" "$ITERATION_START_HEAD" "$iteration" || completion_status=$?
+      if (( completion_status != 0 )); then
+        status=$completion_status
+      fi
     fi
   fi
 
