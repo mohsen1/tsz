@@ -329,6 +329,20 @@ impl<'a> Printer<'a> {
         // Generate module var name: "./foo" -> "foo_1"
         let module_var = self.next_commonjs_module_var(&module_spec);
         self.register_commonjs_named_import_substitutions(node, &module_var);
+        let is_default_only_ast = clause.name.is_some() && clause.named_bindings.is_none();
+
+        if is_default_only_ast {
+            // Default-only CommonJS import uses the interop temp directly:
+            // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
+            // and identifier references are rewritten via substitution map to `m_1.default`.
+            self.write_var_or_const();
+            self.write(&module_var);
+            self.write(" = __importDefault(require(\"");
+            self.write(&module_spec);
+            self.write("\"));");
+            self.write_line();
+            return;
+        }
 
         // Check if this is a namespace-only import (import * as ns from "mod")
         // to inline: var ns = __importStar(require("mod"));
@@ -429,6 +443,15 @@ impl<'a> Printer<'a> {
         let Some(clause) = self.arena.get_import_clause(clause_node) else {
             return;
         };
+        if clause.name.is_some()
+            && let Some(default_name_node) = self.arena.get(clause.name)
+            && let Some(default_ident) = self.arena.get_identifier(default_name_node)
+        {
+            self.commonjs_named_import_substitutions.insert(
+                default_ident.escaped_text.to_string(),
+                format!("{module_var}.default"),
+            );
+        }
         if !clause.named_bindings.is_some() {
             return;
         }
