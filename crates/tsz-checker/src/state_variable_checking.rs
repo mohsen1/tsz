@@ -1211,10 +1211,16 @@ impl<'a> CheckerState<'a> {
             // Note: This applies specifically to 'var' merging where types must match.
             // let/const duplicates are caught earlier by the binder (TS2451).
             // Skip TS2403 for mergeable declarations (namespace, enum, class, interface, function overloads).
-            let is_block_scoped =
-                self.ctx.binder.symbols.get(sym_id).is_some_and(|s| {
-                    s.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
-                });
+            let is_block_scoped = if let Some(ext) = self.ctx.arena.get_extended(decl_idx)
+                && let Some(parent) = self.ctx.arena.get(ext.parent)
+                && parent.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_DECLARATION_LIST
+            {
+                let flags = parent.flags as u32;
+                use tsz_parser::parser::node_flags;
+                (flags & (node_flags::LET | node_flags::CONST | node_flags::USING)) != 0
+            } else {
+                false
+            };
 
             // TS2403 only applies to non-block-scoped variables (var)
             if !is_block_scoped {
@@ -1332,19 +1338,31 @@ impl<'a> CheckerState<'a> {
                                 let other_type = self.get_type_of_node(other_decl);
 
                                 // Check if other declaration is mergeable (namespace, etc.)
-                                let is_other_mergeable =
-                                    if let Some(other_node) = self.ctx.arena.get(other_decl) {
-                                        matches!(
-                                            other_node.kind,
-                                            syntax_kind_ext::MODULE_DECLARATION
-                                                | syntax_kind_ext::ENUM_DECLARATION
-                                                | syntax_kind_ext::CLASS_DECLARATION
-                                                | syntax_kind_ext::INTERFACE_DECLARATION
-                                                | syntax_kind_ext::FUNCTION_DECLARATION
-                                        )
-                                    } else {
-                                        false
-                                    };
+                                let other_node_kind =
+                                    self.ctx.arena.get(other_decl).map_or(0, |n| n.kind);
+                                let is_other_mergeable = matches!(
+                                    other_node_kind,
+                                    syntax_kind_ext::MODULE_DECLARATION
+                                        | syntax_kind_ext::ENUM_DECLARATION
+                                        | syntax_kind_ext::CLASS_DECLARATION
+                                        | syntax_kind_ext::INTERFACE_DECLARATION
+                                        | syntax_kind_ext::FUNCTION_DECLARATION
+                                );
+
+                                // Functions, classes, and enums don't merge with variables,
+                                // so they should not establish a "previous variable type" for TS2403.
+                                // Only other variables and namespaces (which DO merge with vars) establish this.
+                                let establishes_var_type = matches!(
+                                    other_node_kind,
+                                    syntax_kind_ext::VARIABLE_DECLARATION
+                                        | syntax_kind_ext::PARAMETER
+                                        | syntax_kind_ext::BINDING_ELEMENT
+                                        | syntax_kind_ext::MODULE_DECLARATION
+                                );
+
+                                if !establishes_var_type {
+                                    continue;
+                                }
 
                                 if !is_other_mergeable
                                     && !self.are_var_decl_types_compatible(other_type, final_type)
