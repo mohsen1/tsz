@@ -1086,6 +1086,7 @@ impl<'a> CheckerState<'a> {
             let is_ambient = self.is_ambient_declaration(decl_idx);
             let is_const = self.is_const_variable_declaration(decl_idx);
             if self.ctx.no_implicit_any()
+                && !sym_already_cached
                 && var_decl.type_annotation.is_none()
                 && var_decl.initializer.is_none()
                 && final_type == TypeId::ANY
