@@ -601,7 +601,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Numeric literals become string property names (e.g., 0 → "0").
                         // This handles enum member values like `enum E { A = 0 }`.
                         let s = self.interner().intern_string(
-                            &crate::subtype_rules::literals::format_number_for_template(n.0),
+                            &crate::relations::subtype_rules::literals::format_number_for_template(
+                                n.0,
+                            ),
                         );
                         keys.string_literals.push(s);
                     } else {
