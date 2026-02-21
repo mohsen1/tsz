@@ -885,14 +885,30 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("get: ");
                     self.emit_node(get);
-                    self.write(",");
+                    if let Some(comment) = self.extract_trailing_comment_from_function(get) {
+                        self.write(" ");
+                        self.write(&comment);
+                        self.write_line();
+                        self.write_indent();
+                        self.write(",");
+                    } else {
+                        self.write(",");
+                    }
                     self.write_line();
                 }
                 if let Some(set) = &descriptor.set {
                     self.write_indent();
                     self.write("set: ");
                     self.emit_node(set);
-                    self.write(",");
+                    if let Some(comment) = self.extract_trailing_comment_from_function(set) {
+                        self.write(" ");
+                        self.write(&comment);
+                        self.write_line();
+                        self.write_indent();
+                        self.write(",");
+                    } else {
+                        self.write(",");
+                    }
                     self.write_line();
                 }
                 self.write_indent();

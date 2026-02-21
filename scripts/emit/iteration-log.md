@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 803
+Count: 804
+- 804: accessor defineProperty comment comma parity
 - 803: template span boundary recovery parity fix
 - 802: class parser recovery emit parity fix
 - 801: emit alias runtime parity fix
