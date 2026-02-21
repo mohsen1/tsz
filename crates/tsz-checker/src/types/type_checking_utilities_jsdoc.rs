@@ -243,6 +243,100 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Extract and parse `JSDoc` `@satisfies` annotations for a given node.
+    pub(crate) fn jsdoc_satisfies_annotation_for_node(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if is_js_file && !self.ctx.compiler_options.check_js {
+            return None;
+        }
+
+        let sf = self.ctx.arena.source_files.first()?;
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = self.ctx.arena.get(idx)?;
+        let mut jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
+        if jsdoc.is_none() {
+            let mut current = idx;
+            for _ in 0..4 {
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    break;
+                };
+                jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
+                if jsdoc.is_some() {
+                    break;
+                }
+                current = parent;
+            }
+        }
+        let jsdoc = jsdoc?;
+        let type_expr = Self::extract_jsdoc_satisfies_expression(&jsdoc)?;
+        let type_expr = type_expr.trim();
+
+        self.jsdoc_type_from_expression(type_expr).or_else(|| {
+            self.resolve_jsdoc_typedef_type(type_expr, idx, node.pos, comments, source_text)
+                .or_else(|| {
+                    if let Some((module_specifier, member_name)) =
+                        Self::parse_jsdoc_import_type(type_expr)
+                        && let Some(sym_id) =
+                            self.resolve_cross_file_export(&module_specifier, &member_name)
+                    {
+                        let resolved = self.type_reference_symbol_type(sym_id);
+                        if resolved != TypeId::ERROR {
+                            return Some(resolved);
+                        }
+                    }
+                    if let Some(sym_id) = self.ctx.binder.file_locals.get(type_expr) {
+                        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+                        if (symbol.flags & symbol_flags::TYPE_ALIAS) != 0
+                            || (symbol.flags & symbol_flags::CLASS) != 0
+                            || (symbol.flags & symbol_flags::INTERFACE) != 0
+                            || (symbol.flags & symbol_flags::ENUM) != 0
+                        {
+                            let resolved = self.type_reference_symbol_type(sym_id);
+                            if resolved != TypeId::ERROR {
+                                return Some(resolved);
+                            }
+                        }
+                    }
+                    None
+                })
+        })
+    }
+
+    fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
+        let tag_pos = jsdoc.find("@satisfies")?;
+        let rest = &jsdoc[tag_pos + "@satisfies".len()..];
+        let open = rest.find('{')?;
+        let after_open = &rest[open + 1..];
+        let mut depth = 1usize;
+        let mut end_idx = None;
+        for (i, ch) in after_open.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        end_idx = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let end_idx = end_idx?;
+        Some(after_open[..end_idx].trim())
+    }
+
     fn parse_jsdoc_import_type(type_expr: &str) -> Option<(String, String)> {
         let expr = type_expr.trim();
         let rest = expr.strip_prefix("import(")?;

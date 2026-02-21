@@ -735,6 +735,16 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     if let Some(jsdoc_type) = self.checker.jsdoc_type_annotation_for_node(idx) {
                         let _ = self.checker.get_type_of_node(paren.expression);
                         jsdoc_type
+                    } else if let Some(satisfies_type) =
+                        self.checker.jsdoc_satisfies_annotation_for_node(idx)
+                    {
+                        let expr_type = self.checker.get_type_of_node(paren.expression);
+                        let _ = self.checker.check_satisfies_assignable_or_report(
+                            expr_type,
+                            satisfies_type,
+                            paren.expression,
+                        );
+                        expr_type
                     } else {
                         self.checker.get_type_of_node(paren.expression)
                     }
