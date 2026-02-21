@@ -1,7 +1,7 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (5th audit)
-**Branch**: main (commit d755ae809)
+**Date**: 2026-02-21 (6th audit)
+**Branch**: main (commit f3109a0ce)
 **Status**: ALL CLEAR — no violations found
 
 ---
@@ -33,7 +33,7 @@ The binder crate (`tsz-binder`) depends only on `tsz-common`, `tsz-scanner`, and
 
 ### 3. Checker File Sizes — COMPLIANT (8 files in yellow zone)
 
-All checker files are under the 2000-line limit. Eight files are approaching the threshold and need monitoring:
+All checker files are under the 2000-line limit. Eleven files are approaching the threshold and need monitoring:
 
 | File | Lines | Headroom |
 |------|-------|----------|
@@ -43,10 +43,13 @@ All checker files are under the 2000-line limit. Eight files are approaching the
 | `types/type_computation_access.rs` | 1,972 | 28 lines |
 | `state/state_type_resolution_module.rs` | 1,908 | 92 lines |
 | `types/type_checking_queries_lib.rs` | 1,901 | 99 lines |
+| `flow/control_flow_narrowing.rs` | 1,883 | 117 lines |
 | `types/type_computation.rs` | 1,882 | 118 lines |
 | `flow/control_flow_assignment.rs` | 1,837 | 163 lines |
+| `context.rs` | 1,830 | 170 lines |
+| `types/class_type.rs` | 1,803 | 197 lines |
 
-Total checker codebase: ~135 files.
+Total checker codebase: ~127 files, ~106,405 LOC.
 
 ### 4. Cross-Layer Imports — CLEAN
 
@@ -77,11 +80,11 @@ Latest CI run (d755ae809) completed successfully. Three older runs are still in 
 
 | Run | Status | Description |
 |-----|--------|-------------|
+| 22264633879 | completed/success | docs(arch): 5th architecture audit |
 | 22264560766 | completed/success | docs: automated README metrics update |
 | 22264546925 | in_progress | docs(arch): update audit report and fix stale TypeKeys comment |
 | 22264518667 | in_progress | perf(checker): cache lib type-name resolution results |
 | 22264427753 | in_progress | refactor(arch): move collect_infer_bindings from tsz-lowering to solver |
-| 22264368508 | completed/success | docs: add emitter TODO with skipped issue patterns from analysis |
 
 ---
 
@@ -91,4 +94,5 @@ Latest CI run (d755ae809) completed successfully. Three older runs are still in 
    - `state_class_checking.rs` (1,995 lines) — consider extracting class heritage/implements checking
    - `member_declaration_checks.rs` (1,994 lines) — consider extracting method signature validation
    - `type_computation_call.rs` (1,994 lines) — consider extracting overload resolution logic
-2. **Monitor 5 additional near-threshold files** in the 1,837-1,972 range for growth.
+2. **Monitor 8 additional near-threshold files** in the 1,803-1,972 range for growth.
+3. **New files approaching threshold since last audit**: `control_flow_narrowing.rs` (1,883), `context.rs` (1,830), `class_type.rs` (1,803) — these were not flagged in the 5th audit but are now within the monitoring zone.
