@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 805
+Count: 806
+- 806: import-equals recovery null/literal emit parity fix
 - 805: accessor setter rest param ES5 downlevel parity fix
 - 804: accessor defineProperty comment comma parity
 - 803: template span boundary recovery parity fix

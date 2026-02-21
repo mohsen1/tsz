@@ -420,6 +420,21 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Parser recovery can produce missing/invalid module references for
+        // malformed `import x = ...;` declarations. TSC skips JS alias emission
+        // in that case and preserves only trailing recovered expressions.
+        if !self.is_valid_import_equals_reference(import.module_specifier) {
+            if self.is_recovered_import_equals_expression(module_node) {
+                self.emit(import.module_specifier);
+            } else if self
+                .recovered_import_equals_rhs_text(node)
+                .is_some_and(|rhs| rhs == "null")
+            {
+                self.write("null");
+            }
+            return;
+        }
+
         let is_external = module_node.kind == SyntaxKind::StringLiteral as u16
             || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
 
@@ -443,6 +458,61 @@ impl<'a> Printer<'a> {
         }
 
         self.emit_entity_name(import.module_specifier);
+    }
+
+    fn is_valid_import_equals_reference(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::Identifier as u16 => self
+                .arena
+                .get_identifier(node)
+                .is_some_and(|id| !id.escaped_text.is_empty()),
+            k if k == SyntaxKind::ThisKeyword as u16 || k == SyntaxKind::SuperKeyword as u16 => {
+                true
+            }
+            k if k == syntax_kind_ext::QUALIFIED_NAME => {
+                self.arena.get_qualified_name(node).is_some_and(|name| {
+                    self.is_valid_import_equals_reference(name.left)
+                        && self.is_valid_import_equals_reference(name.right)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    const fn is_recovered_import_equals_expression(&self, node: &Node) -> bool {
+        matches!(
+            node.kind,
+            k if k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::TrueKeyword as u16
+                || k == SyntaxKind::FalseKeyword as u16
+                || k == SyntaxKind::NumericLiteral as u16
+                || k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        )
+    }
+
+    fn recovered_import_equals_rhs_text(&self, import_node: &Node) -> Option<&'a str> {
+        let source = self.source_text_for_map()?;
+        let start = import_node.pos as usize;
+        let end = (import_node.end as usize).min(source.len());
+        if start >= end {
+            return None;
+        }
+
+        let declaration_text = &source[start..end];
+        let equals_pos = declaration_text.find('=')?;
+        let rhs_with_suffix = &declaration_text[equals_pos + 1..];
+        let rhs = rhs_with_suffix
+            .split_once(';')
+            .map_or(rhs_with_suffix, |(before_semicolon, _)| before_semicolon)
+            .trim();
+
+        (!rhs.is_empty()).then_some(rhs)
     }
 
     pub(super) fn emit_import_clause(&mut self, node: &Node) {
