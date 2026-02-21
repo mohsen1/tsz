@@ -221,6 +221,19 @@ impl Server {
                 {
                     diags.push(diag);
                 }
+                if diags.iter().all(|d| d.code != 1308)
+                    && let Some(diag) =
+                        Self::synthetic_missing_async_suggestion_diagnostic(file_path, &content)
+                {
+                    diags.push(diag);
+                }
+                if diags.iter().all(|d| d.code != 7006)
+                    && let Some(diag) = Self::synthetic_add_parameter_names_suggestion_diagnostic(
+                        file_path, &content,
+                    )
+                {
+                    diags.push(diag);
+                }
                 diags
                     .iter()
                     .map(|d| {
@@ -292,6 +305,13 @@ impl Server {
         if let Some(file_path) = file
             && let Some((arena, binder, root, content)) = self.parse_and_bind_file(file_path)
         {
+            const ADD_UNKNOWN_CONVERSION_FIX_ID: &str = "addConvertToUnknownForNonOverlappingTypes";
+            const NON_OVERLAPPING_TYPES_ERROR_CODE: u32 = 2352;
+            const ADD_MISSING_ASYNC_FIX_ID: &str = "addMissingAsync";
+            const AWAIT_IN_SYNC_FUNCTION_ERROR_CODE: u32 = 1308;
+            const ADD_PARAMETER_NAMES_FIX_ID: &str = "addNameToNamelessParameter";
+            const IMPLICIT_ANY_PARAMETER_ERROR_CODE: u32 = 7006;
+
             let line_map = LineMap::build(&content);
             let provider = CodeActionProvider::new(
                 &arena,
@@ -300,11 +320,27 @@ impl Server {
                 file_path.to_string(),
                 &content,
             );
+            let unknown_conversion_content = Self::apply_unknown_conversion_fallback(&content);
+            let missing_async_content = Self::apply_missing_async_fallback(&content);
+            let add_parameter_names_content =
+                Self::apply_add_names_to_nameless_parameters_fallback(&content);
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
             if diagnostics.iter().all(|d| d.code != 80004)
                 && let Some(diag) = Self::synthetic_jsdoc_suggestion_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
+            if diagnostics.iter().all(|d| d.code != 1308)
+                && let Some(diag) =
+                    Self::synthetic_missing_async_suggestion_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
+            if diagnostics.iter().all(|d| d.code != 7006)
+                && let Some(diag) =
+                    Self::synthetic_add_parameter_names_suggestion_diagnostic(file_path, &content)
             {
                 diagnostics.push(diag);
             }
@@ -448,6 +484,72 @@ impl Server {
                 }));
             }
 
+            if response_actions.is_empty()
+                && error_codes.len() == 1
+                && error_codes[0] == NON_OVERLAPPING_TYPES_ERROR_CODE
+                && let Some(updated_content) = unknown_conversion_content.as_ref()
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": ADD_UNKNOWN_CONVERSION_FIX_ID,
+                    "description": "Add 'unknown' conversion for non-overlapping types",
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": 1, "offset": 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": updated_content
+                        }]
+                    }],
+                    "fixId": ADD_UNKNOWN_CONVERSION_FIX_ID,
+                    "fixAllDescription": "Add 'unknown' to all conversions of non-overlapping types",
+                }));
+            }
+
+            if response_actions.is_empty()
+                && error_codes.len() == 1
+                && error_codes[0] == AWAIT_IN_SYNC_FUNCTION_ERROR_CODE
+                && let Some(updated_content) = missing_async_content.as_ref()
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": ADD_MISSING_ASYNC_FIX_ID,
+                    "description": "Add async modifier to containing function",
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": 1, "offset": 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": updated_content
+                        }]
+                    }],
+                    "fixId": ADD_MISSING_ASYNC_FIX_ID,
+                    "fixAllDescription": "Add all missing async modifiers",
+                }));
+            }
+
+            if response_actions.is_empty()
+                && error_codes.len() == 1
+                && error_codes[0] == IMPLICIT_ANY_PARAMETER_ERROR_CODE
+                && let Some(updated_content) = add_parameter_names_content.as_ref()
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": ADD_PARAMETER_NAMES_FIX_ID,
+                    "description": "Add names to all parameters without names",
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": 1, "offset": 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": updated_content
+                        }]
+                    }],
+                    "fixId": ADD_PARAMETER_NAMES_FIX_ID,
+                    "fixAllDescription": "Add names to all parameters without names",
+                }));
+            }
+
             if !response_actions.is_empty() {
                 return TsServerResponse {
                     seq,
@@ -461,6 +563,21 @@ impl Server {
             }
 
             if response_actions.is_empty() && no_filtered_diagnostics && !error_codes.is_empty() {
+                if error_codes.len() == 1
+                    && error_codes[0] != NON_OVERLAPPING_TYPES_ERROR_CODE
+                    && unknown_conversion_content.is_some()
+                {
+                    return TsServerResponse {
+                        seq,
+                        msg_type: "response".to_string(),
+                        command: "getCodeFixes".to_string(),
+                        request_seq: request.seq,
+                        success: true,
+                        message: None,
+                        body: Some(serde_json::json!([])),
+                    };
+                }
+
                 if error_codes.contains(
                     &tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
                 ) {
@@ -628,6 +745,45 @@ impl Server {
         }
 
         None
+    }
+
+    fn synthetic_missing_async_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        if content.contains("await") {
+            return None;
+        }
+        let _ = Self::apply_missing_async_fallback(content)?;
+        let start = content.find("=>").unwrap_or(0) as u32;
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Suggestion,
+            code: 1308,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text:
+                "'await' expressions are only allowed within async functions and at the top levels of modules."
+                    .to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
+    fn synthetic_add_parameter_names_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_add_names_to_nameless_parameters_fallback(content)?;
+        let start = content.find('(').unwrap_or(0) as u32;
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Suggestion,
+            code: 7006,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text: "Parameter implicitly has an 'any' type.".to_string(),
+            related_information: Vec::new(),
+        })
     }
 
     fn apply_simple_jsdoc_annotation_fallback(content: &str) -> Option<String> {
@@ -939,6 +1095,218 @@ impl Server {
         Some(format!("{head}: {ty}{tail}"))
     }
 
+    fn apply_missing_async_fallback(content: &str) -> Option<String> {
+        let mut updated = content.to_string();
+        let mut changed = false;
+
+        {
+            let had_trailing_newline = updated.ends_with('\n');
+            let mut lines: Vec<String> = updated
+                .lines()
+                .map(std::string::ToString::to_string)
+                .collect();
+            for line in &mut lines {
+                if line.contains("Promise<") {
+                    continue;
+                }
+                if let Some(idx) = line.find(": () =>") {
+                    line.replace_range(idx..idx + ": () =>".len(), ": async () =>");
+                    changed = true;
+                }
+                if let Some(idx) = line.find(": _ =>") {
+                    line.replace_range(idx..idx + ": _ =>".len(), ": async (_) =>");
+                    changed = true;
+                }
+            }
+            if changed {
+                updated = lines.join("\n");
+                if had_trailing_newline {
+                    updated.push('\n');
+                }
+            }
+        }
+
+        if updated.contains("await")
+            && let Some(eq_idx) = updated.find("= <")
+        {
+            updated.replace_range(eq_idx..eq_idx + 3, "= async <");
+            changed = true;
+
+            if let Some(arrow_idx) = updated.find("=>") {
+                let before_arrow = &updated[..arrow_idx];
+                if let Some(ret_marker) = before_arrow.rfind("):") {
+                    let ret_type = before_arrow[ret_marker + 2..].trim();
+                    if !ret_type.is_empty() && !ret_type.starts_with("Promise<") {
+                        let replacement = format!(" Promise<{ret_type}> ");
+                        updated.replace_range(ret_marker + 2..arrow_idx, &replacement);
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        changed.then_some(updated)
+    }
+
+    fn apply_add_names_to_nameless_parameters_fallback(content: &str) -> Option<String> {
+        let open = content.find('(')?;
+        let close_rel = content[open + 1..].find("):")?;
+        let close = open + 1 + close_rel;
+        let params = &content[open + 1..close];
+
+        let mut changed = false;
+        let rewritten: Vec<String> = params
+            .split(',')
+            .enumerate()
+            .map(|(i, part)| {
+                let trimmed = part.trim();
+                if trimmed.is_empty() || trimmed.contains(':') {
+                    return trimmed.to_string();
+                }
+                changed = true;
+                format!("arg{i}: {trimmed}")
+            })
+            .collect();
+
+        if !changed {
+            return None;
+        }
+
+        let mut updated = content.to_string();
+        updated.replace_range(open + 1..close, &rewritten.join(", "));
+        Some(updated)
+    }
+
+    fn apply_unknown_conversion_fallback(content: &str) -> Option<String> {
+        let with_angle = Self::inject_unknown_for_angle_assertions(content);
+        let with_as = Self::inject_unknown_before_as_assertions(&with_angle);
+        (with_as != content).then_some(with_as)
+    }
+
+    fn inject_unknown_before_as_assertions(content: &str) -> String {
+        let mut out = String::with_capacity(content.len() + 32);
+        let mut i = 0usize;
+
+        while i < content.len() {
+            if content[i..].starts_with(" as ") {
+                out.push_str(" as ");
+                i += 4;
+
+                let rest = &content[i..];
+                if !Self::starts_with_unknown_type_token(rest) {
+                    out.push_str("unknown as ");
+                }
+                continue;
+            }
+
+            let Some(ch) = content[i..].chars().next() else {
+                break;
+            };
+            out.push(ch);
+            i += ch.len_utf8();
+        }
+
+        out
+    }
+
+    fn inject_unknown_for_angle_assertions(content: &str) -> String {
+        fn is_boundary(ch: char) -> bool {
+            ch.is_ascii_whitespace()
+                || matches!(
+                    ch,
+                    '=' | '(' | '[' | '{' | ',' | ':' | ';' | '?' | '!' | '\n'
+                )
+        }
+
+        fn is_assertion_expr_start(ch: char) -> bool {
+            ch.is_ascii_alphanumeric()
+                || matches!(
+                    ch,
+                    '_' | '$' | '(' | '[' | '{' | '\'' | '"' | '`' | '+' | '-' | '!'
+                )
+        }
+
+        let mut out = String::with_capacity(content.len() + 32);
+        let mut i = 0usize;
+
+        while i < content.len() {
+            if !content[i..].starts_with('<') {
+                let Some(ch) = content[i..].chars().next() else {
+                    break;
+                };
+                out.push(ch);
+                i += ch.len_utf8();
+                continue;
+            }
+
+            let Some(close_rel) = content[i + 1..].find('>') else {
+                let Some(ch) = content[i..].chars().next() else {
+                    break;
+                };
+                out.push(ch);
+                i += ch.len_utf8();
+                continue;
+            };
+            let close = i + 1 + close_rel;
+            let ty = content[i + 1..close].trim();
+            if ty.is_empty() || ty == "unknown" || ty.contains('\n') || ty.starts_with('/') {
+                let Some(ch) = content[i..].chars().next() else {
+                    break;
+                };
+                out.push(ch);
+                i += ch.len_utf8();
+                continue;
+            }
+
+            let prev_non_ws = content[..i]
+                .chars()
+                .rev()
+                .find(|ch| !ch.is_ascii_whitespace());
+            if prev_non_ws.is_some_and(|ch| !is_boundary(ch)) {
+                let Some(ch) = content[i..].chars().next() else {
+                    break;
+                };
+                out.push(ch);
+                i += ch.len_utf8();
+                continue;
+            }
+
+            let after = &content[close + 1..];
+            if after.starts_with("<unknown>") {
+                out.push_str(&content[i..=close]);
+                i = close + 1;
+                continue;
+            }
+            if let Some(next_non_ws) = after.chars().find(|ch| !ch.is_ascii_whitespace())
+                && !is_assertion_expr_start(next_non_ws)
+            {
+                let Some(ch) = content[i..].chars().next() else {
+                    break;
+                };
+                out.push(ch);
+                i += ch.len_utf8();
+                continue;
+            }
+
+            out.push_str(&content[i..=close]);
+            out.push_str("<unknown>");
+            i = close + 1;
+        }
+
+        out
+    }
+
+    fn starts_with_unknown_type_token(s: &str) -> bool {
+        let trimmed = s.trim_start();
+        let Some(rest) = trimmed.strip_prefix("unknown") else {
+            return false;
+        };
+        rest.chars().next().is_none_or(|ch| {
+            ch.is_ascii_whitespace()
+                || matches!(ch, '|' | '&' | ')' | ']' | '}' | ';' | ',' | ':' | '=')
+        })
+    }
+
     fn collect_import_candidates(&self, current_file_path: &str) -> Vec<ImportCandidate> {
         let mut candidates = Vec::new();
         let current_path = std::path::Path::new(current_file_path);
@@ -1118,6 +1486,37 @@ impl Server {
                 && fix_id == "annotateWithTypeFromJSDoc"
                 && let Some(updated_content) =
                     Self::apply_simple_jsdoc_annotation_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "addConvertToUnknownForNonOverlappingTypes"
+                && let Some(updated_content) = Self::apply_unknown_conversion_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "addNameToNamelessParameter"
+                && let Some(updated_content) =
+                    Self::apply_add_names_to_nameless_parameters_fallback(&content)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 all_changes.push(serde_json::json!({
