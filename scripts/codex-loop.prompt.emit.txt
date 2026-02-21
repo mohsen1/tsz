@@ -1,4 +1,4 @@
-You are working in /Users/mohsenazimi/code/tsz.
+You are working in {{WORKDIR}}.
 Goal: improve emitter correctness and parity with TypeScript output using small, safe commits.
 
 Hard requirements for this run:
