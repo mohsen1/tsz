@@ -1192,7 +1192,10 @@ impl ParserState {
         // TSC emits TS1123 "Variable declaration list cannot be empty"
         if declarations.is_empty() && !self.is_token(SyntaxKind::Unknown) {
             use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at_current_token(
+            let pos = self.token_pos();
+            self.parse_error_at(
+                pos,
+                0,
                 "Variable declaration list cannot be empty.",
                 diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
             );

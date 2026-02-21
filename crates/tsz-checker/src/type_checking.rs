@@ -910,11 +910,9 @@ impl<'a> CheckerState<'a> {
             .as_ref()
             .is_some_and(|c| c.in_constructor);
 
-        let error_node = if return_data.expression.is_some() {
-            return_data.expression
-        } else {
-            stmt_idx
-        };
+        // TSC anchors TS2322 at the return statement node (the `return` keyword),
+        // not at the return value expression.
+        let error_node = stmt_idx;
 
         // In constructors, bare `return;` (without expression) is always allowed — TSC
         // doesn't check assignability for void returns in constructors.

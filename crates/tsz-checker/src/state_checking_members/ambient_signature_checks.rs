@@ -304,6 +304,7 @@ impl<'a> CheckerState<'a> {
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the method has a body,
         // OR if the method itself has a `declare` modifier and a body.
+        // TSC anchors the error at the body node (the `{`), not the whole member.
         if method.body.is_some() {
             let in_declared_class = self
                 .ctx
@@ -313,7 +314,7 @@ impl<'a> CheckerState<'a> {
             let method_has_declare = self.has_declare_modifier(&method.modifiers);
             if in_declared_class || method_has_declare {
                 self.error_at_node(
-                    member_idx,
+                    method.body,
                     "An implementation cannot be declared in ambient contexts.",
                     diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
                 );
@@ -527,13 +528,41 @@ impl<'a> CheckerState<'a> {
 
             // For async functions, unwrap Promise<T> to T for return type checking
             // The function body should return T, which gets auto-wrapped in Promise
-            let effective_return_type = if is_async && !is_generator {
+            let effective_return_type = if is_generator && has_type_annotation {
+                // Ensure the annotated return type is actually compatible with the Generator protocol.
+                let generator_base = if is_async {
+                    self.resolve_lib_type_by_name("AsyncGenerator")
+                        .unwrap_or(TypeId::ERROR)
+                } else {
+                    self.resolve_lib_type_by_name("Generator")
+                        .unwrap_or(TypeId::ERROR)
+                };
+                if generator_base != TypeId::ERROR {
+                    let any_gen = self.ctx.types.factory().application(
+                        generator_base,
+                        vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                    );
+                    self.check_assignable_or_report(any_gen, return_type, method.type_annotation);
+                }
+
+                self.get_generator_return_type_argument(return_type)
+                    .unwrap_or(return_type)
+            } else if is_async && !is_generator {
                 self.unwrap_promise_type(return_type).unwrap_or(return_type)
             } else {
                 return_type
             };
 
             self.push_return_type(effective_return_type);
+
+            // For generator functions, push the contextual yield type so that
+            // yield expressions can contextually type their operand.
+            let contextual_yield_type = if is_generator && has_type_annotation {
+                self.get_generator_yield_type_argument(return_type)
+            } else {
+                None
+            };
+            self.ctx.push_yield_type(contextual_yield_type);
 
             // Enter async context for await expression checking
             if is_async {
@@ -597,6 +626,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            self.ctx.pop_yield_type();
             self.pop_return_type();
         } else {
             // Abstract method or method overload signature
@@ -656,13 +686,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1183: An implementation cannot be declared in ambient contexts
-        // Check if we're in a declared class and the constructor has a body
+        // Check if we're in a declared class and the constructor has a body.
+        // TSC anchors the error at the body node (the `{`).
         if ctor.body.is_some()
             && let Some(ref class_info) = self.ctx.enclosing_class
             && class_info.is_declared
         {
             self.error_at_node(
-                member_idx,
+                ctor.body,
                 "An implementation cannot be declared in ambient contexts.",
                 diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
@@ -985,13 +1016,14 @@ impl<'a> CheckerState<'a> {
         self.check_modifier_combinations(&accessor.modifiers);
 
         // Error 1183: An implementation cannot be declared in ambient contexts
-        // Check if we're in a declared class and the accessor has a body
+        // Check if we're in a declared class and the accessor has a body.
+        // TSC anchors the error at the body node (the `{`).
         if accessor.body.is_some()
             && let Some(ref class_info) = self.ctx.enclosing_class
             && class_info.is_declared
         {
             self.error_at_node(
-                member_idx,
+                accessor.body,
                 "An implementation cannot be declared in ambient contexts.",
                 diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
@@ -1545,8 +1577,10 @@ impl<'a> CheckerState<'a> {
             // then check parameter-only assignability (ignoring return types).
             // This matches tsc's isImplementationCompatibleWithOverload.
             if !self.is_implementation_compatible_with_overload(impl_type, overload_type) {
+                // TSC anchors the error at the function/method name, not the whole declaration.
+                let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
                 self.error_at_node(
-                    decl_idx,
+                    error_node,
                     diagnostic_messages::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                     diagnostic_codes::THIS_OVERLOAD_SIGNATURE_IS_NOT_COMPATIBLE_WITH_ITS_IMPLEMENTATION_SIGNATURE,
                 );
