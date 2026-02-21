@@ -219,6 +219,28 @@ pub fn is_template_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
 
 /// Check if a type is a type parameter, bound parameter, or infer type.
 ///
+/// Check if a type is a type parameter, or a union/intersection containing one.
+/// This acts as a more specific check than `contains_type_parameters_db` and is useful
+/// for preventing indexed writes to pure type variables (TS2862) while allowing
+/// writes to instantiated generics like mapped types.
+pub fn is_uninstantiated_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(
+            TypeData::TypeParameter(_)
+            | TypeData::BoundParameter(_)
+            | TypeData::Infer(_)
+            | TypeData::Lazy(_),
+        ) => true,
+        Some(TypeData::Intersection(list_id) | TypeData::Union(list_id)) => {
+            let elements = db.type_list(list_id);
+            elements
+                .iter()
+                .any(|&e| is_uninstantiated_type_parameter(db, e))
+        }
+        _ => false,
+    }
+}
+
 /// Returns true for `TypeData::TypeParameter`, `TypeData::BoundParameter`,
 /// and `TypeData::Infer`. `BoundParameter` is included because it represents
 /// a type parameter that has been bound to a specific index in a generic
