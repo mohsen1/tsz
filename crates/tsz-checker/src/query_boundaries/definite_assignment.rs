@@ -1,3 +1,4 @@
+use super::state_checking;
 use crate::flow_analysis::PropertyKey;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -39,5 +40,5 @@ pub(crate) fn find_property_in_object_by_str(
     type_id: TypeId,
     property: &str,
 ) -> Option<tsz_solver::PropertyInfo> {
-    tsz_solver::type_queries::find_property_in_object_by_str(state.ctx.types, type_id, property)
+    state_checking::find_property_in_object_by_str(state.ctx.types, type_id, property)
 }
