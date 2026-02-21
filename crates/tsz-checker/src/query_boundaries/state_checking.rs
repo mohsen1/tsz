@@ -52,6 +52,7 @@ pub(crate) fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) 
     tsz_solver::type_queries::is_only_null_or_undefined(db, type_id)
 }
 
+#[allow(dead_code)]
 pub(crate) fn find_property_in_object_by_str(
     db: &dyn TypeDatabase,
     type_id: TypeId,
