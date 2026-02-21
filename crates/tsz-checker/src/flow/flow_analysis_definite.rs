@@ -119,6 +119,24 @@ impl<'a> CheckerState<'a> {
             return declared_type;
         }
 
+        // Optional-chain intermediates (`obj?.a` in `obj?.a?.b`) are transient
+        // receiver values used only to continue the chain. Re-running flow
+        // narrowing at each intermediate segment is redundant and expensive.
+        if let Some(node) = self.ctx.arena.get(idx)
+            && (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && let Some(access) = self.ctx.arena.get_access_expr(node)
+            && access.question_dot_token
+            && let Some(ext) = self.ctx.arena.get_extended(idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+            && let Some(parent_access) = self.ctx.arena.get_access_expr(parent_node)
+            && parent_access.question_dot_token
+            && parent_access.expression == idx
+        {
+            return declared_type;
+        }
+
         // Create a flow analyzer and apply narrowing
         let analyzer = FlowAnalyzer::with_node_types(
             self.ctx.arena,
