@@ -177,9 +177,15 @@ impl<'a> CheckerState<'a> {
 
             // Check if the property value type is assignable to the target property type
             if !self.is_assignable_to(source_prop_type, target_prop_type) {
+                let source_prop_type_for_diagnostic = if self.is_fresh_literal_expression(prop_value_idx) {
+                    self.widen_literal_type(source_prop_type)
+                } else {
+                    source_prop_type
+                };
+
                 // Emit TS2322 on the property name node
-                self.error_type_not_assignable_at(
-                    source_prop_type,
+                self.error_type_not_assignable_at_with_anchor(
+                    source_prop_type_for_diagnostic,
                     target_prop_type,
                     prop_name_idx,
                 );
@@ -253,7 +259,11 @@ impl<'a> CheckerState<'a> {
                     target_element_type,
                     self.ctx.file_name
                 );
-                self.error_type_not_assignable_at(elem_type, target_element_type, elem_idx);
+                self.error_type_not_assignable_at_with_anchor(
+                    elem_type,
+                    target_element_type,
+                    elem_idx,
+                );
                 elaborated = true;
             }
         }

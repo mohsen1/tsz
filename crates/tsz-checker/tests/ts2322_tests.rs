@@ -151,6 +151,23 @@ fn compile_with_options(
     with_lib_contexts(source, file_name, options)
 }
 
+fn diagnostics_for_source(source: &str) -> Vec<tsz_checker::diagnostics::Diagnostic> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+    checker.ctx.diagnostics.clone()
+}
+
 // =============================================================================
 // Return Statement Tests (TS2322)
 // =============================================================================
@@ -343,6 +360,39 @@ fn test_ts2322_no_error_correct_types() {
         source,
         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
     ));
+}
+
+#[test]
+fn test_ts2322_generic_object_literal_call_property_anchor_and_message() {
+    let source = r#"
+function foo<T>(x: { bar: T; baz: T }) {
+    return x;
+}
+
+var r = foo({ bar: 1, baz: '' });
+"#;
+
+    let diagnostics = diagnostics_for_source(source);
+    let errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .collect();
+
+    assert_eq!(errors.len(), 1, "Expected exactly one TS2322 diagnostic, got: {errors:?}");
+    let diag = errors[0];
+    assert_eq!(
+        diag.message_text,
+        "Type 'string' is not assignable to type 'number'."
+    );
+
+    let expected_start = source
+        .find("baz: ''")
+        .expect("expected test snippet to contain baz property");
+    assert_eq!(
+        diag.start,
+        expected_start as u32,
+        "Expected TS2322 on baz property node at offset {expected_start}"
+    );
 }
 
 // =============================================================================
