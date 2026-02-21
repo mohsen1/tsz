@@ -496,14 +496,14 @@ impl<'a> CheckerState<'a> {
                     self.ctx.enclosing_class.is_some(),
                 );
                 self.check_parameter_properties(&func_type.parameters.nodes);
-                for &param_idx in &func_type.parameters.nodes {
+                for (pi, &param_idx) in func_type.parameters.nodes.iter().enumerate() {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     {
                         if param.type_annotation.is_some() {
                             self.check_type_for_parameter_properties(param.type_annotation);
                         }
-                        self.maybe_report_implicit_any_parameter(param, false);
+                        self.maybe_report_implicit_any_parameter(param, false, pi);
                     }
                 }
                 // Recursively check the return type
