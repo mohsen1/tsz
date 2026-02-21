@@ -179,12 +179,57 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // TS2303: Check for circular import in ambient modules
-            if let Some(ref ambient_module_name) = containing_module_name
-                && let Some(imported_module) = require_module_specifier.as_deref()
-            {
-                // Check if the imported module matches the containing module
-                if ambient_module_name == imported_module {
+            // TS2303: Check for circular import aliases
+            if let Some(imported_module) = require_module_specifier.as_deref() {
+                let mut visited = rustc_hash::FxHashSet::default();
+                if let Some(ref current) = containing_module_name {
+                    visited.insert(current.clone());
+                } else {
+                    visited.insert(self.ctx.file_name.clone());
+                }
+
+                let mut current_module = imported_module.to_string();
+                let mut has_cycle = false;
+
+                // Max depth to prevent infinite loops in malformed graphs
+                for _ in 0..100 {
+                    // Try to resolve current_module to an actual file name
+                    let resolved_module =
+                        if let Some(target_idx) = self.ctx.resolve_import_target(&current_module) {
+                            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+                            if let Some(source_file) = arena.source_files.first() {
+                                source_file.file_name.clone()
+                            } else {
+                                current_module.clone()
+                            }
+                        } else {
+                            current_module.clone()
+                        };
+
+                    if visited.contains(&resolved_module) || visited.contains(&current_module) {
+                        has_cycle = true;
+                        break;
+                    }
+                    visited.insert(resolved_module.clone());
+                    visited.insert(current_module.clone());
+
+                    let mut next_module = None;
+                    if let Some(exports) = self.resolve_effective_module_exports(&current_module)
+                        && let Some(export_equals_sym) = exports.get("export=")
+                            && let Some(sym) = self.get_symbol_globally(export_equals_sym)
+                                && (sym.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                                    && let Some(ref import_mod) = sym.import_module {
+                                        next_module = Some(import_mod.clone());
+                                    }
+
+                    if let Some(next) = next_module {
+                        current_module = next;
+                    } else {
+                        break;
+                    }
+                }
+
+                if has_cycle {
                     // Emit TS2303: Circular definition of import alias
                     if let Some(import_name) = self
                         .ctx
