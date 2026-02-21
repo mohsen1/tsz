@@ -1676,6 +1676,7 @@ impl ParserState {
             };
 
             let saved_flags = self.context_flags;
+            self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
             if is_async {
                 self.context_flags |= CONTEXT_FLAG_ASYNC;
             }
@@ -1739,6 +1740,7 @@ impl ParserState {
             .then(|| self.parse_type_parameters());
 
         let saved_flags = self.context_flags;
+        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }

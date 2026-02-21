@@ -1144,6 +1144,7 @@ impl ParserState {
             self.parse_optional(SyntaxKind::ExclamationToken)
         };
         let method_saved_flags = self.context_flags;
+        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -1282,6 +1283,9 @@ impl ParserState {
             // When a class property has a type annotation and the next token is
             // an expression start (not '=', ';', '}', or EOF), emit TS1442 and
             // treat the expression as the initializer for recovery.
+            let init_saved_flags = self.context_flags;
+            self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
+
             let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
                 self.parse_assignment_expression()
             } else if type_annotation != NodeIndex::NONE
@@ -1300,6 +1304,8 @@ impl ParserState {
             } else {
                 NodeIndex::NONE
             };
+
+            self.context_flags = init_saved_flags;
 
             let end_pos = self.token_end();
             self.arena.add_property_decl(

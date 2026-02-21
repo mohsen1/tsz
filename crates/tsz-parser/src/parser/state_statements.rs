@@ -1438,6 +1438,7 @@ impl ParserState {
         // For async function * (await) {}, the parameter name 'await' should error
         let is_async_generator_declaration = is_async && asterisk_token;
         let saved_flags = self.context_flags;
+        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -1595,6 +1596,7 @@ impl ParserState {
         };
 
         let saved_flags = self.context_flags;
+        self.context_flags &= !(CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
@@ -1675,7 +1677,8 @@ impl ParserState {
         // Parameter-default context is for the containing parameter initializer only.
         // Nested function expressions create a new parsing context where this flag
         // must not leak into function body parsing.
-        self.context_flags &= !CONTEXT_FLAG_PARAMETER_DEFAULT;
+        self.context_flags &=
+            !(CONTEXT_FLAG_PARAMETER_DEFAULT | CONTEXT_FLAG_ASYNC | CONTEXT_FLAG_GENERATOR);
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;
         }
