@@ -132,17 +132,21 @@ discover_runners() {
     [[ -d "$dir" && -f "$dir/.claude.json" ]] && RUNNERS+=("claude:$dir")
   done
 
-  # Codex (if installed)
+  # Codex (if installed) — register spark and standard as separate runners
+  # (they have independent credit pools)
   if command -v codex >/dev/null 2>&1; then
-    RUNNERS+=("codex:default")
+    RUNNERS+=("codex-spark:gpt-5.3-codex-spark")
+    RUNNERS+=("codex:gpt-5.3-codex")
   fi
 
-  # Apply filter
+  # Apply filter ("codex" matches both codex and codex-spark)
   if [[ -n "$RUNNER_FILTER" ]]; then
     local filtered=()
     for r in "${RUNNERS[@]}"; do
-      case "$r" in
-        "$RUNNER_FILTER":*) filtered+=("$r") ;;
+      local rtype="${r%%:*}"
+      case "$RUNNER_FILTER" in
+        codex)  [[ "$rtype" == codex || "$rtype" == codex-spark ]] && filtered+=("$r") ;;
+        *)      [[ "$rtype" == "$RUNNER_FILTER" ]] && filtered+=("$r") ;;
       esac
     done
     RUNNERS=("${filtered[@]}")
@@ -160,6 +164,10 @@ runner_label() {
     local dir_name
     dir_name="$(basename "$path")"
     echo "claude($dir_name)"
+  elif [[ "$type" == "codex-spark" ]]; then
+    echo "codex-spark($path)"
+  elif [[ "$type" == "codex" ]]; then
+    echo "codex($path)"
   else
     echo "$type"
   fi
@@ -296,7 +304,7 @@ check_output_for_drain() {
         return 0
       fi
     done
-  elif [[ "$type" == "codex" ]]; then
+  elif [[ "$type" == "codex" || "$type" == "codex-spark" ]]; then
     for pat in "${CODEX_DRAIN_PATTERNS[@]}"; do
       if echo "$combined_output" | grep -qi "$pat"; then
         return 0
@@ -346,8 +354,14 @@ try_runner() {
     exit_code=$?
     set -e
 
-  elif [[ "$type" == "codex" ]]; then
-    local cmd=(codex exec --dangerously-bypass-approvals-and-sandbox "$prompt")
+  elif [[ "$type" == "codex-spark" || "$type" == "codex" ]]; then
+    # path holds the model name (e.g. gpt-5.3-codex-spark)
+    local model="$path"
+    local effort="medium"
+    if [[ "$type" == "codex-spark" ]]; then
+      effort="xhigh"
+    fi
+    local cmd=(codex exec -m "$model" -c "model_reasoning_effort=\"$effort\"" --dangerously-bypass-approvals-and-sandbox "$prompt")
     log "Command: ${cmd[*]}"
 
     if $DRY_RUN; then
