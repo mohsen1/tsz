@@ -1614,6 +1614,7 @@ impl<'a> DeclarationEmitter<'a> {
     pub(crate) fn emit_auto_imports(&mut self) {
         let modules = std::mem::take(&mut self.import_plan.auto_generated);
         self.emit_import_modules(&modules);
+        self.import_plan.auto_generated = modules;
     }
 
     /// Emit required imports at the beginning of the .d.ts file.
@@ -1627,5 +1628,6 @@ impl<'a> DeclarationEmitter<'a> {
 
         let modules = std::mem::take(&mut self.import_plan.required);
         self.emit_import_modules(&modules);
+        self.import_plan.required = modules;
     }
 }
