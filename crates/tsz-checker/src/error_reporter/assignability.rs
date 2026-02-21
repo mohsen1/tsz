@@ -311,6 +311,30 @@ impl<'a> CheckerState<'a> {
                     })
                     .collect();
 
+                // If all missing properties are numeric indices, emit TS2322.
+                // TSC often emits TS2322 instead of TS2739 when assigning arrays/tuples to tuple-like interfaces.
+                let all_numeric = !filtered_names.is_empty()
+                    && filtered_names.iter().all(|name| {
+                        let s = self.ctx.types.resolve_atom_ref(**name);
+                        s.parse::<usize>().is_ok()
+                    });
+
+                if all_numeric {
+                    let src_str = self.format_type(*source_type);
+                    let tgt_str = self.format_type(*target_type);
+                    let message = format_message(
+                        diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                        &[&src_str, &tgt_str],
+                    );
+                    return Diagnostic::error(
+                        file_name,
+                        start,
+                        length,
+                        message,
+                        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                    );
+                }
+
                 // If all missing properties were private brands, emit TS2322 instead.
                 if filtered_names.is_empty() {
                     let src_str = self.format_type(*source_type);
