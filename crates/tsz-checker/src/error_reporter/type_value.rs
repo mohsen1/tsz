@@ -270,9 +270,19 @@ impl<'a> CheckerState<'a> {
                 }
                 let mut current = decl;
                 let mut guard = 0;
+
+                // Get the arena for this declaration if it's from a different file
+                let arena = self
+                    .ctx
+                    .binder
+                    .symbol_arenas
+                    .get(&alias_sym_id)
+                    .map(|arc| &**arc)
+                    .unwrap_or(self.ctx.arena);
+
                 while guard < 16 {
                     guard += 1;
-                    let Some(node) = self.ctx.arena.get(current) else {
+                    let Some(node) = arena.get(current) else {
                         break;
                     };
                     if node.kind == syntax_kind_ext::IMPORT_DECLARATION {
@@ -281,7 +291,7 @@ impl<'a> CheckerState<'a> {
                     if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                         return Some(TypeOnlyKind::Export);
                     }
-                    let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    let Some(ext) = arena.get_extended(current) else {
                         break;
                     };
                     if ext.parent.is_none() {
