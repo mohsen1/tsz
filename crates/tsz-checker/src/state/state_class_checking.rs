@@ -1257,11 +1257,6 @@ impl<'a> CheckerState<'a> {
         // TypedPropertyDescriptor must be available
         self.check_decorator_global_types(&class.members.nodes);
 
-        // Check for decorator-related global types (TS2318)
-        // When experimentalDecorators is enabled and a method/accessor has decorators,
-        // TypedPropertyDescriptor must be available
-        self.check_decorator_global_types(&class.members.nodes);
-
         // Restore previous enclosing class
         self.ctx.enclosing_class = prev_enclosing_class;
 

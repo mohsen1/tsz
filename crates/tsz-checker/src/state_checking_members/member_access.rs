@@ -1060,6 +1060,12 @@ impl<'a> CheckerState<'a> {
             if own_names.contains(&prop_name) {
                 continue;
             }
+            // Skip internal private brand properties (__private_brand_*)
+            // These are synthetic properties for private class fields and should
+            // not be checked against index signatures
+            if prop_name.starts_with("__private_brand_") {
+                continue;
+            }
 
             let prop_type = prop.type_id;
             if self.type_contains_error(prop_type) {
