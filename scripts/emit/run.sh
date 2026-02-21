@@ -274,7 +274,7 @@ ensure_tsz_binary() {
         fi
     else
         # Fallback when not in a git checkout: use filesystem mtime checks.
-        if find "${TSZ_WATCH_PATHS[@]}" -type f -newer "$tsz_bin" 2>/dev/null | grep -q .; then
+        if find "${TSZ_WATCH_PATHS[@]}" -type f -newer "$tsz_bin" 2>/dev/null -print -quit | read -r _; then
             stale=1
         fi
     fi
@@ -315,7 +315,7 @@ build_runner() {
             fi
         else
             # Fallback when not in a git checkout: use filesystem mtime checks.
-            if find "${RUNNER_WATCH_PATHS[@]}" -type f -newer "$dist_runner" 2>/dev/null | grep -q .; then
+            if find "${RUNNER_WATCH_PATHS[@]}" -type f -newer "$dist_runner" 2>/dev/null -print -quit | read -r _; then
                 stale=1
             fi
         fi
