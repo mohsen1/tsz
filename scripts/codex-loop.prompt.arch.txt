@@ -1,15 +1,17 @@
-Execute one high-impact architecture roadmap slice from docs/architecture/CRITIQUE.md.
+Goal: execute one concrete architecture improvement that the repo can validate now.
 
 Rules for this iteration:
-- Work solver-first and keep checker as thin orchestration.
-- Close one concrete roadmap item or a well-bounded sub-item.
-- Update docs/architecture/CRITIQUE.md in the same iteration to mark completed/in-progress work.
+- Read `docs/architecture/NORTH_STAR.md` and `docs/architecture/BOUNDARIES.md` before code changes.
+- Start by running `./scripts/check-checker-boundaries.sh` and use the report to choose one actionable violation/hotspot.
+- Work solver-first and keep checker as thin orchestration (`WHAT` in solver, `WHERE` in checker).
+- Implement one small, high-signal fix; avoid broad refactors in a single loop.
 - Add or update focused tests for the changed behavior.
-- Run relevant tests and report exact commands and outcomes.
-- Commit only coherent changes with a clear architecture-oriented commit message.
+- Re-run `./scripts/check-checker-boundaries.sh` plus targeted tests for touched crates/files.
+- If improved without regressions, create one coherent architecture-oriented commit.
+- Do not ask user questions; complete the iteration end-to-end.
 
 Output summary must include:
-- Roadmap item(s) advanced
-- Doc status updates made
-- Tests executed and results
-- Risks or follow-up item
+- Architecture issue addressed
+- Files changed and why
+- Checks run with exact commands and outcomes
+- Residual risk or next follow-up
