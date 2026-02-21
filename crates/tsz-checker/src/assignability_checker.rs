@@ -717,6 +717,49 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check assignability and emit the standard TS2322/TS2345-style diagnostic when needed.
+    pub(crate) fn check_satisfies_assignable_or_report(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+    ) -> bool {
+        let diag_idx = source_idx;
+        let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
+
+        if tsz_solver::type_queries::is_keyof_type(self.ctx.types, target)
+            && let Some(str_lit) =
+                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
+        {
+            let keyof_type =
+                tsz_solver::type_queries::get_keyof_type(self.ctx.types, target).unwrap();
+            let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
+            if !allowed_keys.contains(&str_lit) {
+                self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx);
+                return false;
+            }
+        }
+
+        if let Some(node) = self.ctx.arena.get(source_idx)
+            && node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+        {
+            self.check_object_literal_excess_properties(source, target, source_idx);
+        }
+
+        if self.is_assignable_to(source, target)
+            || self.should_skip_weak_union_error(source, target, source_idx)
+        {
+            return true;
+        }
+        self.error_type_does_not_satisfy_the_expected_type(source, target, diag_idx);
+        false
+    }
+
     ///
     /// Returns true when no diagnostic was emitted (assignable or intentionally skipped),
     /// false when an assignability diagnostic was emitted.

@@ -797,7 +797,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             self.checker.ensure_relation_input_ready(expr_type);
                             self.checker.ensure_relation_input_ready(asserted_type);
                             if !self.checker.type_contains_error(asserted_type) {
-                                let _ = self.checker.check_assignable_or_report(
+                                let _ = self.checker.check_satisfies_assignable_or_report(
                                     expr_type,
                                     asserted_type,
                                     assertion.expression,
