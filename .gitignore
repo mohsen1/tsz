@@ -112,6 +112,7 @@ artifacts/
 
 
 session.sh
+.session-*.sh
 
 /.tsz_productivity_log.md
 
