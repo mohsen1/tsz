@@ -428,7 +428,6 @@ impl Server {
             }
 
             if response_actions.is_empty()
-                && Self::should_offer_jsdoc_annotate_fallback(&error_codes)
                 && let Some(updated_content) =
                     Self::apply_simple_jsdoc_annotation_fallback(&content)
             {
@@ -601,12 +600,6 @@ impl Server {
         None
     }
 
-    fn should_offer_jsdoc_annotate_fallback(error_codes: &[u32]) -> bool {
-        error_codes
-            .iter()
-            .any(|code| matches!(*code, 80004 | 7043 | 7044))
-    }
-
     fn synthetic_jsdoc_suggestion_diagnostic(
         file_path: &str,
         content: &str,
@@ -619,6 +612,7 @@ impl Server {
                 .find("@type {")
                 .or_else(|| segment.find("@return {"))
                 .or_else(|| segment.find("@returns {"))
+                .or_else(|| segment.find("@param {"))
             {
                 return Some(tsz::checker::diagnostics::Diagnostic {
                     category: DiagnosticCategory::Suggestion,
