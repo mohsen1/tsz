@@ -175,6 +175,51 @@ else
   SESSION_TAG=""
 fi
 
+if ! git -C "$WORKDIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Workdir is not a git repository: $WORKDIR" >&2
+  exit 1
+fi
+
+verify_iteration_completion() {
+  local repo="$1"
+  local start_head="$2"
+  local iter="$3"
+  local end_head commit_delta
+
+  if ! end_head="$(git -C "$repo" rev-parse HEAD 2>/dev/null)"; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=failed reason=head_unavailable" | tee -a "$LOG_FILE"
+    return 41
+  fi
+
+  if [[ "$end_head" == "$start_head" ]]; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=failed reason=no_new_commit" | tee -a "$LOG_FILE"
+    return 42
+  fi
+
+  commit_delta="$(git -C "$repo" rev-list --count "${start_head}..${end_head}" 2>/dev/null || echo 0)"
+  if [[ "$commit_delta" != "1" ]]; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=warn detail=expected_one_commit_observed_$commit_delta" | tee -a "$LOG_FILE"
+  fi
+
+  if ! git -C "$repo" diff --quiet || ! git -C "$repo" diff --cached --quiet; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=failed reason=dirty_worktree" | tee -a "$LOG_FILE"
+    return 43
+  fi
+
+  if ! git -C "$repo" fetch --quiet origin main >/dev/null 2>&1; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=failed reason=fetch_origin_main_failed" | tee -a "$LOG_FILE"
+    return 44
+  fi
+
+  if ! git -C "$repo" merge-base --is-ancestor "$end_head" origin/main; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=failed reason=commit_not_on_origin_main commit=$end_head" | tee -a "$LOG_FILE"
+    return 45
+  fi
+
+  echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iter completion_gate=passed commit=$end_head" | tee -a "$LOG_FILE"
+  return 0
+}
+
 build_prompt() {
   local prompt
   prompt="$(cat "$PROMPT_FILE")"
@@ -209,6 +254,7 @@ while true; do
   iteration=$((iteration + 1))
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$iteration" | tee -a "$LOG_FILE"
 
+  ITERATION_START_HEAD="$(git -C "$WORKDIR" rev-parse HEAD 2>/dev/null || true)"
   PROMPT_TEXT="$(build_prompt)"
   
   # Construct command
@@ -240,6 +286,15 @@ while true; do
     sleep "$SLEEP_SECONDS"
     retry_count=$((retry_count + 1))
   done
+
+  if (( status == 0 )); then
+    if [[ -z "$ITERATION_START_HEAD" ]]; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration completion_gate=failed reason=start_head_unavailable" | tee -a "$LOG_FILE"
+      status=40
+    elif ! verify_iteration_completion "$WORKDIR" "$ITERATION_START_HEAD" "$iteration"; then
+      status=$?
+    fi
+  fi
 
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration final_exit_status=$status" | tee -a "$LOG_FILE"
 
