@@ -436,8 +436,18 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Only check if there's an explicit return type annotation
             let is_async = func.is_async;
             let is_generator = func.asterisk_token;
-            let check_return_type =
+            let mut check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+            // For async functions, if we couldn't unwrap Promise<T> (e.g. lib files not loaded),
+            // fall back to the annotation syntax. If it looks like Promise<...>, suppress TS2355
+            // since we can't verify the inner type anyway.
+            if is_async
+                && check_return_type == return_type
+                && has_type_annotation
+                && self.return_type_annotation_looks_like_promise(func.type_annotation)
+            {
+                check_return_type = TypeId::VOID;
+            }
             let check_explicit_return_paths = has_type_annotation;
             let requires_return = if check_explicit_return_paths {
                 self.requires_return_value(check_return_type)
