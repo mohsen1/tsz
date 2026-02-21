@@ -232,7 +232,10 @@ impl<'a> CheckerState<'a> {
                             if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
                                 && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
                             {
-                                accesses.push((prop_ident.escaped_text.clone(), node_idx));
+                                accesses.push((
+                                    prop_ident.escaped_text.clone(),
+                                    access.name_or_argument,
+                                ));
                             }
                         }
                     } else {
@@ -413,7 +416,7 @@ impl<'a> CheckerState<'a> {
                         if let Some(name_node) = self.ctx.arena.get(access.name_or_argument)
                             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                         {
-                            accesses.push((ident.escaped_text.clone(), node_idx));
+                            accesses.push((ident.escaped_text.clone(), access.name_or_argument));
                         }
                     } else {
                         // Recurse into the expression part
