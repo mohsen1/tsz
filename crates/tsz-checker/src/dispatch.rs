@@ -1056,6 +1056,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             // JSX Elements (Rule #36: JSX Intrinsic Lookup)
             k if k == syntax_kind_ext::JSX_ELEMENT => {
                 if let Some(jsx) = self.checker.ctx.arena.get_jsx_element(node) {
+                    for &child in &jsx.children.nodes {
+                        self.checker.get_type_of_node(child);
+                    }
                     self.checker
                         .get_type_of_jsx_opening_element(jsx.opening_element)
                 } else {
@@ -1066,9 +1069,26 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 self.checker.get_type_of_jsx_opening_element(idx)
             }
             k if k == syntax_kind_ext::JSX_FRAGMENT => {
+                if let Some(jsx) = self.checker.ctx.arena.get_jsx_fragment(node) {
+                    for &child in &jsx.children.nodes {
+                        self.checker.get_type_of_node(child);
+                    }
+                }
                 // JSX fragments resolve to JSX.Element type
                 self.checker.get_jsx_element_type(idx)
             }
+            k if k == syntax_kind_ext::JSX_EXPRESSION => {
+                if let Some(jsx_expr) = self.checker.ctx.arena.get_jsx_expression(node) {
+                    if jsx_expr.expression.is_some() {
+                        self.checker.get_type_of_node(jsx_expr.expression)
+                    } else {
+                        TypeId::ANY
+                    }
+                } else {
+                    TypeId::ERROR
+                }
+            }
+            k if k == tsz_scanner::SyntaxKind::JsxText as u16 => TypeId::STRING,
 
             // Non-null assertion: x!
             k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
