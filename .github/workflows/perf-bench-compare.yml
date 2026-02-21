@@ -67,5 +67,4 @@ jobs:
         with:
           name: perf-bench-compare
           path: ${{ runner.temp }}/tsz-perf-compare-*/out
-          if-no-files-found: warn
           retention-days: 7

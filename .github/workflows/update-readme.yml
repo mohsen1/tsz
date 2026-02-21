@@ -97,7 +97,6 @@ jobs:
           pattern: ci-metrics-*
           merge-multiple: true
           path: .ci-metrics
-          if-no-files-found: warn
 
       - name: Update README metrics
         run: |
