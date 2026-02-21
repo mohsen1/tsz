@@ -24,6 +24,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 web-time = { workspace = true }
 globset = { workspace = true }
+regex = { workspace = true }
 
 [lints]
 workspace = true

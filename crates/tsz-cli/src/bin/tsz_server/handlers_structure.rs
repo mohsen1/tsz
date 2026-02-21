@@ -259,6 +259,12 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        self.allow_importing_ts_extensions = request
+            .arguments
+            .get("options")
+            .and_then(|o| o.get("allowImportingTsExtensions"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         self.stub_response(seq, request, None)
     }
 

@@ -522,6 +522,10 @@ pub(crate) struct Server {
     pub(crate) organize_imports_ignore_case: bool,
     /// Auto-import exclusion patterns (tsserver preference: autoImportFileExcludePatterns)
     pub(crate) auto_import_file_exclude_patterns: Vec<String>,
+    /// Module-specifier regex exclusions (tsserver preference: autoImportSpecifierExcludeRegexes)
+    pub(crate) auto_import_specifier_exclude_regexes: Vec<String>,
+    /// Compiler option propagated by `compilerOptionsForInferredProjects`.
+    pub(crate) allow_importing_ts_extensions: bool,
     /// Server mode
     pub(crate) _server_mode: ServerMode,
     /// Log configuration
@@ -583,6 +587,8 @@ impl Server {
             organize_imports_type_order: None,
             organize_imports_ignore_case: true,
             auto_import_file_exclude_patterns: Vec::new(),
+            auto_import_specifier_exclude_regexes: Vec::new(),
+            allow_importing_ts_extensions: false,
             _server_mode: server_mode,
             _log_config: log_config,
             enable_telemetry: args.enable_telemetry,
