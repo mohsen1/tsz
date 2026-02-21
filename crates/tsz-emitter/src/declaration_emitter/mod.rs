@@ -92,6 +92,10 @@ pub struct DeclarationEmitter<'a> {
     /// Map of imported name -> `SymbolId` for resolving type references
     /// Helps bridge the gap between type references and import symbols
     import_name_map: FxHashMap<String, SymbolId>,
+    /// Cache of `SymbolId` -> resolved module specifier.
+    symbol_module_specifier_cache: FxHashMap<SymbolId, Option<String>>,
+    /// Precomputed import emission plan for the current file.
+    import_plan: ImportPlan,
     /// Whether we're inside a declare namespace (don't emit 'declare' keyword inside)
     inside_declare_namespace: bool,
     /// Whether we're emitting constructor parameters (don't emit accessibility modifiers)
@@ -107,6 +111,24 @@ pub struct DeclarationEmitter<'a> {
 struct SourceMapState {
     output_name: String,
     source_name: String,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PlannedImportSymbol {
+    pub(crate) name: String,
+    pub(crate) alias: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PlannedImportModule {
+    pub(crate) module: String,
+    pub(crate) symbols: Vec<PlannedImportSymbol>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ImportPlan {
+    pub(crate) required: Vec<PlannedImportModule>,
+    pub(crate) auto_generated: Vec<PlannedImportModule>,
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -135,6 +157,8 @@ impl<'a> DeclarationEmitter<'a> {
             import_string_aliases: FxHashMap::default(),
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
+            symbol_module_specifier_cache: FxHashMap::default(),
+            import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -173,6 +197,8 @@ impl<'a> DeclarationEmitter<'a> {
             import_string_aliases: FxHashMap::default(),
             import_symbol_map: FxHashMap::default(),
             import_name_map: FxHashMap::default(),
+            symbol_module_specifier_cache: FxHashMap::default(),
+            import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
             in_constructor_params: false,
             function_names_with_overloads: FxHashSet::default(),
@@ -386,9 +412,15 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Emit declaration for a source file
     pub fn emit(&mut self, root_idx: NodeIndex) -> String {
-        // Reset usage tracking for each file
+        // Reset per-file emission state
         self.used_symbols = None;
         self.foreign_symbols = None;
+        self.import_name_map.clear();
+        self.import_symbol_map.clear();
+        self.import_string_aliases.clear();
+        self.reserved_names.clear();
+        self.symbol_module_specifier_cache.clear();
+        self.import_plan = ImportPlan::default();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -442,8 +474,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // NEW: Prepare aliases before emitting anything
+        // Prepare aliases and build the import plan before emitting anything
         self.prepare_import_aliases(root_idx);
+        self.prepare_import_plan();
 
         let Some(root_node) = self.arena.get(root_idx) else {
             return String::new();

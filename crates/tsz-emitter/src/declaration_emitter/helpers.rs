@@ -1,6 +1,6 @@
 //! Declaration emitter - type emission and utility helpers.
 
-use super::DeclarationEmitter;
+use super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedImportSymbol};
 use crate::emitter::type_printer::TypePrinter;
 use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use rustc_hash::FxHashMap;
@@ -1372,6 +1372,17 @@ impl<'a> DeclarationEmitter<'a> {
         Some(self.strip_ts_extensions(&rel_path))
     }
 
+    pub(crate) fn resolve_symbol_module_path_cached(&mut self, sym_id: SymbolId) -> Option<String> {
+        if let Some(cached) = self.symbol_module_specifier_cache.get(&sym_id) {
+            return cached.clone();
+        }
+
+        let resolved = self.resolve_symbol_module_path(sym_id);
+        self.symbol_module_specifier_cache
+            .insert(sym_id, resolved.clone());
+        resolved
+    }
+
     /// Check if a symbol is from an ambient module declaration.
     ///
     /// Returns the module name if the symbol is declared inside `declare module "name"`.
@@ -1469,7 +1480,7 @@ impl<'a> DeclarationEmitter<'a> {
     /// Group foreign symbols by their module paths.
     ///
     /// Returns a map of module path -> Vec<SymbolId> for all foreign symbols.
-    pub(crate) fn group_foreign_symbols_by_module(&self) -> FxHashMap<String, Vec<SymbolId>> {
+    pub(crate) fn group_foreign_symbols_by_module(&mut self) -> FxHashMap<String, Vec<SymbolId>> {
         let mut module_map: FxHashMap<String, Vec<SymbolId>> = FxHashMap::default();
 
         debug!(
@@ -1477,24 +1488,28 @@ impl<'a> DeclarationEmitter<'a> {
             self.foreign_symbols
         );
 
-        if let Some(foreign_symbols) = &self.foreign_symbols {
-            for &sym_id in foreign_symbols {
+        let foreign_symbols: Vec<SymbolId> = self
+            .foreign_symbols
+            .as_ref()
+            .map(|symbols| symbols.iter().copied().collect())
+            .unwrap_or_default();
+
+        for sym_id in foreign_symbols {
+            debug!(
+                "[DEBUG] group_foreign_symbols_by_module: resolving symbol {:?}",
+                sym_id
+            );
+            if let Some(module_path) = self.resolve_symbol_module_path_cached(sym_id) {
                 debug!(
-                    "[DEBUG] group_foreign_symbols_by_module: resolving symbol {:?}",
+                    "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> module '{}'",
+                    sym_id, module_path
+                );
+                module_map.entry(module_path).or_default().push(sym_id);
+            } else {
+                debug!(
+                    "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> no module path",
                     sym_id
                 );
-                if let Some(module_path) = self.resolve_symbol_module_path(sym_id) {
-                    debug!(
-                        "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> module '{}'",
-                        sym_id, module_path
-                    );
-                    module_map.entry(module_path).or_default().push(sym_id);
-                } else {
-                    debug!(
-                        "[DEBUG] group_foreign_symbols_by_module: symbol {:?} -> no module path",
-                        sym_id
-                    );
-                }
             }
         }
 
@@ -1505,163 +1520,114 @@ impl<'a> DeclarationEmitter<'a> {
         module_map
     }
 
+    pub(crate) fn prepare_import_plan(&mut self) {
+        let mut plan = ImportPlan::default();
+
+        let mut required_modules: Vec<String> = self.required_imports.keys().cloned().collect();
+        required_modules.sort();
+        for module in required_modules {
+            let Some(symbol_names) = self.required_imports.get(&module) else {
+                continue;
+            };
+            if symbol_names.is_empty() {
+                continue;
+            }
+
+            let mut deduped = symbol_names.clone();
+            deduped.sort();
+            deduped.dedup();
+
+            let symbols = deduped
+                .into_iter()
+                .map(|name| {
+                    let alias = self
+                        .import_string_aliases
+                        .get(&(module.clone(), name.clone()))
+                        .cloned();
+                    PlannedImportSymbol { name, alias }
+                })
+                .collect();
+
+            plan.required.push(PlannedImportModule { module, symbols });
+        }
+
+        if let Some(binder) = self.binder {
+            let module_map = self.group_foreign_symbols_by_module();
+            let mut auto_modules: Vec<_> = module_map.into_iter().collect();
+            auto_modules.sort_by(|a, b| a.0.cmp(&b.0));
+
+            for (module, symbol_ids) in auto_modules {
+                let mut symbol_names: Vec<String> = symbol_ids
+                    .into_iter()
+                    .filter(|sym_id| self.import_symbol_map.contains_key(sym_id))
+                    .filter_map(|sym_id| binder.symbols.get(sym_id).map(|s| s.escaped_name.clone()))
+                    .collect();
+                symbol_names.sort();
+                symbol_names.dedup();
+
+                if symbol_names.is_empty() {
+                    continue;
+                }
+
+                let symbols = symbol_names
+                    .into_iter()
+                    .map(|name| PlannedImportSymbol { name, alias: None })
+                    .collect();
+                plan.auto_generated
+                    .push(PlannedImportModule { module, symbols });
+            }
+        }
+
+        self.import_plan = plan;
+    }
+
+    fn emit_import_modules(&mut self, modules: &[PlannedImportModule]) {
+        for module in modules {
+            self.write_indent();
+            self.write("import { ");
+
+            let mut first = true;
+            for symbol in &module.symbols {
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+
+                self.write(&symbol.name);
+                if let Some(alias) = &symbol.alias {
+                    self.write(" as ");
+                    self.write(alias);
+                }
+            }
+
+            self.write(" } from \"");
+            self.write(&module.module);
+            self.write("\";");
+            self.write_line();
+        }
+    }
+
     /// Emit auto-generated imports for foreign symbols.
     ///
     /// This should be called before emitting other declarations to ensure
     /// imports appear at the top of the .d.ts file.
     pub(crate) fn emit_auto_imports(&mut self) {
-        let binder = match &self.binder {
-            Some(b) => b,
-            None => {
-                return;
-            }
-        };
-
-        // Group foreign symbols by their module paths
-        let module_map = self.group_foreign_symbols_by_module();
-        debug!(
-            "[DEBUG] emit_auto_imports: module_map has {} entries",
-            module_map.len()
-        );
-
-        // Collect and sort imports as owned data to avoid borrow issues
-        let mut imports: Vec<(String, Vec<String>)> = Vec::new();
-
-        for (module_path, symbol_ids) in &module_map {
-            debug!(
-                "[DEBUG] emit_auto_imports: processing module '{}' with {} symbols",
-                module_path,
-                symbol_ids.len()
-            );
-            if symbol_ids.is_empty() {
-                continue;
-            }
-
-            // Get symbol names and sort them
-            // Only emit imports for symbols that are actually imported (in import_symbol_map)
-            let mut symbol_names: Vec<String> = symbol_ids
-                .iter()
-                .filter(|&&sym_id| {
-                    // Skip if not in import_symbol_map (it's a local or lib symbol, not imported)
-                    if !self.import_symbol_map.contains_key(&sym_id) {
-                        debug!(
-                            "[DEBUG] emit_auto_imports: skipping symbol {:?} - not in import_symbol_map (local or lib symbol)",
-                            sym_id
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                })
-                .filter_map(|&sym_id| {
-                    let symbol = binder.symbols.get(sym_id)?;
-                    debug!(
-                        "[DEBUG] emit_auto_imports: found symbol '{}' (id={:?})",
-                        symbol.escaped_name, sym_id
-                    );
-                    Some(symbol.escaped_name.clone())
-                })
-                .collect();
-            symbol_names.sort();
-
-            if !symbol_names.is_empty() {
-                imports.push((module_path.clone(), symbol_names));
-            }
-        }
-
-        debug!(
-            "[DEBUG] emit_auto_imports: collected {} imports to emit",
-            imports.len()
-        );
-
-        // Sort by module path for consistent output
-        imports.sort_by(|a, b| a.0.cmp(&b.0));
-
-        // Emit the import statements
-        for (module_path, symbol_names) in imports {
-            debug!(
-                "[DEBUG] emit_auto_imports: emitting import from '{}' with symbols: {:?}",
-                module_path, symbol_names
-            );
-            self.write_indent();
-            self.write("import { ");
-
-            let mut first = true;
-            for name in &symbol_names {
-                if !first {
-                    self.write(", ");
-                }
-                first = false;
-                self.write(name);
-            }
-
-            self.write(" } from \"");
-            self.write(&module_path);
-            self.write("\";");
-            self.write_line();
-        }
+        let modules = std::mem::take(&mut self.import_plan.auto_generated);
+        self.emit_import_modules(&modules);
+        self.import_plan.auto_generated = modules;
     }
 
     /// Emit required imports at the beginning of the .d.ts file.
     ///
     /// This should be called before emitting other declarations.
     pub(crate) fn emit_required_imports(&mut self) {
-        if self.required_imports.is_empty() {
+        if self.import_plan.required.is_empty() {
             debug!("[DEBUG] emit_required_imports: no required imports");
             return;
         }
 
-        debug!(
-            "[DEBUG] emit_required_imports: has {} modules: {:?}",
-            self.required_imports.len(),
-            self.required_imports
-        );
-
-        // Collect modules as owned strings to avoid borrow checker issues
-        let mut modules: Vec<String> = self.required_imports.keys().cloned().collect();
-        modules.sort();
-
-        for module in modules {
-            // Collect symbol names as owned strings
-            let symbol_names = if let Some(names) = self.required_imports.get(&module) {
-                if names.is_empty() {
-                    continue;
-                }
-                names.clone()
-            } else {
-                continue;
-            };
-
-            self.write_indent();
-            self.write("import { ");
-
-            // Sort symbol names alphabetically
-            let mut names: Vec<_> = symbol_names.iter().collect();
-            names.sort();
-
-            let mut first = true;
-            for name in names {
-                if !first {
-                    self.write(", ");
-                }
-                first = false;
-
-                // Check for alias and emit "name as alias" if collision detected
-                let key = (module.clone(), (*name).to_string());
-                if let Some(alias) = self.import_string_aliases.get(&key) {
-                    let alias_str = alias.clone();
-                    self.write(name);
-                    self.write(" as ");
-                    self.write(&alias_str);
-                } else {
-                    self.write(name);
-                }
-            }
-
-            self.write(" } from \"");
-            self.write(&module);
-            self.write("\";");
-            self.write_line();
-        }
+        let modules = std::mem::take(&mut self.import_plan.required);
+        self.emit_import_modules(&modules);
+        self.import_plan.required = modules;
     }
 }
