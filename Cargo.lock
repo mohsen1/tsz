@@ -1380,41 +1380,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "tsz"
-version = "0.1.1"
-dependencies = [
- "anyhow",
- "bitflags 2.11.0",
- "criterion",
- "dashmap",
- "ena",
- "fixedbitset",
- "indexmap",
- "memchr",
- "once_cell",
- "rayon",
- "rustc-hash",
- "serde",
- "serde-wasm-bindgen",
- "serde_json",
- "smallvec",
- "tempfile",
- "tracing",
- "tsz-binder",
- "tsz-checker",
- "tsz-common",
- "tsz-emitter",
- "tsz-lowering",
- "tsz-lsp",
- "tsz-parser",
- "tsz-scanner",
- "tsz-solver",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "tsz-binder"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1428,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-checker"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "globset",
  "rustc-hash",
@@ -1443,11 +1410,12 @@ dependencies = [
  "tsz-parser",
  "tsz-scanner",
  "tsz-solver",
+ "web-time",
 ]
 
 [[package]]
 name = "tsz-cli"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "clap",
@@ -1462,10 +1430,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tracing-tree",
- "tsz",
  "tsz-binder",
  "tsz-checker",
  "tsz-common",
+ "tsz-core",
  "tsz-emitter",
  "tsz-lsp",
  "tsz-parser",
@@ -1476,7 +1444,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-common"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "dashmap",
  "memchr",
@@ -1506,13 +1474,46 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
- "tsz",
+ "tsz-core",
  "walkdir",
 ]
 
 [[package]]
+name = "tsz-core"
+version = "0.1.6"
+dependencies = [
+ "anyhow",
+ "bitflags 2.11.0",
+ "criterion",
+ "dashmap",
+ "ena",
+ "fixedbitset",
+ "indexmap",
+ "memchr",
+ "once_cell",
+ "rayon",
+ "rustc-hash",
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "smallvec",
+ "tempfile",
+ "tracing",
+ "tsz-binder",
+ "tsz-checker",
+ "tsz-common",
+ "tsz-emitter",
+ "tsz-lowering",
+ "tsz-lsp",
+ "tsz-parser",
+ "tsz-scanner",
+ "tsz-solver",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "tsz-emitter"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "memchr",
  "rustc-hash",
@@ -1529,7 +1530,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-lowering"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "indexmap",
  "rustc-hash",
@@ -1542,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-lsp"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1554,11 +1555,12 @@ dependencies = [
  "tsz-parser",
  "tsz-scanner",
  "tsz-solver",
+ "web-time",
 ]
 
 [[package]]
 name = "tsz-parser"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "rustc-hash",
  "serde",
@@ -1571,7 +1573,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-scanner"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "memchr",
  "serde",
@@ -1581,7 +1583,7 @@ dependencies = [
 
 [[package]]
 name = "tsz-solver"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "bitflags 2.11.0",
  "dashmap",
@@ -1600,17 +1602,17 @@ dependencies = [
 
 [[package]]
 name = "tsz-wasm"
-version = "0.1.1"
+version = "0.1.6"
 dependencies = [
  "console_error_panic_hook",
  "rustc-hash",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",
- "tsz",
  "tsz-binder",
  "tsz-checker",
  "tsz-common",
+ "tsz-core",
  "tsz-emitter",
  "tsz-lsp",
  "tsz-parser",

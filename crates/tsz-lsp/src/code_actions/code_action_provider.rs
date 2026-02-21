@@ -200,8 +200,14 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         // Refactorings (selection-based)
-        // Only if the range is non-empty (user selected text)
-        if range.start != range.end
+        // Only if the range is non-empty (user selected text) and the caller
+        // requested refactor kinds.
+        let request_extract_refactor = context.only.as_ref().is_none_or(|kinds| {
+            kinds.contains(&CodeActionKind::Refactor)
+                || kinds.contains(&CodeActionKind::RefactorExtract)
+        });
+        if request_extract_refactor
+            && range.start != range.end
             && let Some(action) = self.extract_variable(root, range)
         {
             actions.push(action);

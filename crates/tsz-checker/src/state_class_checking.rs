@@ -1878,31 +1878,33 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        for (reference_path, line_num) in references {
+        for (reference_path, line_num, quote_offset) in references {
             if !has_virtual_reference(&reference_path) {
-                // Calculate the position of the error (start of the line)
-                let mut pos = 0u32;
-                for (idx, _) in source_text.lines().enumerate() {
+                // Calculate byte offset to the start of this line
+                let mut line_start = 0u32;
+                for (idx, line) in source_text.lines().enumerate() {
                     if idx == line_num {
                         break;
                     }
-                    pos += source_text.lines().nth(idx).map_or(0, |l| l.len() + 1) as u32;
+                    // +1 for the newline character
+                    line_start += line.len() as u32 + 1;
                 }
 
-                // Find the actual directive on the line to get accurate position
-                if let Some(line) = source_text.lines().nth(line_num)
-                    && let Some(directive_start) = line.find("///")
-                {
-                    pos += directive_start as u32;
-                }
+                // Point at the path value (after the opening quote)
+                let pos = line_start + quote_offset as u32;
+                // Span covers just the path value (not the quotes)
+                let length = reference_path.len() as u32;
 
-                let length = source_text
-                    .lines()
-                    .nth(line_num)
-                    .map_or(0, |l| l.len() as u32);
+                // Resolve the reference path relative to the source file's directory,
+                // matching tsc behavior which reports absolute/resolved paths.
+                let resolved = source_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(&reference_path);
+                let display_path = resolved.to_string_lossy();
 
                 use crate::diagnostics::{diagnostic_codes, format_message};
-                let message = format_message("File '{0}' not found.", &[&reference_path]);
+                let message = format_message("File '{0}' not found.", &[&display_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
         }

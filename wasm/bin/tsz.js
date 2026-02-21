@@ -99,6 +99,49 @@ if (inputFiles.length === 0) {
 const program = new TsProgram();
 program.setCompilerOptions(JSON.stringify(options));
 
+// ─── Load TypeScript lib files ────────────────────────────────────────────────
+// Lib .d.ts files (lib.es5.d.ts, lib.dom.d.ts, etc.) provide global type
+// definitions (Array, String, Promise, console, document, etc.).
+// They are bundled in the package under lib-assets/ with a manifest.
+const libDir = path.join(pkgDir, 'lib-assets');
+const manifestPath = path.join(libDir, 'lib_manifest.json');
+
+if (fs.existsSync(manifestPath)) {
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const libs = manifest.libs || {};
+
+  // Resolve the default root lib based on target (matches tsc's getDefaultLibFileName).
+  // Default target is ES5 → root lib is "es5.full" (equivalent to tsc's "lib.d.ts").
+  const targetLibMap = {
+    es5: 'es5.full', es2015: 'es6', es2016: 'es2016.full',
+    es2017: 'es2017.full', es2018: 'es2018.full', es2019: 'es2019.full',
+    es2020: 'es2020.full', es2021: 'es2021.full', es2022: 'es2022.full',
+    es2023: 'esnext.full', es2024: 'esnext.full', esnext: 'esnext.full',
+  };
+  const rootLib = targetLibMap[(options.target || 'es5').toLowerCase()] || 'es5.full';
+
+  // BFS to resolve all transitive lib references
+  const visited = new Set();
+  const queue = [rootLib];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (!name || visited.has(name)) continue;
+    visited.add(name);
+    const entry = libs[name];
+    if (!entry) continue;
+    const filePath = path.join(libDir, entry.fileName);
+    try {
+      const content = fs.readFileSync(filePath, 'utf8');
+      // Use canonical name (lib.es5.d.ts) so tsc-compatible lookups work
+      program.addLibFile(entry.canonicalFileName || entry.fileName, content);
+    } catch { /* skip missing files */ }
+    // Follow references
+    if (entry.references) {
+      for (const ref of entry.references) queue.push(ref);
+    }
+  }
+}
+
 for (const file of inputFiles) {
   try {
     const text = fs.readFileSync(file, 'utf8');

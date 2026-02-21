@@ -7,8 +7,11 @@
 //!
 //! Also provides format-on-key support for semicolon and newline triggers.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::io::Write;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
+#[cfg(not(target_arch = "wasm32"))]
 use std::process::Command;
 use tsz_common::position::{Position, Range};
 
@@ -75,20 +78,34 @@ pub struct DocumentFormattingProvider;
 impl DocumentFormattingProvider {
     /// Check if prettier is available.
     pub fn has_prettier() -> bool {
-        Command::new("prettier")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Command::new("prettier")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
     }
 
     /// Check if eslint with fix is available.
     pub fn has_eslint_fix() -> bool {
-        Command::new("eslint")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            Command::new("eslint")
+                .arg("--version")
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            false
+        }
     }
 
     /// Format a document using the best available formatter.
@@ -100,21 +117,30 @@ impl DocumentFormattingProvider {
         source_text: &str,
         options: &FormattingOptions,
     ) -> Result<Vec<TextEdit>, String> {
-        // Try prettier first (most common for TypeScript)
-        if Self::has_prettier() {
-            return Self::format_with_prettier(file_path, source_text, options);
+        // External formatters (prettier, eslint) require process spawning,
+        // which is not available on WASM.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            // Try prettier first (most common for TypeScript)
+            if Self::has_prettier() {
+                return Self::format_with_prettier(file_path, source_text, options);
+            }
+
+            // Fall back to eslint with --fix
+            if Self::has_eslint_fix() {
+                return Self::format_with_eslint(file_path, source_text, options);
+            }
         }
 
-        // Fall back to eslint with --fix
-        if Self::has_eslint_fix() {
-            return Self::format_with_eslint(file_path, source_text, options);
-        }
+        // Suppress unused warning on WASM where file_path isn't needed
+        let _ = file_path;
 
-        // No formatter available - return internal formatting edits
+        // No external formatter available - return internal formatting edits
         Self::apply_basic_formatting(source_text, options)
     }
 
     /// Format using prettier.
+    #[cfg(not(target_arch = "wasm32"))]
     fn format_with_prettier(
         file_path: &str,
         source_text: &str,
@@ -169,6 +195,7 @@ impl DocumentFormattingProvider {
     }
 
     /// Format using eslint with --fix.
+    #[cfg(not(target_arch = "wasm32"))]
     fn format_with_eslint(
         file_path: &str,
         source_text: &str,

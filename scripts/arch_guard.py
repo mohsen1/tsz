@@ -144,6 +144,37 @@ CHECKS = [
         re.compile(r"\buse\s+tsz_solver::.*TypeKey|\bTypeKey::"),
         {"exclude_dirs": {"tsz-solver", "tests"}, "ignore_comment_lines": True},
     ),
+    # --- WASM compatibility rules ---
+    # Crates compiled to WASM: all except tsz-cli and conformance.
+    # std::time::Instant panics at runtime on wasm32-unknown-unknown (no clock);
+    # use web_time::Instant which is a drop-in replacement on all platforms.
+    (
+        "WASM compat: std::time::Instant banned in WASM-compiled crates (use web_time::Instant)",
+        ROOT / "crates",
+        re.compile(
+            r"\buse\s+std::time::Instant\b"
+            r"|\buse\s+std::time::\{[^}]*\bInstant\b"
+            r"|\bstd::time::Instant::"
+        ),
+        {
+            "exclude_dirs": {"tsz-cli", "conformance", "tests"},
+            "ignore_comment_lines": True,
+        },
+    ),
+    # std::time::SystemTime also panics on wasm32-unknown-unknown.
+    (
+        "WASM compat: std::time::SystemTime banned in WASM-compiled crates",
+        ROOT / "crates",
+        re.compile(
+            r"\buse\s+std::time::SystemTime\b"
+            r"|\buse\s+std::time::\{[^}]*\bSystemTime\b"
+            r"|\bstd::time::SystemTime::"
+        ),
+        {
+            "exclude_dirs": {"tsz-cli", "conformance", "tests"},
+            "ignore_comment_lines": True,
+        },
+    ),
     (
         "Non-solver/non-lowering crates must not inspect TypeData internals in production code",
         ROOT / "crates",

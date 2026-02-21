@@ -71,7 +71,7 @@ cat > "$PKG/package.json" <<EOF
       "types": "./node/tsz_wasm.d.ts"
     }
   },
-  "files": ["node/", "bundler/", "bin/", "LICENSE.txt"]
+  "files": ["node/", "bundler/", "bin/", "lib-assets/", "LICENSE.txt"]
 }
 EOF
 
@@ -84,8 +84,19 @@ chmod +x "$PKG/bin/tsz.js" "$PKG/bin/tsz-server.js"
 # Copy root LICENSE into pkg/ so it is included in the npm tarball
 cp "$PROJECT_ROOT/LICENSE.txt" "$PKG/LICENSE.txt"
 
-# Note: TypeScript stdlib lib files (lib.es5.d.ts, lib.dom.d.ts, etc.) are
-# passed to TsProgram at runtime via addLibFile() — they are NOT bundled in
-# this package.  See crates/tsz-wasm/src/wasm_api/program.rs for details.
+# ─── Bundle TypeScript lib files ──────────────────────────────────────────────
+# lib .d.ts files provide global type definitions (Array, String, Promise, etc.)
+# The CLI wrapper loads them at startup via TsProgram.addLibFile().
+LIB_ASSETS="$PROJECT_ROOT/src/lib-assets"
+if [ -d "$LIB_ASSETS" ]; then
+    echo "Bundling TypeScript lib files..."
+    mkdir -p "$PKG/lib-assets"
+    cp "$LIB_ASSETS"/*.d.ts "$PKG/lib-assets/"
+    cp "$LIB_ASSETS/lib_manifest.json" "$PKG/lib-assets/"
+    echo "  Copied $(ls "$PKG/lib-assets"/*.d.ts 2>/dev/null | wc -l | tr -d ' ') lib files"
+else
+    echo "WARNING: lib-assets directory not found at $LIB_ASSETS"
+    echo "  The CLI will not have TypeScript built-in types (Array, String, etc.)"
+fi
 
 echo "WASM built successfully.  Package assembled in $PKG/"
