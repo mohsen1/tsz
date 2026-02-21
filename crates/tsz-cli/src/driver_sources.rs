@@ -27,6 +27,39 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
         Err(e) => return FileReadResult::Error(e.to_string()),
     };
 
+    // Check for UTF-16 BOM
+    // UTF-16 BE: FE FF
+    // UTF-16 LE: FF FE
+    if bytes.len() >= 2 {
+        if bytes[0] == 0xFE && bytes[1] == 0xFF {
+            // Decode UTF-16 BE
+            let u16_words: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| {
+                    if chunk.len() == 2 {
+                        u16::from_be_bytes([chunk[0], chunk[1]])
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            return FileReadResult::Text(String::from_utf16_lossy(&u16_words));
+        } else if bytes[0] == 0xFF && bytes[1] == 0xFE {
+            // Decode UTF-16 LE
+            let u16_words: Vec<u16> = bytes[2..]
+                .chunks_exact(2)
+                .map(|chunk| {
+                    if chunk.len() == 2 {
+                        u16::from_le_bytes([chunk[0], chunk[1]])
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            return FileReadResult::Text(String::from_utf16_lossy(&u16_words));
+        }
+    }
+
     // Check for binary indicators
     if is_binary_file(&bytes) {
         return FileReadResult::Binary(String::from_utf8_lossy(&bytes).to_string());
@@ -48,15 +81,6 @@ pub fn read_source_file(path: &Path) -> FileReadResult {
 pub(super) fn is_binary_file(bytes: &[u8]) -> bool {
     if bytes.is_empty() {
         return false;
-    }
-
-    // Check for UTF-16 BOM
-    // UTF-16 BE: FE FF
-    // UTF-16 LE: FF FE
-    if bytes.len() >= 2
-        && ((bytes[0] == 0xFE && bytes[1] == 0xFF) || (bytes[0] == 0xFF && bytes[1] == 0xFE))
-    {
-        return true;
     }
 
     // Check for many null bytes (binary file indicator)

@@ -1052,6 +1052,7 @@ pub struct Project {
     pub(crate) performance: ProjectPerformance,
     pub(crate) strict: bool,
     pub(crate) import_module_specifier_ending: Option<String>,
+    pub(crate) import_module_specifier_preference: Option<String>,
     pub(crate) auto_import_file_exclude_matchers: Vec<globset::GlobMatcher>,
 }
 
@@ -1065,6 +1066,7 @@ impl Project {
             performance: ProjectPerformance::default(),
             strict: false,
             import_module_specifier_ending: None,
+            import_module_specifier_preference: None,
             auto_import_file_exclude_matchers: Vec::new(),
         }
     }
@@ -1078,6 +1080,7 @@ impl Project {
             performance: ProjectPerformance::default(),
             strict: false,
             import_module_specifier_ending: None,
+            import_module_specifier_preference: None,
             auto_import_file_exclude_matchers: Vec::new(),
         }
     }
@@ -1099,6 +1102,11 @@ impl Project {
     /// Set completion module-specifier ending preference (e.g. "js").
     pub fn set_import_module_specifier_ending(&mut self, ending: Option<String>) {
         self.import_module_specifier_ending = ending;
+    }
+
+    /// Set preference for module specifier generation.
+    pub fn set_import_module_specifier_preference(&mut self, pref: Option<String>) {
+        self.import_module_specifier_preference = pref;
     }
 
     /// Set auto-import exclusion patterns used by completions and import fixes.
