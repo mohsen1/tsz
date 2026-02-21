@@ -254,9 +254,11 @@ impl<'a> Printer<'a> {
             && let Some(source_file) = self.inner.arena.get_source_file(node)
         {
             // SAFETY: The source text lives as long as the arena, and we hold
-            // a reference to the arena for the lifetime of the Printer
+            // a reference to the arena for the lifetime of the Printer.
+            // Route through `set_source_text` so writer preallocation stays in sync
+            // with other source-text-aware constructor paths.
             let text_ref: &'a str = &source_file.text;
-            self.inner.source_text = Some(text_ref);
+            self.inner.set_source_text(text_ref);
         }
 
         // Emit the AST
