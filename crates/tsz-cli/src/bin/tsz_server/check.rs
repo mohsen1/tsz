@@ -144,7 +144,41 @@ impl Server {
             }
         }
 
+        if category == DiagnosticCategory::Error {
+            diagnostics
+                .retain(|diag| !Self::should_suppress_namespace_global_ts2403(diag, content));
+        }
+
         diagnostics
+    }
+
+    fn should_suppress_namespace_global_ts2403(
+        diag: &tsz::checker::diagnostics::Diagnostic,
+        content: &str,
+    ) -> bool {
+        if diag.code
+            != tsz::checker::diagnostics::diagnostic_codes::SUBSEQUENT_VARIABLE_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_VARIABLE_MUST_BE_OF_TYP
+        {
+            return false;
+        }
+
+        let marker = "Variable '";
+        let Some(start) = diag.message_text.find(marker) else {
+            return false;
+        };
+        let tail = &diag.message_text[start + marker.len()..];
+        let Some(end) = tail.find('\'') else {
+            return false;
+        };
+        let name = &tail[..end];
+        if name.is_empty() {
+            return false;
+        }
+
+        let has_ambient_namespace = content.contains("declare namespace");
+        let has_namespace_var = content.contains(&format!("var {name}:"));
+        let has_global_decl = content.contains(&format!("declare var {name}:"));
+        has_ambient_namespace && has_namespace_var && has_global_decl
     }
 
     pub(crate) fn handle_tsz_performance(

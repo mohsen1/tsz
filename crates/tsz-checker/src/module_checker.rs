@@ -610,12 +610,10 @@ impl<'a> CheckerState<'a> {
 
             let mut is_local_or_imported = false;
             if let Some(sym_id) = self.ctx.binder.file_locals.get(&name_str)
-                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+                && self.ctx.binder.get_symbol(sym_id).is_some()
             {
-                // Check if it was actually declared or imported in THIS file
-                if symbol.decl_file_idx == self.ctx.current_file_idx as u32 {
-                    is_local_or_imported = true;
-                }
+                // file_locals already scopes to declarations/imports in the current source file.
+                is_local_or_imported = true;
             }
 
             if !is_local_or_imported {
