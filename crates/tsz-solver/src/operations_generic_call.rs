@@ -543,13 +543,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     if let Some(recovered_ty) = recovered {
                         final_subst.insert(tp.name, recovered_ty);
                     } else {
-                        let return_type =
-                            instantiate_type(self.interner, func.return_type, &final_subst);
-                        return CallResult::TypeParameterConstraintViolation {
-                            inferred_type: ty,
-                            constraint_type: constraint_ty,
-                            return_type,
-                        };
+                        // Fall back to constraint type so argument checking emits TS2345
+                        final_subst.insert(tp.name, constraint_ty);
                     }
                 }
             }

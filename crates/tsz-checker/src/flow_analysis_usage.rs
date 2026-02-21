@@ -251,7 +251,6 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node::NodeAccess;
-        
 
         // TS2454 is only emitted under strictNullChecks (matches tsc behavior)
         if !self.ctx.strict_null_checks() {
