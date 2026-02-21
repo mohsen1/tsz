@@ -1923,15 +1923,35 @@ impl<'a> CheckerState<'a> {
                         // Number op enum => number
                         TypeId::NUMBER
                     } else {
-                        // For relational operators (<, >, <=, >=), tsc allows comparison
+                        // For equality operators (==, !=, ===, !==), tsc allows comparison
                         // when the types are comparable (assignable in either direction).
-                        // This covers object types and other non-primitive comparisons.
-                        let is_relational = matches!(
-                            op_str,
-                            "<" | ">" | "<=" | ">=" | "==" | "!=" | "===" | "!=="
-                        );
-                        let is_comparable =
-                            is_relational && self.is_type_comparable_to(eval_left, eval_right);
+                        // For relational operators (<, >, <=, >=), tsc allows comparison
+                        // if both are assignable to number/bigint, or if neither are, they must
+                        // be comparable.
+                        let is_comparable = if matches!(op_str, "==" | "!=" | "===" | "!==") {
+                            self.is_type_comparable_to(eval_left, eval_right)
+                        } else if matches!(op_str, "<" | ">" | "<=" | ">=") {
+                            if eval_left == TypeId::ANY || eval_right == TypeId::ANY {
+                                true
+                            } else {
+                                let number_or_bigint =
+                                    self.ctx.types.union(vec![TypeId::NUMBER, TypeId::BIGINT]);
+                                let left_to_num =
+                                    self.is_assignable_to(eval_left, number_or_bigint);
+                                let right_to_num =
+                                    self.is_assignable_to(eval_right, number_or_bigint);
+
+                                if left_to_num && right_to_num {
+                                    true
+                                } else if !left_to_num && !right_to_num {
+                                    self.is_type_comparable_to(eval_left, eval_right)
+                                } else {
+                                    false
+                                }
+                            }
+                        } else {
+                            false
+                        };
 
                         if is_comparable {
                             TypeId::BOOLEAN
