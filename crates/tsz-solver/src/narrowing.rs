@@ -977,9 +977,10 @@ impl<'a> NarrowingContext<'a> {
             if self.is_assignable_to(instance_type, resolved_source) {
                 return instance_type;
             }
-            // Non-primitive types may still be instances at runtime
-            // Keep the source type rather than returning NEVER.
-            return source_type;
+            // Non-primitive types may still be instances at runtime.
+            // Neither direction holds — create intersection per tsc semantics.
+            // This handles cases like `interface I {}` narrowed by `instanceof RegExp`.
+            return self.db.intersection2(source_type, instance_type);
         }
         // Primitives can never pass instanceof
         TypeId::NEVER
@@ -1003,13 +1004,11 @@ impl<'a> NarrowingContext<'a> {
                     if self.is_js_primitive(member) {
                         return true;
                     }
-                    // Non-primitive: use the true-branch logic to determine if this
-                    // member would be kept by instanceof narrowing. If the true branch
-                    // would keep it, exclude it from the false branch.
-                    let true_result = self.narrow_by_instance_type(member, instance_type);
-                    // If true-branch narrows to NEVER, the member wouldn't pass instanceof
-                    // → keep it in the false branch
-                    true_result == TypeId::NEVER
+                    // A member only fails to reach the false branch if it is GUARANTEED
+                    // to pass the true branch. In TypeScript, this means the member
+                    // is assignable to the instance type.
+                    // If it is NOT assignable, it MIGHT fail at runtime, so we MUST keep it.
+                    !self.is_assignable_to(member, instance_type)
                 })
                 .copied()
                 .collect();
@@ -1022,7 +1021,12 @@ impl<'a> NarrowingContext<'a> {
             return self.db.union(remaining);
         }
 
-        // Non-union: can't narrow in the false branch
+        // Non-union: if it's guaranteed to be an instance, it will never reach the false branch.
+        if self.is_assignable_to(resolved_source, instance_type) {
+            return TypeId::NEVER;
+        }
+
+        // Otherwise, it might reach the false branch, so we keep the original type.
         source_type
     }
 
