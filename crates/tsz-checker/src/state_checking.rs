@@ -292,17 +292,25 @@ impl<'a> CheckerState<'a> {
             }
 
             // TS8006: 'interface'/'enum'/'module'/'namespace' declarations
+            // TSC anchors the error at the declaration name, not the whole statement.
             syntax_kind_ext::INTERFACE_DECLARATION => {
-                self.error_ts_only_declaration("interface", stmt_idx);
+                let error_node = self
+                    .ctx
+                    .arena
+                    .get_interface(node)
+                    .map_or(stmt_idx, |i| i.name);
+                self.error_ts_only_declaration("interface", error_node);
             }
 
             syntax_kind_ext::ENUM_DECLARATION => {
-                self.error_ts_only_declaration("enum", stmt_idx);
+                let error_node = self.ctx.arena.get_enum(node).map_or(stmt_idx, |e| e.name);
+                self.error_ts_only_declaration("enum", error_node);
             }
 
             syntax_kind_ext::MODULE_DECLARATION => {
                 let keyword = self.get_module_keyword(stmt_idx, node);
-                self.error_ts_only_declaration(keyword, stmt_idx);
+                let error_node = self.ctx.arena.get_module(node).map_or(stmt_idx, |m| m.name);
+                self.error_ts_only_declaration(keyword, error_node);
             }
 
             // TS8002: 'import ... =' can only be used in TypeScript files

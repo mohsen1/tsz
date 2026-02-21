@@ -531,9 +531,10 @@ impl<'a> CheckerState<'a> {
             );
         }
 
+        // TSC anchors TS2371 at the parameter name, not the initializer.
         if param_data.initializer.is_some() {
             self.error_at_node(
-                param_data.initializer,
+                param_data.name,
                 "A parameter initializer is only allowed in a function or constructor implementation.",
                 2371,
             );

@@ -8,10 +8,10 @@
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use std::time::Duration;
-use tsz::binder::BinderState;
-use tsz::checker::CheckerOptions;
-use tsz::checker::state::CheckerState;
-use tsz::parser::ParserState;
+use tsz_core::binder::BinderState;
+use tsz_core::checker::CheckerOptions;
+use tsz_core::checker::state::CheckerState;
+use tsz_core::parser::ParserState;
 use tsz_solver::TypeInterner;
 
 /// Simple code without complex control flow.
@@ -268,7 +268,7 @@ fn bench_type_check(c: &mut Criterion) {
                 let mut binder = BinderState::new();
                 binder.bind_source_file(parser.get_arena(), root);
                 let types = TypeInterner::new();
-                let compiler_options = tsz::checker::context::CheckerOptions::default();
+                let compiler_options = tsz_core::checker::context::CheckerOptions::default();
                 let mut checker = CheckerState::new(
                     parser.get_arena(),
                     &binder,

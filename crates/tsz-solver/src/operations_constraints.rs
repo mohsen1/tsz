@@ -1330,12 +1330,10 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         priority: crate::types::InferencePriority,
     ) {
         let t_shape = self.interner.object_shape(target_shape_id);
-        let string_idx_type = t_shape.string_index.as_ref().map(|idx| idx.value_type);
+        // Arrays and Tuples only have number index signatures, not string index signatures.
+        // Therefore, we only constrain their elements against the target's number index signature.
         let number_idx_type = t_shape.number_index.as_ref().map(|idx| idx.value_type);
         for &elem in element_types {
-            if let Some(string_target) = string_idx_type {
-                self.constrain_types(ctx, var_map, elem, string_target, priority);
-            }
             if let Some(number_target) = number_idx_type {
                 self.constrain_types(ctx, var_map, elem, number_target, priority);
             }
