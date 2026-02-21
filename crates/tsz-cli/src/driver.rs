@@ -709,7 +709,9 @@ fn compile_inner(
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
     apply_cli_overrides(&mut resolved, args)?;
-    if config.is_none() && args.module.is_none() && matches!(resolved.printer.module, ModuleKind::None)
+    if config.is_none()
+        && args.module.is_none()
+        && matches!(resolved.printer.module, ModuleKind::None)
     {
         // When no tsconfig is present, align with tsc's computed module default:
         // ES2015+ targets -> ES2015 modules, older targets -> CommonJS.
@@ -1451,16 +1453,14 @@ fn hash_text(text: &str) -> u64 {
 
 #[path = "driver_sources.rs"]
 mod driver_sources;
+#[cfg(test)]
+pub(crate) use driver_sources::has_no_types_and_symbols_directive;
 pub use driver_sources::{FileReadResult, read_source_file};
 use driver_sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
 };
-pub(crate) use driver_sources::{
-    config_base_dir, load_config, resolve_tsconfig_path,
-};
-#[cfg(test)]
-pub(crate) use driver_sources::has_no_types_and_symbols_directive;
+pub(crate) use driver_sources::{config_base_dir, load_config, resolve_tsconfig_path};
 
 #[path = "driver_check.rs"]
 mod driver_check;
