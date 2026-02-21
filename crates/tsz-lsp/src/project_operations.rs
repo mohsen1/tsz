@@ -8,7 +8,7 @@ use web_time::Instant;
 use rustc_hash::FxHashSet;
 
 use crate::code_actions::{ImportCandidate, ImportCandidateKind};
-use crate::completions::{CompletionItem, CompletionItemKind};
+use crate::completions::{CompletionItem, CompletionItemKind, sort_priority};
 use crate::diagnostics::LspDiagnostic;
 use crate::implementation::{GoToImplementationProvider, TargetKind};
 use crate::references::FindReferences;
@@ -1831,8 +1831,12 @@ impl Project {
         let documentation = self.auto_import_documentation(candidate);
 
         let mut item =
-            CompletionItem::new(candidate.local_name.clone(), CompletionItemKind::Variable);
-        item = item.with_detail(detail);
+            CompletionItem::new(candidate.local_name.clone(), CompletionItemKind::Variable)
+                .with_detail(detail)
+                .with_sort_text(sort_priority::AUTO_IMPORT)
+                .with_has_action()
+                .with_source(candidate.module_specifier.clone())
+                .with_source_display(candidate.module_specifier.clone());
         if let Some(doc) = documentation {
             item = item.with_documentation(doc);
         }
@@ -2232,6 +2236,10 @@ impl Project {
     }
 
     fn module_specifier_from_files(&self, from_file: &str, target_file: &str) -> Option<String> {
+        if let Some(package_specifier) = package_specifier_from_node_modules(target_file) {
+            return Some(package_specifier);
+        }
+
         let from_dir = Path::new(from_file)
             .parent()
             .unwrap_or_else(|| Path::new(""));
@@ -2322,6 +2330,43 @@ fn strip_ts_extension(path: &Path) -> PathBuf {
     }
 
     path.to_path_buf()
+}
+
+fn package_specifier_from_node_modules(target_file: &str) -> Option<String> {
+    let normalized = target_file.replace('\\', "/");
+    let marker = "/node_modules/";
+    let marker_idx = normalized.find(marker)?;
+    let package_path = &normalized[marker_idx + marker.len()..];
+    if package_path.is_empty() {
+        return None;
+    }
+
+    let package_path = strip_ts_extension(Path::new(package_path));
+    let mut spec = path_to_string(&package_path).replace('\\', "/");
+    if let Some(stripped) = spec.strip_suffix("/index") {
+        spec = stripped.to_string();
+    }
+
+    if let Some(stripped) = spec.strip_prefix("@types/") {
+        let mut parts = stripped.splitn(2, '/');
+        let package_name = parts.next().unwrap_or_default();
+        let rest = parts.next();
+
+        let package_name = if let Some((scope, name)) = package_name.split_once("__") {
+            format!("@{scope}/{name}")
+        } else {
+            package_name.to_string()
+        };
+
+        spec = match rest {
+            Some(rest) if !rest.is_empty() && rest != "index" => {
+                format!("{package_name}/{rest}")
+            }
+            _ => package_name,
+        };
+    }
+
+    if spec.is_empty() { None } else { Some(spec) }
 }
 
 fn relative_path(from: &Path, to: &Path) -> PathBuf {

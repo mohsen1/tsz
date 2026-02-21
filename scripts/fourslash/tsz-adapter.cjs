@@ -205,6 +205,7 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, settings) {
             super(cancellationToken, settings);
             this._client = null;
+            this._openedFiles = new Set();
         }
 
         setClient(client) {
@@ -243,17 +244,23 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         openFile(fileName, content, scriptKindName) {
             super.openFile(fileName, content, scriptKindName);
             if (this._client) {
-                // If content is not provided, get it from the host's stored scripts
-                // This is needed because the virtual file system paths don't exist on disk,
-                // and tsz-server would fall back to reading from disk (which would fail).
-                let fileContent = content;
-                if (fileContent == null) {
-                    const scriptInfo = this.getScriptInfo(fileName);
-                    if (scriptInfo) {
-                        fileContent = scriptInfo.content;
+                const openKnownFile = (path, fileContent, kindName) => {
+                    if (this._openedFiles.has(path)) return;
+                    let contentToSend = fileContent;
+                    if (contentToSend == null) {
+                        const scriptInfo = this.getScriptInfo(path);
+                        if (scriptInfo) contentToSend = scriptInfo.content;
                     }
+                    if (contentToSend == null) return;
+                    this._client.openFile(path, contentToSend, kindName);
+                    this._openedFiles.add(path);
+                };
+
+                openKnownFile(fileName, content, scriptKindName);
+                for (const path of this.getFilenames()) {
+                    if (!ts.isAnySupportedFileExtension(path)) continue;
+                    openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
                 }
-                this._client.openFile(fileName, fileContent, scriptKindName);
             }
         }
 
