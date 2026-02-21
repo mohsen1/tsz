@@ -781,8 +781,11 @@ impl<'a> CheckerState<'a> {
                     (false, false)
                 };
 
-                let check_return_type =
-                    self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+                let check_return_type = self.return_type_for_implicit_return_check(
+                    annotated_return_type.unwrap_or(return_type),
+                    is_async,
+                    is_generator,
+                );
                 let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(body);
                 let falls_through = self.function_body_falls_through(body);
@@ -811,7 +814,7 @@ impl<'a> CheckerState<'a> {
                     // TS7030: noImplicitReturns - not all code paths return a value
                     // TSC skips TS7030 for functions returning void, any, or unions containing void/any
                     let ts7030_check_type = self.return_type_for_implicit_return_check(
-                        return_type,
+                        annotated_return_type.unwrap_or(return_type),
                         is_async,
                         function_is_generator,
                     );
