@@ -126,12 +126,14 @@ impl<'a> CheckerState<'a> {
     /// - Overload resolution
     /// - Intersection types (mixin pattern)
     /// - Argument type checking
+    #[allow(dead_code)]
     fn constructor_identifier_name(&self, expr_idx: NodeIndex) -> Option<String> {
         let node = self.ctx.arena.get(expr_idx)?;
         let ident = self.ctx.arena.get_identifier(node)?;
         Some(ident.escaped_text.clone())
     }
 
+    #[allow(dead_code)]
     fn weak_collection_method_name_and_receiver(
         &self,
         expr_idx: NodeIndex,
@@ -153,6 +155,7 @@ impl<'a> CheckerState<'a> {
         Some((method, access.expression))
     }
 
+    #[allow(dead_code)]
     fn expr_contains_symbol_value(&mut self, expr_idx: NodeIndex) -> bool {
         use tsz_parser::parser::syntax_kind_ext;
 
@@ -178,84 +181,22 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    pub(crate) fn should_suppress_weak_key_arg_mismatch(
+    pub(crate) const fn should_suppress_weak_key_arg_mismatch(
         &mut self,
-        callee_expr: NodeIndex,
-        args: &[NodeIndex],
-        mismatch_index: usize,
-        actual: TypeId,
+        _callee_expr: NodeIndex,
+        _args: &[NodeIndex],
+        _mismatch_index: usize,
+        _actual: TypeId,
     ) -> bool {
-        if !self.ctx.has_name_in_lib("WeakSet") {
-            return false;
-        }
-
-        if actual == TypeId::SYMBOL {
-            if let Some((method, receiver_expr)) =
-                self.weak_collection_method_name_and_receiver(callee_expr)
-                && mismatch_index == 0
-            {
-                let receiver_type = self.get_type_of_node(receiver_expr);
-                let receiver_name = self.format_type(receiver_type);
-                if ((method == "add" || method == "has" || method == "delete")
-                    && receiver_name.contains("WeakSet"))
-                    || ((method == "set"
-                        || method == "has"
-                        || method == "get"
-                        || method == "delete")
-                        && receiver_name.contains("WeakMap"))
-                    || ((method == "register" || method == "unregister")
-                        && receiver_name.contains("FinalizationRegistry"))
-                {
-                    return true;
-                }
-            }
-
-            if mismatch_index == 0
-                && let Some(callee_name) = self.constructor_identifier_name(callee_expr)
-                && callee_name == "WeakRef"
-            {
-                return true;
-            }
-        }
-
-        if mismatch_index == 0
-            && let Some(callee_name) = self.constructor_identifier_name(callee_expr)
-            && (callee_name == "WeakSet" || callee_name == "WeakMap")
-            && let Some(&first_arg) = args.first()
-            && self.expr_contains_symbol_value(first_arg)
-        {
-            return true;
-        }
-
         false
     }
-
-    pub(crate) fn should_suppress_weak_key_no_overload(
+    pub(crate) const fn should_suppress_weak_key_no_overload(
         &mut self,
-        callee_expr: NodeIndex,
-        args: &[NodeIndex],
+        _callee_expr: NodeIndex,
+        _args: &[NodeIndex],
     ) -> bool {
-        if !self.ctx.has_name_in_lib("WeakSet") {
-            return false;
-        }
-
-        let Some(callee_name) = self.constructor_identifier_name(callee_expr) else {
-            return false;
-        };
-
-        if callee_name != "WeakSet" && callee_name != "WeakMap" {
-            return false;
-        }
-
-        let Some(&first_arg) = args.first() else {
-            return false;
-        };
-
-        self.expr_contains_symbol_value(first_arg)
+        false
     }
-
-    /// For `new importAlias(...)` where `importAlias` is `import X = require("m")`,
-    /// prefer the module's `export =` target type when available.
     ///
     /// This keeps general alias typing unchanged (important for type-position behavior)
     /// while ensuring constructor resolution sees the direct constructable type.
@@ -552,7 +493,11 @@ impl<'a> CheckerState<'a> {
                 );
                 return_type
             }
-            CallResult::NoOverloadMatch { failures, .. } => {
+            CallResult::NoOverloadMatch {
+                failures,
+                fallback_return: _,
+                ..
+            } => {
                 if !self.should_suppress_weak_key_no_overload(new_expr.expression, args) {
                     self.error_no_overload_matches_at(idx, &failures);
                 }

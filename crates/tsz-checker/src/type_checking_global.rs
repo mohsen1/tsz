@@ -386,6 +386,79 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        let mut cross_file_conflicts = Vec::new();
+        for &sym_id in &symbol_ids {
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+
+            if has_libs && self.ctx.symbol_is_from_lib(sym_id) {
+                continue;
+            }
+
+            if symbol.declarations.len() <= 1 {
+                continue;
+            }
+
+            let mut has_local = false;
+            let mut has_remote = false;
+            for &decl_idx in &symbol.declarations {
+                if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                    for arena in arenas {
+                        let is_local = std::ptr::eq(&**arena, self.ctx.arena);
+                        if let Some(_flags) = self.declaration_symbol_flags(arena, decl_idx) {
+                            if has_libs
+                                && is_local
+                                && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
+                            {
+                                continue;
+                            }
+                            if is_local {
+                                has_local = true;
+                            } else {
+                                has_remote = true;
+                            }
+                        }
+                    }
+                } else {
+                    let is_local = true; // Fallback
+                    if let Some(_flags) = self.declaration_symbol_flags(self.ctx.arena, decl_idx) {
+                        if has_libs
+                            && is_local
+                            && !self.declaration_name_matches(decl_idx, &symbol.escaped_name)
+                        {
+                            continue;
+                        }
+                        if is_local {
+                            has_local = true;
+                        } else {
+                            has_remote = true;
+                        }
+                    }
+                }
+            }
+
+            if has_local && has_remote {
+                cross_file_conflicts.push(symbol.escaped_name.clone());
+            }
+        }
+
+        let emit_ts6200 = cross_file_conflicts.len() >= 8;
+        if emit_ts6200 {
+            cross_file_conflicts.sort();
+            let list = cross_file_conflicts.join(", ");
+            let message = format_message(
+                diagnostic_messages::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
+                &[&list],
+            );
+            // Report on the SourceFile node
+            self.error_at_node(
+                tsz_parser::parser::base::NodeIndex(0),
+                &message,
+                diagnostic_codes::DEFINITIONS_OF_THE_FOLLOWING_IDENTIFIERS_CONFLICT_WITH_THOSE_IN_ANOTHER_FILE,
+            );
+        }
+
         for sym_id in symbol_ids {
             if has_libs && self.ctx.symbol_is_from_lib(sym_id) {
                 continue;
@@ -394,6 +467,14 @@ impl<'a> CheckerState<'a> {
             let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
                 continue;
             };
+
+            if emit_ts6200
+                && cross_file_conflicts
+                    .binary_search(&symbol.escaped_name)
+                    .is_ok()
+            {
+                continue;
+            }
 
             if symbol.declarations.len() <= 1 {
                 continue;

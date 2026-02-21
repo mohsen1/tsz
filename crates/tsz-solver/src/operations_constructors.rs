@@ -128,7 +128,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let actual_count = arg_types.len();
         // Track single count-compatible overload that fails on types (see resolve_callable_call).
         let mut type_mismatch_count: usize = 0;
-        let mut sole_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
+        let mut first_type_mismatch: Option<(usize, TypeId, TypeId)> = None;
+        let mut all_mismatches_identical = true;
         let mut has_non_count_non_type_failure = false;
 
         for sig in &shape.construct_signatures {
@@ -155,7 +156,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     all_arg_count_mismatches = false;
                     type_mismatch_count += 1;
                     if type_mismatch_count == 1 {
-                        sole_type_mismatch = Some((index, expected, actual));
+                        first_type_mismatch = Some((index, expected, actual));
+                    } else if first_type_mismatch != Some((index, expected, actual)) {
+                        all_mismatches_identical = false;
                     }
                     failures.push(
                         crate::diagnostics::PendingDiagnosticBuilder::argument_not_assignable(
@@ -203,8 +206,9 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Same "best candidate" heuristic as resolve_callable_call.
         if !has_non_count_non_type_failure
-            && type_mismatch_count == 1
-            && let Some((index, expected, actual)) = sole_type_mismatch
+            && type_mismatch_count > 0
+            && all_mismatches_identical
+            && let Some((index, expected, actual)) = first_type_mismatch
         {
             return CallResult::ArgumentTypeMismatch {
                 index,
@@ -217,6 +221,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             func_type: self.interner.callable(shape.clone()),
             arg_types: arg_types.to_vec(),
             failures,
+            fallback_return: shape
+                .construct_signatures
+                .first()
+                .map(|s| s.return_type)
+                .unwrap_or(TypeId::ANY),
         }
     }
 
