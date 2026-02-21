@@ -1,7 +1,7 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (9th audit)
-**Branch**: main (commit 822202039)
+**Date**: 2026-02-21 (10th audit)
+**Branch**: main (commit b81760973)
 **Status**: ALL CLEAR — no violations found
 
 ---
@@ -28,6 +28,7 @@ No `TypeKey` or `TypeData` type imports found outside the solver crate. All refe
 - No `TypeData` imports in checker, binder, emitter, LSP, or CLI code
 - No direct pattern matching on `TypeData` variants outside solver
 - Checker uses only public solver API: `TypeId`, `DefId`, `TypeFormatter`, `QueryDatabase`, `TypeEnvironment`, `Judge`, etc.
+- 25 `TypeData` mentions in checker are all in comments/documentation (architectural notes), not actual code usage
 
 ### 2. Solver Imports in Binder — CLEAN
 
@@ -51,9 +52,9 @@ All checker files are under the 2000-line limit. Eleven files are approaching th
 | `context.rs` | 1,830 | 170 lines |
 | `types/class_type.rs` | 1,803 | 197 lines |
 
-Total checker codebase: ~148 files, ~106,405 LOC.
+Total checker codebase: ~148 files, ~106,525 LOC.
 
-No change from 8th audit — no new code has been added since then.
+**Note on perf commit (b81760973)**: The `type_checking_queries_lib.rs` file stayed at 1,901 lines — the perf commit extracted new logic into a separate `type_checking_queries_lib_prime.rs` (113 lines), keeping the near-threshold file from growing. Good architectural practice.
 
 ### 4. Cross-Layer Imports — CLEAN
 
@@ -65,6 +66,8 @@ No change from 8th audit — no new code has been added since then.
 - **Lowering -> Checker**: No checker dependency. Lowering bridges AST and Solver only.
 
 **Note on TypeInterner usage**: LSP, CLI, and Emitter import `TypeInterner` from `tsz-solver`. This is **expected architecture** — `TypeInterner` is the public read-only type store. What's forbidden is importing `TypeData` variants or performing direct type construction, not read-only type store access.
+
+**Note on Solver -> Binder (`SymbolId`)**: The solver crate depends on `tsz-binder` for the `SymbolId` identity handle. This is **by design** — `SymbolId(u32)` is a shared identity handle (CLAUDE.md §7) required for type variants like `TypeQuery(SymbolRef)` and `UniqueSymbol(SymbolRef)`. The forbidden pattern is binder importing solver for *semantic decisions*, not shared identity handles flowing between layers.
 
 ### 5. Checker Type Internals Pattern-Matching — CLEAN
 
@@ -87,15 +90,15 @@ The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solv
 
 ## CI Health
 
-Latest CI run (822202039) completed successfully. All 5 recent runs green.
+Latest CI run (b81760973) in progress. All completed runs green.
 
 | Run | Status | Description |
 |-----|--------|-------------|
+| 22264898602 | completed/success | docs(arch): 9th architecture audit |
+| 22264859539 | in_progress | perf(checker): avoid full lib lowering when priming generic params |
 | 22264836885 | completed/success | docs(arch): 8th architecture audit |
 | 22264779796 | completed/success | docs(arch): 7th architecture audit |
 | 22264708570 | completed/success | docs(arch): 6th architecture audit |
-| 22264633879 | completed/success | docs(arch): 5th architecture audit |
-| 22264560766 | completed/success | docs: automated README metrics update |
 
 ---
 
