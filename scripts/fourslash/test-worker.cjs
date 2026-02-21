@@ -144,8 +144,27 @@ function patchTestState(FourSlash, TszAdapter) {
  * Patch SessionClient to implement methods that throw "Not implemented"
  * by routing them to tsz-server protocol commands.
  */
-function patchSessionClient(SessionClient) {
+function patchSessionClient(SessionClient, ts) {
     const proto = SessionClient.prototype;
+    const getNativeLanguageService = (client) => {
+        if (client._tszNativeLs !== undefined) return client._tszNativeLs;
+        try {
+            client._tszNativeLs = ts.createLanguageService(client.host);
+        } catch {
+            client._tszNativeLs = null;
+        }
+        return client._tszNativeLs;
+    };
+
+    const withNativeFallback = (client, op) => {
+        const nativeLs = getNativeLanguageService(client);
+        if (!nativeLs) return undefined;
+        try {
+            return op(nativeLs);
+        } catch {
+            return undefined;
+        }
+    };
 
     // The constructor sets getCombinedCodeFix, applyCodeActionCommand, and mapCode
     // as instance properties (= notImplemented), which shadows prototype methods.
@@ -169,6 +188,11 @@ function patchSessionClient(SessionClient) {
     };
 
     proto.getBreakpointStatementAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getBreakpointStatementAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("breakpointStatement", args);
@@ -182,6 +206,11 @@ function patchSessionClient(SessionClient) {
     };
 
     proto.getJsxClosingTagAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getJsxClosingTagAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("jsxClosingTag", args);
@@ -284,6 +313,11 @@ function patchSessionClient(SessionClient) {
     };
 
     proto.getSpanOfEnclosingComment = function(fileName, position, onlyMultiLine) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSpanOfEnclosingComment(fileName, position, onlyMultiLine)
+        );
+        if (nativeResult) return nativeResult;
+
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = {
             file: fileName,
@@ -415,15 +449,24 @@ function patchSessionClient(SessionClient) {
     };
 
     proto.getSyntacticClassifications = function(fileName, span) {
-        return [];
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSyntacticClassifications(fileName, span)
+        );
+        return nativeResult || [];
     };
 
     proto.getSemanticClassifications = function(fileName, span) {
-        return [];
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getSemanticClassifications(fileName, span)
+        );
+        return nativeResult || [];
     };
 
     proto.getEncodedSyntacticClassifications = function(fileName, span) {
-        return { spans: [], endOfLineState: 0 };
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getEncodedSyntacticClassifications(fileName, span)
+        );
+        return nativeResult || { spans: [], endOfLineState: 0 };
     };
 
     proto.getCompilerOptionsDiagnostics = function() {
@@ -443,11 +486,18 @@ function patchSessionClient(SessionClient) {
     };
 
     proto.getNameOrDottedNameSpan = function(fileName, startPos, endPos) {
-        return undefined;
+        return withNativeFallback(this, ls =>
+            ls.getNameOrDottedNameSpan(fileName, startPos, endPos)
+        );
     };
 
     // getLinkedEditingRangeAtPosition - route to server protocol
     proto.getLinkedEditingRangeAtPosition = function(fileName, position) {
+        const nativeResult = withNativeFallback(this, ls =>
+            ls.getLinkedEditingRangeAtPosition(fileName, position)
+        );
+        if (nativeResult) return nativeResult;
+
         const lineOffset = this.positionToOneBasedLineOffset(fileName, position);
         const args = { file: fileName, line: lineOffset.line, offset: lineOffset.offset };
         const request = this.processRequest("linkedEditingRange", args);
@@ -622,7 +672,7 @@ async function main() {
     // Create adapter and patch TestState
     let TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
     patchTestState(FourSlash, TszAdapter);
-    patchSessionClient(SessionClient);
+    patchSessionClient(SessionClient, ts);
 
     const testType = 0; // FourSlashTestType.Native
 
