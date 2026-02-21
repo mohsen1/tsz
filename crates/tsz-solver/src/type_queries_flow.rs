@@ -99,6 +99,10 @@ pub fn classify_for_constructor_instance(
 /// Recursively handles union types (collecting from all members) and intersection types
 /// (returning from the first member with construct signatures).
 pub fn instance_type_from_constructor(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN {
+        return Some(type_id);
+    }
+
     match classify_for_constructor_instance(db, type_id) {
         ConstructorInstanceKind::Callable(shape_id) => {
             let shape = db.callable_shape(shape_id);
