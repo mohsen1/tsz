@@ -1818,110 +1818,110 @@ impl<'a> CheckerState<'a> {
             self.ctx.compiler_options.no_implicit_any,
         );
 
-        if is_generic_call && !substitution_exprs.is_empty() {
-            if let Some(shape) = callee_shape.as_ref() {
-                // Pre-compute contextual sensitivity
-                let sensitive_args: Vec<bool> = substitution_exprs
-                    .iter()
-                    .map(|&arg| is_contextually_sensitive(self, arg))
-                    .collect();
-                let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
+        if is_generic_call
+            && !substitution_exprs.is_empty()
+            && let Some(shape) = callee_shape.as_ref()
+        {
+            // Pre-compute contextual sensitivity
+            let sensitive_args: Vec<bool> = substitution_exprs
+                .iter()
+                .map(|&arg| is_contextually_sensitive(self, arg))
+                .collect();
+            let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
 
-                if needs_two_pass {
-                    // === Round 1: Collect non-contextual substitution types ===
-                    let factory = self.ctx.types.factory();
-                    let placeholder = {
-                        let fshape = tsz_solver::FunctionShape {
-                            params: vec![],
-                            return_type: TypeId::ANY,
-                            this_type: None,
-                            type_params: vec![],
-                            type_predicate: None,
-                            is_constructor: false,
-                            is_method: false,
-                        };
-                        factory.function(fshape)
+            if needs_two_pass {
+                // === Round 1: Collect non-contextual substitution types ===
+                let factory = self.ctx.types.factory();
+                let placeholder = {
+                    let fshape = tsz_solver::FunctionShape {
+                        params: vec![],
+                        return_type: TypeId::ANY,
+                        this_type: None,
+                        type_params: vec![],
+                        type_predicate: None,
+                        is_constructor: false,
+                        is_method: false,
                     };
+                    factory.function(fshape)
+                };
 
-                    // Build argument types for Round 1: TemplateStringsArray + substitutions
-                    // Use ANY as stand-in for TemplateStringsArray since it's a fixed
-                    // non-generic type that doesn't affect type parameter inference.
-                    let template_strings_type = TypeId::ANY;
-                    let mut round1_arg_types: Vec<TypeId> =
-                        Vec::with_capacity(1 + substitution_exprs.len());
-                    round1_arg_types.push(template_strings_type);
+                // Build argument types for Round 1: TemplateStringsArray + substitutions
+                // Use ANY as stand-in for TemplateStringsArray since it's a fixed
+                // non-generic type that doesn't affect type parameter inference.
+                let template_strings_type = TypeId::ANY;
+                let mut round1_arg_types: Vec<TypeId> =
+                    Vec::with_capacity(1 + substitution_exprs.len());
+                round1_arg_types.push(template_strings_type);
 
-                    for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
-                        if sensitive_args[i] {
-                            round1_arg_types.push(placeholder);
-                        } else {
-                            let ctx_type = ctx_helper
-                                .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
-                            let prev_context = self.ctx.contextual_type;
-                            self.ctx.contextual_type = ctx_type;
-                            let arg_type = self.get_type_of_node(expr_idx);
-                            self.ctx.contextual_type = prev_context;
-                            round1_arg_types.push(arg_type);
-                        }
-                    }
-
-                    // Perform Round 1 inference
-                    let evaluated_shape = {
-                        let new_params: Vec<_> = shape
-                            .params
-                            .iter()
-                            .map(|p| tsz_solver::ParamInfo {
-                                name: p.name,
-                                type_id: self.evaluate_type_with_env(p.type_id),
-                                optional: p.optional,
-                                rest: p.rest,
-                            })
-                            .collect();
-                        tsz_solver::FunctionShape {
-                            params: new_params,
-                            return_type: shape.return_type,
-                            this_type: shape.this_type,
-                            type_params: shape.type_params.clone(),
-                            type_predicate: shape.type_predicate.clone(),
-                            is_constructor: shape.is_constructor,
-                            is_method: shape.is_method,
-                        }
-                    };
-                    let substitution = {
-                        let env = self.ctx.type_env.borrow();
-                        call_checker::compute_contextual_types_with_context(
-                            self.ctx.types,
-                            &self.ctx,
-                            &env,
-                            &evaluated_shape,
-                            &round1_arg_types,
-                            self.ctx.contextual_type,
-                        )
-                    };
-
-                    // === Round 2: Type-check all substitutions with contextual types ===
-                    let total_args = 1 + substitution_exprs.len();
-                    for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                    if sensitive_args[i] {
+                        round1_arg_types.push(placeholder);
+                    } else {
                         let ctx_type = ctx_helper
-                            .get_parameter_type_for_call(i + 1, total_args)
-                            .map(|pt| {
-                                let instantiated =
-                                    instantiate_type(self.ctx.types, pt, &substitution);
-                                self.evaluate_type_with_env(instantiated)
-                            });
+                            .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
                         let prev_context = self.ctx.contextual_type;
-                        if is_contextually_sensitive(self, expr_idx) {
-                            self.ctx.contextual_type = ctx_type;
-                        }
-                        self.get_type_of_node(expr_idx);
+                        self.ctx.contextual_type = ctx_type;
+                        let arg_type = self.get_type_of_node(expr_idx);
                         self.ctx.contextual_type = prev_context;
+                        round1_arg_types.push(arg_type);
                     }
-
-                    // Return instantiated return type
-                    let return_type =
-                        instantiate_type(self.ctx.types, shape.return_type, &substitution);
-                    return self.evaluate_type_with_env(return_type);
                 }
+
+                // Perform Round 1 inference
+                let evaluated_shape = {
+                    let new_params: Vec<_> = shape
+                        .params
+                        .iter()
+                        .map(|p| tsz_solver::ParamInfo {
+                            name: p.name,
+                            type_id: self.evaluate_type_with_env(p.type_id),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect();
+                    tsz_solver::FunctionShape {
+                        params: new_params,
+                        return_type: shape.return_type,
+                        this_type: shape.this_type,
+                        type_params: shape.type_params.clone(),
+                        type_predicate: shape.type_predicate.clone(),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    }
+                };
+                let substitution = {
+                    let env = self.ctx.type_env.borrow();
+                    call_checker::compute_contextual_types_with_context(
+                        self.ctx.types,
+                        &self.ctx,
+                        &env,
+                        &evaluated_shape,
+                        &round1_arg_types,
+                        self.ctx.contextual_type,
+                    )
+                };
+
+                // === Round 2: Type-check all substitutions with contextual types ===
+                let total_args = 1 + substitution_exprs.len();
+                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                    let ctx_type = ctx_helper
+                        .get_parameter_type_for_call(i + 1, total_args)
+                        .map(|pt| {
+                            let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
+                            self.evaluate_type_with_env(instantiated)
+                        });
+                    let prev_context = self.ctx.contextual_type;
+                    if is_contextually_sensitive(self, expr_idx) {
+                        self.ctx.contextual_type = ctx_type;
+                    }
+                    self.get_type_of_node(expr_idx);
+                    self.ctx.contextual_type = prev_context;
+                }
+
+                // Return instantiated return type
+                let return_type =
+                    instantiate_type(self.ctx.types, shape.return_type, &substitution);
+                return self.evaluate_type_with_env(return_type);
             }
         }
 
@@ -1949,7 +1949,7 @@ impl<'a> CheckerState<'a> {
         TypeId::ANY
     }
 
-    /// Collect template substitution expression NodeIndex values from a tagged template.
+    /// Collect template substitution expression `NodeIndex` values from a tagged template.
     fn collect_template_substitution_exprs(
         &self,
         tagged: &tsz_parser::parser::node::TaggedTemplateData,
@@ -1957,14 +1957,13 @@ impl<'a> CheckerState<'a> {
         let mut exprs = Vec::new();
         if let Some(template_node) = self.ctx.arena.get(tagged.template)
             && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            && let Some(templ_data) = self.ctx.arena.get_template_expr(template_node)
         {
-            if let Some(templ_data) = self.ctx.arena.get_template_expr(template_node) {
-                for &span_idx in &templ_data.template_spans.nodes {
-                    if let Some(span_node) = self.ctx.arena.get(span_idx)
-                        && let Some(span_data) = self.ctx.arena.get_template_span(span_node)
-                    {
-                        exprs.push(span_data.expression);
-                    }
+            for &span_idx in &templ_data.template_spans.nodes {
+                if let Some(span_node) = self.ctx.arena.get(span_idx)
+                    && let Some(span_data) = self.ctx.arena.get_template_span(span_node)
+                {
+                    exprs.push(span_data.expression);
                 }
             }
         }
@@ -1978,15 +1977,13 @@ impl<'a> CheckerState<'a> {
     ) {
         if let Some(template_node) = self.ctx.arena.get(tagged.template)
             && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            && let Some(templ_data) = self.ctx.arena.get_template_expr(template_node).cloned()
         {
-            if let Some(templ_data) = self.ctx.arena.get_template_expr(template_node).cloned() {
-                for &span_idx in &templ_data.template_spans.nodes {
-                    if let Some(span_node) = self.ctx.arena.get(span_idx)
-                        && let Some(span_data) =
-                            self.ctx.arena.get_template_span(span_node).cloned()
-                    {
-                        self.get_type_of_node(span_data.expression);
-                    }
+            for &span_idx in &templ_data.template_spans.nodes {
+                if let Some(span_node) = self.ctx.arena.get(span_idx)
+                    && let Some(span_data) = self.ctx.arena.get_template_span(span_node).cloned()
+                {
+                    self.get_type_of_node(span_data.expression);
                 }
             }
         }
