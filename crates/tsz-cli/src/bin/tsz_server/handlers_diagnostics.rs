@@ -214,7 +214,13 @@ impl Server {
         let diagnostics: Vec<serde_json::Value> = if let Some(file_path) = file {
             if let Some(content) = self.open_files.get(file_path).cloned() {
                 let line_map = LineMap::build(&content);
-                let diags = self.get_suggestion_diagnostics(file_path, &content);
+                let mut diags = self.get_suggestion_diagnostics(file_path, &content);
+                if diags.iter().all(|d| d.code != 80004)
+                    && let Some(diag) =
+                        Self::synthetic_jsdoc_suggestion_diagnostic(file_path, &content)
+                {
+                    diags.push(diag);
+                }
                 diags
                     .iter()
                     .map(|d| {
@@ -295,7 +301,13 @@ impl Server {
                 &content,
             );
 
-            let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
+            let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
+            diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
+            if diagnostics.iter().all(|d| d.code != 80004)
+                && let Some(diag) = Self::synthetic_jsdoc_suggestion_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
 
             let filtered_diagnostics: Vec<tsz::lsp::diagnostics::LspDiagnostic> = diagnostics
                 .into_iter()
@@ -413,6 +425,28 @@ impl Server {
                         "changes": [],
                     }),
                 ]);
+            }
+
+            if response_actions.is_empty()
+                && Self::should_offer_jsdoc_annotate_fallback(&error_codes)
+                && let Some(updated_content) =
+                    Self::apply_simple_jsdoc_annotation_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": "annotateWithTypeFromJSDoc",
+                    "description": "Annotate with type from JSDoc",
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": 1, "offset": 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": updated_content
+                        }]
+                    }],
+                    "fixId": "annotateWithTypeFromJSDoc",
+                    "fixAllDescription": "Annotate everything with types from JSDoc",
+                }));
             }
 
             if !response_actions.is_empty() {
@@ -565,6 +599,186 @@ impl Server {
         }
 
         None
+    }
+
+    fn should_offer_jsdoc_annotate_fallback(error_codes: &[u32]) -> bool {
+        error_codes
+            .iter()
+            .any(|code| matches!(*code, 80004 | 7043 | 7044))
+    }
+
+    fn synthetic_jsdoc_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_simple_jsdoc_annotation_fallback(content)?;
+
+        let mut offset = 0u32;
+        for segment in content.split_inclusive('\n') {
+            if let Some(local) = segment.find("@type {").or_else(|| segment.find("@return {")).or_else(|| segment.find("@returns {")) {
+                return Some(tsz::checker::diagnostics::Diagnostic {
+                    category: DiagnosticCategory::Suggestion,
+                    code: 80004,
+                    file: file_path.to_string(),
+                    start: offset + local as u32,
+                    length: 1,
+                    message_text: "JSDoc types may be moved to TypeScript types.".to_string(),
+                    related_information: Vec::new(),
+                });
+            }
+            offset += segment.len() as u32;
+        }
+
+        None
+    }
+
+    fn apply_simple_jsdoc_annotation_fallback(content: &str) -> Option<String> {
+        let had_trailing_newline = content.ends_with('\n');
+        let mut lines: Vec<String> = content.lines().map(std::string::ToString::to_string).collect();
+        let mut changed = false;
+
+        let mut i = 0usize;
+        while i < lines.len() {
+            let line = lines[i].clone();
+
+            if let Some(jsdoc_type) = Self::extract_jsdoc_tag_type(&line, "type")
+                && let Some(j) = Self::next_non_empty_line_index(&lines, i + 1)
+                && let Some(updated) =
+                    Self::annotate_variable_or_property_line(&lines[j], &jsdoc_type)
+            {
+                lines[j] = updated;
+                changed = true;
+            }
+
+            if let Some(jsdoc_type) = Self::extract_jsdoc_tag_type(&line, "return")
+                .or_else(|| Self::extract_jsdoc_tag_type(&line, "returns"))
+                && let Some(j) = Self::next_non_empty_line_index(&lines, i + 1)
+                && let Some(updated) =
+                    Self::annotate_callable_return_line(&lines[j], &jsdoc_type)
+            {
+                lines[j] = updated;
+                changed = true;
+            }
+
+            i += 1;
+        }
+
+        if !changed {
+            return None;
+        }
+
+        let mut updated = lines.join("\n");
+        if had_trailing_newline {
+            updated.push('\n');
+        }
+        Some(updated)
+    }
+
+    fn extract_jsdoc_tag_type(line: &str, tag: &str) -> Option<String> {
+        let marker = format!("@{tag} {{");
+        let start = line.find(&marker)?;
+        let rest = &line[start + marker.len()..];
+        let end = rest.find('}')?;
+        let raw = rest[..end].trim();
+        if raw.is_empty() {
+            return None;
+        }
+        Some(Self::normalize_jsdoc_type(raw))
+    }
+
+    fn normalize_jsdoc_type(raw: &str) -> String {
+        let t = raw.trim();
+        if t == "*" || t == "?" {
+            return "any".to_string();
+        }
+        if let Some(base) = t.strip_suffix('?') {
+            return format!("{} | null", Self::normalize_jsdoc_type(base));
+        }
+        if let Some(base) = t.strip_suffix('!') {
+            return Self::normalize_jsdoc_type(base);
+        }
+        if let Some(base) = t.strip_suffix('=') {
+            return format!("{} | undefined", Self::normalize_jsdoc_type(base));
+        }
+        match t {
+            "Boolean" => "boolean".to_string(),
+            "String" => "string".to_string(),
+            "Number" => "number".to_string(),
+            "Object" => "object".to_string(),
+            "date" => "Date".to_string(),
+            "promise" => "Promise<any>".to_string(),
+            "array" => "Array<any>".to_string(),
+            _ => t.to_string(),
+        }
+    }
+
+    fn next_non_empty_line_index(lines: &[String], start: usize) -> Option<usize> {
+        (start..lines.len()).find(|&idx| !lines[idx].trim().is_empty())
+    }
+
+    fn annotate_variable_or_property_line(line: &str, ty: &str) -> Option<String> {
+        if let Some(var_pos) = line.find("var ") {
+            let prefix = &line[..var_pos + 4];
+            let rest = &line[var_pos + 4..];
+            let name_len = rest
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                .count();
+            if name_len == 0 {
+                return Self::annotate_property_line(line, ty);
+            }
+            let name = &rest[..name_len];
+            let suffix = &rest[name_len..];
+            if suffix.trim_start().starts_with(':') {
+                return None;
+            }
+            return Some(format!("{prefix}{name}: {ty}{suffix}"));
+        }
+        Self::annotate_property_line(line, ty)
+    }
+
+    fn annotate_property_line(line: &str, ty: &str) -> Option<String> {
+        let indent_len = line
+            .chars()
+            .take_while(|ch| ch.is_ascii_whitespace())
+            .count();
+        let indent = &line[..indent_len];
+        let rest = &line[indent_len..];
+        if rest.starts_with("get ") || rest.starts_with("set ") || rest.starts_with("function ") {
+            return None;
+        }
+
+        let name_len = rest
+            .chars()
+            .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+            .count();
+        if name_len == 0 {
+            return None;
+        }
+        let name = &rest[..name_len];
+        let suffix = &rest[name_len..];
+        if suffix.trim_start().starts_with(':') {
+            return None;
+        }
+        let trimmed_suffix = suffix.trim_start();
+        if !trimmed_suffix.starts_with('=') && !trimmed_suffix.starts_with(';') {
+            return None;
+        }
+        Some(format!("{indent}{name}: {ty}{suffix}"))
+    }
+
+    fn annotate_callable_return_line(line: &str, ty: &str) -> Option<String> {
+        if line.contains("=>") {
+            return None;
+        }
+        let close_paren = line.rfind(')')?;
+        let brace_pos = line[close_paren..].find('{')?;
+        let between = &line[close_paren + 1..close_paren + brace_pos];
+        if between.contains(':') {
+            return None;
+        }
+        let (head, tail) = line.split_at(close_paren + 1);
+        Some(format!("{head}: {ty}{tail}"))
     }
 
     fn collect_import_candidates(&self, current_file_path: &str) -> Vec<ImportCandidate> {
@@ -739,6 +953,22 @@ impl Server {
                 all_changes.push(serde_json::json!({
                     "fileName": fname,
                     "textChanges": text_changes
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "annotateWithTypeFromJSDoc"
+                && let Some(updated_content) =
+                    Self::apply_simple_jsdoc_annotation_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
                 }));
             }
 
