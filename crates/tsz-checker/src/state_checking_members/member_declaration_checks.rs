@@ -1351,11 +1351,19 @@ impl<'a> CheckerState<'a> {
                     || (!self.ctx.compiler_options.experimental_decorators && is_ambient_field)
                 {
                     use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        modifier_idx,
-                        "Decorators are not valid here.",
-                        diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-                    );
+                    if is_abstract && node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                        self.error_at_node(
+                            modifier_idx,
+                            "A decorator can only decorate a method implementation, not an overload.",
+                            diagnostic_codes::A_DECORATOR_CAN_ONLY_DECORATE_A_METHOD_IMPLEMENTATION_NOT_AN_OVERLOAD,
+                        );
+                    } else {
+                        self.error_at_node(
+                            modifier_idx,
+                            "Decorators are not valid here.",
+                            diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                        );
+                    }
                 }
 
                 let Some(decorator) = self.ctx.arena.get_decorator(modifier_node) else {

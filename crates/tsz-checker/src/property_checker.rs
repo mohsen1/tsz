@@ -424,24 +424,25 @@ impl<'a> CheckerState<'a> {
         if let Some(list) = type_params_list {
             for &tp_idx in &list.nodes {
                 if let Some(tp_node) = self.ctx.arena.get(tp_idx)
-                    && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) {
-                        let tp_name = self
-                            .ctx
-                            .arena
-                            .get_identifier(self.ctx.arena.get(tp.name).unwrap())
-                            .unwrap()
-                            .escaped_text
-                            .clone();
-                        if tp_name == name {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
+                    && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node)
+                {
+                    let tp_name = self
+                        .ctx
+                        .arena
+                        .get_identifier(self.ctx.arena.get(tp.name).unwrap())
+                        .unwrap()
+                        .escaped_text
+                        .clone();
+                    if tp_name == name {
+                        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                        self.error_at_node(
                                 type_name_idx,
                                 diagnostic_messages::A_COMPUTED_PROPERTY_NAME_CANNOT_REFERENCE_A_TYPE_PARAMETER_FROM_ITS_CONTAINING_T,
                                 diagnostic_codes::A_COMPUTED_PROPERTY_NAME_CANNOT_REFERENCE_A_TYPE_PARAMETER_FROM_ITS_CONTAINING_T,
                             );
-                            return;
-                        }
+                        return;
                     }
+                }
             }
         }
     }
