@@ -457,7 +457,7 @@ impl<'a> CheckerState<'a> {
             && self.has_private_modifier(&method.modifiers);
         // Get method-level JSDoc for @param type checking
         let method_jsdoc = self.get_jsdoc_for_function(member_idx);
-        for &param_idx in &method.parameters.nodes {
+        for (pi, &param_idx) in method.parameters.nodes.iter().enumerate() {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
             {
@@ -472,7 +472,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                    self.maybe_report_implicit_any_parameter(param, has_jsdoc);
+                    self.maybe_report_implicit_any_parameter(param, has_jsdoc, pi);
                 }
             }
         }
@@ -734,7 +734,7 @@ impl<'a> CheckerState<'a> {
             && self.has_private_modifier(&ctor.modifiers);
         // Get constructor-level JSDoc for @param type checking
         let ctor_jsdoc = self.get_jsdoc_for_function(member_idx);
-        for &param_idx in &ctor.parameters.nodes {
+        for (pi, &param_idx) in ctor.parameters.nodes.iter().enumerate() {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
             {
@@ -749,7 +749,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             false
                         };
-                    self.maybe_report_implicit_any_parameter(param, has_jsdoc);
+                    self.maybe_report_implicit_any_parameter(param, has_jsdoc, pi);
                 }
             }
         }
@@ -1060,12 +1060,12 @@ impl<'a> CheckerState<'a> {
         // Setter parameters are checked in check_setter_parameter() below, which also
         // validates other setter constraints (no initializer, no rest parameter).
         if is_getter && !skip_implicit_any_accessor {
-            for &param_idx in &accessor.parameters.nodes {
+            for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
                 if let Some(param_node) = self.ctx.arena.get(param_idx)
                     && let Some(param) = self.ctx.arena.get_parameter(param_node)
                 {
                     let has_jsdoc = self.param_has_inline_jsdoc_type(param_idx);
-                    self.maybe_report_implicit_any_parameter(param, has_jsdoc);
+                    self.maybe_report_implicit_any_parameter(param, has_jsdoc, pi);
                 }
             }
         }

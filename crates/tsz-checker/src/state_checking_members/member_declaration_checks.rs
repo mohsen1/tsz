@@ -681,14 +681,14 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_properties(&params.nodes);
                     // TS2371: Parameter initializers not allowed in call/construct signatures
                     self.check_non_impl_parameter_initializers(&params.nodes, false, false);
-                    for &param_idx in &params.nodes {
+                    for (pi, &param_idx) in params.nodes.iter().enumerate() {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
                             if param.type_annotation.is_some() {
                                 self.check_type_for_parameter_properties(param.type_annotation);
                             }
-                            self.maybe_report_implicit_any_parameter(param, false);
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
                         }
                     }
                 }
@@ -726,14 +726,14 @@ impl<'a> CheckerState<'a> {
                     self.check_parameter_properties(&params.nodes);
                     // TS2371: Parameter initializers not allowed in method signatures
                     self.check_non_impl_parameter_initializers(&params.nodes, false, false);
-                    for &param_idx in &params.nodes {
+                    for (pi, &param_idx) in params.nodes.iter().enumerate() {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
                             if param.type_annotation.is_some() {
                                 self.check_type_for_parameter_properties(param.type_annotation);
                             }
-                            self.maybe_report_implicit_any_parameter(param, false);
+                            self.maybe_report_implicit_any_parameter(param, false, pi);
                         }
                     }
                 }
@@ -978,6 +978,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         param: &tsz_parser::parser::node::ParameterData,
         has_contextual_type: bool,
+        param_index: usize,
     ) {
         use crate::diagnostics::diagnostic_codes;
 
@@ -1054,18 +1055,67 @@ impl<'a> CheckerState<'a> {
         // Rest parameters use TS7019, regular parameters use TS7006
         let report_node = self.param_node_for_implicit_any_diagnostic(param);
         if param.dot_dot_dot_token {
-            self.error_at_node_msg(
-                report_node,
-                diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
-                &[&param_name],
-            );
+            // TS7051: Check if rest parameter name looks like a type keyword
+            // e.g., `m(...string)` where `string` is likely meant as `...args: string[]`
+            if Self::is_type_keyword_name(&param_name) {
+                let suggested_name = format!("arg{}", param_index);
+                self.error_at_node_msg(
+                    report_node,
+                    diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
+                    &[&suggested_name, &param_name],
+                );
+            } else {
+                self.error_at_node_msg(
+                    report_node,
+                    diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
+                    &[&param_name],
+                );
+            }
         } else {
-            self.error_at_node_msg(
-                report_node,
-                diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
-                &[&param_name, "any"],
-            );
+            // TS7051: Detect parameters whose name looks like a type keyword or type name
+            // e.g., `(string, number)` where the user likely meant `(arg0: string, arg1: number)`
+            // TypeScript emits TS7051 for type keyword names and uppercase-starting names
+            // (which conventionally refer to classes/interfaces).
+            if Self::is_type_keyword_name(&param_name)
+                || param_name
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase())
+            {
+                let suggested_name = format!("arg{}", param_index);
+                self.error_at_node_msg(
+                    report_node,
+                    diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
+                    &[&suggested_name, &param_name],
+                );
+            } else {
+                self.error_at_node_msg(
+                    report_node,
+                    diagnostic_codes::PARAMETER_IMPLICITLY_HAS_AN_TYPE,
+                    &[&param_name, "any"],
+                );
+            }
         }
+    }
+
+    /// Check if a parameter name is a TypeScript type keyword.
+    /// These keywords when used as parameter names strongly suggest the user
+    /// intended them as type annotations, not parameter names.
+    fn is_type_keyword_name(name: &str) -> bool {
+        matches!(
+            name,
+            "string"
+                | "number"
+                | "boolean"
+                | "symbol"
+                | "void"
+                | "object"
+                | "undefined"
+                | "bigint"
+                | "never"
+                | "any"
+                | "unknown"
+        )
     }
 
     fn param_node_for_implicit_any_diagnostic(
