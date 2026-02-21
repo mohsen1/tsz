@@ -73,6 +73,47 @@ impl<'a> CheckerState<'a> {
                     let _ = self.get_type_of_node(expr_idx);
                 }
 
+                // TS2499: An interface can only extend an identifier/qualified-name with optional type arguments.
+                if !is_class_declaration && is_extends_clause {
+                    let mut is_valid = true;
+
+                    let mut current_idx = expr_idx;
+                    use tsz_parser::parser::flags::node_flags;
+                    use tsz_parser::parser::syntax_kind_ext::*;
+
+                    loop {
+                        let Some(node) = self.ctx.arena.get(current_idx) else {
+                            is_valid = false;
+                            break;
+                        };
+
+                        if node.flags & (node_flags::OPTIONAL_CHAIN as u16) != 0 {
+                            is_valid = false;
+                            break;
+                        }
+
+                        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16 {
+                            break;
+                        } else if node.kind == PROPERTY_ACCESS_EXPRESSION
+                            && let Some(p) = self.ctx.arena.get_access_expr(node)
+                            && !p.question_dot_token
+                        {
+                            current_idx = p.expression;
+                        } else {
+                            is_valid = false;
+                            break;
+                        }
+                    }
+
+                    if !is_valid {
+                        self.error_at_node(
+                            expr_idx,
+                            crate::diagnostics::diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_IDENTIFIER_QUALIFIED_NAME_WITH_OPTIONAL_TYPE_ARG,
+                            crate::diagnostics::diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_IDENTIFIER_QUALIFIED_NAME_WITH_OPTIONAL_TYPE_ARG,
+                        );
+                    }
+                }
+
                 // TS2562: Base class expressions cannot reference class type parameters.
                 // This applies to `extends` expressions that include type positions
                 // (e.g., call type arguments like `extends base<T>()`), but should not
