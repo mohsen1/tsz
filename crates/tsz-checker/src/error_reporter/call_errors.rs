@@ -203,21 +203,20 @@ impl<'a> CheckerState<'a> {
             _ => return false,
         };
 
-        // Get the expected element type from the parameter array type
-        let target_element_type =
-            match tsz_solver::visitor::array_element_type(self.ctx.types, param_type) {
-                Some(elem_type) => elem_type,
-                None => return false,
-            };
-
         let arr = match self.ctx.arena.get_literal_expr(arg_node) {
             Some(arr) => arr.clone(),
             None => return false,
         };
 
+        let ctx_helper = tsz_solver::ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            param_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+
         let mut elaborated = false;
 
-        for &elem_idx in &arr.elements.nodes {
+        for (index, &elem_idx) in arr.elements.nodes.iter().enumerate() {
             let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
                 continue;
             };
@@ -226,6 +225,15 @@ impl<'a> CheckerState<'a> {
             if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT {
                 continue;
             }
+
+            // Get the expected element type from the parameter array/tuple type
+            let target_element_type = if let Some(t) = ctx_helper.get_tuple_element_type(index) {
+                t
+            } else if let Some(t) = ctx_helper.get_array_element_type() {
+                t
+            } else {
+                continue;
+            };
 
             let elem_type = self.get_type_of_node(elem_idx);
 
