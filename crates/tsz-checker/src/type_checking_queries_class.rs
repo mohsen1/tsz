@@ -27,10 +27,9 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.ctx.type_parameter_scope.remove(&name);
             }
-            if shadowed_class_param
-                && let Some(ref mut c) = self.ctx.enclosing_class {
-                    c.type_param_names.push(name);
-                }
+            if shadowed_class_param && let Some(ref mut c) = self.ctx.enclosing_class {
+                c.type_param_names.push(name);
+            }
         }
     }
 

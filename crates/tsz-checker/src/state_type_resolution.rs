@@ -183,15 +183,15 @@ impl<'a> CheckerState<'a> {
                     self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
                     if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
                         && enclosing_class.in_static_member
-                            && enclosing_class.type_param_names.iter().any(|n| n == name)
-                        {
-                            use crate::diagnostics::diagnostic_codes;
-                            self.error_at_node(
-                                type_name_idx,
-                                "Static members cannot reference class type parameters.",
-                                diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
-                            );
-                        }
+                        && enclosing_class.type_param_names.iter().any(|n| n == name)
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node(
+                            type_name_idx,
+                            "Static members cannot reference class type parameters.",
+                            diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                        );
+                    }
                 }
                 let type_resolution =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
@@ -507,15 +507,15 @@ impl<'a> CheckerState<'a> {
                 self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
                 if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
                     && enclosing_class.in_static_member
-                        && enclosing_class.type_param_names.iter().any(|n| n == name)
-                    {
-                        use crate::diagnostics::diagnostic_codes;
-                        self.error_at_node(
-                            type_name_idx,
-                            "Static members cannot reference class type parameters.",
-                            diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
-                        );
-                    }
+                    && enclosing_class.type_param_names.iter().any(|n| n == name)
+                {
+                    use crate::diagnostics::diagnostic_codes;
+                    self.error_at_node(
+                        type_name_idx,
+                        "Static members cannot reference class type parameters.",
+                        diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                    );
+                }
                 return type_param;
             }
 

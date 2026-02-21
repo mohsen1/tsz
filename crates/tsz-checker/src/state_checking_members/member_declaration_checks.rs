@@ -1910,13 +1910,14 @@ impl<'a> CheckerState<'a> {
 
         // Is sym_id a type parameter of class_sym?
         if let Some(class_sym) = class_sym_id
-            && symbol.parent == class_sym {
-                println!("FOUND TS2302! error_node: {error_node:?}");
-                self.error_at_node(
-                    error_node,
-                    "Static members cannot reference class type parameters.",
-                    diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
-                );
-            }
+            && symbol.parent == class_sym
+        {
+            println!("FOUND TS2302! error_node: {error_node:?}");
+            self.error_at_node(
+                error_node,
+                "Static members cannot reference class type parameters.",
+                diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+            );
+        }
     }
 }

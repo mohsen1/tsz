@@ -968,10 +968,11 @@ impl<'a> CheckerState<'a> {
             };
             let mut shadowed_class_param = false;
             if let Some(ref mut c) = self.ctx.enclosing_class
-                && let Some(pos) = c.type_param_names.iter().position(|x| *x == name) {
-                    c.type_param_names.remove(pos);
-                    shadowed_class_param = true;
-                }
+                && let Some(pos) = c.type_param_names.iter().position(|x| *x == name)
+            {
+                c.type_param_names.remove(pos);
+                shadowed_class_param = true;
+            }
 
             let type_id = factory.type_param(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
