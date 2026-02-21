@@ -21,6 +21,20 @@ impl ParserState {
         decorators: Option<NodeList>,
         start_pos: u32,
     ) -> NodeIndex {
+        if let Some(ref decorator_list) = decorators
+            && !decorator_list.nodes.is_empty() {
+                // TS1206: Decorators are not valid on class expressions
+                use tsz_common::diagnostics::diagnostic_codes;
+                let first_decorator_node = decorator_list.nodes[0];
+                let first_decorator_pos = self.arena.nodes[first_decorator_node.0 as usize].pos;
+                self.parse_error_at(
+                    first_decorator_pos,
+                    0,
+                    "Decorators are not valid here.",
+                    diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                );
+            }
+
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse optional name (class expressions can be anonymous)

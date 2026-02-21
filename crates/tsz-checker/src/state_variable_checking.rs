@@ -660,19 +660,21 @@ impl<'a> CheckerState<'a> {
                             && self.ctx.has_modifier(
                                 &module.modifiers,
                                 tsz_scanner::SyntaxKind::DeclareKeyword as u16,
-                            ) {
-                                is_ambient = true;
-                                break;
-                            }
+                            )
+                        {
+                            is_ambient = true;
+                            break;
+                        }
                     } else if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
                         if let Some(var_stmt) = self.ctx.arena.get_variable(node)
                             && self.ctx.has_modifier(
                                 &var_stmt.modifiers,
                                 tsz_scanner::SyntaxKind::DeclareKeyword as u16,
-                            ) {
-                                is_ambient = true;
-                                break;
-                            }
+                            )
+                        {
+                            is_ambient = true;
+                            break;
+                        }
                     } else if node.kind == tsz_parser::parser::syntax_kind_ext::SOURCE_FILE {
                         break;
                     }
