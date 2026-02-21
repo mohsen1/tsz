@@ -70,8 +70,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Resolve ref types (interfaces, type aliases) to their structural forms.
         // Without this, interface types (TypeData::Lazy) won't match the object_shape_id
         // check below, causing TS2322 instead of TS2741/TS2739/TS2740.
-        let resolved_source = self.resolve_ref_type(source);
-        let resolved_target = self.resolve_ref_type(target);
+        let mut resolved_source = self.resolve_ref_type(source);
+        let mut resolved_target = self.resolve_ref_type(target);
+
+        // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
+        if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
+            && let Some(expanded) = self.try_expand_application(app_id) {
+                resolved_source = self.resolve_ref_type(expanded);
+            }
+        if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_target)
+            && let Some(expanded) = self.try_expand_application(app_id) {
+                resolved_target = self.resolve_ref_type(expanded);
+            }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {
