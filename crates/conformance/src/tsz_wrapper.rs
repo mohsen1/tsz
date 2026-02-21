@@ -588,37 +588,18 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
         opts.insert(tsconfig_key.to_string(), json_value);
     }
 
-    // TypeScript's `strict` flag sets defaults for the strict option family when they are
-    // not explicitly provided. Materialize those defaults so downstream option parsing
-    // preserves both `strict: true` and `strict: false` behavior.
+    // Match the cache generator's tsconfig synthesis: just set `strict` and `alwaysStrict`.
+    // Do NOT expand individual strict-family flags (noImplicitAny, strictNullChecks, etc.)
+    // because tsz's config.rs handles `strict: true` expansion internally.
+    // Expanding them here would add extra properties, shifting line numbers and causing
+    // TS5025 position mismatches vs the tsc cache.
     //
-    // TypeScript 6.0 changed the default: `strict` is now ON by default unless explicitly
-    // set to `false`. This means all strict-family flags (strictNullChecks, noImplicitAny,
-    // etc.) default to `true` when not specified.
-    //
-    // These use canonical camelCase because they are synthesized defaults (not from test
-    // directives), and should NOT trigger TS5025 "Did you mean?" diagnostics.
-    let strict_value = match opts.get("strict") {
-        Some(serde_json::Value::Bool(strict)) => *strict,
-        _ => true, // tsc 6.0+ defaults to strict: true when not specified
-    };
-    for (lowercase, canonical) in [
-        ("noimplicitany", "noImplicitAny"),
-        ("noimplicitthis", "noImplicitThis"),
-        ("strictnullchecks", "strictNullChecks"),
-        ("strictfunctiontypes", "strictFunctionTypes"),
-        ("strictbindcallapply", "strictBindCallApply"),
-        (
-            "strictpropertyinitialization",
-            "strictPropertyInitialization",
-        ),
-        ("useunknownincatchvariables", "useUnknownInCatchVariables"),
-        ("alwaysstrict", "alwaysStrict"),
-    ] {
-        // Only insert if neither the lowercase (from directive) nor canonical form exists
-        if !opts.contains_key(lowercase) && !opts.contains_key(canonical) {
-            opts.insert(canonical.to_string(), serde_json::Value::Bool(strict_value));
-        }
+    // TypeScript 6.0 defaults to strict: true when not specified.
+    if !opts.contains_key("strict") {
+        opts.insert("strict".to_string(), serde_json::Value::Bool(true));
+    }
+    if !opts.contains_key("alwaysstrict") && !opts.contains_key("alwaysStrict") {
+        opts.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
     }
 
     // Match tsc 6.0 default compiler behavior for tests that omit @target.
@@ -631,6 +612,11 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             serde_json::Value::String("es2022".to_string()),
         );
     }
+
+    // Sort properties alphabetically for deterministic tsconfig output.
+    // This ensures consistent line numbers for TS5025 diagnostics regardless
+    // of HashMap iteration order.
+    opts.sort_keys();
 
     serde_json::Value::Object(opts)
 }
