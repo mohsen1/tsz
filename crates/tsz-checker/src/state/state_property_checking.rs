@@ -98,7 +98,10 @@ impl<'a> CheckerState<'a> {
 
                 if target_prop_types.is_empty() {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
-                    self.error_excess_property_at(&prop_name, target, idx);
+                    let report_idx = self
+                        .find_object_literal_property_element(idx, source_prop.name)
+                        .unwrap_or(idx);
+                    self.error_excess_property_at(&prop_name, target, report_idx);
                 } else {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -160,7 +163,10 @@ impl<'a> CheckerState<'a> {
 
                 if !found {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
-                    self.error_excess_property_at(&prop_name, target, idx);
+                    let report_idx = self
+                        .find_object_literal_property_element(idx, source_prop.name)
+                        .unwrap_or(idx);
+                    self.error_excess_property_at(&prop_name, target, report_idx);
                 } else {
                     let nested_target = tsz_solver::utils::intersection_or_single(
                         self.ctx.types,
@@ -200,7 +206,10 @@ impl<'a> CheckerState<'a> {
                 let target_prop = target_props.iter().find(|p| p.name == source_prop.name);
                 if target_prop.is_none() {
                     let prop_name = self.ctx.types.resolve_atom(source_prop.name);
-                    self.error_excess_property_at(&prop_name, target, idx);
+                    let report_idx = self
+                        .find_object_literal_property_element(idx, source_prop.name)
+                        .unwrap_or(idx);
+                    self.error_excess_property_at(&prop_name, target, report_idx);
                 } else if let Some(target_prop) = target_prop {
                     // =============================================================
                     // NESTED OBJECT LITERAL EXCESS PROPERTY CHECKING
@@ -323,6 +332,38 @@ impl<'a> CheckerState<'a> {
                 return; // Found the property, stop searching
             }
         }
+    }
+
+    /// Find the property element node in an object literal by interned property name.
+    fn find_object_literal_property_element(
+        &self,
+        obj_literal_idx: NodeIndex,
+        prop_name: tsz_common::interner::Atom,
+    ) -> Option<NodeIndex> {
+        let obj_node = self.ctx.arena.get(obj_literal_idx)?;
+        let obj_lit = self.ctx.arena.get_literal_expr(obj_node)?;
+        for &elem_idx in &obj_lit.elements.nodes {
+            let elem_node = self.ctx.arena.get(elem_idx)?;
+            let elem_prop_atom = match elem_node.kind {
+                syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_property_assignment(elem_node)
+                    .and_then(|prop| self.get_property_name(prop.name))
+                    .map(|name| self.ctx.types.intern_string(&name)),
+                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                    .ctx
+                    .arena
+                    .get_shorthand_property(elem_node)
+                    .and_then(|prop| self.get_identifier_text_from_idx(prop.name))
+                    .map(|name| self.ctx.types.intern_string(&name)),
+                _ => None,
+            };
+            if elem_prop_atom == Some(prop_name) {
+                return Some(elem_idx);
+            }
+        }
+        None
     }
 
     /// Skip parentheses to get the effective expression node.
