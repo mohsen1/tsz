@@ -38,6 +38,8 @@ required_files=(
     "$PKG/bundler/tsz_wasm.js"
     "$PKG/bundler/tsz_wasm.d.ts"
     "$PKG/bundler/tsz_wasm_bg.wasm"
+    "$PKG/bin/tsz.js"
+    "$PKG/bin/tsz-server.js"
     "$PKG/LICENSE.txt"
 )
 
