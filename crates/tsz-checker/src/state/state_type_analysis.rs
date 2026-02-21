@@ -86,19 +86,71 @@ impl<'a> CheckerState<'a> {
 
         // Resolve the left side (could be Identifier or another QualifiedName)
         let left_type = if let Some(left_node) = self.ctx.arena.get(qn.left) {
-            if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-                self.resolve_qualified_name(qn.left)
+            let left_name = self.entity_name_text(qn.left).unwrap_or_default();
+            
+            let sym_res = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                self.resolve_qualified_symbol_in_type_position(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
-                let left_name = self
-                    .ctx
-                    .arena
-                    .get_identifier(left_node)
-                    .map(|id| id.escaped_text.clone())
-                    .unwrap_or_default();
-
-                match self.resolve_identifier_symbol_in_type_position(qn.left) {
-                    TypeSymbolResolution::Type(sym_id) => self.type_reference_symbol_type(sym_id),
-                    TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => {
+                self.resolve_identifier_symbol_in_type_position(qn.left)
+            } else {
+                TypeSymbolResolution::NotFound
+            };
+            
+            match sym_res {
+                TypeSymbolResolution::Type(sym_id) => {
+                    let lib_binders = self.get_lib_binders();
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                        use tsz_binder::symbol_flags;
+                        let valid_namespace_flags = symbol_flags::MODULE
+                            | symbol_flags::NAMESPACE_MODULE
+                            | symbol_flags::VALUE_MODULE
+                            | symbol_flags::CLASS
+                            | symbol_flags::ENUM
+                            | symbol_flags::REGULAR_ENUM
+                            | symbol_flags::CONST_ENUM
+                            | symbol_flags::ENUM_MEMBER;
+                        
+                        if (symbol.flags & valid_namespace_flags) == 0 {
+                            let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
+                                && let Some(id) = self.ctx.arena.get_identifier(right_node)
+                            {
+                                id.escaped_text.clone()
+                            } else {
+                                String::new()
+                            };
+                            
+                            // Get rightmost name of the left side
+                            let left_rightmost_name = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                                if let Some(left_qn) = self.ctx.arena.get_qualified_name(left_node) {
+                                    if let Some(rn) = self.ctx.arena.get(left_qn.right)
+                                        && let Some(id) = self.ctx.arena.get_identifier(rn)
+                                    {
+                                        id.escaped_text.clone()
+                                    } else {
+                                        left_name.clone()
+                                    }
+                                } else {
+                                    left_name.clone()
+                                }
+                            } else {
+                                left_name.clone()
+                            };
+                            
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node_msg(
+                                idx, // The entire qualified name node
+                                diagnostic_codes::CANNOT_ACCESS_BECAUSE_IS_A_TYPE_BUT_NOT_A_NAMESPACE_DID_YOU_MEAN_TO_RETRIEVE_THE,
+                                &[left_rightmost_name.as_str(), right_name.as_str()],
+                            );
+                            return TypeId::ERROR;
+                        }
+                    }
+                    self.type_reference_symbol_type(sym_id)
+                },
+                TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => {
+                    if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+                        self.resolve_qualified_name(qn.left)
+                    } else if left_node.kind == SyntaxKind::Identifier as u16 {
                         if !self.is_unresolved_import_symbol(qn.left) && !left_name.is_empty() {
                             use crate::diagnostics::diagnostic_codes;
                             self.error_at_node_msg(
@@ -108,10 +160,10 @@ impl<'a> CheckerState<'a> {
                             );
                         }
                         TypeId::ERROR
+                    } else {
+                        TypeId::ERROR
                     }
                 }
-            } else {
-                TypeId::ERROR // Unknown node kind - propagate error
             }
         } else {
             TypeId::ERROR // Missing left node - propagate error
