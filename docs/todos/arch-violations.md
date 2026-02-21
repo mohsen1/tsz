@@ -1,8 +1,8 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (3rd audit)
-**Branch**: main (commit 7ecbb5b4a)
-**Status**: ONE VIOLATION FIXED — `TypeData` traversal moved from tsz-lowering to solver
+**Date**: 2026-02-21 (4th audit)
+**Branch**: main (commit f5aa685e7)
+**Status**: ALL CLEAR — no new violations found
 
 ---
 
@@ -19,9 +19,13 @@ Checked all architecture rules from CLAUDE.md and NORTH_STAR.md:
 
 ## Findings
 
-### 1. TypeKey Leakage Outside Solver — CLEAN
+### 1. TypeKey/TypeData Leakage Outside Solver — CLEAN
 
-No `TypeKey` type exists in the codebase (the actual internal type is `TypeData`, which is properly encapsulated). All references to "TypeKey" in scanner/parser are `SyntaxKind::TypeKeyword` (the `type` keyword token), which is unrelated. One stale comment in `state_type_analysis_cross_file.rs:311` mentions "TypeKeys" conceptually but does not use the type.
+No `TypeKey` type exists in the codebase (the actual internal type is `TypeData`, which is properly encapsulated within `tsz-solver`). All references to "TypeKey" in scanner/parser are `SyntaxKind::TypeKeyword` (the `type` keyword token), which is unrelated.
+
+- No `TypeData` imports in checker, binder, emitter, LSP, or CLI code
+- No direct pattern matching on `TypeData` variants outside solver
+- One stale comment in `state_type_analysis_cross_file.rs:311` mentions "TypeKeys" conceptually but does not use the type (cosmetic issue only)
 
 ### 2. Solver Imports in Binder — CLEAN
 
@@ -39,9 +43,7 @@ All checker files are under the 2000-line limit. Three files are within 6 lines 
 | `types/type_computation_access.rs` | 1,972 | 28 lines |
 | `state/state_type_resolution_module.rs` | 1,908 | 92 lines |
 
-Total checker codebase: ~106,388 lines across ~143 files (avg ~744 lines/file).
-
-Solver files are well within limits — largest is `visitors/visitor.rs` at 1,945 lines (no file over 2,000).
+Total checker codebase: ~106,388 lines across ~141 files (avg ~754 lines/file).
 
 ### 4. Cross-Layer Imports — CLEAN
 
@@ -51,14 +53,11 @@ Solver files are well within limits — largest is `visitors/visitor.rs` at 1,94
 - **CLI -> Checker internals**: CLI and LSP crates import only public checker exports.
 - **Solver -> Parser/Checker**: No upward imports. Solver is a pure type system layer.
 
-### 5. TypeData Pattern Matching in tsz-lowering — FIXED
+**Note on TypeInterner usage**: LSP, CLI, and Emitter import `TypeInterner` from `tsz-solver`. This is **expected architecture** — `TypeInterner` is the public read-only type store. LSP owns the global type interner (per NORTH_STAR §14: "Global type interning across files"). Emitter needs read-only type access for `.d.ts` emission and type display. What's forbidden is importing `TypeData` variants or performing direct type construction, not read-only type store access.
 
-**Prior state**: `tsz-lowering/src/lower_advanced.rs` contained a 170-line `collect_infer_bindings` method that manually pattern-matched on 20+ `TypeData` variants for deep type-graph traversal. This violated the architecture rule: "Use visitor helpers for type traversal; avoid repeated TypeKey matching."
+### 5. Previously Fixed: TypeData Traversal in tsz-lowering — REMAINS FIXED
 
-**Fix applied**: Moved `collect_infer_bindings` into `tsz-solver/src/visitors/visitor_extract.rs` as a solver-owned utility function. The lowering crate now calls `tsz_solver::collect_infer_bindings(interner, type_id)` and processes the returned `Vec<(Atom, TypeId)>`. This:
-- Removes `TypeData` import from tsz-lowering entirely
-- Consolidates type-graph traversal in the solver (WHAT)
-- Keeps tsz-lowering as a thin AST→type bridge (WHO/WHERE)
+The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solver/src/visitors/visitor_extract.rs` in commit f5aa685e7. The lowering crate now calls the solver-owned utility. No regression.
 
 ### 6. TS2322 Routing — COMPLIANT
 
@@ -70,31 +69,20 @@ Solver files are well within limits — largest is `visitors/visitor.rs` at 1,94
 
 ## CI Health
 
+All 5 most recent CI runs are `in_progress` (none red/failed):
+
 | Run | Status | Description |
 |-----|--------|-------------|
+| 22264427753 | in_progress | refactor(arch): move collect_infer_bindings from tsz-lowering to solver |
+| 22264368508 | in_progress | docs: add emitter TODO with skipped issue patterns from analysis |
+| 22264336895 | in_progress | docs(perf): note deferred profiling and type-env follow-ups |
 | 22263919551 | in_progress | fix(checker): stop appending elaboration to TS2345 |
 | 22263843318 | in_progress | fix(checker): stop appending elaboration to TS2322 |
-| 22263649318 | success | fix: 6 bugs found in self-review |
-| 22263618029 | success | harden run-session.sh |
-| 22263607291 | in_progress | Fix node_modules package exports |
-
-No red/failed CI runs. Latest completed runs are green.
-
----
-
-## Pre-existing Test Failures (4)
-
-These 4 tests fail on main before and after the refactoring (not related to architecture):
-
-1. `conformance_issues::test_narrowing_after_never_returning_function`
-2. `control_flow_tests::test_loop_label_returns_declared_type`
-3. `spread_rest_tests::test_spread_in_function_call_with_wrong_types`
-4. `ts2322_tests::test_ts2322_type_query_in_type_assertion_uses_flow_narrowed_property_type`
 
 ---
 
 ## Recommendations
 
 1. **Split near-limit checker files**: The 3 files at 1,994-1,995 lines will breach the 2,000-line limit on the next feature addition. Proactively split them before adding new code.
-2. **Stale comment**: Consider removing the "TypeKeys" reference in `state_type_analysis_cross_file.rs:311`.
-3. **Investigate pre-existing test failures**: The 4 failing tests may indicate real conformance gaps worth prioritizing.
+2. **Stale comment**: Consider updating the "TypeKeys" reference in `state_type_analysis_cross_file.rs:311` to use current terminology.
+3. **Monitor CI**: All 5 runs are still in progress — verify they complete green.

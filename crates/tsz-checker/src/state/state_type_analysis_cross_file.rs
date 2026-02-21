@@ -308,7 +308,7 @@ impl<'a> CheckerState<'a> {
 
             // Merge child's DefId→SymbolId mappings to parent.
             // The child creates DefIds (in the shared DefinitionStore) for enum/class/etc.
-            // symbols. These DefIds are embedded in TypeKeys in the shared TypeStore.
+            // symbols. These DefIds are embedded in interned types in the shared TypeStore.
             // The parent needs DefId→SymbolId mappings to resolve these types
             // (e.g., for enum property access via resolve_namespace_value_member).
             // NOTE: symbol_to_def is NOT merged because SymbolIds are binder-local;
