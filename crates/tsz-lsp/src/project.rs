@@ -1016,6 +1016,7 @@ pub struct Project {
     pub(crate) symbol_index: SymbolIndex,
     pub(crate) performance: ProjectPerformance,
     pub(crate) strict: bool,
+    pub(crate) import_module_specifier_ending: Option<String>,
 }
 
 impl Project {
@@ -1027,6 +1028,7 @@ impl Project {
             symbol_index: SymbolIndex::new(),
             performance: ProjectPerformance::default(),
             strict: false,
+            import_module_specifier_ending: None,
         }
     }
 
@@ -1038,6 +1040,7 @@ impl Project {
             symbol_index: SymbolIndex::new(),
             performance: ProjectPerformance::default(),
             strict: false,
+            import_module_specifier_ending: None,
         }
     }
 
@@ -1053,6 +1056,11 @@ impl Project {
         for file in self.files.values_mut() {
             file.set_strict(strict);
         }
+    }
+
+    /// Set completion module-specifier ending preference (e.g. "js").
+    pub fn set_import_module_specifier_ending(&mut self, ending: Option<String>) {
+        self.import_module_specifier_ending = ending;
     }
 
     /// Total number of files tracked by the project.

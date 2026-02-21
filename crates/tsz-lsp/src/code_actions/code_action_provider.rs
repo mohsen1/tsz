@@ -1123,8 +1123,10 @@ impl<'a> CodeActionProvider<'a> {
             _ => {}
         }
 
-        let (insert_pos, needs_newline) = self.import_insertion_point(root)?;
+        let (insert_pos, needs_newline) =
+            self.import_insertion_point(root, &candidate.module_specifier)?;
         let insert_at_file_start = insert_pos.line == 0 && insert_pos.character == 0;
+        let has_leading_import = insert_at_file_start && self.first_statement_is_import(root);
         let mut new_text = String::new();
         if needs_newline {
             new_text.push('\n');
@@ -1157,7 +1159,7 @@ impl<'a> CodeActionProvider<'a> {
         new_text.push_str(" from \"");
         new_text.push_str(&candidate.module_specifier);
         new_text.push_str("\";\n");
-        if insert_at_file_start {
+        if insert_at_file_start && !has_leading_import {
             new_text.push('\n');
         }
 
@@ -1639,7 +1641,11 @@ impl<'a> CodeActionProvider<'a> {
         None
     }
 
-    fn import_insertion_point(&self, root: NodeIndex) -> Option<(Position, bool)> {
+    fn import_insertion_point(
+        &self,
+        root: NodeIndex,
+        module_specifier: &str,
+    ) -> Option<(Position, bool)> {
         let root_node = self.arena.get(root)?;
         let source_file = self.arena.get_source_file(root_node)?;
 
@@ -1651,6 +1657,15 @@ impl<'a> CodeActionProvider<'a> {
             if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
                 || stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
             {
+                if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION
+                    && let Some(import_decl) = self.arena.get_import_decl(stmt_node)
+                    && let Some(existing_module) =
+                        self.arena.get_literal_text(import_decl.module_specifier)
+                    && module_specifier < existing_module
+                {
+                    let insert_pos = self.line_map.offset_to_position(stmt_node.pos, self.source);
+                    return Some((insert_pos, false));
+                }
                 last_import = Some(stmt_idx);
             }
         }
@@ -1663,6 +1678,22 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         Some((Position::new(0, 0), false))
+    }
+
+    fn first_statement_is_import(&self, root: NodeIndex) -> bool {
+        let Some(root_node) = self.arena.get(root) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(root_node) else {
+            return false;
+        };
+        let Some(&first_stmt_idx) = source_file.statements.nodes.first() else {
+            return false;
+        };
+        self.arena.get(first_stmt_idx).is_some_and(|stmt| {
+            stmt.kind == syntax_kind_ext::IMPORT_DECLARATION
+                || stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+        })
     }
 
     fn property_access_info(&self, node_idx: NodeIndex) -> Option<PropertyAccessInfo> {

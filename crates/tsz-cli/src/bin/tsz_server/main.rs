@@ -512,6 +512,8 @@ pub(crate) struct Server {
     pub(crate) response_seq: u64,
     /// Open files (for tsserver protocol)
     pub(crate) open_files: FxHashMap<String, String>,
+    /// Completion preference: import module specifier ending (e.g. "js")
+    pub(crate) completion_import_module_specifier_ending: Option<String>,
     /// Server mode
     pub(crate) _server_mode: ServerMode,
     /// Log configuration
@@ -568,6 +570,7 @@ impl Server {
             checks_completed: 0,
             response_seq: 0,
             open_files: FxHashMap::default(),
+            completion_import_module_specifier_ending: None,
             _server_mode: server_mode,
             _log_config: log_config,
             enable_telemetry: args.enable_telemetry,

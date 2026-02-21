@@ -44,6 +44,9 @@ impl Server {
         }
 
         let mut project = Project::new();
+        project.set_import_module_specifier_ending(
+            self.completion_import_module_specifier_ending.clone(),
+        );
         for (path, text) in files {
             project.set_file(path, text);
         }
