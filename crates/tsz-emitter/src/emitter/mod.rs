@@ -261,6 +261,10 @@ pub struct Printer<'a> {
     /// When true, suppress namespace identifier qualification (emitting a declaration name).
     pub(super) suppress_ns_qualification: bool,
 
+    /// When true, do not substitute CommonJS named imports while emitting identifiers.
+    /// Used for property-name positions like `obj.name`.
+    pub(super) suppress_commonjs_named_import_substitution: bool,
+
     /// Pending class field initializers to inject into constructor body.
     /// Each entry is (`field_name`, `initializer_node_index`).
     pub(super) pending_class_field_inits: Vec<(String, NodeIndex)>,
@@ -287,6 +291,10 @@ pub struct Printer<'a> {
     /// Temp names for ES5 iterator-based for-of lowering that must be emitted
     /// as top-level `var` declarations (e.g., `e_1, _a, e_2, _b`).
     pub(super) hoisted_for_of_temps: Vec<String>,
+
+    /// CommonJS named import substitutions (e.g. `f` -> `demoModule_1.f`).
+    /// Used to match tsc emit where named imports are referenced via module temps.
+    pub(super) commonjs_named_import_substitutions: FxHashMap<String, String>,
 
     /// Pre-allocated return-temp names for iterator for-of nodes.
     /// This lets nested loops reserve their return temp before outer loop
@@ -355,6 +363,7 @@ impl<'a> Printer<'a> {
             declared_namespace_names: FxHashSet::default(),
             namespace_exported_names: FxHashSet::default(),
             suppress_ns_qualification: false,
+            suppress_commonjs_named_import_substitution: false,
             pending_class_field_inits: Vec::new(),
             hoisted_assignment_value_temps: Vec::new(),
             preallocated_logical_assignment_value_temps: VecDeque::new(),
@@ -362,6 +371,7 @@ impl<'a> Printer<'a> {
             hoisted_assignment_temps: Vec::new(),
             preallocated_temp_names: VecDeque::new(),
             hoisted_for_of_temps: Vec::new(),
+            commonjs_named_import_substitutions: FxHashMap::default(),
             reserved_iterator_return_temps: FxHashMap::default(),
             iterator_for_of_depth: 0,
             destructuring_read_depth: 0,
@@ -1306,6 +1316,7 @@ impl<'a> Printer<'a> {
         for ident in &self.arena.identifiers {
             self.file_identifiers.insert(ident.escaped_text.clone());
         }
+        self.commonjs_named_import_substitutions.clear();
         self.generated_temp_names.clear();
         self.first_for_of_emitted = false;
 

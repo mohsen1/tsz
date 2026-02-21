@@ -1896,3 +1896,211 @@ fn test_ts2882_regular_import_still_emits_ts2307() {
         "Should NOT emit TS2882 for regular import (only for side-effect imports).\nActual errors: {diagnostics:#?}"
     );
 }
+
+// TS7051: Parameter has a name but no type. Did you mean 'arg0: string'?
+// TS7006: Parameter 'x' implicitly has an 'any' type.
+
+/// TS7051 should fire for type-keyword parameter names without type annotation.
+/// From: noImplicitAnyNamelessParameter.ts
+#[test]
+fn test_ts7051_type_keyword_name() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(string, number) { }
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7051),
+        "Should emit TS7051 for type-keyword parameter name.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Should NOT emit TS7006 for type-keyword parameter name (should be TS7051).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7051 should fire for rest parameters with type-keyword names.
+/// e.g., `function f(...string)` should suggest `...args: string[]`
+#[test]
+fn test_ts7051_rest_type_keyword_name() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(...string) { }
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7051),
+        "Should emit TS7051 for rest param with type-keyword name.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7051 should fire for uppercase-starting parameter names.
+/// e.g., `function f(MyType)` looks like a missing type annotation.
+#[test]
+fn test_ts7051_uppercase_name() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(MyType) { }
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7051),
+        "Should emit TS7051 for uppercase parameter name.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Should NOT emit TS7006 for uppercase parameter name (should be TS7051).\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7051 should NOT fire (and TS7006 SHOULD fire) for parameters with modifiers.
+/// e.g., `constructor(public A)` - the modifier makes it clear A is the parameter name.
+/// From: ParameterList4.ts, ParameterList5.ts, ParameterList6.ts
+#[test]
+fn test_ts7006_not_ts7051_with_modifier() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+class C {
+    constructor(public A) { }
+}
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Should emit TS7006 for modified parameter 'A'.\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 7051),
+        "Should NOT emit TS7051 when parameter has modifier.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7006 should fire for lowercase parameter names without contextual type.
+/// This verifies we don't regress on the basic case.
+#[test]
+fn test_ts7006_basic_untyped_parameter() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(x) { }
+        ",
+        opts,
+    );
+    assert!(
+        has_error(&diagnostics, 7006),
+        "Should emit TS7006 for untyped parameter 'x'.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7006 should NOT fire when parameter has explicit type annotation.
+#[test]
+fn test_no_ts7006_with_type_annotation() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(x: number) { }
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Should NOT emit TS7006 for typed parameter.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7006 should NOT fire when noImplicitAny is disabled.
+#[test]
+fn test_no_ts7006_without_no_implicit_any() {
+    let opts = CheckerOptions {
+        no_implicit_any: false,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f(x) { }
+        ",
+        opts,
+    );
+    assert!(
+        !has_error(&diagnostics, 7006),
+        "Should NOT emit TS7006 when noImplicitAny is off.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// Tagged template expressions should contextually type substitutions.
+/// From: taggedTemplateContextualTyping1.ts
+#[test]
+fn test_tagged_template_contextual_typing() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function tag(strs: TemplateStringsArray, f: (x: number) => void) { }
+tag `${ x => x }`;
+        ",
+        opts,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 - 'x' should be contextually typed from tag parameter.\nActual errors: {relevant:#?}"
+    );
+}
+
+/// Tagged template with generic function should infer type parameters.
+/// From: taggedTemplateStringsTypeArgumentInferenceES6.ts
+#[test]
+fn test_tagged_template_generic_contextual_typing() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function someGenerics6<A>(strs: TemplateStringsArray, a: (a: A) => A, b: (b: A) => A, c: (c: A) => A) { }
+someGenerics6 `${ (n: number) => n }${ n => n }${ n => n }`;
+        ",
+        opts,
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .cloned()
+        .collect();
+    assert!(
+        !has_error(&relevant, 7006),
+        "Should NOT emit TS7006 - 'n' should be inferred as number from generic context.\nActual errors: {relevant:#?}"
+    );
+}
