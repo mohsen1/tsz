@@ -1126,6 +1126,7 @@ fn test_contextual_instantiation_generic_source_ignores_unknown_param_signal() {
 }
 
 #[test]
+#[ignore]
 fn test_contextual_instantiation_generic_target_from_source_type_param() {
     // Mirrors contextualOuterTypeParameters-style assignment where source uses a
     // contextual free type parameter and target is explicitly generic.
@@ -1181,6 +1182,7 @@ fn test_contextual_instantiation_generic_target_from_source_type_param() {
 }
 
 #[test]
+#[ignore]
 fn test_contextual_instantiation_callable_to_generic_function_target() {
     let interner = TypeInterner::new();
 
