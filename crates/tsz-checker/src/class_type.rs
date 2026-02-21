@@ -201,7 +201,10 @@ impl<'a> CheckerState<'a> {
                     let type_id = if !prop.type_annotation.is_none() {
                         self.get_type_from_type_node(prop.type_annotation)
                     } else if !prop.initializer.is_none() {
+                        let prev = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
                         let init_type = self.get_type_of_node(prop.initializer);
+                        self.ctx.preserve_literal_types = prev;
                         // Widen literal types for mutable class properties.
                         // `class Foo { name = "" }` → `name: string`.
                         // Readonly properties keep literal types:
@@ -1136,11 +1139,20 @@ impl<'a> CheckerState<'a> {
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = true;
                         }
+                        let prev = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
                         let init_type = self.get_type_of_node(prop.initializer);
+                        self.ctx.preserve_literal_types = prev;
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = false;
                         }
-                        init_type
+
+                        let is_readonly = self.has_readonly_modifier(&prop.modifiers);
+                        if is_readonly {
+                            init_type
+                        } else {
+                            self.widen_literal_type(init_type)
+                        }
                     } else {
                         // Static properties without type annotation or initializer
                         // get implicit 'any' type (same as instance properties).
