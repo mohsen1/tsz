@@ -112,6 +112,13 @@ fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
 }
 
 fn compile_and_get_diagnostics_with_lib(source: &str) -> Vec<(u32, String)> {
+    compile_and_get_diagnostics_with_lib_and_options(source, CheckerOptions::default())
+}
+
+fn compile_and_get_diagnostics_with_lib_and_options(
+    source: &str,
+    options: CheckerOptions,
+) -> Vec<(u32, String)> {
     let lib_files = load_lib_files_for_test();
 
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
@@ -126,7 +133,7 @@ fn compile_and_get_diagnostics_with_lib(source: &str) -> Vec<(u32, String)> {
         &binder,
         &types,
         "test.ts".to_string(),
-        CheckerOptions::default(),
+        options,
     );
 
     if !lib_files.is_empty() {
@@ -197,6 +204,32 @@ const upper = "hello".toUpperCase();
     assert!(
         diagnostics.is_empty(),
         "Expected no diagnostics for primitive string property access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_global_array_augmentation_uses_lib_resolution_without_diagnostics() {
+    let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
+        r#"
+export {};
+
+declare global {
+    interface Array<T> {
+        firstOrUndefined(): T | undefined;
+    }
+}
+
+const xs = [1, 2, 3];
+const first = xs.firstOrUndefined();
+"#,
+        CheckerOptions {
+            module: tsz_common::common::ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for Array global augmentation merged with lib declarations.\nActual diagnostics: {diagnostics:#?}"
     );
 }
 
