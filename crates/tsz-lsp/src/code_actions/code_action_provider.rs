@@ -515,9 +515,10 @@ impl<'a> CodeActionProvider<'a> {
             }
 
             let mut resolved = candidate.clone();
-            // By default TS adds standard named imports for missing symbols,
-            // even when usage is type-only, unless explicit preferences request otherwise.
-            resolved.is_type_only = false;
+            // Use `import type` when the identifier is only used in a type position
+            // (type annotations, implements clauses, etc.). For value usage, use a
+            // regular import so the symbol is available at runtime.
+            resolved.is_type_only = usage == ImportUsage::Type;
 
             let Some(edits) = self.build_import_edit(root, &resolved) else {
                 continue;

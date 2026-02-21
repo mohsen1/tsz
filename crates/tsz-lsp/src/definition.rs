@@ -233,9 +233,14 @@ impl<'a> GoToDefinition<'a> {
             return None;
         }
 
+        // Only accept the backtracked node if it ends at or very near the cursor.
+        // This prevents jumping from e.g. a semicolon after `1;` back to an
+        // identifier like `x` that is several tokens earlier.
         if !is_symbol_query_node(self.arena, node_idx)
             && (self.is_comment_context(offset) || self.should_backtrack_to_previous_symbol(offset))
             && let Some(adjusted) = self.find_symbol_query_node_at_or_before(offset)
+            && let Some(adj_node) = self.arena.get(adjusted)
+            && (adj_node.end >= offset || offset.saturating_sub(adj_node.end) <= 1)
         {
             node_idx = adjusted;
         }
@@ -258,7 +263,10 @@ impl<'a> GoToDefinition<'a> {
         };
 
         // 4. If primary resolution succeeded, use the symbol
+        //    But skip class/interface members resolved via scope chain for bare identifiers
+        //    (they require `this.` qualification and shouldn't resolve as lexical names).
         if let Some(symbol_id) = symbol_id_opt
+            && !self.is_bare_class_member_reference(node_idx, symbol_id)
             && let Some(locations) = self.locations_from_symbol(symbol_id)
         {
             return Some(locations);
@@ -415,6 +423,29 @@ impl<'a> GoToDefinition<'a> {
 
         // Try looking up in file_locals
         let symbol_id = self.binder.file_locals.get(text)?;
+
+        // Skip class/interface members — they aren't lexically scoped and require
+        // `this.` qualification. Without this guard, `value` inside a method body
+        // would incorrectly resolve to a class property named `value`.
+        if let Some(symbol) = self.binder.symbols.get(symbol_id) {
+            const CLASS_MEMBER_FLAGS: u32 = symbol_flags::PROPERTY
+                | symbol_flags::METHOD
+                | symbol_flags::GET_ACCESSOR
+                | symbol_flags::SET_ACCESSOR;
+            if symbol.flags & CLASS_MEMBER_FLAGS != 0
+                && symbol.flags
+                    & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                        | symbol_flags::BLOCK_SCOPED_VARIABLE
+                        | symbol_flags::FUNCTION
+                        | symbol_flags::CLASS
+                        | symbol_flags::INTERFACE
+                        | symbol_flags::TYPE_ALIAS)
+                    == 0
+            {
+                return None;
+            }
+        }
+
         self.locations_from_symbol(symbol_id)
     }
 
@@ -506,6 +537,55 @@ impl<'a> GoToDefinition<'a> {
         self.locations_from_symbol(member_symbol_id)
     }
 
+    /// Check if a resolved symbol is a class/interface member being referenced as a bare
+    /// identifier (not through `this.member` or `obj.member`). Class members require
+    /// `this.` qualification and shouldn't resolve as lexical names.
+    fn is_bare_class_member_reference(&self, node_idx: NodeIndex, symbol_id: SymbolId) -> bool {
+        // If this node IS the declaration name itself, it's not a "bare reference"
+        if self.binder.node_symbols.contains_key(&node_idx.0) {
+            return false;
+        }
+
+        let Some(symbol) = self.binder.symbols.get(symbol_id) else {
+            return false;
+        };
+
+        // Only applies to property/method/accessor symbols
+        const CLASS_MEMBER_FLAGS: u32 = symbol_flags::PROPERTY
+            | symbol_flags::METHOD
+            | symbol_flags::GET_ACCESSOR
+            | symbol_flags::SET_ACCESSOR;
+        if symbol.flags & CLASS_MEMBER_FLAGS == 0 {
+            return false;
+        }
+        // If symbol also has variable/function flags, it's a merged declaration
+        if symbol.flags
+            & (symbol_flags::FUNCTION_SCOPED_VARIABLE
+                | symbol_flags::BLOCK_SCOPED_VARIABLE
+                | symbol_flags::FUNCTION
+                | symbol_flags::CLASS
+                | symbol_flags::INTERFACE
+                | symbol_flags::TYPE_ALIAS)
+            != 0
+        {
+            return false;
+        }
+
+        // Check if the identifier node is the right-hand side of a property access.
+        // If it is (e.g., `this.value`), this is a legitimate member reference.
+        if let Some(ext) = self.arena.get_extended(node_idx)
+            && ext.parent.is_some()
+            && let Some(parent_node) = self.arena.get(ext.parent)
+            && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.arena.get_access_expr(parent_node)
+            && access.name_or_argument == node_idx
+        {
+            return false; // Part of `obj.member` — not a bare reference
+        }
+
+        true // Bare identifier referencing a class member
+    }
+
     /// Check if a node is a built-in keyword literal or built-in identifier
     /// that has no user-navigable definition (e.g., null, true, false, undefined, arguments).
     fn is_builtin_node(&self, node_idx: NodeIndex) -> bool {
@@ -563,6 +643,8 @@ impl<'a> GoToDefinition<'a> {
         if !is_symbol_query_node(self.arena, node_idx)
             && (self.is_comment_context(offset) || self.should_backtrack_to_previous_symbol(offset))
             && let Some(adjusted) = self.find_symbol_query_node_at_or_before(offset)
+            && let Some(adj_node) = self.arena.get(adjusted)
+            && (adj_node.end >= offset || offset.saturating_sub(adj_node.end) <= 1)
         {
             node_idx = adjusted;
         }
