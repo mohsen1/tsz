@@ -500,22 +500,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_shape = self.interner.object_shape(source_shape_id);
 
-        // Get target shape
-        let target_shape_id = match classify_object_type(self.interner, target) {
-            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
-                shape_id
-            }
-            ObjectTypeKind::NotObject => return true, // Not an object type, can't check
-        };
-
-        let target_shape = self.interner.object_shape(target_shape_id);
+        let (has_string_index, has_number_index) = self.check_index_signatures(target);
 
         // If target has string index signature, skip excess property check entirely
-        if target_shape.string_index.is_some() {
+        if has_string_index {
             return true;
         }
-
-        let has_number_index = target_shape.number_index.is_some();
 
         // Collect all target properties (including base types if intersection)
         let target_properties = self.collect_target_properties(target);
@@ -581,21 +571,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             _ => target,
         };
 
-        let target_shape_id = match classify_object_type(self.interner, resolved_target) {
-            ObjectTypeKind::Object(shape_id) | ObjectTypeKind::ObjectWithIndex(shape_id) => {
-                shape_id
-            }
-            ObjectTypeKind::NotObject => return None,
-        };
-
-        let target_shape = self.interner.object_shape(target_shape_id);
+        let (has_string_index, has_number_index) = self.check_index_signatures(resolved_target);
 
         // If target has string index signature, skip excess property check entirely
-        if target_shape.string_index.is_some() {
+        if has_string_index {
             return None;
         }
-
-        let has_number_index = target_shape.number_index.is_some();
 
         // Collect all target properties (including base types if intersection)
         let target_properties = self.collect_target_properties(resolved_target);
@@ -627,6 +608,47 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ///
     /// For intersections: property exists if it's in ANY member
     /// For unions: property exists if it's in ALL members
+    /// Check if a type or any of its composite members has a string or numeric index signature.
+    /// Returns `(has_string_index, has_number_index)`.
+    fn check_index_signatures(&mut self, type_id: TypeId) -> (bool, bool) {
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return (true, true);
+        }
+
+        let type_id = match self.interner.lookup(type_id) {
+            Some(TypeData::Lazy(def_id)) => {
+                self.subtype.resolver.resolve_lazy(def_id, self.interner).unwrap_or(type_id)
+            }
+            Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
+                self.subtype.evaluate_type(type_id)
+            }
+            _ => type_id,
+        };
+
+        if type_id == TypeId::ANY || type_id == TypeId::UNKNOWN || type_id == TypeId::ERROR {
+            return (true, true);
+        }
+
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner.object_shape(shape_id);
+                (shape.string_index.is_some(), shape.number_index.is_some())
+            }
+            Some(TypeData::Intersection(members_id)) | Some(TypeData::Union(members_id)) => {
+                let members = self.interner.type_list(members_id);
+                let mut has_str = false;
+                let mut has_num = false;
+                for &member in members.iter() {
+                    let (s, n) = self.check_index_signatures(member);
+                    has_str |= s;
+                    has_num |= n;
+                }
+                (has_str, has_num)
+            }
+            _ => (false, false),
+        }
+    }
+
     fn collect_target_properties(&mut self, type_id: TypeId) -> rustc_hash::FxHashSet<Atom> {
         // Handle Mapped and Application types by evaluating them to concrete types
         // We resolve before matching so the existing logic handles the result.
