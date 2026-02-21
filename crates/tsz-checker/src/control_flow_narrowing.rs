@@ -505,6 +505,13 @@ impl<'a> FlowAnalyzer<'a> {
             return type_id;
         }
 
+        // When the constructor expression is typed as `any`, instanceof narrowing is not
+        // well-defined — TypeScript keeps the source type unchanged in this case.
+        let constructor_expr_type = self.node_types.and_then(|nt| nt.get(&bin.right.0).copied());
+        if constructor_expr_type == Some(TypeId::ANY) {
+            return type_id;
+        }
+
         // Extract instance type from constructor expression (AST -> TypeId)
         let instance_type = self
             .instance_type_from_constructor(bin.right)
