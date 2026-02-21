@@ -540,6 +540,20 @@ where
     }
 }
 
+/// Invoke a function on each immediate child `TypeId` of `type_id`.
+///
+/// This helper keeps callers from requiring direct `lookup()` access when they
+/// only need one-level traversal.
+pub fn for_each_child_type_id<F>(db: &dyn TypeDatabase, type_id: TypeId, f: F)
+where
+    F: FnMut(TypeId),
+{
+    let Some(key) = db.lookup(type_id) else {
+        return;
+    };
+    for_each_child(db, &key, f);
+}
+
 /// Walk all transitively referenced type IDs from `root`.
 ///
 /// Convenience wrapper around [`for_each_child`] that takes a `TypeId` instead of `&TypeData`.

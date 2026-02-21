@@ -1715,17 +1715,19 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                         && let Some(inner) = self.arena.get(export_decl.export_clause)
-                        && ((inner.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    {
+                        let matches_exported_type = (inner.kind
+                            == syntax_kind_ext::INTERFACE_DECLARATION
                             && self.arena.get_interface(inner).is_some_and(|iface| {
                                 self.get_identifier_text_idx(iface.name) == assigned_name
                             }))
                             || (inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
                                 && self.arena.get_type_alias(inner).is_some_and(|alias| {
                                     self.get_identifier_text_idx(alias.name) == assigned_name
-                                })))
-                                })))
-                    {
-                        matched_type = true;
+                                }));
+                        if matches_exported_type {
+                            matched_type = true;
+                        }
                     }
                 }
                 _ => {}
