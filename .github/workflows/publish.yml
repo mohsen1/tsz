@@ -2,8 +2,10 @@ name: Publish
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches:
+      - main
+    paths:
+      - 'Cargo.toml'   # only run when root workspace Cargo.toml changes
 
 env:
   CARGO_TERM_COLOR: always
@@ -11,10 +13,55 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────
+  # Check if the version actually bumped; create git tag if so.
+  # All downstream jobs depend on this one succeeding with version_changed=true.
+  # ──────────────────────────────────────────────────────────────────────────
+  check-version:
+    name: Detect version bump
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the git tag
+    outputs:
+      version_changed: ${{ steps.detect.outputs.version_changed }}
+      version: ${{ steps.detect.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # need HEAD and HEAD^ to diff
+
+      - name: Detect version change
+        id: detect
+        run: |
+          PREV=$(git show HEAD^:Cargo.toml 2>/dev/null | grep '^version' | head -1 | sed 's/.*"\(.*\)"/\1/' || echo "")
+          CURR=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "Previous version: $PREV"
+          echo "Current version:  $CURR"
+          if [ "$CURR" != "$PREV" ] && [ -n "$CURR" ]; then
+            echo "version_changed=true"  >> "$GITHUB_OUTPUT"
+            echo "version=$CURR"         >> "$GITHUB_OUTPUT"
+          else
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+            echo "version=$CURR"         >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create git tag
+        if: steps.detect.outputs.version_changed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ steps.detect.outputs.version }}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG"
+          git push origin "$TAG"
+
+  # ──────────────────────────────────────────────────────────────────────────
   # Publish all Rust crates to crates.io
   # ──────────────────────────────────────────────────────────────────────────
   publish-crates:
     name: Publish crates to crates.io
+    needs: check-version
+    if: needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     environment: publish
     steps:
@@ -45,6 +92,8 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────
   publish-npm:
     name: Publish WASM package to npm
+    needs: check-version
+    if: needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
     environment: publish
     steps:
@@ -61,8 +110,7 @@ jobs:
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
 
       - name: Install wasm-opt (via binaryen)
-        run: |
-          sudo apt-get install -y binaryen
+        run: sudo apt-get install -y binaryen
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -84,3 +132,4 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: bash scripts/publish-npm.sh
+
