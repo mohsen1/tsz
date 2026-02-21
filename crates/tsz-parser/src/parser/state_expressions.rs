@@ -515,13 +515,16 @@ impl ParserState {
     // Parse type parameters: <T, U extends Foo, V = `DefaultType`>
     pub(crate) fn parse_type_parameters(&mut self) -> NodeList {
         let mut params = Vec::new();
+        let less_than_pos = self.token_pos();
 
         self.parse_expected(SyntaxKind::LessThanToken);
 
         // Check for empty type parameter list: <>
         // TypeScript reports TS1098: "Type parameter list cannot be empty"
         if self.is_token(SyntaxKind::GreaterThanToken) {
-            self.parse_error_at_current_token(
+            self.parse_error_at(
+                less_than_pos,
+                1,
                 "Type parameter list cannot be empty.",
                 diagnostic_codes::TYPE_PARAMETER_LIST_CANNOT_BE_EMPTY,
             );
