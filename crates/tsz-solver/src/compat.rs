@@ -616,9 +616,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         }
 
         let type_id = match self.interner.lookup(type_id) {
-            Some(TypeData::Lazy(def_id)) => {
-                self.subtype.resolver.resolve_lazy(def_id, self.interner).unwrap_or(type_id)
-            }
+            Some(TypeData::Lazy(def_id)) => self
+                .subtype
+                .resolver
+                .resolve_lazy(def_id, self.interner)
+                .unwrap_or(type_id),
             Some(TypeData::Mapped(_) | TypeData::Application(_)) => {
                 self.subtype.evaluate_type(type_id)
             }
