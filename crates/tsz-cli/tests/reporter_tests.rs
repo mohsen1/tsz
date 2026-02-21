@@ -1,7 +1,7 @@
 use super::reporter::Reporter;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tsz_checker::diagnostics::{Diagnostic, DiagnosticCategory};
+use tsz_checker::diagnostics::Diagnostic;
 
 struct TempDir {
     path: PathBuf,
