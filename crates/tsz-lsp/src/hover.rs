@@ -13,6 +13,7 @@ use crate::utils::{find_node_at_or_before_offset, is_symbol_query_node};
 use tsz_checker::state::CheckerState;
 use tsz_common::position::{Position, Range};
 use tsz_parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 
 /// A single `JSDoc` tag (e.g. `@param`, `@returns`, `@deprecated`).
 #[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -450,9 +451,15 @@ impl<'a> HoverProvider<'a> {
             return format!("namespace {}", symbol.escaped_name);
         }
         if f & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
-            let type_string = self
+            let mut type_string = self
                 .merged_function_initializer_display_type(decl_node_idx)
                 .unwrap_or_else(|| type_string.to_string());
+            if type_string == "error"
+                && let Some(array_type) =
+                    self.array_constructor_initializer_display_type(decl_node_idx)
+            {
+                type_string = array_type;
+            }
             let keyword = self.get_variable_keyword(decl_node_idx);
             if self.is_local_variable(decl_node_idx) {
                 return format!(
@@ -463,9 +470,15 @@ impl<'a> HoverProvider<'a> {
             return format!("{} {}: {}", keyword, symbol.escaped_name, type_string);
         }
         if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
-            let type_string = self
+            let mut type_string = self
                 .merged_function_initializer_display_type(decl_node_idx)
                 .unwrap_or_else(|| type_string.to_string());
+            if type_string == "error"
+                && let Some(array_type) =
+                    self.array_constructor_initializer_display_type(decl_node_idx)
+            {
+                type_string = array_type;
+            }
             if self.is_parameter_declaration(decl_node_idx) {
                 return format!("(parameter) {}: {}", symbol.escaped_name, type_string);
             }
@@ -633,6 +646,67 @@ impl<'a> HoverProvider<'a> {
                     .is_some_and(|export_symbol| (export_symbol.flags & symbol_flags::VALUE) != 0)
             })
         })
+    }
+
+    fn array_constructor_initializer_display_type(
+        &self,
+        decl_node_idx: NodeIndex,
+    ) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        if decl_node.kind != tsz_parser::syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let var_decl = self.arena.get_variable_declaration(decl_node)?;
+        if !var_decl.initializer.is_some() {
+            return None;
+        }
+        let init_node = self.arena.get(var_decl.initializer)?;
+        let call = self.arena.get_call_expr(init_node)?;
+        let callee = self.arena.get_identifier_text(call.expression)?;
+        if callee != "Array" {
+            return None;
+        }
+
+        if let Some(type_args) = call.type_arguments.as_ref()
+            && let Some(&first_type_arg) = type_args.nodes.first()
+            && let Some(type_node) = self.arena.get(first_type_arg)
+        {
+            let start = type_node.pos as usize;
+            let end = type_node.end.min(self.source_text.len() as u32) as usize;
+            if start < end {
+                let mut elem = self.source_text[start..end].trim().to_string();
+                while elem.ends_with('>') {
+                    let opens = elem.chars().filter(|&c| c == '<').count();
+                    let closes = elem.chars().filter(|&c| c == '>').count();
+                    if closes > opens {
+                        elem.pop();
+                        elem = elem.trim_end().to_string();
+                    } else {
+                        break;
+                    }
+                }
+                while elem.ends_with(',') {
+                    elem.pop();
+                    elem = elem.trim_end().to_string();
+                }
+                if !elem.is_empty() {
+                    return Some(format!("{elem}[]"));
+                }
+            }
+        }
+
+        if let Some(args) = call.arguments.as_ref()
+            && let Some(&first_arg) = args.nodes.first()
+            && let Some(first_node) = self.arena.get(first_arg)
+            && first_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+        {
+            return Some("string[]".to_string());
+        }
+
+        Some("any[]".to_string())
     }
 
     fn colon_to_arrow_signature(signature: &str) -> String {
