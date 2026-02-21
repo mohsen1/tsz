@@ -1649,6 +1649,189 @@ impl<'a> Printer<'a> {
         }
     }
 
+    /// Check if a namespace import-alias target resolves to a runtime value.
+    /// This mirrors TypeScript behavior for `export import X = Y;` inside namespaces:
+    /// when `Y` is type-only (e.g. non-instantiated namespace), no runtime assignment
+    /// should be emitted.
+    fn namespace_alias_target_has_runtime_value(&self, target: NodeIndex) -> bool {
+        self.resolve_entity_runtime_value(target, None)
+            .is_none_or(|(has_runtime, _)| has_runtime)
+    }
+
+    /// Resolve whether an entity name has runtime value semantics in a scope.
+    /// Returns:
+    /// - `None`: unresolved (caller should be conservative)
+    /// - `(has_runtime, nested_scope)`:
+    ///   - `has_runtime`: whether the resolved symbol exists at runtime
+    ///   - `nested_scope`: module body for namespace-qualified lookup continuation
+    fn resolve_entity_runtime_value(
+        &self,
+        entity: NodeIndex,
+        scope_body: Option<NodeIndex>,
+    ) -> Option<(bool, Option<NodeIndex>)> {
+        let node = self.arena.get(entity)?;
+
+        if let Some(qualified) = self.arena.get_qualified_name(node) {
+            let left = self.resolve_entity_runtime_value(qualified.left, scope_body)?;
+            if !left.0 {
+                return Some((false, None));
+            }
+            if let Some(next_scope) = left.1 {
+                return self
+                    .resolve_entity_runtime_value(qualified.right, Some(next_scope))
+                    .or(Some((true, None)));
+            }
+            return Some((true, None));
+        }
+
+        if node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let name = self.get_identifier_text_idx(entity);
+        if name.is_empty() {
+            return None;
+        }
+
+        let statements = self.scope_statements_for_runtime_lookup(scope_body);
+        if statements.is_empty() {
+            return None;
+        }
+
+        let mut matched = false;
+        let mut has_runtime = false;
+        let mut nested_scope = None;
+
+        for stmt_idx in statements {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some((stmt_runtime, stmt_scope)) =
+                self.statement_runtime_for_name(stmt_node, &name)
+            else {
+                continue;
+            };
+
+            matched = true;
+            if stmt_runtime {
+                has_runtime = true;
+                if nested_scope.is_none() {
+                    nested_scope = stmt_scope;
+                }
+            }
+        }
+
+        if matched {
+            Some((has_runtime, nested_scope))
+        } else {
+            None
+        }
+    }
+
+    fn scope_statements_for_runtime_lookup(&self, scope_body: Option<NodeIndex>) -> Vec<NodeIndex> {
+        if let Some(scope_idx) = scope_body {
+            let Some(scope_node) = self.arena.get(scope_idx) else {
+                return Vec::new();
+            };
+
+            if let Some(module) = self.arena.get_module(scope_node) {
+                return self.scope_statements_for_runtime_lookup(Some(module.body));
+            }
+
+            if let Some(block) = self.arena.get_module_block(scope_node)
+                && let Some(stmts) = &block.statements
+            {
+                return stmts.nodes.clone();
+            }
+
+            if let Some(source) = self.arena.get_source_file(scope_node) {
+                return source.statements.nodes.clone();
+            }
+
+            return Vec::new();
+        }
+
+        for node in &self.arena.nodes {
+            if node.kind == syntax_kind_ext::SOURCE_FILE
+                && let Some(source) = self.arena.get_source_file(node)
+            {
+                return source.statements.nodes.clone();
+            }
+        }
+
+        Vec::new()
+    }
+
+    fn statement_runtime_for_name(
+        &self,
+        stmt_node: &Node,
+        name: &str,
+    ) -> Option<(bool, Option<NodeIndex>)> {
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                let export = self.arena.get_export_decl(stmt_node)?;
+                let inner = self.arena.get(export.export_clause)?;
+                self.statement_runtime_for_name(inner, name)
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let module = self.arena.get_module(stmt_node)?;
+                if self.get_identifier_text_idx(module.name) != name {
+                    return None;
+                }
+                let runtime = !self.has_declare_modifier(&module.modifiers)
+                    && self.is_instantiated_module(module.body);
+                Some((runtime, if runtime { Some(module.body) } else { None }))
+            }
+            k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                let class = self.arena.get_class(stmt_node)?;
+                if self.get_identifier_text_idx(class.name) != name {
+                    return None;
+                }
+                let runtime = !self.has_declare_modifier(&class.modifiers);
+                Some((runtime, None))
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                let func = self.arena.get_function(stmt_node)?;
+                if self.get_identifier_text_idx(func.name) != name {
+                    return None;
+                }
+                let runtime = !self.has_declare_modifier(&func.modifiers) && !func.body.is_none();
+                Some((runtime, None))
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                let enum_decl = self.arena.get_enum(stmt_node)?;
+                if self.get_identifier_text_idx(enum_decl.name) != name {
+                    return None;
+                }
+                let runtime = !self.has_declare_modifier(&enum_decl.modifiers)
+                    && !self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16);
+                Some((runtime, None))
+            }
+            k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                let iface = self.arena.get_interface(stmt_node)?;
+                if self.get_identifier_text_idx(iface.name) != name {
+                    return None;
+                }
+                Some((false, None))
+            }
+            k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                let type_alias = self.arena.get_type_alias(stmt_node)?;
+                if self.get_identifier_text_idx(type_alias.name) != name {
+                    return None;
+                }
+                Some((false, None))
+            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                let import = self.arena.get_import_decl(stmt_node)?;
+                if self.get_identifier_text_idx(import.import_clause) != name {
+                    return None;
+                }
+                Some((self.import_decl_has_runtime_value(import), None))
+            }
+            _ => None,
+        }
+    }
+
     /// Emit exported import alias as namespace property assignment.
     /// `export import X = Y;` → `ns.X = Y;`
     fn emit_namespace_exported_import_alias(&mut self, import_idx: NodeIndex, ns_name: &str) {
@@ -1667,6 +1850,9 @@ impl<'a> Printer<'a> {
 
         // Check if the referenced value has runtime semantics
         if !self.import_decl_has_runtime_value(import) {
+            return;
+        }
+        if !self.namespace_alias_target_has_runtime_value(import.module_specifier) {
             return;
         }
 
