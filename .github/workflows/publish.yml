@@ -58,7 +58,7 @@ jobs:
           esac
           NEW="$MAJOR.$MINOR.$PATCH"
           echo "Bumping $CURR → $NEW"
-          sed -i "s/^version = \"$CURR\"/version = \"$NEW\"/" Cargo.toml
+          sed -i "s/version = \"$CURR\"/version = \"$NEW\"/g" Cargo.toml
           echo "new_version=$NEW" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push
