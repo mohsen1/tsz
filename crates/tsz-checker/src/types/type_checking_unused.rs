@@ -397,8 +397,18 @@ impl<'a> CheckerState<'a> {
                                 6133,
                             )
                         };
-                        let start = decl_node.pos;
-                        let length = decl_node.end.saturating_sub(decl_node.pos);
+                        let report_node = if is_import {
+                            // TS6133 for imports is anchored on the import declaration start.
+                            self.find_parent_import_declaration(decl_idx)
+                                .unwrap_or(decl_idx)
+                        } else {
+                            self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
+                        };
+                        let (start, length) = if let Some(node) = self.ctx.arena.get(report_node) {
+                            (node.pos, node.end.saturating_sub(node.pos))
+                        } else {
+                            (decl_node.pos, decl_node.end.saturating_sub(decl_node.pos))
+                        };
                         self.ctx.push_diagnostic(Diagnostic::error(
                             file_name.clone(),
                             start,
@@ -432,8 +442,12 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let msg = format!("'{name}' is declared but its value is never read.");
-                    let start = decl_node.pos;
-                    let length = decl_node.end.saturating_sub(decl_node.pos);
+                    let report_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    let (start, length) = if let Some(node) = self.ctx.arena.get(report_node) {
+                        (node.pos, node.end.saturating_sub(node.pos))
+                    } else {
+                        (decl_node.pos, decl_node.end.saturating_sub(decl_node.pos))
+                    };
                     self.ctx.push_diagnostic(Diagnostic::error(
                         file_name.clone(),
                         start,

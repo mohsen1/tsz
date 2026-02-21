@@ -1432,9 +1432,25 @@ impl<'a> CheckerState<'a> {
                 let func = self.ctx.arena.get_function(node)?;
                 Some(func.name)
             }
+            syntax_kind_ext::PARAMETER => {
+                let param = self.ctx.arena.get_parameter(node)?;
+                Some(param.name)
+            }
             syntax_kind_ext::CLASS_DECLARATION => {
                 let class = self.ctx.arena.get_class(node)?;
                 Some(class.name)
+            }
+            syntax_kind_ext::PROPERTY_DECLARATION => {
+                let prop = self.ctx.arena.get_property_decl(node)?;
+                Some(prop.name)
+            }
+            syntax_kind_ext::METHOD_DECLARATION => {
+                let method = self.ctx.arena.get_method_decl(node)?;
+                Some(method.name)
+            }
+            syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => {
+                let accessor = self.ctx.arena.get_accessor(node)?;
+                Some(accessor.name)
             }
             syntax_kind_ext::INTERFACE_DECLARATION => {
                 let interface = self.ctx.arena.get_interface(node)?;
@@ -1447,6 +1463,10 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::ENUM_DECLARATION => {
                 let enum_decl = self.ctx.arena.get_enum(node)?;
                 Some(enum_decl.name)
+            }
+            syntax_kind_ext::MODULE_DECLARATION => {
+                let module_decl = self.ctx.arena.get_module(node)?;
+                Some(module_decl.name)
             }
             syntax_kind_ext::IMPORT_CLAUSE => {
                 let clause = self.ctx.arena.get_import_clause(node)?;
