@@ -514,11 +514,12 @@ impl BinderState {
 
                         if !export.module_specifier.is_none()
                             && let Some(spec_node) = arena.get(export.module_specifier)
-                                && let Some(lit) = arena.get_literal(spec_node) {
-                                    sym.import_module = Some(lit.text.clone());
-                                    // Use '*' to indicate it's a namespace export, similar to namespace imports
-                                    sym.import_name = Some("*".to_string());
-                                }
+                            && let Some(lit) = arena.get_literal(spec_node)
+                        {
+                            sym.import_module = Some(lit.text.clone());
+                            // Use '*' to indicate it's a namespace export, similar to namespace imports
+                            sym.import_name = Some("*".to_string());
+                        }
                     }
 
                     self.current_scope.set(name.to_string(), sym_id);
