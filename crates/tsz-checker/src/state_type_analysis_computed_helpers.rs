@@ -71,6 +71,7 @@ impl<'a> CheckerState<'a> {
         // classification. E.g., keyof Person → "name" | "age".
         if tsz_solver::type_queries::is_keyof_type(self.ctx.types, ctx_type)
             || tsz_solver::type_queries::is_index_access_type(self.ctx.types, ctx_type)
+            || tsz_solver::type_queries::is_conditional_type(self.ctx.types, ctx_type)
         {
             let evaluated = self.evaluate_type_with_env(ctx_type);
             if evaluated != ctx_type && evaluated != TypeId::ERROR {
