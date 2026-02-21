@@ -551,7 +551,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 IRParam::new(&name)
             };
 
-            if !param_data.initializer.is_none()
+            if param_data.initializer.is_some()
                 && let Some(default) = self.transform_expression(param_data.initializer)
             {
                 param = param.with_default(default);

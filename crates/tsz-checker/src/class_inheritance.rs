@@ -320,7 +320,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 .get(decl_idx)
                 .and_then(|node| self.ctx.arena.get_class(node))
                 .map(|class| class.name)
-                .filter(|name| !name.is_none())
+                .filter(|name| name.is_some())
                 .unwrap_or(decl_idx)
         } else {
             self.ctx
@@ -328,7 +328,7 @@ impl<'a, 'ctx> ClassInheritanceChecker<'a, 'ctx> {
                 .get(decl_idx)
                 .and_then(|node| self.ctx.arena.get_interface(node))
                 .map(|iface| iface.name)
-                .filter(|name| !name.is_none())
+                .filter(|name| name.is_some())
                 .unwrap_or(decl_idx)
         };
 

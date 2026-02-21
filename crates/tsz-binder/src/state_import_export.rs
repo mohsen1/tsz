@@ -33,7 +33,7 @@ impl BinderState {
             {
                 let clause_type_only = clause.is_type_only;
                 // Default import
-                if !clause.name.is_none()
+                if clause.name.is_some()
                     && let Some(name) = Self::get_identifier_name(arena, clause.name)
                 {
                     // Use import_clause node as the declaration node
@@ -53,7 +53,7 @@ impl BinderState {
                 }
 
                 // Named imports
-                if !clause.named_bindings.is_none()
+                if clause.named_bindings.is_some()
                     && let Some(bindings_node) = arena.get(clause.named_bindings)
                 {
                     if bindings_node.kind == SyntaxKind::Identifier as u16 {
@@ -76,7 +76,7 @@ impl BinderState {
                         }
                     } else if let Some(named) = arena.get_named_imports(bindings_node) {
                         // Handle namespace import: import * as ns from 'module'
-                        if !named.name.is_none()
+                        if named.name.is_some()
                             && let Some(name) = Self::get_identifier_name(arena, named.name)
                         {
                             // Use named_bindings (NamespaceImport) as the declaration node
@@ -119,7 +119,7 @@ impl BinderState {
 
                                     // Get property name before mutable borrow to avoid borrow checker error
                                     let prop_name =
-                                        if !spec.name.is_none() && !spec.property_name.is_none() {
+                                        if spec.name.is_some() && spec.property_name.is_some() {
                                             Self::get_identifier_name(arena, spec.property_name)
                                         } else {
                                             None
@@ -320,7 +320,7 @@ impl BinderState {
                 return;
             }
 
-            if !export.export_clause.is_none()
+            if export.export_clause.is_some()
                 && let Some(clause_node) = arena.get(export.export_clause)
             {
                 // Check if it's named exports { foo, bar }
@@ -512,7 +512,7 @@ impl BinderState {
                         sym.is_type_only = export_type_only;
                         sym.declarations.push(export.export_clause);
 
-                        if !export.module_specifier.is_none()
+                        if export.module_specifier.is_some()
                             && let Some(spec_node) = arena.get(export.module_specifier)
                             && let Some(lit) = arena.get_literal(spec_node)
                         {
@@ -536,7 +536,7 @@ impl BinderState {
 
             // Handle `export * from 'module'` (wildcard re-exports)
             // This is when export_clause is None but module_specifier is not None
-            if export.export_clause.is_none() && !export.module_specifier.is_none() {
+            if export.export_clause.is_none() && export.module_specifier.is_some() {
                 let module_name = if export.module_specifier.is_some() {
                     let idx = export.module_specifier;
                     arena

@@ -271,7 +271,7 @@ impl<'a> EnumTransformer<'a> {
                     output.push_str("[\"");
                     output.push_str(&member_name);
                     output.push_str("\"] = ");
-                    if !member_data.initializer.is_none() {
+                    if member_data.initializer.is_some() {
                         output.push_str(&self.emit_expression(member_data.initializer));
                     } else {
                         output.push('0');

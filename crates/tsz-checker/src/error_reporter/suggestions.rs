@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else if let Some(&first_decl) = symbol.declarations.first() {
             first_decl

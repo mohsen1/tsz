@@ -1362,7 +1362,7 @@ impl<'a> CheckerState<'a> {
 
         // Check if property access is LHS of a `=` assignment
         let parent_idx = match self.ctx.arena.get_extended(property_access_idx) {
-            Some(ext) if !ext.parent.is_none() => ext.parent,
+            Some(ext) if ext.parent.is_some() => ext.parent,
             _ => return false,
         };
         let Some(parent_node) = self.ctx.arena.get(parent_idx) else {

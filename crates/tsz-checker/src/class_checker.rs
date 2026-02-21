@@ -330,9 +330,9 @@ impl<'a> CheckerState<'a> {
                     MemberVisibility::Public
                 };
                 let is_static = self.has_static_modifier(&prop.modifiers);
-                let prop_type = if !prop.type_annotation.is_none() {
+                let prop_type = if prop.type_annotation.is_some() {
                     self.get_type_from_type_node(prop.type_annotation)
-                } else if !prop.initializer.is_none() {
+                } else if prop.initializer.is_some() {
                     let init_type = self.get_type_of_node(prop.initializer);
                     if self.has_readonly_modifier(&prop.modifiers) {
                         init_type
@@ -412,7 +412,7 @@ impl<'a> CheckerState<'a> {
                     MemberVisibility::Public
                 };
                 let is_static = self.has_static_modifier(&accessor.modifiers);
-                let accessor_type = if !accessor.type_annotation.is_none() {
+                let accessor_type = if accessor.type_annotation.is_some() {
                     self.get_type_from_type_node(accessor.type_annotation)
                 } else {
                     self.infer_getter_return_type(accessor.body)
@@ -452,7 +452,7 @@ impl<'a> CheckerState<'a> {
                     .first()
                     .and_then(|&p| self.ctx.arena.get_parameter_at(p))
                     .map_or(TypeId::ANY, |param| {
-                        if !param.type_annotation.is_none() {
+                        if param.type_annotation.is_some() {
                             self.get_type_from_type_node(param.type_annotation)
                         } else {
                             TypeId::ANY
@@ -498,7 +498,7 @@ impl<'a> CheckerState<'a> {
             Some(ref hc) => hc,
             None => {
                 // No heritage clauses — still check for override members (TS4112)
-                let derived_class_name = if !class_data.name.is_none() {
+                let derived_class_name = if class_data.name.is_some() {
                     self.ctx
                         .arena
                         .get(class_data.name)
@@ -598,7 +598,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                 {
                     // Try value_declaration first, then declarations
-                    if !symbol.value_declaration.is_none() {
+                    if symbol.value_declaration.is_some() {
                         base_class_idx = Some(symbol.value_declaration);
                     } else if let Some(&decl_idx) = symbol.declarations.first() {
                         base_class_idx = Some(decl_idx);
@@ -608,7 +608,7 @@ impl<'a> CheckerState<'a> {
             break; // Only one extends clause is valid
         }
 
-        let derived_class_name = if !class_data.name.is_none() {
+        let derived_class_name = if class_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                     ident.escaped_text.clone()

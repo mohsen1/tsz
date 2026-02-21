@@ -691,7 +691,7 @@ impl<'a> FindReferences<'a> {
         // The node itself might be the name child of a declaration.
         // Check if its parent is in the declaration set.
         if let Some(ext) = self.arena.get_extended(node_idx)
-            && !ext.parent.is_none()
+            && ext.parent.is_some()
             && declaration_set.contains(&ext.parent.0)
         {
             // Make sure this node is actually the "name" of the parent declaration
@@ -825,9 +825,9 @@ impl<'a> FindReferences<'a> {
             }
             k if k == syntax_kind_ext::IMPORT_SPECIFIER => {
                 let spec = self.arena.get_specifier(node)?;
-                if !spec.name.is_none() {
+                if spec.name.is_some() {
                     Some(spec.name)
-                } else if !spec.property_name.is_none() {
+                } else if spec.property_name.is_some() {
                     Some(spec.property_name)
                 } else {
                     None
@@ -835,9 +835,9 @@ impl<'a> FindReferences<'a> {
             }
             k if k == syntax_kind_ext::EXPORT_SPECIFIER => {
                 let spec = self.arena.get_specifier(node)?;
-                if !spec.property_name.is_none() {
+                if spec.property_name.is_some() {
                     Some(spec.property_name)
-                } else if !spec.name.is_none() {
+                } else if spec.name.is_some() {
                     Some(spec.name)
                 } else {
                     None

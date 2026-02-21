@@ -614,7 +614,7 @@ impl<'a> AsyncES5Transformer<'a> {
             let name = self.get_identifier_text(decl.name);
 
             // Check if initializer contains await
-            if !decl.initializer.is_none() && self.is_await_expression(decl.initializer) {
+            if decl.initializer.is_some() && self.is_await_expression(decl.initializer) {
                 // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
                 // We need to declare the variable first to avoid ReferenceError in strict mode
                 current_statements.push(IRNode::VarDecl {
@@ -637,7 +637,7 @@ impl<'a> AsyncES5Transformer<'a> {
                         right: Box::new(IRNode::GeneratorSent),
                     },
                 )));
-            } else if !decl.initializer.is_none() && self.contains_await_recursive(decl.initializer)
+            } else if decl.initializer.is_some() && self.contains_await_recursive(decl.initializer)
             {
                 // Initializer contains await but is not a direct await expression
                 // (e.g., var x = (await foo()) + 1;)

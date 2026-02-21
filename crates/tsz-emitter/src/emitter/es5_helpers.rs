@@ -909,7 +909,7 @@ impl<'a> Printer<'a> {
         }
 
         // Name (if any)
-        if !func.name.is_none() {
+        if func.name.is_some() {
             self.write_space();
             self.emit(func.name);
         } else {
@@ -968,7 +968,7 @@ impl<'a> Printer<'a> {
         }
 
         // Name
-        if !func.name.is_none() {
+        if func.name.is_some() {
             self.write_space();
             self.emit(func.name);
         }

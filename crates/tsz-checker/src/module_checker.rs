@@ -366,13 +366,13 @@ impl<'a> CheckerState<'a> {
             // Get the property name (what we're exporting from the source module)
             // For `export { bar as baz }`, property_name is "bar"
             // For `export { foo }`, we use the name "foo"
-            let export_name = if !specifier.property_name.is_none() {
+            let export_name = if specifier.property_name.is_some() {
                 if let Some(text) = self.get_identifier_text_from_idx(specifier.property_name) {
                     text
                 } else {
                     continue;
                 }
-            } else if !specifier.name.is_none() {
+            } else if specifier.name.is_some() {
                 if let Some(text) = self.get_identifier_text_from_idx(specifier.name) {
                     text
                 } else {
@@ -595,7 +595,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let name_idx = if !specifier.property_name.is_none() {
+            let name_idx = if specifier.property_name.is_some() {
                 specifier.property_name
             } else {
                 specifier.name
@@ -722,7 +722,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 if cycle_detected {
-                    let decl_idx = if !sym.value_declaration.is_none() {
+                    let decl_idx = if sym.value_declaration.is_some() {
                         sym.value_declaration
                     } else if let Some(first) = sym.declarations.first() {
                         *first
@@ -737,18 +737,18 @@ impl<'a> CheckerState<'a> {
                             || decl_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
                         {
                             if let Some(spec) = self.ctx.arena.get_specifier(decl_node) {
-                                let name_idx = if !spec.name.is_none() {
+                                let name_idx = if spec.name.is_some() {
                                     spec.name
                                 } else {
                                     spec.property_name
                                 };
-                                if !name_idx.is_none() {
+                                if name_idx.is_some() {
                                     error_node_idx = name_idx;
                                 }
                             }
                         } else if decl_node.kind == syntax_kind_ext::IMPORT_CLAUSE
                             && let Some(import_clause) = self.ctx.arena.get_import_clause(decl_node)
-                            && !import_clause.name.is_none()
+                            && import_clause.name.is_some()
                         {
                             error_node_idx = import_clause.name;
                         }

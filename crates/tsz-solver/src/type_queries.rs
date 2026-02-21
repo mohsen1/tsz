@@ -417,126 +417,31 @@ use crate::types::IntrinsicKind;
 
 /// Check if a type is the `any` type.
 ///
-/// Returns true for `TypeId::ANY` or `TypeData::Intrinsic(IntrinsicKind::Any)`.
-pub fn is_any_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::ANY
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Any))
-        )
+/// Generate an intrinsic type checker function that checks both the well-known
+/// `TypeId` constant and the `TypeData::Intrinsic` variant.
+macro_rules! define_intrinsic_check {
+    ($fn_name:ident, $type_id:ident, $kind:ident) => {
+        pub fn $fn_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+            type_id == TypeId::$type_id
+                || matches!(
+                    db.lookup(type_id),
+                    Some(TypeData::Intrinsic(IntrinsicKind::$kind))
+                )
+        }
+    };
 }
 
-/// Check if a type is the `unknown` type.
-///
-/// Returns true for `TypeId::UNKNOWN` or `TypeData::Intrinsic(IntrinsicKind::Unknown)`.
-pub fn is_unknown_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::UNKNOWN
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Unknown))
-        )
-}
-
-/// Check if a type is the `never` type.
-///
-/// Returns true for `TypeId::NEVER` or `TypeData::Intrinsic(IntrinsicKind::Never)`.
-pub fn is_never_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::NEVER
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Never))
-        )
-}
-
-/// Check if a type is the `void` type.
-///
-/// Returns true for `TypeId::VOID` or `TypeData::Intrinsic(IntrinsicKind::Void)`.
-pub fn is_void_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::VOID
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Void))
-        )
-}
-
-/// Check if a type is the `undefined` type.
-///
-/// Returns true for `TypeId::UNDEFINED` or `TypeData::Intrinsic(IntrinsicKind::Undefined)`.
-pub fn is_undefined_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::UNDEFINED
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Undefined))
-        )
-}
-
-/// Check if a type is the `null` type.
-///
-/// Returns true for `TypeId::NULL` or `TypeData::Intrinsic(IntrinsicKind::Null)`.
-pub fn is_null_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::NULL
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Null))
-        )
-}
-
-/// Check if a type is the `string` type.
-///
-/// Returns true for `TypeId::STRING` or `TypeData::Intrinsic(IntrinsicKind::String)`.
-pub fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::STRING
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::String))
-        )
-}
-
-/// Check if a type is the `number` type.
-///
-/// Returns true for `TypeId::NUMBER` or `TypeData::Intrinsic(IntrinsicKind::Number)`.
-pub fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::NUMBER
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Number))
-        )
-}
-
-/// Check if a type is the `bigint` type.
-///
-/// Returns true for `TypeId::BIGINT` or `TypeData::Intrinsic(IntrinsicKind::Bigint)`.
-pub fn is_bigint_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::BIGINT
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Bigint))
-        )
-}
-
-/// Check if a type is the `boolean` type.
-///
-/// Returns true for `TypeId::BOOLEAN` or `TypeData::Intrinsic(IntrinsicKind::Boolean)`.
-/// Note: This does NOT include boolean literals (true/false). For literal checks,
-/// use `is_literal_type` combined with value inspection.
-pub fn is_boolean_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::BOOLEAN
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Boolean))
-        )
-}
-
-/// Check if a type is the `symbol` type.
-///
-/// Returns true for `TypeId::SYMBOL` or `TypeData::Intrinsic(IntrinsicKind::Symbol)`.
-pub fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    type_id == TypeId::SYMBOL
-        || matches!(
-            db.lookup(type_id),
-            Some(TypeData::Intrinsic(IntrinsicKind::Symbol))
-        )
-}
+define_intrinsic_check!(is_any_type, ANY, Any);
+define_intrinsic_check!(is_unknown_type, UNKNOWN, Unknown);
+define_intrinsic_check!(is_never_type, NEVER, Never);
+define_intrinsic_check!(is_void_type, VOID, Void);
+define_intrinsic_check!(is_undefined_type, UNDEFINED, Undefined);
+define_intrinsic_check!(is_null_type, NULL, Null);
+define_intrinsic_check!(is_string_type, STRING, String);
+define_intrinsic_check!(is_number_type, NUMBER, Number);
+define_intrinsic_check!(is_bigint_type, BIGINT, Bigint);
+define_intrinsic_check!(is_boolean_type, BOOLEAN, Boolean);
+define_intrinsic_check!(is_symbol_type, SYMBOL, Symbol);
 
 // =============================================================================
 // Composite Type Queries

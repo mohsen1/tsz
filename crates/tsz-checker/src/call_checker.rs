@@ -115,7 +115,7 @@ impl<'a> CheckerState<'a> {
         let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
             return false;
         };
-        if !var_decl.type_annotation.is_none() || var_decl.initializer.is_none() {
+        if var_decl.type_annotation.is_some() || var_decl.initializer.is_none() {
             return false;
         }
 

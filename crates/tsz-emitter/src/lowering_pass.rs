@@ -328,7 +328,7 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
                 if let Some(decl) = self.arena.get_variable_declaration(node) {
                     self.visit(decl.name);
-                    if !decl.initializer.is_none() {
+                    if decl.initializer.is_some() {
                         self.visit(decl.initializer);
                     }
                 }
@@ -396,7 +396,7 @@ impl<'a> LoweringPass<'a> {
                         }
                     }
                     self.visit(prop.name);
-                    if !prop.initializer.is_none() {
+                    if prop.initializer.is_some() {
                         self.visit(prop.initializer);
                     }
                 }
@@ -422,7 +422,7 @@ impl<'a> LoweringPass<'a> {
                     for &param_idx in &method.parameters.nodes {
                         self.visit(param_idx);
                     }
-                    if !method.body.is_none() {
+                    if method.body.is_some() {
                         if self.ctx.target_es5 {
                             let cn = self.compute_this_capture_name_with_params(
                                 method.body,
@@ -449,7 +449,7 @@ impl<'a> LoweringPass<'a> {
                     for &param_idx in &ctor.parameters.nodes {
                         self.visit(param_idx);
                     }
-                    if !ctor.body.is_none() {
+                    if ctor.body.is_some() {
                         if self.ctx.target_es5 {
                             let cn = self.compute_this_capture_name_with_params(
                                 ctor.body,
@@ -477,7 +477,7 @@ impl<'a> LoweringPass<'a> {
                     for &param_idx in &accessor.parameters.nodes {
                         self.visit(param_idx);
                     }
-                    if !accessor.body.is_none() {
+                    if accessor.body.is_some() {
                         if self.ctx.target_es5 {
                             let cn = self.compute_this_capture_name_with_params(
                                 accessor.body,
@@ -499,7 +499,7 @@ impl<'a> LoweringPass<'a> {
                     for &param_idx in &func.parameters.nodes {
                         self.visit(param_idx);
                     }
-                    if !func.body.is_none() {
+                    if func.body.is_some() {
                         if self.ctx.target_es5 {
                             let cn = self.compute_this_capture_name_with_params(
                                 func.body,
@@ -544,7 +544,7 @@ impl<'a> LoweringPass<'a> {
                         }
                     }
                     self.visit(param.name);
-                    if !param.initializer.is_none() {
+                    if param.initializer.is_some() {
                         self.visit(param.initializer);
                     }
                 }
@@ -573,11 +573,11 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::BINDING_ELEMENT => {
                 if let Some(elem) = self.arena.get_binding_element(node) {
-                    if !elem.property_name.is_none() {
+                    if elem.property_name.is_some() {
                         self.visit(elem.property_name);
                     }
                     self.visit(elem.name);
-                    if !elem.initializer.is_none() {
+                    if elem.initializer.is_some() {
                         self.visit(elem.initializer);
                     }
                 }
@@ -716,7 +716,7 @@ impl<'a> LoweringPass<'a> {
                 if let Some(if_stmt) = self.arena.get_if_statement(node) {
                     self.visit(if_stmt.expression);
                     self.visit(if_stmt.then_statement);
-                    if !if_stmt.else_statement.is_none() {
+                    if if_stmt.else_statement.is_some() {
                         self.visit(if_stmt.else_statement);
                     }
                 }
@@ -734,14 +734,14 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret) = self.arena.get_return_statement(node)
-                    && !ret.expression.is_none()
+                    && ret.expression.is_some()
                 {
                     self.visit(ret.expression);
                 }
             }
             k if k == syntax_kind_ext::THROW_STATEMENT => {
                 if let Some(thr) = self.arena.get_return_statement(node)
-                    && !thr.expression.is_none()
+                    && thr.expression.is_some()
                 {
                     self.visit(thr.expression);
                 }
@@ -754,7 +754,7 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
                 if let Some(clause) = self.arena.get_case_clause(node) {
-                    if !clause.expression.is_none() {
+                    if clause.expression.is_some() {
                         self.visit(clause.expression);
                     }
                     for &stmt in &clause.statements.nodes {
@@ -765,17 +765,17 @@ impl<'a> LoweringPass<'a> {
             k if k == syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_stmt) = self.arena.get_try(node) {
                     self.visit(try_stmt.try_block);
-                    if !try_stmt.catch_clause.is_none() {
+                    if try_stmt.catch_clause.is_some() {
                         self.visit(try_stmt.catch_clause);
                     }
-                    if !try_stmt.finally_block.is_none() {
+                    if try_stmt.finally_block.is_some() {
                         self.visit(try_stmt.finally_block);
                     }
                 }
             }
             k if k == syntax_kind_ext::CATCH_CLAUSE => {
                 if let Some(catch) = self.arena.get_catch_clause(node) {
-                    if !catch.variable_declaration.is_none() {
+                    if catch.variable_declaration.is_some() {
                         self.visit(catch.variable_declaration);
                     }
                     self.visit(catch.block);
@@ -861,7 +861,7 @@ impl<'a> LoweringPass<'a> {
             && !clause.is_type_only
         {
             // Default import: import d from "mod" -> needs __importDefault
-            if !clause.name.is_none() {
+            if clause.name.is_some() {
                 let helpers = self.transforms.helpers_mut();
                 helpers.import_default = true;
             }
@@ -874,7 +874,7 @@ impl<'a> LoweringPass<'a> {
                     helpers.import_star = true;
                     helpers.create_binding = true; // __importStar depends on __createBinding
                 } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                    && !named_imports.name.is_none()
+                    && named_imports.name.is_some()
                     && named_imports.elements.nodes.is_empty()
                 {
                     // "default" import with empty named imports (also needs importStar)
@@ -886,7 +886,7 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Continue traversal
-        if !import_decl.import_clause.is_none() {
+        if import_decl.import_clause.is_some() {
             self.visit(import_decl.import_clause);
         }
     }
@@ -903,7 +903,7 @@ impl<'a> LoweringPass<'a> {
 
         // Detect CommonJS helpers: export * from "mod"
         if self.is_commonjs()
-            && !export_decl.module_specifier.is_none()
+            && export_decl.module_specifier.is_some()
             && export_decl.export_clause.is_none()
         {
             let helpers = self.transforms.helpers_mut();
@@ -943,7 +943,7 @@ impl<'a> LoweringPass<'a> {
                         self.visit(param_idx);
                     }
 
-                    if !func.body.is_none() {
+                    if func.body.is_some() {
                         self.visit(func.body);
                     }
 
@@ -1092,7 +1092,7 @@ impl<'a> LoweringPass<'a> {
         };
 
         // Get class name only if we might need it for exports.
-        let class_name = if is_exported && !class.name.is_none() {
+        let class_name = if is_exported && class.name.is_some() {
             self.get_identifier_id(class.name)
         } else {
             None
@@ -1244,7 +1244,7 @@ impl<'a> LoweringPass<'a> {
             self.has_default_modifier(&func.modifiers)
         };
 
-        let func_name = if is_exported && !func.name.is_none() {
+        let func_name = if is_exported && func.name.is_some() {
             self.get_identifier_id(func.name)
         } else {
             None
@@ -1313,7 +1313,7 @@ impl<'a> LoweringPass<'a> {
             self.visit(param_idx);
         }
 
-        if !func.body.is_none() {
+        if func.body.is_some() {
             // Track this function body as a potential _this capture scope
             if self.ctx.target_es5 {
                 let cn =
@@ -1351,7 +1351,7 @@ impl<'a> LoweringPass<'a> {
             is_exported = true;
         }
 
-        let enum_name = if is_exported && !enum_decl.name.is_none() {
+        let enum_name = if is_exported && enum_decl.name.is_some() {
             self.get_identifier_id(enum_decl.name)
         } else {
             None
@@ -1396,7 +1396,7 @@ impl<'a> LoweringPass<'a> {
                 && let Some(member) = self.arena.get_enum_member(member_node)
             {
                 self.visit(member.name);
-                if !member.initializer.is_none() {
+                if member.initializer.is_some() {
                     self.visit(member.initializer);
                 }
             }
@@ -1511,7 +1511,7 @@ impl<'a> LoweringPass<'a> {
         };
 
         if self.ctx.target_es5 {
-            let malformed_return_type = !arrow.type_annotation.is_none()
+            let malformed_return_type = arrow.type_annotation.is_some()
                 && self
                     .arena
                     .get(arrow.type_annotation)
@@ -1521,7 +1521,7 @@ impl<'a> LoweringPass<'a> {
                 for &param_idx in &arrow.parameters.nodes {
                     self.visit(param_idx);
                 }
-                if !arrow.body.is_none() {
+                if arrow.body.is_some() {
                     self.visit(arrow.body);
                 }
                 return;
@@ -1592,7 +1592,7 @@ impl<'a> LoweringPass<'a> {
             self.visit(param_idx);
         }
 
-        if !arrow.body.is_none() {
+        if arrow.body.is_some() {
             self.visit(arrow.body);
         }
 
@@ -1646,7 +1646,7 @@ impl<'a> LoweringPass<'a> {
         for &param_idx in &ctor.parameters.nodes {
             self.visit(param_idx);
         }
-        if !ctor.body.is_none() {
+        if ctor.body.is_some() {
             if self.ctx.target_es5 {
                 let cn = self.compute_this_capture_name(ctor.body);
                 self.enclosing_function_bodies.push(ctor.body);
@@ -1799,7 +1799,7 @@ impl<'a> LoweringPass<'a> {
             self.visit(param_idx);
         }
 
-        if !func.body.is_none() {
+        if func.body.is_some() {
             // Track this function body as a potential _this capture scope
             if self.ctx.target_es5 {
                 let cn =

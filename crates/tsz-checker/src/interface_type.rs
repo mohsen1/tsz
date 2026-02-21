@@ -96,7 +96,7 @@ impl<'a> CheckerState<'a> {
                         self.push_type_parameters(&sig.type_parameters);
                     let (params, this_type) = self.extract_params_from_signature(sig);
                     self.push_typeof_param_scope(&params);
-                    let (return_type, type_predicate) = if !sig.type_annotation.is_none() {
+                    let (return_type, type_predicate) = if sig.type_annotation.is_some() {
                         let is_predicate = self
                             .ctx
                             .arena
@@ -131,7 +131,7 @@ impl<'a> CheckerState<'a> {
                         self.push_type_parameters(&sig.type_parameters);
                     let (params, this_type) = self.extract_params_from_signature(sig);
                     self.push_typeof_param_scope(&params);
-                    let (return_type, type_predicate) = if !sig.type_annotation.is_none() {
+                    let (return_type, type_predicate) = if sig.type_annotation.is_some() {
                         let is_predicate = self
                             .ctx
                             .arena
@@ -167,7 +167,7 @@ impl<'a> CheckerState<'a> {
                     if member_node.kind == METHOD_SIGNATURE
                         && let Some(ref _params) = sig.parameters
                     {}
-                    let type_id = if !sig.type_annotation.is_none() {
+                    let type_id = if sig.type_annotation.is_some() {
                         self.get_type_from_type_node(sig.type_annotation)
                     } else {
                         TypeId::ANY
@@ -196,7 +196,7 @@ impl<'a> CheckerState<'a> {
                     });
 
                     if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                        let getter_type = if !accessor.type_annotation.is_none() {
+                        let getter_type = if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
                             TypeId::ANY
@@ -210,7 +210,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| {
-                                (!param.type_annotation.is_none())
+                                (param.type_annotation.is_some())
                                     .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
@@ -230,7 +230,7 @@ impl<'a> CheckerState<'a> {
                 let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
                     continue;
                 };
-                let key_type = if !param_data.type_annotation.is_none() {
+                let key_type = if param_data.type_annotation.is_some() {
                     self.get_type_from_type_node(param_data.type_annotation)
                 } else {
                     TypeId::ANY
@@ -254,7 +254,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                let value_type = if !index_sig.type_annotation.is_none() {
+                let value_type = if index_sig.type_annotation.is_some() {
                     self.get_type_from_type_node(index_sig.type_annotation)
                 } else {
                     TypeId::ANY
@@ -430,7 +430,7 @@ impl<'a> CheckerState<'a> {
                             break;
                         }
                     }
-                    if base_type.is_none() && !base_symbol.value_declaration.is_none() {
+                    if base_type.is_none() && base_symbol.value_declaration.is_some() {
                         let base_decl_idx = base_symbol.value_declaration;
                         if let Some(base_node) = self.ctx.arena.get(base_decl_idx)
                             && let Some(base_class) = self.ctx.arena.get_class(base_node)
@@ -884,7 +884,7 @@ impl<'a> CheckerState<'a> {
                             && std::ptr::eq(arena, self.ctx.arena)
                             && let Some(ref _params) = sig.parameters
                         {}
-                        let type_id = if !sig.type_annotation.is_none()
+                        let type_id = if sig.type_annotation.is_some()
                             && std::ptr::eq(arena, self.ctx.arena)
                         {
                             self.get_type_of_node(sig.type_annotation)
@@ -910,7 +910,7 @@ impl<'a> CheckerState<'a> {
             // Namespace/module augmentations contribute value members.
             if node.kind == MODULE_DECLARATION
                 && let Some(module_decl) = arena.get_module(node)
-                && !module_decl.body.is_none()
+                && module_decl.body.is_some()
                 && let Some(body_node) = arena.get(module_decl.body)
                 && body_node.kind == MODULE_BLOCK
                 && let Some(block) = arena.get_module_block(body_node)
@@ -945,7 +945,7 @@ impl<'a> CheckerState<'a> {
                                                 continue;
                                             };
 
-                                            let type_id = if !decl.type_annotation.is_none()
+                                            let type_id = if decl.type_annotation.is_some()
                                                 && std::ptr::eq(arena, self.ctx.arena)
                                             {
                                                 self.get_type_of_node(decl.type_annotation)
@@ -973,7 +973,7 @@ impl<'a> CheckerState<'a> {
                                         && let Some(name_node) = arena.get(decl.name)
                                         && let Some(id_data) = arena.get_identifier(name_node)
                                     {
-                                        let type_id = if !decl.type_annotation.is_none()
+                                        let type_id = if decl.type_annotation.is_some()
                                             && std::ptr::eq(arena, self.ctx.arena)
                                         {
                                             self.get_type_of_node(decl.type_annotation)
@@ -1034,7 +1034,7 @@ impl<'a> CheckerState<'a> {
                         }
                         EXPORT_DECLARATION => {
                             if let Some(export_decl) = arena.get_export_decl(stmt_node)
-                                && !export_decl.export_clause.is_none()
+                                && export_decl.export_clause.is_some()
                                 && let Some(clause_node) = arena.get(export_decl.export_clause)
                                 && clause_node.kind == VARIABLE_STATEMENT
                                 && let Some(var_stmt) = arena.get_variable(clause_node)
@@ -1060,7 +1060,7 @@ impl<'a> CheckerState<'a> {
                                                 continue;
                                             };
 
-                                            let type_id = if !decl.type_annotation.is_none()
+                                            let type_id = if decl.type_annotation.is_some()
                                                 && std::ptr::eq(arena, self.ctx.arena)
                                             {
                                                 self.get_type_of_node(decl.type_annotation)
@@ -1088,7 +1088,7 @@ impl<'a> CheckerState<'a> {
                                         && let Some(name_node) = arena.get(decl.name)
                                         && let Some(id_data) = arena.get_identifier(name_node)
                                     {
-                                        let type_id = if !decl.type_annotation.is_none()
+                                        let type_id = if decl.type_annotation.is_some()
                                             && std::ptr::eq(arena, self.ctx.arena)
                                         {
                                             self.get_type_of_node(decl.type_annotation)

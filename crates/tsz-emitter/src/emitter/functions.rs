@@ -344,7 +344,7 @@ impl<'a> Printer<'a> {
                 }
             }
             // Check for type annotation
-            let has_type = !param.type_annotation.is_none();
+            let has_type = param.type_annotation.is_some();
             tracing::trace!(has_type, "Type annotation check");
             if has_type {
                 tracing::trace!("Has type annotation, returning true");
@@ -381,7 +381,7 @@ impl<'a> Printer<'a> {
         // Type annotations are irrelevant for JS emit - they're always stripped
 
         // Must have no initializer
-        if !param.initializer.is_none() {
+        if param.initializer.is_some() {
             return false;
         }
 
@@ -404,7 +404,7 @@ impl<'a> Printer<'a> {
         };
 
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
-            let func_name = if !func.name.is_none() {
+            let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {
                 String::new()
@@ -424,7 +424,7 @@ impl<'a> Printer<'a> {
         }
 
         // Name (if any)
-        if !func.name.is_none() {
+        if func.name.is_some() {
             self.write_space();
             self.emit_decl_name(func.name);
         } else {
@@ -435,7 +435,7 @@ impl<'a> Printer<'a> {
         // Parameters (without types for JavaScript)
         // Map opening `(` to its source position
         {
-            let search_start = if !func.name.is_none() {
+            let search_start = if func.name.is_some() {
                 self.arena.get(func.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos
@@ -453,7 +453,7 @@ impl<'a> Printer<'a> {
                 .first()
                 .and_then(|&idx| self.arena.get(idx))
                 .map_or(node.pos, |n| n.pos);
-            let search_end = if !func.body.is_none() {
+            let search_end = if func.body.is_some() {
                 self.arena.get(func.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
@@ -607,7 +607,7 @@ impl<'a> Printer<'a> {
                 }
                 self.emit_parameter_name_js(param.name);
                 // Skip type annotations and defaults for JS emit
-                if !param.initializer.is_none() {
+                if param.initializer.is_some() {
                     self.write(" = ");
                     self.emit(param.initializer);
                 }
@@ -637,12 +637,12 @@ impl<'a> Printer<'a> {
             self.write("?");
         }
 
-        if !param.type_annotation.is_none() {
+        if param.type_annotation.is_some() {
             self.write(": ");
             self.emit(param.type_annotation);
         }
 
-        if !param.initializer.is_none() {
+        if param.initializer.is_some() {
             self.write(" = ");
             self.emit_expression(param.initializer);
         }

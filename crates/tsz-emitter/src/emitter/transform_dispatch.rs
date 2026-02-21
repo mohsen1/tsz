@@ -450,7 +450,7 @@ impl<'a> Printer<'a> {
                 if let Some(func_node) = self.arena.get(function_node)
                     && let Some(func) = self.arena.get_function(func_node)
                 {
-                    let func_name = if !func.name.is_none() {
+                    let func_name = if func.name.is_some() {
                         self.get_identifier_text_idx(func.name)
                     } else {
                         String::new()
@@ -664,7 +664,7 @@ impl<'a> Printer<'a> {
                 if let Some(func_node) = self.arena.get(*function_node)
                     && let Some(func) = self.arena.get_function(func_node)
                 {
-                    if !func.name.is_none() {
+                    if func.name.is_some() {
                         let func_name = self.get_identifier_text_idx(func.name);
                         self.emit_async_function_es5(func, &func_name, "this");
                     } else if let Some(export_name) = export_name {
@@ -910,7 +910,7 @@ impl<'a> Printer<'a> {
                 if let Some(func_node) = self.arena.get(*function_node)
                     && let Some(func) = self.arena.get_function(func_node)
                 {
-                    let func_name = if !func.name.is_none() {
+                    let func_name = if func.name.is_some() {
                         self.get_identifier_text_idx(func.name)
                     } else {
                         String::new()

@@ -37,7 +37,7 @@ impl<'a> Printer<'a> {
                 self.write(" *");
             }
         }
-        if !unary.expression.is_none() {
+        if unary.expression.is_some() {
             let Some(expr_node) = self.arena.get(unary.expression) else {
                 self.write(" ");
                 return;
@@ -77,7 +77,7 @@ impl<'a> Printer<'a> {
         // e.g., `await p || a` → `(yield p) || a` (not `yield p || a`)
         let needs_yield_parens = self.ctx.emit_await_as_yield
             && self.ctx.flags.in_binary_operand
-            && !unary.expression.is_none();
+            && unary.expression.is_some();
 
         let keyword = if self.ctx.emit_await_as_yield {
             "yield"

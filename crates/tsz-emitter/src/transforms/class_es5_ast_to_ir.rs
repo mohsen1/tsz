@@ -955,7 +955,7 @@ impl<'a> AstToIr<'a> {
             };
             let params = self.convert_parameters(&func.parameters);
             // Capture body source range for single-line detection
-            let body_source_range = if !func.body.is_none() {
+            let body_source_range = if func.body.is_some() {
                 self.arena
                     .get(func.body)
                     .map(|body_node| (body_node.pos, body_node.end))
@@ -1084,7 +1084,7 @@ impl<'a> AstToIr<'a> {
                 let name = get_identifier_text(self.arena, param.name)?;
                 let rest = param.dot_dot_dot_token;
                 // Convert default value if present
-                let default_value = (!param.initializer.is_none())
+                let default_value = (param.initializer.is_some())
                     .then(|| Box::new(self.convert_expression(param.initializer)));
                 Some(IRParam {
                     name,

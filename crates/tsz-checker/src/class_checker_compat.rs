@@ -184,7 +184,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Get the derived interface name for the error message
-        let derived_name = if !iface_data.name.is_none() {
+        let derived_name = if iface_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(iface_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                     ident.escaped_text.clone()
@@ -288,7 +288,7 @@ impl<'a> CheckerState<'a> {
                         base_iface_indices.push(decl_idx);
                     }
                 }
-                if base_iface_indices.is_empty() && !base_symbol.value_declaration.is_none() {
+                if base_iface_indices.is_empty() && base_symbol.value_declaration.is_some() {
                     let decl_idx = base_symbol.value_declaration;
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && self.ctx.arena.get_interface(node).is_some()
@@ -412,7 +412,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
 
-                    if base_class_idx.is_none() && !base_symbol.value_declaration.is_none() {
+                    if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
                         let decl_idx = base_symbol.value_declaration;
                         if let Some(node) = self.ctx.arena.get(decl_idx)
                             && node.kind == syntax_kind_ext::CLASS_DECLARATION
@@ -781,7 +781,7 @@ impl<'a> CheckerState<'a> {
                         } else {
                             MemberVisibility::Public
                         };
-                        let prop_type = if !param.type_annotation.is_none() {
+                        let prop_type = if param.type_annotation.is_some() {
                             self.get_type_from_type_node(param.type_annotation)
                         } else {
                             tsz_solver::TypeId::ANY
@@ -834,7 +834,7 @@ impl<'a> CheckerState<'a> {
             let base_name = &ident.escaped_text;
             let sym_id = self.ctx.binder.file_locals.get(base_name)?;
             let symbol = self.ctx.binder.get_symbol(sym_id)?;
-            let base_idx = if !symbol.value_declaration.is_none() {
+            let base_idx = if symbol.value_declaration.is_some() {
                 symbol.value_declaration
             } else {
                 *symbol.declarations.first()?
@@ -905,7 +905,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             // Optional or has-default parameters are not required
-            if param.question_token || !param.initializer.is_none() {
+            if param.question_token || param.initializer.is_some() {
                 continue;
             }
             count += 1;

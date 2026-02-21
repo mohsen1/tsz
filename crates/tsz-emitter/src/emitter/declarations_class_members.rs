@@ -79,12 +79,12 @@ impl<'a> Printer<'a> {
             self.write("*");
         }
 
-        if !method.name.is_none() && !has_recovery_missing_name {
+        if method.name.is_some() && !has_recovery_missing_name {
             self.emit(method.name);
         }
         // Map opening `(` to its source position
         {
-            let search_start = if !method.name.is_none() {
+            let search_start = if method.name.is_some() {
                 self.arena.get(method.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos
@@ -102,7 +102,7 @@ impl<'a> Printer<'a> {
                 .first()
                 .and_then(|&idx| self.arena.get(idx))
                 .map_or(node.pos, |n| n.pos);
-            let search_end = if !method.body.is_none() {
+            let search_end = if method.body.is_some() {
                 self.arena.get(method.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
@@ -259,7 +259,7 @@ impl<'a> Printer<'a> {
 
         // Skip type annotations for JavaScript emit
 
-        if !prop.initializer.is_none() {
+        if prop.initializer.is_some() {
             self.write(" = ");
             self.emit(prop.initializer);
         }
@@ -311,7 +311,7 @@ impl<'a> Printer<'a> {
                 .last()
                 .and_then(|&idx| self.arena.get(idx))
                 .map_or(node.pos, |n| n.end);
-            let search_end = if !ctor.body.is_none() {
+            let search_end = if ctor.body.is_some() {
                 self.arena.get(ctor.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
@@ -766,7 +766,7 @@ impl<'a> Printer<'a> {
 
         // Skip type annotation for JS emit
 
-        if !accessor.body.is_none() {
+        if accessor.body.is_some() {
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.ctx.block_scope_state.enter_scope();
@@ -807,7 +807,7 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        if !accessor.body.is_none() {
+        if accessor.body.is_some() {
             let prev_emitting_function_body_block = self.emitting_function_body_block;
             self.emitting_function_body_block = true;
             self.ctx.block_scope_state.enter_scope();

@@ -595,7 +595,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
                 // TS1100: Invalid use of 'eval'/'arguments' as function expression name
                 if let Some(func) = self.checker.ctx.arena.get_function(node)
-                    && !func.name.is_none()
+                    && func.name.is_some()
                     && let Some(name_node) = self.checker.ctx.arena.get(func.name)
                     && let Some(ident) = self.checker.ctx.arena.get_identifier(name_node)
                     && (ident.escaped_text == "eval" || ident.escaped_text == "arguments")

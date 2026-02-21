@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
                             if let Some(decl_node) = self.ctx.arena.get(decl_idx)
                                 && let Some(var_decl) =
                                     self.ctx.arena.get_variable_declaration(decl_node)
-                                && !var_decl.initializer.is_none()
+                                && var_decl.initializer.is_some()
                             {
                                 if is_const && var_decl.type_annotation.is_none() {
                                     // const without type annotation: only string/numeric literals allowed
@@ -167,7 +167,7 @@ impl<'a> CheckerState<'a> {
             // Recursively check nested modules/namespaces
             if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
                 && let Some(module) = self.ctx.arena.get_module(stmt_node)
-                && !module.body.is_none()
+                && module.body.is_some()
             {
                 self.check_initializers_in_ambient_body(module.body);
             }

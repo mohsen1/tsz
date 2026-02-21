@@ -156,7 +156,7 @@ impl BinderState {
                                 }
                                 // Update value_declaration if not set
                                 if existing_mut.value_declaration.is_none()
-                                    && !lib_sym.value_declaration.is_none()
+                                    && lib_sym.value_declaration.is_some()
                                 {
                                     existing_mut.value_declaration = lib_sym.value_declaration;
                                 }
@@ -234,7 +234,7 @@ impl BinderState {
                 };
 
                 // Remap parent
-                if !lib_sym.parent.is_none()
+                if lib_sym.parent.is_some()
                     && let Some(&new_parent) =
                         lib_symbol_remap.get(&(lib_binder_ptr, lib_sym.parent))
                     && let Some(sym) = self.symbols.get_mut(new_id)

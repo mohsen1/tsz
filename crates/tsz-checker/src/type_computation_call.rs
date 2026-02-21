@@ -81,7 +81,7 @@ impl<'a> CheckerState<'a> {
                     .or_else(|| self.resolve_identifier_symbol(call.expression))
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
-                            let decl_idx = if !symbol.value_declaration.is_none() {
+                            let decl_idx = if symbol.value_declaration.is_some() {
                                 Some(symbol.value_declaration)
                             } else if symbol.declarations.len() == 1 {
                                 symbol.declarations.first().copied()
@@ -1063,7 +1063,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Don't emit TS2693 for export default/export = expressions
                 if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
-                    && !parent_ext.parent.is_none()
+                    && parent_ext.parent.is_some()
                     && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
                 {
                     use tsz_parser::parser::syntax_kind_ext;
@@ -1142,7 +1142,7 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                     if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
-                        && !parent_ext.parent.is_none()
+                        && parent_ext.parent.is_some()
                         && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
                     {
                         use tsz_parser::parser::syntax_kind_ext;
@@ -1206,7 +1206,7 @@ impl<'a> CheckerState<'a> {
                 // `export default InterfaceName` and `export = InterfaceName`
                 // are valid TypeScript — they export the type binding.
                 if let Some(parent_ext) = self.ctx.arena.get_extended(idx)
-                    && !parent_ext.parent.is_none()
+                    && parent_ext.parent.is_some()
                     && let Some(parent_node) = self.ctx.arena.get(parent_ext.parent)
                 {
                     use tsz_parser::parser::syntax_kind_ext;

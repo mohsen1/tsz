@@ -468,7 +468,7 @@ impl<'a> CheckerState<'a> {
                                 parent_id: None,
                             });
                         } else {
-                            let type_id = if !sig.type_annotation.is_none() {
+                            let type_id = if sig.type_annotation.is_some() {
                                 self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                             } else {
                                 TypeId::ANY
@@ -503,7 +503,7 @@ impl<'a> CheckerState<'a> {
                 let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
                     continue;
                 };
-                let key_type = if !param_data.type_annotation.is_none() {
+                let key_type = if param_data.type_annotation.is_some() {
                     self.get_type_from_type_node_in_type_literal(param_data.type_annotation)
                 } else {
                     // Missing annotation defaults to ANY (TS7011 reported separately)
@@ -528,7 +528,7 @@ impl<'a> CheckerState<'a> {
                     );
                 }
 
-                let value_type = if !index_sig.type_annotation.is_none() {
+                let value_type = if index_sig.type_annotation.is_some() {
                     self.get_type_from_type_node_in_type_literal(index_sig.type_annotation)
                 } else {
                     // Missing annotation defaults to ANY (TS7011 reported separately)
@@ -557,7 +557,7 @@ impl<'a> CheckerState<'a> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
-                    let getter_type = if !accessor.type_annotation.is_none() {
+                    let getter_type = if accessor.type_annotation.is_some() {
                         self.get_type_from_type_node_in_type_literal(accessor.type_annotation)
                     } else {
                         TypeId::ANY
@@ -584,7 +584,7 @@ impl<'a> CheckerState<'a> {
                         .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                         .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                         .and_then(|param| {
-                            (!param.type_annotation.is_none()).then(|| {
+                            (param.type_annotation.is_some()).then(|| {
                                 self.get_type_from_type_node_in_type_literal(param.type_annotation)
                             })
                         })

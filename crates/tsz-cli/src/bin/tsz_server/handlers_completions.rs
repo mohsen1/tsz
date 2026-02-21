@@ -296,7 +296,7 @@ impl Server {
 
         let symbol_id = binder.file_locals.get(name)?;
         let sym = binder.symbols.get(symbol_id)?;
-        let decl = if !sym.value_declaration.is_none() {
+        let decl = if sym.value_declaration.is_some() {
             sym.value_declaration
         } else {
             *sym.declarations.first()?
@@ -346,7 +346,7 @@ impl Server {
     ) {
         let decl_text = binder.file_locals.get(name).and_then(|sid| {
             let sym = binder.symbols.get(sid)?;
-            let decl = if !sym.value_declaration.is_none() {
+            let decl = if sym.value_declaration.is_some() {
                 sym.value_declaration
             } else {
                 *sym.declarations.first()?
@@ -438,7 +438,7 @@ impl Server {
     ) {
         let decl_text = binder.file_locals.get(name).and_then(|sid| {
             let sym = binder.symbols.get(sid)?;
-            let decl = if !sym.value_declaration.is_none() {
+            let decl = if sym.value_declaration.is_some() {
                 sym.value_declaration
             } else {
                 *sym.declarations.first()?

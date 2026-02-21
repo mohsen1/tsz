@@ -158,7 +158,7 @@ impl<'a> EnumES5Transformer<'a> {
             };
 
             let member_name = self.get_member_name(member_data.name);
-            let has_initializer = !member_data.initializer.is_none();
+            let has_initializer = member_data.initializer.is_some();
 
             let stmt = if has_initializer {
                 if self.is_string_literal(member_data.initializer) {

@@ -706,7 +706,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 };
                 if binding_node.kind == syntax_kind_ext::BINDING_ELEMENT
                     && let Some(binding) = self.ctx.arena.get_binding_element(binding_node)
-                    && !binding.property_name.is_none()
+                    && binding.property_name.is_some()
                     && binding.name.is_some()
                     && let Some(alias_name) = self.ctx.arena.get_identifier_text(binding.name)
                 {
@@ -744,7 +744,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             };
 
         // Check return type annotation
-        if !func_data.type_annotation.is_none()
+        if func_data.type_annotation.is_some()
             && let Some(tn) = self.ctx.arena.get(func_data.type_annotation)
             && tn.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(tr) = self.ctx.arena.get_type_ref(tn)
@@ -766,7 +766,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         for param_idx in &func_data.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(*param_idx)
                 && let Some(param_data) = self.ctx.arena.get_parameter(param_node)
-                && !param_data.type_annotation.is_none()
+                && param_data.type_annotation.is_some()
                 && let Some(tn) = self.ctx.arena.get(param_data.type_annotation)
                 && tn.kind == syntax_kind_ext::TYPE_REFERENCE
                 && let Some(tr) = self.ctx.arena.get_type_ref(tn)
@@ -1006,7 +1006,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                                 parent_id: None,
                             });
                         } else {
-                            let type_id = if !sig.type_annotation.is_none() {
+                            let type_id = if sig.type_annotation.is_some() {
                                 self.check(sig.type_annotation)
                             } else {
                                 TypeId::ANY
@@ -1041,7 +1041,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let Some(param_data) = self.ctx.arena.get_parameter(param_node) else {
                     continue;
                 };
-                let key_type = if !param_data.type_annotation.is_none() {
+                let key_type = if param_data.type_annotation.is_some() {
                     self.check(param_data.type_annotation)
                 } else {
                     TypeId::ANY
@@ -1068,7 +1068,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         );
                 }
 
-                let value_type = if !index_sig.type_annotation.is_none() {
+                let value_type = if index_sig.type_annotation.is_some() {
                     self.check(index_sig.type_annotation)
                 } else {
                     TypeId::ANY
@@ -1096,7 +1096,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 let name_atom = self.ctx.types.intern_string(&name);
                 let is_getter = member.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
                 if is_getter {
-                    let getter_type = if !accessor.type_annotation.is_none() {
+                    let getter_type = if accessor.type_annotation.is_some() {
                         self.check(accessor.type_annotation)
                     } else {
                         TypeId::ANY
@@ -1123,7 +1123,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                         .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                         .and_then(|param| {
-                            (!param.type_annotation.is_none())
+                            (param.type_annotation.is_some())
                                 .then(|| self.check(param.type_annotation))
                         })
                         .unwrap_or(TypeId::UNKNOWN);
@@ -1440,19 +1440,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
                 // Check for 'this' parameter
                 if name == "this" {
-                    this_type = (!param_data.type_annotation.is_none())
+                    this_type = (param_data.type_annotation.is_some())
                         .then(|| self.check(param_data.type_annotation));
                     continue;
                 }
 
                 // Get parameter type
-                let type_id = if !param_data.type_annotation.is_none() {
+                let type_id = if param_data.type_annotation.is_some() {
                     self.check(param_data.type_annotation)
                 } else {
                     TypeId::ANY
                 };
 
-                let optional = param_data.question_token || !param_data.initializer.is_none();
+                let optional = param_data.question_token || param_data.initializer.is_some();
                 let rest = param_data.dot_dot_dot_token;
 
                 // Under strictNullChecks, optional parameters (with `?`) get

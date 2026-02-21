@@ -989,7 +989,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // For const variables, narrowing is preserved (they're immutable).
                 let outer_flow_id = flow.antecedent.first().copied().or_else(|| {
                     // START with no antecedents - try to find outer flow via node_flow map
-                    if !flow.node.is_none() {
+                    if flow.node.is_some() {
                         self.binder.node_flow.get(&flow.node.0).copied()
                     } else {
                         None
@@ -1512,12 +1512,12 @@ impl<'a> FlowAnalyzer<'a> {
                 return false;
             };
             // If there's a type annotation, don't widen - the user specified the type
-            if !decl.type_annotation.is_none() {
+            if decl.type_annotation.is_some() {
                 return false;
             }
             // Check if the parent declaration list is let/var (not const)
             if let Some(ext) = self.arena.get_extended(node)
-                && !ext.parent.is_none()
+                && ext.parent.is_some()
                 && let Some(parent_node) = self.arena.get(ext.parent)
             {
                 let flags = parent_node.flags as u32;
@@ -1567,7 +1567,7 @@ impl<'a> FlowAnalyzer<'a> {
         if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION
             && let Some(decl) = self.arena.get_variable_declaration(node_data)
         {
-            return !decl.type_annotation.is_none();
+            return decl.type_annotation.is_some();
         }
 
         // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT
@@ -1581,7 +1581,7 @@ impl<'a> FlowAnalyzer<'a> {
                 };
                 if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
                     && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    && !decl.type_annotation.is_none()
+                    && decl.type_annotation.is_some()
                 {
                     return true;
                 }

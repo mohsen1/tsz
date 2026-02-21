@@ -58,7 +58,7 @@ impl BinderState {
         let id = self.flow_nodes.alloc(flow_flags::ASSIGNMENT);
         if let Some(node) = self.flow_nodes.get_mut(id) {
             node.node = assignment;
-            if !self.current_flow.is_none() {
+            if self.current_flow.is_some() {
                 node.antecedent.push(self.current_flow);
             }
         }
@@ -70,7 +70,7 @@ impl BinderState {
         let id = self.flow_nodes.alloc(flow_flags::CALL);
         if let Some(node) = self.flow_nodes.get_mut(id) {
             node.node = call;
-            if !self.current_flow.is_none() {
+            if self.current_flow.is_some() {
                 node.antecedent.push(self.current_flow);
             }
         }
@@ -82,7 +82,7 @@ impl BinderState {
         let id = self.flow_nodes.alloc(flow_flags::ARRAY_MUTATION);
         if let Some(node) = self.flow_nodes.get_mut(id) {
             node.node = call;
-            if !self.current_flow.is_none() {
+            if self.current_flow.is_some() {
                 node.antecedent.push(self.current_flow);
             }
         }
@@ -94,7 +94,7 @@ impl BinderState {
         let id = self.flow_nodes.alloc(flow_flags::AWAIT_POINT);
         if let Some(node) = self.flow_nodes.get_mut(id) {
             node.node = await_expr;
-            if !self.current_flow.is_none() {
+            if self.current_flow.is_some() {
                 node.antecedent.push(self.current_flow);
             }
         }
@@ -106,7 +106,7 @@ impl BinderState {
         let id = self.flow_nodes.alloc(flow_flags::YIELD_POINT);
         if let Some(node) = self.flow_nodes.get_mut(id) {
             node.node = yield_expr;
-            if !self.current_flow.is_none() {
+            if self.current_flow.is_some() {
                 node.antecedent.push(self.current_flow);
             }
         }
