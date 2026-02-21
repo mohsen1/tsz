@@ -75,13 +75,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         // Expand applications (like Array<number>, MyGeneric<string>) to structural forms
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_source)
-            && let Some(expanded) = self.try_expand_application(app_id) {
-                resolved_source = self.resolve_ref_type(expanded);
-            }
+            && let Some(expanded) = self.try_expand_application(app_id)
+        {
+            resolved_source = self.resolve_ref_type(expanded);
+        }
         if let Some(app_id) = crate::visitor::application_id(self.interner, resolved_target)
-            && let Some(expanded) = self.try_expand_application(app_id) {
-                resolved_target = self.resolve_ref_type(expanded);
-            }
+            && let Some(expanded) = self.try_expand_application(app_id)
+        {
+            resolved_target = self.resolve_ref_type(expanded);
+        }
 
         if let Some(shape) = self.apparent_primitive_shape_for_type(resolved_source) {
             if let Some(t_shape_id) = object_shape_id(self.interner, resolved_target) {

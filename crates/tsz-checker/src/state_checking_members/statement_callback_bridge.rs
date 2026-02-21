@@ -623,13 +623,10 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     self.ctx.contextual_type = prev_context;
                     self.check_assignable_or_report(actual_type, et, clause_idx);
                     if let Some(expr_node) = self.ctx.arena.get(clause_idx)
-                        && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                            self.check_object_literal_excess_properties(
-                                actual_type,
-                                et,
-                                clause_idx,
-                            );
-                        }
+                        && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    {
+                        self.check_object_literal_excess_properties(actual_type, et, clause_idx);
+                    }
                 }
 
                 if export_decl.module_specifier.is_none()
