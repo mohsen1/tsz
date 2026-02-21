@@ -1,1 +1,1 @@
-pub(crate) use crate::relations::compat::*;
+pub use crate::relations::compat::*;
