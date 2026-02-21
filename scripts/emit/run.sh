@@ -199,6 +199,18 @@ cache_contains_watched_changes() {
     return 1
 }
 
+state_head_matches() {
+    local state_file="$1"
+    local head="$2"
+    local stored_head
+
+    [[ -f "$state_file" ]] || return 1
+    stored_head="$(cat "$state_file" 2>/dev/null || true)"
+    [[ "$head" == "$stored_head" ]] || return 1
+
+    return 0
+}
+
 # Resolve tsz binary path for the Node runner
 resolve_tsz_binary() {
     local candidates=()
@@ -256,11 +268,7 @@ ensure_tsz_binary() {
         if cache_contains_watched_changes TSZ_STATUS_PREFIXES; then
             stale=1
         else
-            if [[ -z "$ROOT_GIT_HEAD" ]]; then
-                stale=1
-            elif [[ ! -f "$state_file" ]]; then
-                stale=1
-            elif [[ "$ROOT_GIT_HEAD" != "$(cat "$state_file")" ]]; then
+            if ! state_head_matches "$state_file" "$ROOT_GIT_HEAD"; then
                 stale=1
             fi
         fi
@@ -301,7 +309,7 @@ build_runner() {
             if cache_contains_watched_changes RUNNER_STATUS_PREFIXES; then
                 stale=1
             else
-                if [[ -z "$ROOT_GIT_HEAD" ]] || [[ ! -f "$state_file" ]] || [[ "$ROOT_GIT_HEAD" != "$(cat "$state_file")" ]]; then
+                if ! state_head_matches "$state_file" "$ROOT_GIT_HEAD"; then
                     stale=1
                 fi
             fi
