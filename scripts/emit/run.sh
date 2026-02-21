@@ -64,8 +64,29 @@ RUNNER_WATCH_PATHS=(
     "$SCRIPT_DIR/../package.json"
     "$SCRIPT_DIR/../package-lock.json"
 )
+TSZ_STATUS_PREFIXES=(
+    "src/"
+    "crates/tsz-cli/"
+    "crates/tsz-emitter/"
+    "crates/tsz-checker/"
+    "crates/tsz-solver/"
+    "crates/tsz-parser/"
+    "crates/tsz-scanner/"
+    "crates/tsz-common/"
+    "Cargo.toml"
+    "Cargo.lock"
+)
+EMIT_REL_PATH="${SCRIPT_DIR#"$ROOT_DIR/"}"
+RUNNER_STATUS_PREFIXES=(
+    "$EMIT_REL_PATH/src/"
+    "$EMIT_REL_PATH/tsconfig.json"
+    "scripts/package.json"
+    "scripts/package-lock.json"
+)
 ROOT_GIT_AVAILABLE=0
 ROOT_GIT_HEAD=""
+ROOT_GIT_STATUS_CACHED=0
+ROOT_GIT_STATUS_OUTPUT=""
 
 if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
     ROOT_GIT_AVAILABLE=1
@@ -124,6 +145,60 @@ write_state_head() {
     printf '%s\n' "$head" > "$state_file"
 }
 
+cache_git_status_output() {
+    if [[ "$ROOT_GIT_STATUS_CACHED" -eq 1 ]]; then
+        return 0
+    fi
+    ROOT_GIT_STATUS_CACHED=1
+
+    if [[ "$ROOT_GIT_AVAILABLE" -ne 1 ]]; then
+        ROOT_GIT_STATUS_OUTPUT=""
+        return 0
+    fi
+
+    ROOT_GIT_STATUS_OUTPUT="$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null || true)"
+}
+
+status_path_matches_prefixes() {
+    local path="$1"
+    local -n prefixes_ref="$2"
+    local prefix
+
+    for prefix in "${prefixes_ref[@]}"; do
+        case "$path" in
+            "$prefix" | "$prefix"/*) return 0 ;;
+        esac
+    done
+
+    return 1
+}
+
+cache_contains_watched_changes() {
+    local -n prefixes_ref="$1"
+    local raw_path raw_left raw_right
+
+    if [[ -z "$ROOT_GIT_STATUS_OUTPUT" ]]; then
+        return 1
+    fi
+
+    while IFS= read -r raw_line; do
+        raw_path="${raw_line:3}"
+        if [[ "$raw_path" == *" -> "* ]]; then
+            raw_left="${raw_path%% -> *}"
+            raw_right="${raw_path##* -> }"
+            if status_path_matches_prefixes "$raw_left" "$1" || status_path_matches_prefixes "$raw_right" "$1"; then
+                return 0
+            fi
+        else
+            if status_path_matches_prefixes "$raw_path" "$1"; then
+                return 0
+            fi
+        fi
+    done <<< "$ROOT_GIT_STATUS_OUTPUT"
+
+    return 1
+}
+
 # Resolve tsz binary path for the Node runner
 resolve_tsz_binary() {
     local candidates=()
@@ -178,15 +253,15 @@ ensure_tsz_binary() {
     local state_file="$(dirname "$tsz_bin")/.tsz_binary_head"
 
     if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
-        if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
+        cache_git_status_output
+        if cache_contains_watched_changes TSZ_STATUS_PREFIXES; then
             stale=1
         else
-            current_head="$ROOT_GIT_HEAD"
-            if [[ -z "$current_head" ]]; then
+            if [[ -z "$ROOT_GIT_HEAD" ]]; then
                 stale=1
             elif [[ ! -f "$state_file" ]]; then
                 stale=1
-            elif [[ "$current_head" != "$(cat "$state_file")" ]]; then
+            elif [[ "$ROOT_GIT_HEAD" != "$(cat "$state_file")" ]]; then
                 stale=1
             fi
         fi
@@ -224,11 +299,11 @@ build_runner() {
         stale=1
     else
         if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
-            if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
+            cache_git_status_output
+            if cache_contains_watched_changes RUNNER_STATUS_PREFIXES; then
                 stale=1
             else
-                current_head="$ROOT_GIT_HEAD"
-                if [[ -z "$current_head" || ! -f "$state_file" || "$current_head" != "$(cat "$state_file")" ]]; then
+                if [[ -z "$ROOT_GIT_HEAD" ]] || [[ ! -f "$state_file" ]] || [[ "$ROOT_GIT_HEAD" != "$(cat "$state_file")" ]]; then
                     stale=1
                 fi
             fi
