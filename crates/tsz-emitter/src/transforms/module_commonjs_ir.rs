@@ -42,18 +42,31 @@ impl<'a> CommonJsTransformContext<'a> {
 
     /// Transform a source file's statements to `CommonJS` IR
     pub fn transform_source_file(&mut self, statements: &[NodeIndex]) -> Vec<IRNode> {
-        let mut result = Vec::new();
-
-        // Add preamble
-        result.push(IRNode::UseStrict);
-        result.push(IRNode::EsesModuleMarker);
-
         // Collect export names for initialization
         let mut exports =
             crate::transforms::module_commonjs::collect_export_names(self.arena, statements);
 
         // TypeScript emits void 0 initialization in reverse declaration order
         exports.reverse();
+
+        // Transform statements
+        let mut lowered_statements = Vec::new();
+        for &stmt_idx in statements {
+            if let Some(ir) = self.transform_statement(stmt_idx) {
+                lowered_statements.push(ir);
+            }
+        }
+
+        // Fully erased type-only module syntax should produce no runtime IR.
+        if exports.is_empty() && lowered_statements.is_empty() {
+            return Vec::new();
+        }
+
+        let mut result = Vec::new();
+
+        // Add preamble
+        result.push(IRNode::UseStrict);
+        result.push(IRNode::EsesModuleMarker);
 
         // Initialize exports
         if !exports.is_empty() {
@@ -63,13 +76,7 @@ impl<'a> CommonJsTransformContext<'a> {
                 exports.join(" = exports.")
             )));
         }
-
-        // Transform statements
-        for &stmt_idx in statements {
-            if let Some(ir) = self.transform_statement(stmt_idx) {
-                result.push(ir);
-            }
-        }
+        result.extend(lowered_statements);
 
         result
     }
@@ -124,7 +131,7 @@ impl<'a> CommonJsTransformContext<'a> {
         // var module_1 = require("./module");
         statements.push(IRNode::RequireStatement {
             var_name: var_name.clone(),
-            module_spec,
+            module_spec: module_spec.clone(),
         });
 
         // Process import bindings
@@ -146,6 +153,7 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Named bindings
+        let mut named_bindings_all_type_only = false;
         if !clause.named_bindings.is_none()
             && let Some(named_node) = self.arena.get(clause.named_bindings)
             && let Some(named_imports) = self.arena.get_named_imports(named_node)
@@ -160,6 +168,7 @@ impl<'a> CommonJsTransformContext<'a> {
                 }
             } else {
                 // Named imports: import { a, b } from "..."
+                let mut saw_value_specifier = false;
                 for &spec_idx in &named_imports.elements.nodes {
                     if let Some(spec_node) = self.arena.get(spec_idx)
                         && let Some(spec) = self.arena.get_specifier(spec_node)
@@ -167,6 +176,7 @@ impl<'a> CommonJsTransformContext<'a> {
                         if spec.is_type_only {
                             continue;
                         }
+                        saw_value_specifier = true;
                         let local_name =
                             get_identifier_text(self.arena, spec.name).unwrap_or_default();
                         let import_name = if !spec.property_name.is_none() {
@@ -182,7 +192,20 @@ impl<'a> CommonJsTransformContext<'a> {
                         });
                     }
                 }
+
+                if !saw_value_specifier && !named_imports.elements.nodes.is_empty() {
+                    named_bindings_all_type_only = true;
+                }
             }
+        }
+
+        if statements.len() == 1 {
+            if named_bindings_all_type_only {
+                // `import { type Foo } from "x"` is fully erased in JS output.
+                return None;
+            }
+            // `import {} from "x"` should preserve runtime side effects without temp module binding.
+            return Some(IRNode::Raw(format!("require(\"{module_spec}\");")));
         }
 
         Some(IRNode::Block(statements))

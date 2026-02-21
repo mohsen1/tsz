@@ -6,9 +6,7 @@ usage() {
 Usage:
   scripts/codex-loop.sh [--conformance|--emit|--lsp|--arch|--spark]
                         [--session N|--session=N] [--prompt-file FILE]
-                        [--workdir DIR] [--model MODEL]
-                        [--sandbox MODE] [--approval POLICY] [--bypass]
-                        [--help]
+                        [--workdir DIR] [--model MODEL] [--help]
 
 Modes:
   --conformance   Continuous conformance loop (default)
@@ -22,9 +20,6 @@ Options:
   --prompt-file   Override prompt file path
   --workdir DIR   Root directory to run codex from (default: repo root)
   --model MODEL   Override model passed to `codex exec --model`
-  --sandbox MODE  Codex sandbox mode: read-only|workspace-write|danger-full-access (default: workspace-write)
-  --approval POL  Codex approval policy: untrusted|on-failure|on-request|never (default: never)
-  --bypass        Pass --dangerously-bypass-approvals-and-sandbox to codex exec
   -h, --help      Show help
 EOF
 }
@@ -34,14 +29,10 @@ SESSION_ID=""
 MODEL_OVERRIDE=""
 PROMPT_FILE=""
 WORKDIR="$(pwd)"
-SANDBOX_MODE="${CODEX_LOOP_SANDBOX:-workspace-write}"
-APPROVAL_POLICY="${CODEX_LOOP_APPROVAL:-never}"
-BYPASS_APPROVALS_AND_SANDBOX="${CODEX_LOOP_BYPASS:-0}"
 TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-120}"
 SLEEP_SECONDS="${CODEX_LOOP_SLEEP:-2}"
 CONF_QUARTERS="${CODEX_LOOP_CONFORMANCE_QUARTERS:-4}"
 CONF_TOTAL_TESTS="${CODEX_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
-LOG_ROOT="${CODEX_LOOP_LOG_ROOT:-logs/loops/codex}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -73,26 +64,6 @@ while [[ $# -gt 0 ]]; do
       MODEL_OVERRIDE="${1#*=}"
       shift
       ;;
-    --sandbox)
-      SANDBOX_MODE="${2:-}"
-      shift 2
-      ;;
-    --sandbox=*)
-      SANDBOX_MODE="${1#*=}"
-      shift
-      ;;
-    --approval)
-      APPROVAL_POLICY="${2:-}"
-      shift 2
-      ;;
-    --approval=*)
-      APPROVAL_POLICY="${1#*=}"
-      shift
-      ;;
-    --bypass)
-      BYPASS_APPROVALS_AND_SANDBOX=1
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
@@ -119,22 +90,6 @@ if [[ -n "$SESSION_ID" ]] && ! [[ "$SESSION_ID" =~ ^[0-9]+$ ]]; then
   echo "Invalid session id: $SESSION_ID (expected integer)" >&2
   exit 1
 fi
-
-case "$SANDBOX_MODE" in
-  read-only|workspace-write|danger-full-access) ;;
-  *)
-    echo "Invalid sandbox mode: $SANDBOX_MODE" >&2
-    exit 1
-    ;;
-esac
-
-case "$APPROVAL_POLICY" in
-  untrusted|on-failure|on-request|never) ;;
-  *)
-    echo "Invalid approval policy: $APPROVAL_POLICY" >&2
-    exit 1
-    ;;
-esac
 
 if ! command -v codex >/dev/null 2>&1; then
   echo "codex CLI not found in PATH" >&2
@@ -167,12 +122,12 @@ else
   REASONING_EFFORT="low"
 fi
 
-mkdir -p "$LOG_ROOT"
+mkdir -p logs
 if [[ -n "$SESSION_ID" ]]; then
-  LOG_FILE="${LOG_ROOT}/session-${SESSION_ID}.${MODE}.log"
+  LOG_FILE="logs/codex-loop.session-${SESSION_ID}.${MODE}.log"
   SESSION_TAG=" session=$SESSION_ID"
 else
-  LOG_FILE="${LOG_ROOT}/${MODE}.log"
+  LOG_FILE="logs/codex-loop.${MODE}.log"
   SESSION_TAG=""
 fi
 
@@ -200,18 +155,17 @@ build_prompt() {
   prompt="${prompt}
 
 Mandatory completion gate for this iteration:
-1) Before starting new work, check for leftover diff from the previous iteration and continue from it if present.
-2) End the iteration with exactly one commit.
-3) Sync and push that commit to main using:
+1) End the iteration with exactly one commit.
+2) Sync and push that commit to main using:
    git pull --rebase origin main
    git push origin HEAD:main
-4) If there are no file changes, create an explicit empty checkpoint commit and push it:
+3) If there are no file changes, create an explicit empty checkpoint commit and push it:
    git commit --allow-empty -m \"chore(loop): iteration checkpoint\""
 
   printf '%s\n' "$prompt"
 }
 
-echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting mode=$MODE${SESSION_TAG} workdir=$WORKDIR log=$LOG_FILE model=$MODEL reasoning=$REASONING_EFFORT sandbox=$SANDBOX_MODE approval=$APPROVAL_POLICY bypass=$BYPASS_APPROVALS_AND_SANDBOX" | tee -a "$LOG_FILE"
+echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] starting mode=$MODE${SESSION_TAG} workdir=$WORKDIR log=$LOG_FILE model=$MODEL reasoning=$REASONING_EFFORT" | tee -a "$LOG_FILE"
 
 iteration=0
 while true; do
@@ -219,10 +173,7 @@ while true; do
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] mode=$MODE${SESSION_TAG} iteration=$iteration" | tee -a "$LOG_FILE"
 
   PROMPT_TEXT="$(build_prompt)"
-  CMD=( "$CODEX_BIN" exec --model "$MODEL" -s "$SANDBOX_MODE" -c "approval_policy=\"$APPROVAL_POLICY\"" -c "model_reasoning_effort=$REASONING_EFFORT" -C "$WORKDIR" )
-  if [[ "$BYPASS_APPROVALS_AND_SANDBOX" == "1" ]]; then
-    CMD+=( --dangerously-bypass-approvals-and-sandbox )
-  fi
+  CMD=( "$CODEX_BIN" exec --model "$MODEL" -c "model_reasoning_effort=$REASONING_EFFORT" -C "$WORKDIR" )
   # The OpenAI Responses API rejects web_search with minimal reasoning effort.
   if [[ "$REASONING_EFFORT" == "minimal" ]]; then
     CMD+=( -c 'web_search="disabled"' )

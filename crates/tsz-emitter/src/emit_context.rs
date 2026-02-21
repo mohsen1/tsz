@@ -146,6 +146,9 @@ pub struct ModuleTransformState {
     /// Whether the file contains an `export =` assignment (`CommonJS` export assignment)
     /// If true, other named exports should be suppressed in `CommonJS` emit.
     pub has_export_assignment: bool,
+
+    /// Counter for generated CommonJS module temporary bindings (`foo_1`, `foo_2`, ...).
+    pub module_temp_counter: u32,
 }
 
 impl ModuleTransformState {
@@ -158,6 +161,7 @@ impl ModuleTransformState {
     pub fn exit_commonjs(&mut self) {
         self.commonjs_mode = false;
         self.pending_exports.clear();
+        self.module_temp_counter = 0;
     }
 
     /// Add an export name

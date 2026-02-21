@@ -371,8 +371,8 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
     if !clause.name.is_none()
         && let Some(name) = get_identifier_text(arena, clause.name)
     {
-        // Match TypeScript default behavior without esModuleInterop:
-        // bind directly to the `.default` property.
+        // Bind to the default value directly so local identifier references
+        // preserve TS-style runtime behavior.
         bindings.push(format!("var {name} = {module_var}.default;"));
     }
 
@@ -390,22 +390,9 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
                     bindings.push(format!("var {name} = __importStar({module_var});"));
                 }
             } else {
-                // Named imports: import { a, b } from "..."
-                for &spec_idx in &named_imports.elements.nodes {
-                    if let Some(spec) = arena.get_specifier_at(spec_idx) {
-                        if spec.is_type_only {
-                            continue;
-                        }
-                        let local_name = get_identifier_text(arena, spec.name).unwrap_or_default();
-                        let import_name = if !spec.property_name.is_none() {
-                            get_identifier_text(arena, spec.property_name)
-                                .unwrap_or_else(|| local_name.clone())
-                        } else {
-                            local_name.clone()
-                        };
-                        bindings.push(format!("var {local_name} = {module_var}.{import_name};"));
-                    }
-                }
+                // Named imports (`import { a, b as c } from "..."`) should not emit
+                // local alias vars in CommonJS output; call sites are rewritten to
+                // property accesses on the module temp (`module_1.a`), matching tsc.
             }
         }
     }
@@ -588,8 +575,22 @@ fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> 
 /// Sanitize module specifier for use as variable name
 /// "./foo/bar" -> "`foo_bar`"
 pub fn sanitize_module_name(module_spec: &str) -> String {
-    module_spec
+    let mut sanitized = module_spec
         .trim_start_matches("./")
         .trim_start_matches("../")
-        .replace(['/', '-', '.', '@'], "_")
+        .replace(['/', '-', '.', '@'], "_");
+
+    if sanitized.is_empty() {
+        sanitized.push_str("module");
+    }
+
+    let starts_with_invalid_ident = sanitized
+        .chars()
+        .next()
+        .is_some_and(|c| !(c == '_' || c == '$' || c.is_ascii_alphabetic()));
+    if starts_with_invalid_ident {
+        sanitized.insert(0, '_');
+    }
+
+    sanitized
 }

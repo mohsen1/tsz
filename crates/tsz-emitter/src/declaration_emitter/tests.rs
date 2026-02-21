@@ -82,3 +82,46 @@ fn test_type_alias() {
         "Expected type alias: {output}"
     );
 }
+
+#[test]
+fn test_type_only_export_module_gets_empty_export_marker() {
+    let source = r#"
+type T = { x: number };
+export interface I {
+    f: T;
+}
+
+#[test]
+fn test_empty_named_export_has_no_extra_spacing() {
+    let source = "export {};";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export {};"),
+        "Expected compact empty export syntax: {output}"
+    );
+    assert!(
+        !output.contains("export {  };"),
+        "Did not expect extra spacing in empty export syntax: {output}"
+    );
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("export interface I"),
+        "Expected exported interface: {output}"
+    );
+    assert!(
+        output.contains("export {};"),
+        "Expected empty export marker for type-only module exports: {output}"
+    );
+}

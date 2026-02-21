@@ -8,6 +8,17 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
+        use crate::transforms::module_commonjs;
+
+        self.ctx.module_state.module_temp_counter += 1;
+        format!(
+            "{}_{}",
+            module_commonjs::sanitize_module_name(module_spec),
+            self.ctx.module_state.module_temp_counter
+        )
+    }
+
     pub(super) fn emit_commonjs_export<F>(
         &mut self,
         names: &[IdentifierId],
@@ -270,29 +281,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let mut has_value_binding = !clause.name.is_none();
-        if !clause.named_bindings.is_none()
-            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
-        {
-            if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
-                    has_value_binding = true;
-                } else {
-                    let value_specs = self.collect_value_specifiers(&named_imports.elements);
-                    if !value_specs.is_empty() {
-                        has_value_binding = true;
-                    }
-                }
-            } else {
-                has_value_binding = true;
-            }
-        }
-
-        if !has_value_binding {
-            return;
-        }
-
-        // Get module specifier and generate var name
+        // Module specifier is needed for both binding and side-effect-only CommonJS emit.
         let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
             if let Some(lit) = self.arena.get_literal(spec_node) {
                 lit.text.clone()
@@ -303,8 +292,42 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        let mut has_value_binding = !clause.name.is_none();
+        let mut named_bindings_all_type_only = false;
+        if !clause.named_bindings.is_none()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+        {
+            if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
+                if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
+                    has_value_binding = true;
+                } else {
+                    let value_specs = self.collect_value_specifiers(&named_imports.elements);
+                    if !value_specs.is_empty() {
+                        has_value_binding = true;
+                    } else if !named_imports.elements.nodes.is_empty() {
+                        // `import { type Foo } from "x"` has no runtime impact in CommonJS.
+                        named_bindings_all_type_only = true;
+                    }
+                }
+            } else {
+                has_value_binding = true;
+            }
+        }
+
+        if !has_value_binding {
+            if named_bindings_all_type_only {
+                return;
+            }
+            // `import {} from "x"` has no local value bindings but is still a runtime side effect.
+            self.write("require(\"");
+            self.write(&module_spec);
+            self.write("\");");
+            self.write_line();
+            return;
+        }
+
         // Generate module var name: "./foo" -> "foo_1"
-        let module_var = format!("{}_1", module_commonjs::sanitize_module_name(&module_spec));
+        let module_var = self.next_commonjs_module_var(&module_spec);
 
         // Check if this is a namespace-only import (import * as ns from "mod")
         // to inline: var ns = __importStar(require("mod"));
@@ -734,8 +757,6 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn emit_export_declaration_commonjs(&mut self, node: &Node) {
-        use crate::transforms::module_commonjs;
-
         let Some(export) = self.arena.get_export_decl(node) else {
             return;
         };
@@ -756,7 +777,7 @@ impl<'a> Printer<'a> {
                 return;
             };
 
-            let module_var = format!("{}_1", module_commonjs::sanitize_module_name(&module_spec));
+            let module_var = self.next_commonjs_module_var(&module_spec);
 
             if export.export_clause.is_none() {
                 // First emit the require
@@ -969,6 +990,18 @@ impl<'a> Printer<'a> {
                 }
                 // export class C {} or export default class C {}
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    let mut named_export_emitted_with_class = false;
+                    if !self.ctx.module_state.has_export_assignment
+                        && !export.is_default_export
+                        && let Some(class) = self.arena.get_class(clause_node)
+                        && let Some(name) = self.get_identifier_text_opt(class.name)
+                    {
+                        // Keep named class export assignment immediately after the class
+                        // declaration and before lowered static blocks/IIFEs.
+                        self.pending_commonjs_class_export_name = Some(name);
+                        named_export_emitted_with_class = true;
+                    }
+
                     if self.ctx.options.legacy_decorators
                         && !self.ctx.module_state.has_export_assignment
                         && !export.is_default_export
@@ -1045,14 +1078,19 @@ impl<'a> Printer<'a> {
                     {
                         if export.is_default_export {
                             self.write("exports.default = ");
-                        } else {
+                            self.write(&name);
+                            self.write(";");
+                            self.write_line();
+                        } else if !named_export_emitted_with_class {
                             self.write("exports.");
                             self.write(&name);
                             self.write(" = ");
+                            self.write(&name);
+                            self.write(";");
+                            self.write_line();
+                        } else {
+                            // Named exports were already emitted at class-body boundary.
                         }
-                        self.write(&name);
-                        self.write(";");
-                        self.write_line();
                     }
                 }
                 // export enum E {}
@@ -1451,11 +1489,62 @@ impl<'a> Printer<'a> {
         for &stmt_idx in &statements.nodes {
             if let Some(node) = self.arena.get(stmt_idx)
                 && node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                && !self.export_assignment_identifier_is_type_only(node, statements)
             {
                 return true;
             }
         }
         false
+    }
+
+    pub(super) fn export_assignment_identifier_is_type_only(
+        &self,
+        export_assignment_node: &Node,
+        statements: &NodeList,
+    ) -> bool {
+        let Some(export_assign) = self.arena.get_export_assignment(export_assignment_node) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(export_assign.expression) else {
+            return false;
+        };
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return false;
+        }
+        let assigned_name = self.get_identifier_text_idx(export_assign.expression);
+        statements.nodes.iter().any(|&stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
+                    .arena
+                    .get_interface(stmt_node)
+                    .is_some_and(|iface| self.get_identifier_text_idx(iface.name) == assigned_name),
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
+                    .arena
+                    .get_type_alias(stmt_node)
+                    .is_some_and(|alias| self.get_identifier_text_idx(alias.name) == assigned_name),
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => self
+                    .arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| self.arena.get(export.export_clause))
+                    .is_some_and(|inner| {
+                        if inner.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                            return self.arena.get_interface(inner).is_some_and(|iface| {
+                                self.get_identifier_text_idx(iface.name) == assigned_name
+                            });
+                        }
+                        if inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                            return self.arena.get_type_alias(inner).is_some_and(|alias| {
+                                self.get_identifier_text_idx(alias.name) == assigned_name
+                            });
+                        }
+                        false
+                    }),
+                _ => false,
+            }
+        })
     }
 
     /// Check if a file is a module (has any import/export syntax).

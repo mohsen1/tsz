@@ -1100,6 +1100,13 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_parenthesized_object_literal_access(access.expression, |this| {
+            this.write(".");
+            this.emit(access.name_or_argument);
+        }) {
+            return;
+        }
+
         self.emit(access.expression);
 
         // Preserve multi-line property access chains from the original source.
@@ -1169,10 +1176,46 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_parenthesized_object_literal_access(access.expression, |this| {
+            this.write("[");
+            this.emit(access.name_or_argument);
+            this.write("]");
+        }) {
+            return;
+        }
+
         self.emit(access.expression);
         self.write("[");
         self.emit(access.name_or_argument);
         self.write("]");
+    }
+
+    fn emit_parenthesized_object_literal_access<F>(
+        &mut self,
+        expr: NodeIndex,
+        emit_suffix: F,
+    ) -> bool
+    where
+        F: FnOnce(&mut Self),
+    {
+        let Some(expr_node) = self.arena.get(expr) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return false;
+        }
+        let Some(paren) = self.arena.get_parenthesized(expr_node) else {
+            return false;
+        };
+        if !self.type_assertion_wraps_object_literal(paren.expression) {
+            return false;
+        }
+
+        self.write("(");
+        self.emit(paren.expression);
+        emit_suffix(self);
+        self.write(")");
+        true
     }
 
     fn emit_optional_property_access(&mut self, access: &AccessExprData, token: &str) {
