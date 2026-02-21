@@ -1,8 +1,16 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS-only mode, baseline 9118/13623 = 66.9%)
+## Pattern Analysis (JS-only mode, baseline 9209/13623 = 67.6%)
 
 ### Fixed This Session
+- **Template literal closing brace off-by-one** (+73 tests): `template_span_has_closing_brace`
+  scanned `text[expr_end..lit_pos]` but Rust's half-open range excluded `lit_pos` itself,
+  which is where `}` sits. When whitespace padded `${ expr }`, the range contained only
+  spaces and returned false, dropping the `}`. Similarly, `template_tail_has_backtick` had
+  an analogous issue. Fixed both in `template_literals.rs` to check `lit_node.pos` and
+  `node.end - 1` directly.
+
+### Previously Fixed
 - **Orphaned comments at end of class body** (+27 tests): Comments after erased members
   leaked past the closing `}`. Fixed by advancing `comment_emit_idx` past remaining
   comments inside the class body boundary after the member loop.
@@ -73,3 +81,12 @@
 
 15. **`using` statement disposal helpers** (~26 tests): The `using` declaration
     requires `__addDisposableResource` and related helpers. Not yet implemented.
+
+16. **Import elision for unused value imports** (~11 tests): `import {x} from "foo"`
+    where `x` is never used at runtime should be stripped, with `export {};` emitted to
+    preserve module status. See `cachedModuleResolution1..9`, `bundlerConditionsExcludesNode`,
+    `bundlerNodeModules1`. Requires checker-emitter coordination to track used imports.
+
+17. **Enum constant folding/inlining** (~5 tests): `foo(E.A)` should emit `foo(0 /* E.A */)`
+    when `E.A` is a const-evaluable enum member. See `assignmentNonObjectTypeConstraints`,
+    `blockScopedEnumVariablesUseBeforeDef*`. Requires solver integration for enum evaluation.

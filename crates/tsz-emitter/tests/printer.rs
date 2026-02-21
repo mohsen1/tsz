@@ -491,3 +491,73 @@ fn test_nested_for_await_of_targets_nested_return_temps() {
     assert!(output.contains("e_2"));
     assert!(output.contains("_a ="));
 }
+
+#[test]
+fn test_template_literal_closing_brace_with_whitespace() {
+    // Regression test: template substitutions with whitespace padding inside
+    // `${ expr }` must preserve closing `}` and backtick.
+    let source = "var x = `${ null }${ 4 }`;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("`${null}${4}`"),
+        "expected template with closing braces, got: {output}"
+    );
+}
+
+#[test]
+fn test_template_literal_closing_brace_no_whitespace() {
+    let source = "var x = `${null}${4}`;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("`${null}${4}`"),
+        "expected template with closing braces, got: {output}"
+    );
+}
+
+#[test]
+fn test_template_literal_tail_backtick_with_content() {
+    // Ensure TemplateTail text + closing backtick are both emitted.
+    let source = "var x = `hello ${ name } world`;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("`hello ${name} world`"),
+        "expected template with tail content and backtick, got: {output}"
+    );
+}
+
+#[test]
+fn test_tagged_template_closing_brace_with_whitespace() {
+    let source =
+        "function tag(s: TemplateStringsArray, ...a: any[]) {}\ntag `${ null }${ null }`;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("tag `${null}${null}`"),
+        "expected tagged template with closing braces, got: {output}"
+    );
+}
+
+#[test]
+fn test_template_literal_multiple_spans_mixed_whitespace() {
+    // Mix of spaces and no-spaces across multiple substitutions.
+    let source = "var x = `a${ 1 }b${2}c${ 3 }d`;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(&parser.arena, root, PrintOptions::es6()).code;
+    assert!(
+        output.contains("`a${1}b${2}c${3}d`"),
+        "expected template with all closing braces, got: {output}"
+    );
+}
