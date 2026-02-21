@@ -1750,6 +1750,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::iterable_checker::{
             call_signatures_for_type, function_shape_for_type,
         };
+        use tsz_solver::instantiate_type;
 
         let Some(node) = self.ctx.arena.get(idx) else {
             return TypeId::ERROR;
@@ -1784,28 +1785,154 @@ impl<'a> CheckerState<'a> {
         // Get the type of the tag function
         let tag_type = self.get_type_of_node(tagged.tag);
 
-        // Visit the template to ensure substitution expressions are type-checked.
-        // The template is either a NoSubstitutionTemplateLiteral or a TemplateExpression.
-        if let Some(template_node) = self.ctx.arena.get(tagged.template)
-            && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+        // If tag type is `any`, type-check substitutions without context and return `any`
+        if tag_type == TypeId::ANY || tag_type == TypeId::ERROR {
+            self.type_check_template_substitutions_no_context(&tagged);
+            return tag_type;
+        }
+
+        // Collect substitution expression NodeIndex values from the template
+        let substitution_exprs: Vec<NodeIndex> = self.collect_template_substitution_exprs(&tagged);
+
+        // Resolve the tag function type for signature extraction
+        let resolved_tag_type = self.resolve_ref_type(tag_type);
+        let resolved_tag_type = self.resolve_lazy_type(resolved_tag_type);
+
+        // Extract function shape from the tag function type
+        let callee_shape =
+            call_checker::get_contextual_signature(self.ctx.types, resolved_tag_type);
+        let is_generic_call = callee_shape
+            .as_ref()
+            .is_some_and(|s| !s.type_params.is_empty())
+            && tagged.type_arguments.is_none();
+
+        // For tagged templates, the tag function parameters are:
+        //   param[0] = TemplateStringsArray (always)
+        //   param[1..] = substitution expressions
+        // So substitution expression at index `i` corresponds to param at index `i + 1`.
+
+        // Create contextual context from tag function type
+        let ctx_helper = ContextualTypeContext::with_expected_and_options(
+            self.ctx.types,
+            resolved_tag_type,
+            self.ctx.compiler_options.no_implicit_any,
+        );
+
+        if is_generic_call
+            && !substitution_exprs.is_empty()
+            && let Some(shape) = callee_shape.as_ref()
         {
-            // Type-check each substitution expression in the template spans
-            if let Some(templ_data) = self.ctx.arena.get_template_expr(template_node).cloned() {
-                for &span_idx in &templ_data.template_spans.nodes {
-                    if let Some(span_node) = self.ctx.arena.get(span_idx)
-                        && let Some(span_data) =
-                            self.ctx.arena.get_template_span(span_node).cloned()
-                    {
-                        // Type-check the substitution expression
-                        self.get_type_of_node(span_data.expression);
+            // Pre-compute contextual sensitivity
+            let sensitive_args: Vec<bool> = substitution_exprs
+                .iter()
+                .map(|&arg| is_contextually_sensitive(self, arg))
+                .collect();
+            let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
+
+            if needs_two_pass {
+                // === Round 1: Collect non-contextual substitution types ===
+                let factory = self.ctx.types.factory();
+                let placeholder = {
+                    let fshape = tsz_solver::FunctionShape {
+                        params: vec![],
+                        return_type: TypeId::ANY,
+                        this_type: None,
+                        type_params: vec![],
+                        type_predicate: None,
+                        is_constructor: false,
+                        is_method: false,
+                    };
+                    factory.function(fshape)
+                };
+
+                // Build argument types for Round 1: TemplateStringsArray + substitutions
+                // Use ANY as stand-in for TemplateStringsArray since it's a fixed
+                // non-generic type that doesn't affect type parameter inference.
+                let template_strings_type = TypeId::ANY;
+                let mut round1_arg_types: Vec<TypeId> =
+                    Vec::with_capacity(1 + substitution_exprs.len());
+                round1_arg_types.push(template_strings_type);
+
+                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                    if sensitive_args[i] {
+                        round1_arg_types.push(placeholder);
+                    } else {
+                        let ctx_type = ctx_helper
+                            .get_parameter_type_for_call(i + 1, 1 + substitution_exprs.len());
+                        let prev_context = self.ctx.contextual_type;
+                        self.ctx.contextual_type = ctx_type;
+                        let arg_type = self.get_type_of_node(expr_idx);
+                        self.ctx.contextual_type = prev_context;
+                        round1_arg_types.push(arg_type);
                     }
                 }
+
+                // Perform Round 1 inference
+                let evaluated_shape = {
+                    let new_params: Vec<_> = shape
+                        .params
+                        .iter()
+                        .map(|p| tsz_solver::ParamInfo {
+                            name: p.name,
+                            type_id: self.evaluate_type_with_env(p.type_id),
+                            optional: p.optional,
+                            rest: p.rest,
+                        })
+                        .collect();
+                    tsz_solver::FunctionShape {
+                        params: new_params,
+                        return_type: shape.return_type,
+                        this_type: shape.this_type,
+                        type_params: shape.type_params.clone(),
+                        type_predicate: shape.type_predicate.clone(),
+                        is_constructor: shape.is_constructor,
+                        is_method: shape.is_method,
+                    }
+                };
+                let substitution = {
+                    let env = self.ctx.type_env.borrow();
+                    call_checker::compute_contextual_types_with_context(
+                        self.ctx.types,
+                        &self.ctx,
+                        &env,
+                        &evaluated_shape,
+                        &round1_arg_types,
+                        self.ctx.contextual_type,
+                    )
+                };
+
+                // === Round 2: Type-check all substitutions with contextual types ===
+                let total_args = 1 + substitution_exprs.len();
+                for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+                    let ctx_type = ctx_helper
+                        .get_parameter_type_for_call(i + 1, total_args)
+                        .map(|pt| {
+                            let instantiated = instantiate_type(self.ctx.types, pt, &substitution);
+                            self.evaluate_type_with_env(instantiated)
+                        });
+                    let prev_context = self.ctx.contextual_type;
+                    if is_contextually_sensitive(self, expr_idx) {
+                        self.ctx.contextual_type = ctx_type;
+                    }
+                    self.get_type_of_node(expr_idx);
+                    self.ctx.contextual_type = prev_context;
+                }
+
+                // Return instantiated return type
+                let return_type =
+                    instantiate_type(self.ctx.types, shape.return_type, &substitution);
+                return self.evaluate_type_with_env(return_type);
             }
         }
 
-        // If tag type is `any`, result is `any`
-        if tag_type == TypeId::ANY || tag_type == TypeId::ERROR {
-            return tag_type;
+        // Single-pass: type-check substitutions with contextual types from tag signature
+        let total_args = 1 + substitution_exprs.len();
+        for (i, &expr_idx) in substitution_exprs.iter().enumerate() {
+            let ctx_type = ctx_helper.get_parameter_type_for_call(i + 1, total_args);
+            let prev_context = self.ctx.contextual_type;
+            self.ctx.contextual_type = ctx_type;
+            self.get_type_of_node(expr_idx);
+            self.ctx.contextual_type = prev_context;
         }
 
         // Get the return type from the tag function's call signature
@@ -1820,6 +1947,46 @@ impl<'a> CheckerState<'a> {
 
         // If tag is Function type, return any
         TypeId::ANY
+    }
+
+    /// Collect template substitution expression `NodeIndex` values from a tagged template.
+    fn collect_template_substitution_exprs(
+        &self,
+        tagged: &tsz_parser::parser::node::TaggedTemplateData,
+    ) -> Vec<NodeIndex> {
+        let mut exprs = Vec::new();
+        if let Some(template_node) = self.ctx.arena.get(tagged.template)
+            && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            && let Some(templ_data) = self.ctx.arena.get_template_expr(template_node)
+        {
+            for &span_idx in &templ_data.template_spans.nodes {
+                if let Some(span_node) = self.ctx.arena.get(span_idx)
+                    && let Some(span_data) = self.ctx.arena.get_template_span(span_node)
+                {
+                    exprs.push(span_data.expression);
+                }
+            }
+        }
+        exprs
+    }
+
+    /// Type-check template substitution expressions without contextual types.
+    fn type_check_template_substitutions_no_context(
+        &mut self,
+        tagged: &tsz_parser::parser::node::TaggedTemplateData,
+    ) {
+        if let Some(template_node) = self.ctx.arena.get(tagged.template)
+            && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
+            && let Some(templ_data) = self.ctx.arena.get_template_expr(template_node).cloned()
+        {
+            for &span_idx in &templ_data.template_spans.nodes {
+                if let Some(span_node) = self.ctx.arena.get(span_idx)
+                    && let Some(span_data) = self.ctx.arena.get_template_span(span_node).cloned()
+                {
+                    self.get_type_of_node(span_data.expression);
+                }
+            }
+        }
     }
 }
 

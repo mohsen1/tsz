@@ -496,14 +496,14 @@ impl<'a> CheckerState<'a> {
                     self.ctx.enclosing_class.is_some(),
                 );
                 self.check_parameter_properties(&func_type.parameters.nodes);
-                for &param_idx in &func_type.parameters.nodes {
+                for (pi, &param_idx) in func_type.parameters.nodes.iter().enumerate() {
                     if let Some(param_node) = self.ctx.arena.get(param_idx)
                         && let Some(param) = self.ctx.arena.get_parameter(param_node)
                     {
                         if param.type_annotation.is_some() {
                             self.check_type_for_parameter_properties(param.type_annotation);
                         }
-                        self.maybe_report_implicit_any_parameter(param, false);
+                        self.maybe_report_implicit_any_parameter(param, false, pi);
                     }
                 }
                 // Recursively check the return type
@@ -918,24 +918,38 @@ impl<'a> CheckerState<'a> {
         // doesn't check assignability for void returns in constructors.
         let skip_assignability = is_in_constructor && return_data.expression.is_none();
 
-        if !skip_assignability
+        // Track whether assignability check passed — when it fails, the solver's
+        // failure reason already emits the appropriate diagnostic (including TS2353
+        // for excess properties on fresh object literals).  Running the explicit
+        // excess-property check again would produce a duplicate.
+        let assignability_ok = if !skip_assignability
             && expected_type != TypeId::ANY
             && !self.type_contains_error(expected_type)
-            && !self.check_assignable_or_report(return_type, expected_type, error_node)
         {
-            // TS2409: In constructors, also emit the constructor-specific diagnostic
-            // alongside the TS2322 already emitted by check_assignable_or_report.
-            if is_in_constructor {
-                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                self.error_at_node(
-                    error_node,
-                    diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
-                    diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
-                );
+            let ok = self.check_assignable_or_report(return_type, expected_type, error_node);
+            if !ok {
+                // TS2409: In constructors, also emit the constructor-specific diagnostic
+                // alongside the TS2322 already emitted by check_assignable_or_report.
+                if is_in_constructor {
+                    use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                    self.error_at_node(
+                        error_node,
+                        diagnostic_messages::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
+                        diagnostic_codes::RETURN_TYPE_OF_CONSTRUCTOR_SIGNATURE_MUST_BE_ASSIGNABLE_TO_THE_INSTANCE_TYPE_OF,
+                    );
+                }
             }
-        }
+            ok
+        } else {
+            true
+        };
 
-        if expected_type != TypeId::ANY
+        // Only run explicit excess-property check when the assignability check
+        // passed (types are structurally compatible but may have excess props)
+        // or was skipped.  When assignability failed, the solver already
+        // emitted the correct TS2353/TS2322 via the failure reason.
+        if assignability_ok
+            && expected_type != TypeId::ANY
             && expected_type != TypeId::UNKNOWN
             && !self.type_contains_error(expected_type)
             && return_data.expression.is_some()

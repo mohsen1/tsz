@@ -1364,7 +1364,7 @@ impl<'a> CheckerState<'a> {
                     // Check if accessor JSDoc has @param type annotations
                     let accessor_jsdoc = self.get_jsdoc_for_function(elem_idx);
                     let mut first_param_lacks_annotation = false;
-                    for &param_idx in &accessor.parameters.nodes {
+                    for (pi, &param_idx) in accessor.parameters.nodes.iter().enumerate() {
                         if let Some(param_node) = self.ctx.arena.get(param_idx)
                             && let Some(param) = self.ctx.arena.get_parameter(param_node)
                         {
@@ -1379,7 +1379,7 @@ impl<'a> CheckerState<'a> {
                             if param.type_annotation.is_none() && !has_jsdoc {
                                 first_param_lacks_annotation = true;
                             }
-                            self.maybe_report_implicit_any_parameter(param, has_jsdoc);
+                            self.maybe_report_implicit_any_parameter(param, has_jsdoc, pi);
                         }
                     }
                     // TS7032: emit on property name when the setter has no parameter type

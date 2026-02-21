@@ -1292,6 +1292,10 @@ fn lib_dir_from_root(root: &Path) -> Option<PathBuf> {
         // even for ES5 targets (e.g., dom.generated.d.ts references es2015.symbol.d.ts).
         root.join("node_modules").join("typescript").join("lib"),
         root.join("scripts")
+            .join("node_modules")
+            .join("typescript")
+            .join("lib"),
+        root.join("scripts")
             .join("emit")
             .join("node_modules")
             .join("typescript")

@@ -406,6 +406,7 @@ impl<'a> CheckerState<'a> {
                     self.maybe_report_implicit_any_parameter(
                         param,
                         has_contextual_type || has_jsdoc_param,
+                        contextual_index,
                     );
                 }
 
