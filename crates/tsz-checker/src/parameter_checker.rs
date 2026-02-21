@@ -400,6 +400,44 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn check_binding_pattern_optionality(
+        &mut self,
+        parameters: &[NodeIndex],
+        has_body: bool,
+    ) {
+        if !has_body {
+            return;
+        }
+
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        use tsz_parser::parser::syntax_kind_ext::{ARRAY_BINDING_PATTERN, OBJECT_BINDING_PATTERN};
+
+        for &param_idx in parameters {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+
+            if param.initializer.is_none() && param.question_token {
+                let Some(name_node) = self.ctx.arena.get(param.name) else {
+                    continue;
+                };
+
+                if name_node.kind == OBJECT_BINDING_PATTERN
+                    || name_node.kind == ARRAY_BINDING_PATTERN
+                {
+                    self.error_at_node(
+                        param_idx,
+                        diagnostic_messages::A_BINDING_PATTERN_PARAMETER_CANNOT_BE_OPTIONAL_IN_AN_IMPLEMENTATION_SIGNATURE,
+                        diagnostic_codes::A_BINDING_PATTERN_PARAMETER_CANNOT_BE_OPTIONAL_IN_AN_IMPLEMENTATION_SIGNATURE,
+                    );
+                }
+            }
+        }
+    }
+
     // =========================================================================
     // Parameter Properties
     // =========================================================================
