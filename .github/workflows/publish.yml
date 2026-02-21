@@ -85,7 +85,7 @@ jobs:
     name: Detect version bump
     runs-on: ubuntu-latest
     needs: [bump-version]
-    if: always()
+    if: ${{ !failure() }}
     permissions:
       contents: write
     outputs:
@@ -148,7 +148,7 @@ jobs:
     name: Publish crates to crates.io
     needs: check-version
     if: >
-      always() &&
+      !failure() &&
       needs.check-version.result == 'success' &&
       needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
@@ -178,17 +178,88 @@ jobs:
         run: bash scripts/publish-crates.sh
 
   # ──────────────────────────────────────────────────────────────────────────
-  # Build WASM and publish @mohsen-azimi/tsz-dev to npm
+  # Build native binaries for each platform
   # ──────────────────────────────────────────────────────────────────────────
-  publish-npm:
-    name: Publish WASM package to npm
+  build-native:
+    name: Build native (${{ matrix.pkg }})
     needs: check-version
     if: >
-      always() &&
+      !failure() &&
+      needs.check-version.result == 'success' &&
+      needs.check-version.outputs.version_changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-apple-darwin,    os: macos-14,       pkg: darwin-arm64 }
+          - { target: x86_64-apple-darwin,     os: macos-13,       pkg: darwin-x64 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest, pkg: linux-x64 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-latest, pkg: linux-arm64,  cross: true }
+          - { target: x86_64-pc-windows-msvc,  os: windows-latest, pkg: win32-x64 }
+          - { target: aarch64-pc-windows-msvc, os: windows-latest, pkg: win32-arm64,  cross: true }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          ref: main
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.cross && startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-native-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-${{ matrix.target }}-cargo-native-
+
+      - name: Build native binaries
+        run: cargo build --profile dist-fast -p tsz-cli --target ${{ matrix.target }}
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          mkdir -p artifacts/bin
+          if [[ "${{ matrix.pkg }}" == win32-* ]]; then
+            cp target/${{ matrix.target }}/dist-fast/tsz.exe artifacts/bin/
+            cp target/${{ matrix.target }}/dist-fast/tsz-server.exe artifacts/bin/
+          else
+            cp target/${{ matrix.target }}/dist-fast/tsz artifacts/bin/
+            cp target/${{ matrix.target }}/dist-fast/tsz-server artifacts/bin/
+            chmod +x artifacts/bin/*
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.pkg }}
+          path: artifacts/bin/
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Build WASM package
+  # ──────────────────────────────────────────────────────────────────────────
+  build-wasm:
+    name: Build WASM
+    needs: check-version
+    if: >
+      !failure() &&
       needs.check-version.result == 'success' &&
       needs.check-version.outputs.version_changed == 'true'
     runs-on: ubuntu-latest
-    environment: publish
     steps:
       - uses: actions/checkout@v4
         with:
@@ -206,12 +277,6 @@ jobs:
       - name: Install wasm-opt (via binaryen)
         run: sudo apt-get install -y binaryen
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
       - name: Cache Cargo registry
         uses: actions/cache@v4
         with:
@@ -222,8 +287,138 @@ jobs:
           key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-wasm-
 
-      - name: Build WASM and publish to npm
+      - name: Build WASM
+        run: bash scripts/build-npm-packages.sh --wasm-only
+
+      - name: Upload WASM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-build
+          path: |
+            npm/tsz/wasm/node/
+            npm/tsz/wasm/bundler/
+          retention-days: 1
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Assemble and publish all npm packages
+  # ──────────────────────────────────────────────────────────────────────────
+  publish-npm:
+    name: Publish npm packages
+    needs: [check-version, build-native, build-wasm]
+    if: >
+      !failure() &&
+      needs.check-version.result == 'success' &&
+      needs.check-version.outputs.version_changed == 'true' &&
+      needs.build-native.result == 'success' &&
+      needs.build-wasm.result == 'success'
+    runs-on: ubuntu-latest
+    environment: publish
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Download all native binary artifacts into their platform package dirs
+      - name: Download darwin-arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-arm64
+          path: npm/@mohsen-azimi/tsz-darwin-arm64/bin/
+
+      - name: Download darwin-x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-darwin-x64
+          path: npm/@mohsen-azimi/tsz-darwin-x64/bin/
+
+      - name: Download linux-x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: npm/@mohsen-azimi/tsz-linux-x64/bin/
+
+      - name: Download linux-arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-arm64
+          path: npm/@mohsen-azimi/tsz-linux-arm64/bin/
+
+      - name: Download win32-x64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-win32-x64
+          path: npm/@mohsen-azimi/tsz-win32-x64/bin/
+
+      - name: Download win32-arm64 binary
+        uses: actions/download-artifact@v4
+        with:
+          name: native-win32-arm64
+          path: npm/@mohsen-azimi/tsz-win32-arm64/bin/
+
+      # Download WASM build artifacts
+      - name: Download WASM build
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-build
+          path: npm/tsz/wasm/
+
+      # Assemble packages (skip build, just update versions + copy assets)
+      - name: Assemble npm packages
+        run: bash scripts/build-npm-packages.sh --skip-build
+
+      # Make binaries executable (artifact upload may lose permissions)
+      - name: Fix binary permissions
+        run: |
+          for dir in npm/@mohsen-azimi/tsz-*/bin; do
+            chmod +x "$dir"/* 2>/dev/null || true
+          done
+
+      # Publish platform packages first (main package depends on them)
+      - name: Publish platform packages
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: bash scripts/publish-npm.sh
+        run: |
+          PLATFORMS=(darwin-arm64 darwin-x64 linux-x64 linux-arm64 win32-x64 win32-arm64)
+          for platform in "${PLATFORMS[@]}"; do
+            PKG_DIR="npm/@mohsen-azimi/tsz-$platform"
+            echo "Publishing @mohsen-azimi/tsz-$platform..."
+            cd "$PKG_DIR"
+            if npm publish --access public 2>&1; then
+              echo "  Published successfully!"
+            else
+              VERSION=$(node -p "require('./package.json').version")
+              if npm view "@mohsen-azimi/tsz-$platform" version 2>/dev/null | grep -q "$VERSION"; then
+                echo "  Version $VERSION already published — skipping (OK)"
+              else
+                echo "  npm publish failed for @mohsen-azimi/tsz-$platform"
+                exit 1
+              fi
+            fi
+            cd "$GITHUB_WORKSPACE"
+          done
 
+      # Publish main package
+      - name: Publish main package
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          cd npm/tsz
+          echo "Publishing @mohsen-azimi/tsz..."
+          if npm publish --access public 2>&1; then
+            echo "Published successfully!"
+          else
+            VERSION=$(node -p "require('./package.json').version")
+            if npm view "@mohsen-azimi/tsz" version 2>/dev/null | grep -q "$VERSION"; then
+              echo "Version $VERSION already published — skipping (OK)"
+            else
+              echo "npm publish failed for @mohsen-azimi/tsz"
+              exit 1
+            fi
+          fi
