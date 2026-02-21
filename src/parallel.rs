@@ -47,6 +47,8 @@ use rayon::prelude::{
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::Once;
 use tsz_common::interner::{Atom, Interner};
 
 type ModuleExportEntry = FxHashMap<String, (String, Option<String>)>;
@@ -56,6 +58,25 @@ type Reexports = FxHashMap<String, ModuleExportEntry>;
 fn resolve_default_lib_files(_target: ScriptTarget) -> anyhow::Result<Vec<PathBuf>> {
     Ok(Vec::new())
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+static RAYON_POOL_INIT: Once = Once::new();
+
+/// Ensure Rayon global pool is configured once with stack size suitable for checker recursion.
+///
+/// We initialize lazily to avoid paying global pool startup cost for single-file sequential paths.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn ensure_rayon_global_pool() {
+    RAYON_POOL_INIT.call_once(|| {
+        // If the pool was already initialized through another rayon call, keep going.
+        let _ = rayon::ThreadPoolBuilder::new()
+            .stack_size(8 * 1024 * 1024)
+            .build_global();
+    });
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn ensure_rayon_global_pool() {}
 
 /// Conditionally use parallel or sequential iteration based on target.
 /// For WASM, Rayon parallelism creates oversubscription when combined with
@@ -116,6 +137,9 @@ pub struct ParseResult {
 /// # Returns
 /// Vector of `ParseResult` for each file
 pub fn parse_files_parallel(files: Vec<(String, String)>) -> Vec<ParseResult> {
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_rayon_global_pool();
+
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
             let mut parser = ParserState::new(file_name.clone(), source_text);
@@ -237,6 +261,9 @@ pub struct BindResult {
 /// # Returns
 /// Vector of `BindResult` for each file
 pub fn parse_and_bind_parallel(files: Vec<(String, String)>) -> Vec<BindResult> {
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_rayon_global_pool();
+
     maybe_parallel_into!(files)
         .map(|(file_name, source_text)| {
             // Skip parsing .json files - they should not be parsed as TypeScript.
@@ -541,101 +568,117 @@ pub fn parse_and_bind_parallel_with_libs(
     files: Vec<(String, String)>,
     lib_files: &[Arc<lib_loader::LibFile>],
 ) -> Vec<BindResult> {
+    if files.len() <= 1 {
+        return files
+            .into_iter()
+            .map(|(file_name, source_text)| bind_file_with_libs(file_name, source_text, lib_files))
+            .collect();
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    ensure_rayon_global_pool();
+
     maybe_parallel_into!(files)
-        .map(|(file_name, source_text)| {
-            // Skip parsing .json files - they should not be parsed as TypeScript.
-            // JSON module imports should be resolved during module resolution and
-            // emit TS2732 if resolveJsonModule is false.
-            if file_name.ends_with(".json") {
-                // Create empty result for JSON files
-                let arena = NodeArena::new();
-                let source_file = NodeIndex::NONE;
-                let parse_diagnostics = Vec::new();
-
-                let binder = BinderState::new();
-                let lib_binders = binder.lib_binders.clone();
-
-                return BindResult {
-                    file_name,
-                    source_file,
-                    arena: Arc::new(arena),
-                    symbols: binder.symbols,
-                    file_locals: binder.file_locals,
-                    declared_modules: binder.declared_modules,
-                    module_exports: binder.module_exports,
-                    node_symbols: binder.node_symbols,
-                    symbol_arenas: binder.symbol_arenas,
-                    declaration_arenas: binder.declaration_arenas,
-                    scopes: binder.scopes,
-                    node_scope_ids: binder.node_scope_ids,
-                    parse_diagnostics,
-                    shorthand_ambient_modules: binder.shorthand_ambient_modules,
-                    global_augmentations: binder.global_augmentations,
-                    module_augmentations: binder.module_augmentations,
-                    reexports: binder.reexports,
-                    wildcard_reexports: binder.wildcard_reexports,
-                    lib_binders,
-                    lib_symbol_ids: binder.lib_symbol_ids,
-                    lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
-                    flow_nodes: binder.flow_nodes,
-                    node_flow: binder.node_flow,
-                    switch_clause_to_switch: binder.switch_clause_to_switch,
-                    is_external_module: false,
-                    expando_properties: FxHashMap::default(),
-                };
-            }
-
-            // Parse
-            let mut parser = ParserState::new(file_name.clone(), source_text);
-            let source_file = parser.parse_source_file();
-
-            let (arena, parse_diagnostics) = parser.into_parts();
-
-            // Bind with lib symbols
-            let mut binder = BinderState::new();
-            binder.set_debug_file(&file_name);
-
-            // IMPORTANT: Merge lib symbols BEFORE binding source file
-            // so that symbols like console, Array, Promise are available during binding
-            if !lib_files.is_empty() {
-                binder.merge_lib_symbols(lib_files);
-            }
-
-            binder.bind_source_file(&arena, source_file);
-
-            // Extract lib_binders from binder before it's moved
-            let lib_binders = binder.lib_binders.clone();
-
-            BindResult {
-                file_name,
-                source_file,
-                arena: Arc::new(arena),
-                symbols: binder.symbols,
-                file_locals: binder.file_locals,
-                declared_modules: binder.declared_modules,
-                module_exports: binder.module_exports,
-                node_symbols: binder.node_symbols,
-                symbol_arenas: binder.symbol_arenas,
-                declaration_arenas: binder.declaration_arenas,
-                scopes: binder.scopes,
-                node_scope_ids: binder.node_scope_ids,
-                parse_diagnostics,
-                shorthand_ambient_modules: binder.shorthand_ambient_modules,
-                global_augmentations: binder.global_augmentations,
-                module_augmentations: binder.module_augmentations,
-                reexports: binder.reexports,
-                wildcard_reexports: binder.wildcard_reexports,
-                lib_binders,
-                lib_symbol_ids: binder.lib_symbol_ids,
-                lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
-                flow_nodes: binder.flow_nodes,
-                node_flow: binder.node_flow,
-                switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
-                is_external_module: binder.is_external_module,
-                expando_properties: std::mem::take(&mut binder.expando_properties),
-            }
-        })
+        .map(|(file_name, source_text)| bind_file_with_libs(file_name, source_text, lib_files))
         .collect()
+}
+
+fn bind_file_with_libs(
+    file_name: String,
+    source_text: String,
+    lib_files: &[Arc<lib_loader::LibFile>],
+) -> BindResult {
+    // Skip parsing .json files - they should not be parsed as TypeScript.
+    // JSON module imports should be resolved during module resolution and
+    // emit TS2732 if resolveJsonModule is false.
+    if file_name.ends_with(".json") {
+        // Create empty result for JSON files
+        let arena = NodeArena::new();
+        let source_file = NodeIndex::NONE;
+        let parse_diagnostics = Vec::new();
+
+        let binder = BinderState::new();
+        let lib_binders = binder.lib_binders.clone();
+
+        return BindResult {
+            file_name,
+            source_file,
+            arena: Arc::new(arena),
+            symbols: binder.symbols,
+            file_locals: binder.file_locals,
+            declared_modules: binder.declared_modules,
+            module_exports: binder.module_exports,
+            node_symbols: binder.node_symbols,
+            symbol_arenas: binder.symbol_arenas,
+            declaration_arenas: binder.declaration_arenas,
+            scopes: binder.scopes,
+            node_scope_ids: binder.node_scope_ids,
+            parse_diagnostics,
+            shorthand_ambient_modules: binder.shorthand_ambient_modules,
+            global_augmentations: binder.global_augmentations,
+            module_augmentations: binder.module_augmentations,
+            reexports: binder.reexports,
+            wildcard_reexports: binder.wildcard_reexports,
+            lib_binders,
+            lib_symbol_ids: binder.lib_symbol_ids,
+            lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
+            flow_nodes: binder.flow_nodes,
+            node_flow: binder.node_flow,
+            switch_clause_to_switch: binder.switch_clause_to_switch,
+            is_external_module: false,
+            expando_properties: FxHashMap::default(),
+        };
+    }
+
+    // Parse
+    let mut parser = ParserState::new(file_name.clone(), source_text);
+    let source_file = parser.parse_source_file();
+
+    let (arena, parse_diagnostics) = parser.into_parts();
+
+    // Bind with lib symbols
+    let mut binder = BinderState::new();
+    binder.set_debug_file(&file_name);
+
+    // IMPORTANT: Merge lib symbols BEFORE binding source file
+    // so that symbols like console, Array, Promise are available during binding
+    if !lib_files.is_empty() {
+        binder.merge_lib_symbols(lib_files);
+    }
+
+    binder.bind_source_file(&arena, source_file);
+
+    // Extract lib_binders from binder before it's moved
+    let lib_binders = binder.lib_binders.clone();
+
+    BindResult {
+        file_name,
+        source_file,
+        arena: Arc::new(arena),
+        symbols: binder.symbols,
+        file_locals: binder.file_locals,
+        declared_modules: binder.declared_modules,
+        module_exports: binder.module_exports,
+        node_symbols: binder.node_symbols,
+        symbol_arenas: binder.symbol_arenas,
+        declaration_arenas: binder.declaration_arenas,
+        scopes: binder.scopes,
+        node_scope_ids: binder.node_scope_ids,
+        parse_diagnostics,
+        shorthand_ambient_modules: binder.shorthand_ambient_modules,
+        global_augmentations: binder.global_augmentations,
+        module_augmentations: binder.module_augmentations,
+        reexports: binder.reexports,
+        wildcard_reexports: binder.wildcard_reexports,
+        lib_binders,
+        lib_symbol_ids: binder.lib_symbol_ids,
+        lib_symbol_reverse_remap: binder.lib_symbol_reverse_remap,
+        flow_nodes: binder.flow_nodes,
+        node_flow: binder.node_flow,
+        switch_clause_to_switch: std::mem::take(&mut binder.switch_clause_to_switch),
+        is_external_module: binder.is_external_module,
+        expando_properties: std::mem::take(&mut binder.expando_properties),
+    }
 }
 
 // =============================================================================
