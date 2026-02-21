@@ -253,6 +253,24 @@ function patchSessionClient(SessionClient, ts) {
         return result;
     };
 
+    // Forward code-fix preferences as well (e.g. autoImportFileExcludePatterns).
+    const _origGetCodeFixesAtPosition = proto.getCodeFixesAtPosition;
+    proto.getCodeFixesAtPosition = function(fileName, start, end, errorCodes, formatOptions, preferences) {
+        const oldPreferences = this.preferences;
+        if (preferences) this.configure(preferences);
+        const result = _origGetCodeFixesAtPosition.call(
+            this,
+            fileName,
+            start,
+            end,
+            errorCodes,
+            formatOptions,
+            preferences,
+        );
+        if (preferences) this.configure(oldPreferences || {});
+        return result;
+    };
+
     // Override getDefinitionAtPosition to pass through metadata fields from
     // the server response (kind, name, containerName, contextSpan, etc.)
     // The base SessionClient hardcodes these as empty strings.
