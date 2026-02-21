@@ -125,6 +125,74 @@ impl<'a> Completions<'a> {
             return true;
         }
 
+        // If the user is typing an identifier prefix in expression/member-declaration
+        // context, treat this as a new identifier location.
+        if let Some(prev) = trimmed.chars().last()
+            && (prev == '_' || prev == '$' || prev.is_ascii_alphanumeric())
+        {
+            let bytes = trimmed.as_bytes();
+            let mut idx = bytes.len();
+            while idx > 0 {
+                let ch = bytes[idx - 1] as char;
+                if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+                    idx -= 1;
+                } else {
+                    break;
+                }
+            }
+            let current_word = &trimmed[idx..];
+            if matches!(
+                current_word,
+                "new"
+                    | "as"
+                    | "return"
+                    | "throw"
+                    | "typeof"
+                    | "void"
+                    | "delete"
+                    | "in"
+                    | "of"
+                    | "extends"
+                    | "implements"
+                    | "import"
+                    | "export"
+                    | "from"
+            ) {
+                return false;
+            }
+            let mut prev_sig_idx = idx;
+            while prev_sig_idx > 0 && bytes[prev_sig_idx - 1].is_ascii_whitespace() {
+                prev_sig_idx -= 1;
+            }
+            if prev_sig_idx == 0 {
+                return false;
+            }
+            let prev_sig = bytes[prev_sig_idx - 1] as char;
+            // Member access completion (`obj.|`) is not a new identifier location.
+            if prev_sig == '.' {
+                return false;
+            }
+            return matches!(
+                prev_sig,
+                '=' | '('
+                    | ','
+                    | '['
+                    | '{'
+                    | '<'
+                    | ':'
+                    | '?'
+                    | '|'
+                    | '&'
+                    | '!'
+                    | ';'
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '/'
+                    | '%'
+            );
+        }
+
         false
     }
 

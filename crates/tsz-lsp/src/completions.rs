@@ -497,11 +497,18 @@ impl<'a> Completions<'a> {
                 seen_names.insert(name.clone());
 
                 if let Some(symbol) = self.binder.symbols.get(*symbol_id) {
-                    let kind = self.determine_completion_kind(symbol);
+                    let mut kind = self.determine_completion_kind(symbol);
+                    if kind == CompletionItemKind::Variable && self.symbol_is_parameter(symbol) {
+                        kind = CompletionItemKind::Parameter;
+                    }
                     let mut item = CompletionItem::new(name.clone(), kind);
                     item.sort_text = Some(default_sort_text(kind).to_string());
 
-                    if let Some(detail) = self.get_symbol_detail(symbol) {
+                    if kind == CompletionItemKind::Parameter
+                        && let Some(param_type) = self.parameter_annotation_text(symbol)
+                    {
+                        item = item.with_detail(param_type);
+                    } else if let Some(detail) = self.get_symbol_detail(symbol) {
                         item = item.with_detail(detail);
                     }
                     if let Some(modifiers) = self.build_kind_modifiers(symbol) {
@@ -629,6 +636,56 @@ impl<'a> Completions<'a> {
             // Default to variable for const, let, var, and parameters
             CompletionItemKind::Variable
         }
+    }
+
+    fn symbol_is_parameter(&self, symbol: &tsz_binder::Symbol) -> bool {
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else if let Some(&first) = symbol.declarations.first() {
+            first
+        } else {
+            return false;
+        };
+        self.arena
+            .get(decl)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PARAMETER)
+    }
+
+    fn parameter_annotation_text(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
+        let decl = if symbol.value_declaration.is_some() {
+            symbol.value_declaration
+        } else {
+            *symbol.declarations.first()?
+        };
+        let node = self.arena.get(decl)?;
+        if node.kind != syntax_kind_ext::PARAMETER {
+            return None;
+        }
+        let param = self.arena.get_parameter(node)?;
+        if !param.type_annotation.is_some() {
+            return None;
+        }
+        let type_node = self.arena.get(param.type_annotation)?;
+        let start = type_node.pos as usize;
+        let end = type_node.end.min(self.source_text.len() as u32) as usize;
+        (start < end).then(|| {
+            let mut text = self.source_text[start..end].trim().to_string();
+            while text.ends_with(',') || text.ends_with(';') {
+                text.pop();
+                text = text.trim_end().to_string();
+            }
+            while text.ends_with(')') {
+                let opens = text.chars().filter(|&c| c == '(').count();
+                let closes = text.chars().filter(|&c| c == ')').count();
+                if closes > opens {
+                    text.pop();
+                    text = text.trim_end().to_string();
+                } else {
+                    break;
+                }
+            }
+            text
+        })
     }
 
     /// Get detail information for a symbol (e.g., "const", "function", "class").
