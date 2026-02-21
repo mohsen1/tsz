@@ -36,6 +36,26 @@ pub(crate) fn get_contextual_signature(
     tsz_solver::get_contextual_signature_with_compat_checker(db, type_id)
 }
 
+/// Get the construct signature of a type, including generic ones.
+/// Used for two-pass inference in `new` expressions where the construct
+/// signature may have type parameters that need to be inferred.
+pub(crate) fn get_construct_signature(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<FunctionShape> {
+    let sigs = tsz_solver::type_queries::get_construct_signatures(db, type_id)?;
+    let sig = sigs.first()?;
+    Some(FunctionShape {
+        type_params: sig.type_params.clone(),
+        params: sig.params.clone(),
+        this_type: sig.this_type,
+        return_type: sig.return_type,
+        type_predicate: sig.type_predicate.clone(),
+        is_constructor: true,
+        is_method: false,
+    })
+}
+
 pub(crate) fn resolve_call<C: AssignabilityChecker>(
     db: &dyn QueryDatabase,
     checker: &mut C,

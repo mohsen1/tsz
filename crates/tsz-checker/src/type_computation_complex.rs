@@ -1,8 +1,10 @@
 //! Complex type computation: new expressions, constructability, union/keyof types,
 //! and class type helpers.
 
+use crate::query_boundaries::call_checker;
 use crate::query_boundaries::type_computation_complex as query;
 use crate::state::CheckerState;
+use tracing::trace;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::{ContextualTypeContext, TypeId};
 
@@ -384,21 +386,159 @@ impl<'a> CheckerState<'a> {
             None => &[],
         };
 
-        // Prepare argument types with contextual typing
-        // Note: We use a generic context helper here because we delegate the specific
-        // signature selection to the solver.
+        // Extract construct signature to check for generic constructor needing two-pass inference.
+        // Use get_construct_signature (not get_contextual_signature) to include generic
+        // construct signatures — those are skipped by contextual extraction but needed
+        // for two-pass inference where we infer the type params ourselves.
+        let constructor_shape_type = self.resolve_ref_type(constructor_type);
+        let constructor_shape =
+            call_checker::get_construct_signature(self.ctx.types, constructor_shape_type);
+        let is_generic_new = constructor_shape
+            .as_ref()
+            .is_some_and(|s| !s.type_params.is_empty())
+            && new_expr.type_arguments.is_none();
+        trace!(
+            is_generic_new = is_generic_new,
+            constructor_shape_found = constructor_shape.is_some(),
+            type_params_count = constructor_shape
+                .as_ref()
+                .map(|s| s.type_params.len())
+                .unwrap_or(0),
+            "New expression: two-pass inference check"
+        );
+
         let ctx_helper = ContextualTypeContext::with_expected_and_options(
             self.ctx.types,
             constructor_type,
             self.ctx.compiler_options.no_implicit_any,
         );
-        let check_excess_properties = true; // Default to true, solver handles specifics
-        let arg_types = self.collect_call_argument_types_with_context(
-            args,
-            |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
-            check_excess_properties,
-            None, // No skipping needed for constructor calls
-        );
+        let check_excess_properties = true;
+
+        let arg_types = if is_generic_new {
+            if let Some(shape) = constructor_shape {
+                // Two-pass inference for generic constructors (same as call expressions)
+                let sensitive_args: Vec<bool> = args
+                    .iter()
+                    .map(|&arg| is_contextually_sensitive(self, arg))
+                    .collect();
+                let needs_two_pass = sensitive_args.iter().copied().any(std::convert::identity);
+
+                if needs_two_pass {
+                    // === Round 1: Collect non-contextual argument types ===
+                    // Skip checking sensitive arguments entirely to prevent TS7006
+                    // from being emitted before inference completes.
+                    let mut round1_arg_types = self.collect_call_argument_types_with_context(
+                        args,
+                        |i, arg_count| {
+                            if i < sensitive_args.len() && sensitive_args[i] {
+                                None
+                            } else {
+                                ctx_helper.get_parameter_type_for_call(i, arg_count)
+                            }
+                        },
+                        check_excess_properties,
+                        Some(&sensitive_args),
+                    );
+
+                    // For sensitive object literal arguments, extract a partial type
+                    // from non-sensitive properties to improve inference.
+                    for (i, &arg_idx) in args.iter().enumerate() {
+                        if sensitive_args[i]
+                            && let Some(partial) = self.extract_non_sensitive_object_type(arg_idx)
+                        {
+                            trace!(
+                                arg_index = i,
+                                partial_type = partial.0,
+                                "Round 1: extracted non-sensitive partial type for object literal"
+                            );
+                            round1_arg_types[i] = partial;
+                        }
+                    }
+
+                    // === Perform Round 1 Inference ===
+                    let evaluated_shape = {
+                        let new_params: Vec<_> = shape
+                            .params
+                            .iter()
+                            .map(|p| tsz_solver::ParamInfo {
+                                name: p.name,
+                                type_id: self.evaluate_type_with_env(p.type_id),
+                                optional: p.optional,
+                                rest: p.rest,
+                            })
+                            .collect();
+                        tsz_solver::FunctionShape {
+                            params: new_params,
+                            return_type: shape.return_type,
+                            this_type: shape.this_type,
+                            type_params: shape.type_params.clone(),
+                            type_predicate: shape.type_predicate.clone(),
+                            is_constructor: shape.is_constructor,
+                            is_method: shape.is_method,
+                        }
+                    };
+                    let substitution = {
+                        let env = self.ctx.type_env.borrow();
+                        call_checker::compute_contextual_types_with_context(
+                            self.ctx.types,
+                            &self.ctx,
+                            &env,
+                            &evaluated_shape,
+                            &round1_arg_types,
+                            self.ctx.contextual_type,
+                        )
+                    };
+
+                    // Round 2: apply inferred types as contextual types for sensitive args
+                    let arg_count = args.len();
+                    let mut round2_contextual_types: Vec<Option<TypeId>> =
+                        Vec::with_capacity(arg_count);
+                    for i in 0..arg_count {
+                        let ctx_type = if let Some(param_type) =
+                            ctx_helper.get_parameter_type_for_call(i, arg_count)
+                        {
+                            let instantiated = tsz_solver::instantiate_type(
+                                self.ctx.types,
+                                param_type,
+                                &substitution,
+                            );
+                            Some(self.evaluate_type_with_env(instantiated))
+                        } else {
+                            None
+                        };
+                        round2_contextual_types.push(ctx_type);
+                    }
+
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |i, _arg_count| round2_contextual_types.get(i).copied().flatten(),
+                        check_excess_properties,
+                        None,
+                    )
+                } else {
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                        check_excess_properties,
+                        None,
+                    )
+                }
+            } else {
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                    check_excess_properties,
+                    None,
+                )
+            }
+        } else {
+            self.collect_call_argument_types_with_context(
+                args,
+                |i, arg_count| ctx_helper.get_parameter_type_for_call(i, arg_count),
+                check_excess_properties,
+                None,
+            )
+        };
 
         self.ensure_relation_input_ready(constructor_type);
         self.ensure_relation_inputs_ready(&arg_types);
