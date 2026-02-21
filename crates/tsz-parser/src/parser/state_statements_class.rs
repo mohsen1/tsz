@@ -21,16 +21,6 @@ impl ParserState {
         decorators: Option<NodeList>,
         start_pos: u32,
     ) -> NodeIndex {
-        if decorators.is_some() {
-            use tsz_common::diagnostics::diagnostic_codes;
-            self.parse_error_at(
-                start_pos,
-                0,
-                "Decorators are not valid here.",
-                diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
-            );
-        }
-
         self.parse_expected(SyntaxKind::ClassKeyword);
 
         // Parse optional name (class expressions can be anonymous)

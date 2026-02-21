@@ -854,6 +854,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::CLASS_DECLARATION => Some(symbol_flags::CLASS),
             syntax_kind_ext::INTERFACE_DECLARATION => Some(symbol_flags::INTERFACE),
             syntax_kind_ext::TYPE_ALIAS_DECLARATION => Some(symbol_flags::TYPE_ALIAS),
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => Some(symbol_flags::ALIAS),
             syntax_kind_ext::ENUM_DECLARATION => {
                 // Check if this is a const enum by looking for const modifier
                 let is_const_enum = arena
