@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'Cargo.toml'   # only run when root workspace Cargo.toml changes
+  workflow_dispatch:   # allow manual trigger for testing
 
 env:
   CARGO_TERM_COLOR: always
