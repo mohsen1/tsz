@@ -12,7 +12,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-tsz = { path = "../.." }
+tsz = { path = "../..", package = "tsz-core" }
 tsz-common = { workspace = true }
 tsz-scanner = { workspace = true }
 tsz-parser = { workspace = true }

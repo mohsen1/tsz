@@ -7,6 +7,7 @@ publish = false
 
 [dependencies.tsz]
 path = "../.."
+package = "tsz-core"
 features = []
 
 [dependencies]
