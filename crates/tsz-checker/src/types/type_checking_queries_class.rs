@@ -1315,6 +1315,10 @@ impl<'a> CheckerState<'a> {
         use tsz_lowering::TypeLowering;
         use tsz_parser::parser::node::NodeAccess;
 
+        if let Some(cached) = self.ctx.lib_type_resolution_cache.get(name) {
+            return *cached;
+        }
+
         tracing::trace!(name, "resolve_lib_type_by_name: called");
         let mut lib_type_id: Option<TypeId> = None;
         let factory = self.ctx.types.factory();
@@ -1690,6 +1694,9 @@ impl<'a> CheckerState<'a> {
         // For generic lib interfaces, we already cached the type params in the
         // interface lowering code above. The type is already correctly lowered
         // and can be returned directly.
+        self.ctx
+            .lib_type_resolution_cache
+            .insert(name.to_string(), lib_type_id);
         lib_type_id
     }
 }

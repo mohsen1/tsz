@@ -241,6 +241,10 @@ pub struct CheckerContext<'a> {
     /// Cached types for variable declarations (used for TS2403 checks).
     pub var_decl_types: FxHashMap<SymbolId, TypeId>,
 
+    /// Cache for `resolve_lib_type_by_name` results.
+    /// Keyed by type name and stores both hits (`Some(TypeId)`) and misses (`None`).
+    pub lib_type_resolution_cache: FxHashMap<String, Option<TypeId>>,
+
     /// Cached types for nodes.
     pub node_types: FxHashMap<u32, TypeId>,
 

@@ -2,3 +2,5 @@
 
 - `profiling/tooling (samply on .target-bench/dist/tsz)`: call stacks were unsymbolicated addresses only; needs build/profile configuration work (debug symbols + symbolization path) before flamegraph-level analysis is reliable.
 - `crates/tsz-checker/src/state/state_type_environment.rs::build_type_environment`: still spends significant time in upfront symbol/type environment population; deeper redesign to defer more `get_type_of_symbol` work is architectural and not a small targeted optimization.
+- `crates/tsz-lowering/src/lower.rs::TypeLowering::lower_merged_interface_declarations / collect_interface_members`: still hot in `ts-essentials/paths.ts`; caching merged lib-interface lowering likely helps, but needs cross-arena cache keys and invalidation design beyond a small safe patch.
+- `crates/tsz-checker/src/types/type_checking_global.rs::register_boxed_types`: still performs broad generic lib prewarm per file; reducing this further likely requires changing when `TypeEnvironment` is rebuilt, which is a larger architectural change.
