@@ -76,6 +76,10 @@ impl<'a> CheckerState<'a> {
                 && !is_tdz_in_heritage_clause
                 && !self.is_in_static_property_initializer_ast_context(idx)
                 && self.ctx.strict_null_checks()
+                && (!self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
+                    sym.decl_file_idx != u32::MAX
+                        && sym.decl_file_idx != self.ctx.current_file_idx as u32
+                }))
                 && self.ctx.binder.symbols.get(sym_id).is_some_and(|sym| {
                     sym.flags & tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE != 0
                         && sym.flags
