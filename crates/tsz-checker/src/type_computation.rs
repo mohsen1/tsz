@@ -1563,6 +1563,8 @@ impl<'a> CheckerState<'a> {
             } else if is_equality_op
                 && left_narrow != TypeId::ERROR
                 && right_narrow != TypeId::ERROR
+                && left_narrow != TypeId::NEVER
+                && right_narrow != TypeId::NEVER
                 && self.types_have_no_overlap(left_narrow, right_narrow)
             {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -1855,8 +1857,11 @@ impl<'a> CheckerState<'a> {
                 let is_right_nan = self.is_identifier_reference_to_global_nan(right_idx);
 
                 // Check if the types have any overlap (skip if NaN, handled above)
+                // Also skip if either type is `never` — tsc doesn't emit TS2367 for never.
                 if !is_left_nan
                     && !is_right_nan
+                    && left_type != TypeId::NEVER
+                    && right_type != TypeId::NEVER
                     && !self.are_types_overlapping(left_type, right_type)
                 {
                     // TS2367: This condition will always return 'false'/'true'
