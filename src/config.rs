@@ -533,7 +533,9 @@ pub fn resolve_compiler_options(
     }
 
     if let Some(jsx) = options.jsx.as_deref() {
-        resolved.jsx = Some(parse_jsx_emit(jsx)?);
+        let jsx_emit = parse_jsx_emit(jsx)?;
+        resolved.jsx = Some(jsx_emit);
+        resolved.checker.jsx_mode = jsx_emit_to_mode(jsx_emit);
     }
 
     if let Some(no_lib) = options.no_lib {
@@ -991,6 +993,17 @@ fn parse_jsx_emit(value: &str) -> Result<JsxEmit> {
     };
 
     Ok(jsx)
+}
+
+const fn jsx_emit_to_mode(emit: JsxEmit) -> tsz_common::checker_options::JsxMode {
+    use tsz_common::checker_options::JsxMode;
+    match emit {
+        JsxEmit::Preserve => JsxMode::Preserve,
+        JsxEmit::React => JsxMode::React,
+        JsxEmit::ReactJsx => JsxMode::ReactJsx,
+        JsxEmit::ReactJsxDev => JsxMode::ReactJsxDev,
+        JsxEmit::ReactNative => JsxMode::ReactNative,
+    }
 }
 
 fn build_path_mappings(paths: &FxHashMap<String, Vec<String>>) -> Vec<PathMapping> {

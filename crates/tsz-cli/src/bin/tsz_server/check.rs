@@ -722,6 +722,7 @@ impl Server {
             no_implicit_override: options.no_implicit_override,
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_mode: tsz_common::checker_options::JsxMode::None,
         }
     }
 }

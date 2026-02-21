@@ -422,7 +422,18 @@ impl<'a> CheckerState<'a> {
 
     /// Check that the JSX factory is in scope.
     /// Emits TS2874 if the factory cannot be found.
+    ///
+    /// Only emits for "react" (classic) JSX mode where the factory function
+    /// (e.g. `React.createElement`) must be in scope. Other modes (preserve,
+    /// react-jsx, react-jsxdev, react-native) don't require the factory.
     pub(crate) fn check_jsx_factory_in_scope(&mut self, node_idx: NodeIndex) {
+        use tsz_common::checker_options::JsxMode;
+
+        // Only classic "react" mode requires the factory in scope
+        if self.ctx.compiler_options.jsx_mode != JsxMode::React {
+            return;
+        }
+
         let factory = self.ctx.compiler_options.jsx_factory.clone();
         let root_ident = factory.split('.').next().unwrap_or(&factory);
 
