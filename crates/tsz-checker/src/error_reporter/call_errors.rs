@@ -287,33 +287,22 @@ impl<'a> CheckerState<'a> {
         if let Some(loc) = self.get_source_location(idx) {
             let arg_str = self.format_type_for_assignability_message(arg_type);
             let param_str = self.format_type_for_assignability_message(param_type);
-            let mut message = format_message(
+            let message = format_message(
                 diagnostic_messages::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE,
                 &[&arg_str, &param_str],
             );
             tracing::debug!("File name: {}", self.ctx.file_name);
+            // tsc emits elaboration as related information, not in the main TS2345 message.
+            // We compute elaboration for future use but don't append it to the message.
             if let Some(prop_name) = self.missing_single_required_property(arg_type, param_type) {
-                let prop = self.ctx.types.resolve_atom_ref(prop_name);
-                let detail = format_message(
-                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    &[&prop, &arg_str, &param_str],
-                );
-                message = format!("{message} {detail}");
+                let _prop = self.ctx.types.resolve_atom_ref(prop_name);
             } else if (param_str == "Callable" || param_str == "Applicable")
                 && !tsz_solver::is_primitive_type(self.ctx.types, arg_type)
             {
-                let prop = if param_str == "Callable" {
-                    "call"
-                } else {
-                    "apply"
-                };
-                let detail = format_message(
-                    diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
-                    &[prop, &arg_str, &param_str],
-                );
-                message = format!("{message} {detail}");
-            } else if let Some(detail) = self.elaborate_type_mismatch_detail(arg_type, param_type) {
-                message = format!("{message} {detail}");
+                // Callable/Applicable property elaboration omitted from main message
+            } else if let Some(_detail) = self.elaborate_type_mismatch_detail(arg_type, param_type)
+            {
+                // Type mismatch elaboration omitted from main message
             }
             self.ctx.diagnostics.push(Diagnostic::error(
                 self.ctx.file_name.clone(),
