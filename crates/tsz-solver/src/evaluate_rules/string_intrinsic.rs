@@ -84,8 +84,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.apply_string_intrinsic_to_template_literal(kind, spans)
             }
 
-            // The intrinsic string type passes through unchanged
-            TypeData::Intrinsic(IntrinsicKind::String) => TypeId::STRING,
+            // The intrinsic string type passes through unchanged but wrapped in the intrinsic
+            // so we preserve the Uppercase/Lowercase constraint (e.g. `string extends Uppercase<string>` is false).
+            TypeData::Intrinsic(IntrinsicKind::String) => {
+                self.interner().string_intrinsic(kind, evaluated_arg)
+            }
 
             // For type parameters and other deferred types, keep as StringIntrinsic
             TypeData::TypeParameter(_)
