@@ -333,9 +333,8 @@ try_runner() {
   log "Starting runner: $label"
   log "Prompt (first 200 chars): ${prompt:0:200}..."
 
-  local stdout_tmp stderr_tmp
-  stdout_tmp="$(mktmp)"
-  stderr_tmp="$(mktmp)"
+  local output_tmp
+  output_tmp="$(mktmp)"
 
   local exit_code=0
 
@@ -350,8 +349,8 @@ try_runner() {
 
     set +e
     CLAUDE_CONFIG_DIR="$path" run_with_timeout "$TIMEOUT_SECONDS" \
-      "${cmd[@]}" > >(tee "$stdout_tmp") 2> >(tee "$stderr_tmp" >&2)
-    exit_code=$?
+      "${cmd[@]}" 2>&1 | tee "$output_tmp"
+    exit_code=${PIPESTATUS[0]}
     set -e
 
   elif [[ "$type" == "codex-spark" || "$type" == "codex" ]]; then
@@ -371,8 +370,8 @@ try_runner() {
 
     set +e
     run_with_timeout "$TIMEOUT_SECONDS" \
-      "${cmd[@]}" > >(tee "$stdout_tmp") 2> >(tee "$stderr_tmp" >&2)
-    exit_code=$?
+      "${cmd[@]}" 2>&1 | tee "$output_tmp"
+    exit_code=${PIPESTATUS[0]}
     set -e
 
   else
@@ -382,16 +381,14 @@ try_runner() {
 
   # Append captured output to log
   {
-    echo "=== STDOUT ==="
-    cat "$stdout_tmp"
-    echo "=== STDERR ==="
-    cat "$stderr_tmp"
+    echo "=== OUTPUT ==="
+    cat "$output_tmp"
     echo "=== EXIT CODE: $exit_code ==="
   } >> "$LOG_FILE"
 
   # Check for drain/rate-limit
   local combined
-  combined="$(cat "$stdout_tmp" "$stderr_tmp" 2>/dev/null || true)"
+  combined="$(cat "$output_tmp" 2>/dev/null || true)"
 
   if check_output_for_drain "$type" "$combined"; then
     warn "$label appears drained/rate-limited"
