@@ -85,8 +85,48 @@ fn test_get_import_bindings_default_import_uses_default_property() {
         .expect("statement node should exist");
     assert_eq!(stmt_node.kind, syntax_kind_ext::IMPORT_DECLARATION);
 
-    let bindings = get_import_bindings(&parser.arena, stmt_node, "module_1");
+    // Without esModuleInterop, default imports use plain property access
+    let bindings = get_import_bindings(&parser.arena, stmt_node, "module_1", false);
     assert_eq!(bindings, vec!["var foo = module_1.default;".to_string()]);
+}
+
+#[test]
+fn test_namespace_import_without_es_module_interop() {
+    use tsz_parser::parser::ParserState;
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let source = r#"import * as ns from "./module";"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser
+        .arena
+        .get(root)
+        .expect("root node must exist in arena");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("failed to get source file");
+    let stmt_idx = *source_file
+        .statements
+        .nodes
+        .first()
+        .expect("source should have one statement");
+    let stmt_node = parser
+        .arena
+        .get(stmt_idx)
+        .expect("statement node should exist");
+    assert_eq!(stmt_node.kind, syntax_kind_ext::IMPORT_DECLARATION);
+
+    // Without esModuleInterop: plain alias, no __importStar
+    let bindings = get_import_bindings(&parser.arena, stmt_node, "module_1", false);
+    assert_eq!(bindings, vec!["var ns = module_1;".to_string()]);
+
+    // With esModuleInterop: uses __importStar helper
+    let bindings = get_import_bindings(&parser.arena, stmt_node, "module_1", true);
+    assert_eq!(
+        bindings,
+        vec!["var ns = __importStar(module_1);".to_string()]
+    );
 }
 
 #[test]

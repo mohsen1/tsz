@@ -99,6 +99,8 @@ pub struct PrinterOptions {
     pub use_define_for_class_fields: bool,
     /// Enable legacy (experimental) decorator lowering (`__decorate` style)
     pub legacy_decorators: bool,
+    /// Emit interop helpers (`__importStar`, `__importDefault`) for CJS/ESM interop
+    pub es_module_interop: bool,
 }
 
 impl Default for PrinterOptions {
@@ -116,6 +118,7 @@ impl Default for PrinterOptions {
             always_strict: false,
             use_define_for_class_fields: false,
             legacy_decorators: false,
+            es_module_interop: false,
         }
     }
 }

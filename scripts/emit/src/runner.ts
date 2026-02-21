@@ -411,7 +411,7 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
     const noEmitHelpers = directives.noemithelpers === true;
     const noEmitOnError = directives.noemitonerror === true;
     const importHelpers = directives.importhelpers === true;
-    const esModuleInterop = directives.esmoduleinterop === true;
+    const esModuleInterop = directives.esmoduleinterop !== false;
     const useDefineForClassFields = typeof directives.usedefineforclassfields === 'boolean'
       ? directives.usedefineforclassfields
       : undefined;
