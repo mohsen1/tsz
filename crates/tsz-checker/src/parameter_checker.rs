@@ -617,6 +617,20 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            // In malformed signatures like `(...arg?) => {}`, TypeScript still
+            // reports TS2370 in addition to TS1047/TS7019.
+            if param.question_token
+                && param.type_annotation.is_none()
+                && param.initializer.is_none()
+            {
+                self.error_at_node(
+                    param.name,
+                    "A rest parameter must be of an array type.",
+                    diagnostic_codes::A_REST_PARAMETER_MUST_BE_OF_AN_ARRAY_TYPE,
+                );
+                continue;
+            }
+
             if param.type_annotation.is_some() {
                 // Has explicit type annotation — check the declared type
                 let declared_type = self.get_type_from_type_node(param.type_annotation);

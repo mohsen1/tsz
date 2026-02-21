@@ -113,3 +113,12 @@ fn test_rest_parameter_in_arrow_function() {
 
     assert!(has_error_ts2370(source));
 }
+
+#[test]
+fn test_optional_rest_parameter_without_type_emits_ts2370() {
+    let source = r"
+        (...arg?) => 102;
+    ";
+
+    assert!(has_error_ts2370(source));
+}
