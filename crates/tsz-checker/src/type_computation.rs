@@ -1589,11 +1589,11 @@ impl<'a> CheckerState<'a> {
 
             // Logical AND: `a && b`
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
+                self.check_truthy_or_falsy(left_idx);
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                self.check_truthy_or_falsy(left_idx);
                 let result = match evaluator.evaluate(left_type, right_type, "&&") {
                     BinaryOpResult::Success(ty) => ty,
                     BinaryOpResult::TypeError { .. } => TypeId::UNKNOWN,
@@ -1604,12 +1604,13 @@ impl<'a> CheckerState<'a> {
 
             // Logical OR: `a || b`
             if op_kind == SyntaxKind::BarBarToken as u16 {
+                // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
+                self.check_truthy_or_falsy(left_idx);
+
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
-                self.check_truthy_or_falsy(left_idx);
 
                 let result = match evaluator.evaluate(left_type, right_type, "||") {
                     BinaryOpResult::Success(ty) => ty,
@@ -1621,13 +1622,14 @@ impl<'a> CheckerState<'a> {
 
             // Nullish coalescing: `a ?? b`
             if op_kind == SyntaxKind::QuestionQuestionToken as u16 {
+                // TS2872: This kind of expression is always truthy.
+                self.check_always_truthy(left_idx, left_type);
+
                 // Propagate error types (don't collapse to unknown)
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;
                 }
-                // TS2872: This kind of expression is always truthy.
-                self.check_always_truthy(left_idx, left_type);
 
                 let (non_nullish, cause) = self.split_nullish_type(left_type);
                 if cause.is_none() {
