@@ -355,25 +355,33 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         }
 
+        // TSC anchors the error at the function name, not the whole declaration.
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        let error_node = self
+            .ctx
+            .arena
+            .get(func_idx)
+            .and_then(|n| self.ctx.arena.get_function(n))
+            .map(|f| f.name)
+            .filter(|n| n.is_some())
+            .unwrap_or(func_idx);
+        let (pos, len) = self
+            .ctx
+            .arena
+            .get(error_node)
+            .map_or((0, 0), |n| (n.pos, n.end - n.pos));
         if in_class {
             self.ctx.error(
-                self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
-                self.ctx
-                    .arena
-                    .get(func_idx)
-                    .map_or(0, |n| n.end - n.pos),
+                pos,
+                len,
                 diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2
                     .to_string(),
                 diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2,
             );
         } else {
             self.ctx.error(
-                self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
-                self.ctx
-                    .arena
-                    .get(func_idx)
-                    .map_or(0, |n| n.end - n.pos),
+                pos,
+                len,
                 diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN
                     .to_string(),
                 diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN,
