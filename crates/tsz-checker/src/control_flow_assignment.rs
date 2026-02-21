@@ -77,6 +77,17 @@ impl<'a> FlowAnalyzer<'a> {
                         };
                     }
 
+                    if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                        || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+                        || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+                    {
+                        if let Some(node_types) = self.node_types
+                            && let Some(&rhs_type) = node_types.get(&bin.right.0) {
+                                return Some(rhs_type);
+                            }
+                        return None;
+                    }
+
                     // Get LHS type (current narrowed type of the variable)
                     let left_type = if let Some(node_types) = self.node_types
                         && let Some(&lhs_type) = node_types.get(&bin.left.0)

@@ -305,6 +305,32 @@ impl<'a> NarrowingContext<'a> {
     /// For `unknown`, TypeScript does NOT narrow in falsy branches.
     ///
     /// Only literal types are narrowed (e.g., `0 | 1` -> `0`, `true | false` -> `false`).
+    /// Narrows a type by nullishness (like `if (x != null)` or `if (x == null)`).
+    /// If `nullish` is true, returns the nullish part (null | undefined).
+    /// If `nullish` is false, returns the non-nullish part.
+    pub fn narrow_by_nullishness(&self, source_type: TypeId, nullish: bool) -> TypeId {
+        if source_type == TypeId::ANY {
+            return source_type;
+        }
+
+        if source_type == TypeId::UNKNOWN {
+            if nullish {
+                return self.db.union(vec![TypeId::NULL, TypeId::UNDEFINED]);
+            } else {
+                let narrowed = self.narrow_excluding_type(source_type, TypeId::NULL);
+                return self.narrow_excluding_type(narrowed, TypeId::UNDEFINED);
+            }
+        }
+
+        let (non_nullish, null_part) =
+            crate::narrowing_utils::split_nullish_type(self.db, source_type);
+        if nullish {
+            null_part.unwrap_or(TypeId::NEVER)
+        } else {
+            non_nullish.unwrap_or(TypeId::NEVER)
+        }
+    }
+
     pub fn narrow_to_falsy(&self, type_id: TypeId) -> TypeId {
         let _span = span!(Level::TRACE, "narrow_to_falsy", type_id = type_id.0).entered();
 
