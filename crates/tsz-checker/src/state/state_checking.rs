@@ -28,6 +28,21 @@ pub(crate) fn is_strict_mode_reserved_name(name: &str) -> bool {
 }
 
 impl<'a> CheckerState<'a> {
+    fn needs_boxed_type_registration(&self) -> bool {
+        for idx in 0..self.ctx.arena.len() {
+            let node_idx = NodeIndex(idx as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     /// Check a declaration name node for strict mode reserved words.
     /// Emits TS1212 (general strict mode), TS1213 (class context), or TS1214 (module context).
     pub(crate) fn check_strict_mode_reserved_name_at(
@@ -167,7 +182,9 @@ impl<'a> CheckerState<'a> {
             // This enables primitive property access to use lib definitions instead of hardcoded lists
             // IMPORTANT: Must run AFTER build_type_environment() because it replaces the
             // TypeEnvironment, which would erase the boxed/array type registrations.
-            self.register_boxed_types();
+            if self.needs_boxed_type_registration() {
+                self.register_boxed_types();
+            }
 
             // Type check each top-level statement
             // Mark that we're now in the checking phase. During build_type_environment,

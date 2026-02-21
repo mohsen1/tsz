@@ -99,11 +99,21 @@ impl<'a> CheckerState<'a> {
         let (array_type, array_type_params) = self.resolve_lib_type_with_params("Array");
 
         // Pre-compute type parameters for commonly-used generic lib types.
-        // This populates the def_type_params cache so that:
-        // 1. validate_type_reference_type_arguments can check constraints (TS2344)
-        // 2. Application(Lazy(DefId), Args) expansion works in the solver
-        // Without this, cross-arena delegation in get_type_params_for_symbol fails
-        // for lib symbols due to depth guards, causing constraint checks to be skipped.
+        // To reduce startup overhead, only prewarm symbols referenced by this file.
+        // Unreferenced symbols are still resolved lazily through normal lookup paths.
+        let mut referenced_type_names = FxHashSet::default();
+        for idx in 0..self.ctx.arena.len() {
+            let node_idx = NodeIndex(idx as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+                && let Some(identifier) = self.ctx.arena.get_identifier(node)
+            {
+                referenced_type_names.insert(identifier.escaped_text.clone());
+            }
+        }
+
         for type_name in &[
             "ReadonlyArray",
             "Promise",
@@ -139,7 +149,9 @@ impl<'a> CheckerState<'a> {
             "ThisParameterType",
             "OmitThisParameter",
         ] {
-            self.prime_lib_type_params(type_name);
+            if referenced_type_names.contains(*type_name) {
+                self.prime_lib_type_params(type_name);
+            }
         }
 
         // The Array type from lib.d.ts is a Callable with instance methods as properties

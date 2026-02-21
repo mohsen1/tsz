@@ -10,7 +10,10 @@
 
 use crate::context::CheckerOptions;
 use crate::state::CheckerState;
+use std::path::Path;
+use std::sync::Arc;
 use tsz_binder::BinderState;
+use tsz_binder::lib_loader::LibFile;
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeInterner;
 
@@ -51,6 +54,150 @@ fn compile_and_get_diagnostics_with_options(
 /// Helper to check if specific error codes are present
 fn has_error(diagnostics: &[(u32, String)], code: u32) -> bool {
     diagnostics.iter().any(|(c, _)| *c == code)
+}
+
+fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib_paths = [
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("scripts/conformance/node_modules/typescript/lib/lib.esnext.d.ts"),
+        manifest_dir.join("scripts/emit/node_modules/typescript/lib/lib.esnext.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/es2015.d.ts"),
+        manifest_dir.join("TypeScript/src/lib/lib.dom.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("../TypeScript/src/lib/es2015.d.ts"),
+        manifest_dir.join("../TypeScript/src/lib/lib.dom.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/conformance/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../../scripts/emit/node_modules/typescript/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/es5.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/es2015.d.ts"),
+        manifest_dir.join("../../TypeScript/src/lib/lib.dom.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es5.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.es2015.d.ts"),
+        manifest_dir.join("../../TypeScript/node_modules/typescript/lib/lib.dom.d.ts"),
+    ];
+
+    let mut lib_files = Vec::new();
+    for lib_path in &lib_paths {
+        if lib_path.exists()
+            && let Ok(content) = std::fs::read_to_string(lib_path)
+        {
+            let lib_file = LibFile::from_source("lib.d.ts".to_string(), content);
+            lib_files.push(Arc::new(lib_file));
+        }
+    }
+    lib_files
+}
+
+fn compile_and_get_diagnostics_with_lib(source: &str) -> Vec<(u32, String)> {
+    let lib_files = load_lib_files_for_test();
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(parser.get_arena(), root, &lib_files);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+
+    if !lib_files.is_empty() {
+        let lib_contexts: Vec<crate::context::LibContext> = lib_files
+            .iter()
+            .map(|lib| crate::context::LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        checker.ctx.set_lib_contexts(lib_contexts);
+    }
+
+    checker.check_source_file(root);
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+#[test]
+fn test_indexed_access_constrained_type_param_no_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type PropertyType<T extends object, K extends keyof T> = T[K];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2536),
+        "Should not emit TS2536 when index type parameter is constrained by keyof.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_indexed_access_unconstrained_type_param_emits_ts2536() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type BadPropertyType<T extends object, K> = T[K];
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2536),
+        "Should emit TS2536 when type parameter is unconstrained for indexed access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
+    let diagnostics =
+        compile_and_get_diagnostics_with_lib(r#"type ValidRecord = Record<string, number>;"#);
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for valid Record<K, V> usage.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_primitive_property_access_works_with_conditional_boxed_registration() {
+    let diagnostics = compile_and_get_diagnostics_with_lib(
+        r#"
+const upper = "hello".toUpperCase();
+        "#,
+    );
+    assert!(
+        diagnostics.is_empty(),
+        "Expected no diagnostics for primitive string property access.\nActual diagnostics: {diagnostics:#?}"
+    );
 }
 
 /// Helper to compile with `report_unresolved_imports` enabled (for import-related tests)

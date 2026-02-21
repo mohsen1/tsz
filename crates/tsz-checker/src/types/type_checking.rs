@@ -1407,7 +1407,10 @@ impl<'a> CheckerState<'a> {
         }
 
         let keyof_object = self.ctx.types.evaluate_keyof(object_type);
-        if !self.is_assignable_to(index_type, keyof_object) {
+        let index_type_for_check =
+            tsz_solver::type_queries::get_type_parameter_constraint(self.ctx.types, index_type)
+                .unwrap_or(index_type);
+        if !self.is_assignable_to(index_type_for_check, keyof_object) {
             let obj_type_str = self.format_type(object_type);
             let index_type_str = self.format_type(index_type);
 
