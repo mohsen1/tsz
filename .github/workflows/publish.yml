@@ -127,8 +127,13 @@ jobs:
           TAG="v${{ steps.detect.outputs.version }}"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG"
-          git push origin "$TAG"
+          # Skip if tag already exists (e.g. force_publish re-run)
+          if git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            echo "Tag $TAG already exists — skipping"
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
 
   # ──────────────────────────────────────────────────────────────────────────
   # Publish all Rust crates to crates.io
