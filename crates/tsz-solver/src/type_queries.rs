@@ -1912,6 +1912,38 @@ pub fn collect_property_name_atoms_for_diagnostics(
     atoms
 }
 
+/// Collect property names accessible on a type for spelling suggestions.
+///
+/// For union types, only properties present in ALL members are returned (intersection).
+/// This matches tsc: "did you mean" for union access uses only common/accessible properties.
+pub fn collect_accessible_property_names_for_suggestion(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    max_depth: usize,
+) -> Vec<Atom> {
+    if let Some(TypeData::Union(list_id)) = db.lookup(type_id) {
+        let members = db.type_list(list_id).to_vec();
+        if members.is_empty() {
+            return vec![];
+        }
+        let mut common = collect_property_name_atoms_for_diagnostics(db, members[0], max_depth);
+        common.sort_unstable();
+        common.dedup();
+        for &member in &members[1..] {
+            let mut member_props =
+                collect_property_name_atoms_for_diagnostics(db, member, max_depth);
+            member_props.sort_unstable();
+            member_props.dedup();
+            common.retain(|a| member_props.binary_search(a).is_ok());
+            if common.is_empty() {
+                return vec![];
+            }
+        }
+        return common;
+    }
+    collect_property_name_atoms_for_diagnostics(db, type_id, max_depth)
+}
+
 /// Checks if a type is exclusively `null`, `undefined`, or a union of both.
 pub fn is_only_null_or_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {

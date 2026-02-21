@@ -453,7 +453,9 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     let error_reporter_suggestions_src = fs::read_to_string("src/error_reporter/suggestions.rs")
         .expect("failed to read src/error_reporter/suggestions.rs for architecture guard");
     assert!(
-        error_reporter_suggestions_src.contains("collect_property_name_atoms_for_diagnostics("),
+        error_reporter_suggestions_src.contains("collect_property_name_atoms_for_diagnostics(")
+            || error_reporter_suggestions_src
+                .contains("collect_accessible_property_names_for_suggestion("),
         "error_reporter should use query-boundary solver property-name collection helper"
     );
     assert!(
