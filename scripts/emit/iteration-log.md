@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 800
+Count: 801
+- 801: emit alias runtime parity fix
 - 800: run.sh optimization loop
 - 799: run.sh optimization loop
 - 798: run.sh optimization loop
