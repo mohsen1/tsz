@@ -33,6 +33,7 @@ TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-120}"
 SLEEP_SECONDS="${CODEX_LOOP_SLEEP:-2}"
 CONF_QUARTERS="${CODEX_LOOP_CONFORMANCE_QUARTERS:-4}"
 CONF_TOTAL_TESTS="${CODEX_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
+LOG_ROOT="${CODEX_LOOP_LOG_ROOT:-logs/loops/codex}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -122,12 +123,12 @@ else
   REASONING_EFFORT="low"
 fi
 
-mkdir -p logs
+mkdir -p "$LOG_ROOT"
 if [[ -n "$SESSION_ID" ]]; then
-  LOG_FILE="logs/codex-loop.session-${SESSION_ID}.${MODE}.log"
+  LOG_FILE="${LOG_ROOT}/session-${SESSION_ID}.${MODE}.log"
   SESSION_TAG=" session=$SESSION_ID"
 else
-  LOG_FILE="logs/codex-loop.${MODE}.log"
+  LOG_FILE="${LOG_ROOT}/${MODE}.log"
   SESSION_TAG=""
 fi
 
