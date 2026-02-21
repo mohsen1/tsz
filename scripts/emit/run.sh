@@ -113,6 +113,17 @@ resolve_tsc_binary() {
     return 1
 }
 
+write_state_head() {
+    local state_file="$1"
+    local head="$2"
+    [[ -n "$head" ]] || return 0
+    if [[ -f "$state_file" && "$head" == "$(cat "$state_file" 2>/dev/null || true)" ]]; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$state_file")"
+    printf '%s\n' "$head" > "$state_file"
+}
+
 # Resolve tsz binary path for the Node runner
 resolve_tsz_binary() {
     local candidates=()
@@ -187,11 +198,7 @@ ensure_tsz_binary() {
     fi
 
     if [[ "$stale" -eq 0 ]]; then
-        current_head="$ROOT_GIT_HEAD"
-        if [[ -n "$current_head" ]]; then
-            mkdir -p "$(dirname "$state_file")"
-            printf '%s\n' "$current_head" > "$state_file"
-        fi
+        write_state_head "$state_file" "$ROOT_GIT_HEAD"
         return 0
     fi
 
@@ -202,11 +209,7 @@ ensure_tsz_binary() {
             log_error "Failed to resolve tsz binary after rebuild"
             exit 1
         }
-        current_head="$ROOT_GIT_HEAD"
-        if [[ -n "$current_head" ]]; then
-            mkdir -p "$(dirname "$state_file")"
-            printf '%s\n' "$current_head" > "$state_file"
-        fi
+        write_state_head "$state_file" "$ROOT_GIT_HEAD"
     fi
 }
 
@@ -237,11 +240,7 @@ build_runner() {
         fi
 
         if [[ "$stale" -eq 0 ]]; then
-            current_head="$ROOT_GIT_HEAD"
-            if [[ -n "$current_head" ]]; then
-                mkdir -p "$(dirname "$state_file")"
-                printf '%s\n' "$current_head" > "$state_file"
-            fi
+            write_state_head "$state_file" "$ROOT_GIT_HEAD"
             log_success "Runner up to date"
             return 0
         fi
@@ -298,11 +297,7 @@ build_runner() {
         # Use tsc from scripts or emit fallback node_modules.
         "$TSC_BIN" -p tsconfig.json
     )
-    current_head="$ROOT_GIT_HEAD"
-    if [[ -n "$current_head" ]]; then
-        mkdir -p "$(dirname "$state_file")"
-        printf '%s\n' "$current_head" > "$state_file"
-    fi
+    write_state_head "$state_file" "$ROOT_GIT_HEAD"
     log_success "Runner built"
 }
 
