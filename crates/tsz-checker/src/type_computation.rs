@@ -1708,6 +1708,36 @@ impl<'a> CheckerState<'a> {
                     // Evaluate types to resolve unevaluated conditional/mapped types
                     let eval_left = self.evaluate_type_for_binary_ops(left_type);
                     let eval_right = self.evaluate_type_for_binary_ops(right_type);
+                    let right_narrow = self
+                        .literal_type_from_initializer(right_idx)
+                        .unwrap_or(eval_right);
+                    if matches!(op_str, "<<" | ">>" | ">>>")
+                        && let Some(n) = tsz_solver::type_queries_extended::get_number_literal_value(
+                            self.ctx.types,
+                            right_narrow,
+                        )
+                        && n.abs() >= 32.0
+                    {
+                        let left_text = if let Some(left_node) = self.ctx.arena.get(left_idx) {
+                            if let Some(src) = self.ctx.arena.source_files.first() {
+                                src.text
+                                    .get(left_node.pos as usize..left_node.end as usize)
+                                    .unwrap_or("expr")
+                                    .to_string()
+                            } else {
+                                "expr".to_string()
+                            }
+                        } else {
+                            "expr".to_string()
+                        };
+                        let shift_amount = ((n as i64) % 32).to_string();
+                        self.error_at_node_msg(
+                                    node_idx,
+                                    crate::diagnostics::diagnostic_codes::THIS_OPERATION_CAN_BE_SIMPLIFIED_THIS_SHIFT_IS_IDENTICAL_TO,
+                                    &[&left_text, op_str, &shift_amount],
+                                );
+                    }
+
                     let result = evaluator.evaluate(eval_left, eval_right, op_str);
                     let result_type = match result {
                         BinaryOpResult::Success(result_type) => result_type,
