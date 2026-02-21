@@ -276,10 +276,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 };
 
                 // If parameter has an initializer in an ambient function, emit TS2371
+                // TSC anchors the error at the parameter name, not the whole parameter.
                 if param.initializer.is_some() {
+                    let name_node = self.ctx.arena.get(param.name).unwrap_or(param_node);
                     self.ctx.error(
-                        param_node.pos,
-                        param_node.end - param_node.pos,
+                        name_node.pos,
+                        name_node.end - name_node.pos,
                         "A parameter initializer is only allowed in a function or constructor implementation.".to_string(),
                         2371, // TS2371
                     );
