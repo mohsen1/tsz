@@ -320,14 +320,14 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(SPREAD_ARRAY_HELPER);
         output.push('\n');
     }
-    if helpers.import_default {
-        output.push_str(IMPORT_DEFAULT_HELPER);
-        output.push('\n');
-    }
     if helpers.import_star {
         output.push_str(SET_MODULE_DEFAULT_HELPER);
         output.push('\n');
         output.push_str(IMPORT_STAR_HELPER);
+        output.push('\n');
+    }
+    if helpers.import_default {
+        output.push_str(IMPORT_DEFAULT_HELPER);
         output.push('\n');
     }
     if helpers.export_star {

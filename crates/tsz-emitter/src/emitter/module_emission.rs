@@ -8,7 +8,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
-    fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
+    pub(super) fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         use crate::transforms::module_commonjs;
 
         let base = module_commonjs::sanitize_module_name(module_spec);
@@ -259,6 +259,12 @@ impl<'a> Printer<'a> {
         };
 
         let Some(clause_node) = self.arena.get(import.import_clause) else {
+            if matches!(
+                self.ctx.original_module_kind,
+                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+            ) {
+                return;
+            }
             // Side-effect import: import "module"; -> emit require
             let module_spec = if let Some(spec_node) = self.arena.get(import.module_specifier) {
                 if let Some(lit) = self.arena.get_literal(spec_node) {
@@ -294,6 +300,15 @@ impl<'a> Printer<'a> {
         } else {
             return;
         };
+
+        // Wrapped module formats bind imports via wrapper parameters/setters.
+        // Suppress per-statement CommonJS `require(...)` emission in the body.
+        if matches!(
+            self.ctx.original_module_kind,
+            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        ) {
+            return;
+        }
 
         let mut has_value_binding = clause.name.is_some();
         let mut named_bindings_all_type_only = false;
@@ -678,6 +693,75 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             self.emit(clause.named_bindings);
+        }
+    }
+
+    pub(super) fn emit_wrapped_import_interop_prologue(
+        &mut self,
+        statements: &tsz_parser::parser::NodeList,
+    ) {
+        if !matches!(
+            self.ctx.original_module_kind,
+            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        ) {
+            return;
+        }
+
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if !self.import_decl_has_runtime_value(import_decl) {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+
+            if clause.name.is_some() {
+                let local_name = self.get_identifier_text_idx(clause.name);
+                if !local_name.is_empty()
+                    && let Some(subst) = self
+                        .commonjs_named_import_substitutions
+                        .get(local_name.as_str())
+                    && let Some(dep_var) = subst.strip_suffix(".default")
+                {
+                    let dep_var = dep_var.to_string();
+                    self.write(&dep_var);
+                    self.write(" = __importDefault(");
+                    self.write(&dep_var);
+                    self.write(");");
+                    self.write_line();
+                }
+            }
+
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                && named_imports.name.is_some()
+                && named_imports.elements.nodes.is_empty()
+            {
+                let local_name = self.get_identifier_text_idx(named_imports.name);
+                if !local_name.is_empty() {
+                    self.write(&local_name);
+                    self.write(" = __importStar(");
+                    self.write(&local_name);
+                    self.write(");");
+                    self.write_line();
+                }
+            }
         }
     }
 
