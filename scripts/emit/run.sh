@@ -175,7 +175,7 @@ status_path_matches_prefixes() {
 
 cache_contains_watched_changes() {
     local -n prefixes_ref="$1"
-    local raw_path raw_left raw_right
+    local raw_line raw_path raw_left raw_right
 
     if [[ -z "$ROOT_GIT_STATUS_OUTPUT" ]]; then
         return 1
@@ -249,7 +249,6 @@ ensure_tsz_binary() {
 
     local tsz_bin="$TSZ_BIN"
     local stale=0
-    local current_head
     local state_file="$(dirname "$tsz_bin")/.tsz_binary_head"
 
     if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
@@ -292,7 +291,6 @@ ensure_tsz_binary() {
 build_runner() {
     local dist_runner="$SCRIPT_DIR/dist/runner.js"
     local stale=0
-    local current_head
     local state_file="$(dirname "$dist_runner")/.runner_build_head"
 
     if [[ ! -f "$dist_runner" ]]; then
