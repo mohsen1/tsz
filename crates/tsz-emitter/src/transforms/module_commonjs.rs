@@ -94,6 +94,9 @@ fn collect_export_name_from_declaration(
                 if has_declare_modifier_from_list(arena, &module.modifiers) {
                     return;
                 }
+                if !is_instantiated_module_for_exports(arena, module.body) {
+                    return;
+                }
                 if let Some(name) = get_identifier_text(arena, module.name) {
                     exports.push(name);
                 }
@@ -209,6 +212,7 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
                 if let Some(module) = arena.get_module(node)
                     && has_export_modifier_from_list(arena, &module.modifiers)
                     && !has_declare_modifier_from_list(arena, &module.modifiers)
+                    && is_instantiated_module_for_exports(arena, module.body)
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
                     exports.push(name);
@@ -453,6 +457,81 @@ fn has_export_modifier_from_list(
     modifiers: &Option<tsz_parser::parser::NodeList>,
 ) -> bool {
     has_modifier(arena, modifiers, SyntaxKind::ExportKeyword as u16)
+}
+
+fn is_instantiated_module_for_exports(arena: &NodeArena, module_body: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(module_body) else {
+        return false;
+    };
+
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION
+        && let Some(inner_module) = arena.get_module(body_node)
+    {
+        return is_instantiated_module_for_exports(arena, inner_module.body);
+    }
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        return false;
+    }
+
+    if let Some(block) = arena.get_module_block(body_node)
+        && let Some(stmts) = &block.statements
+    {
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if !is_type_only_module_statement(arena, stmt_node) {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> bool {
+    match node.kind {
+        k if k == syntax_kind_ext::INTERFACE_DECLARATION
+            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+        {
+            true
+        }
+        k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+            if let Some(import_decl) = arena.get_import_decl(node)
+                && let Some(clause_node) = arena.get(import_decl.import_clause)
+                && let Some(clause) = arena.get_import_clause(clause_node)
+            {
+                return clause.is_type_only;
+            }
+            false
+        }
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+            if let Some(export_decl) = arena.get_export_decl(node) {
+                if export_decl.is_type_only {
+                    return true;
+                }
+                if let Some(inner_node) = arena.get(export_decl.export_clause) {
+                    return is_type_only_module_statement(arena, inner_node);
+                }
+            }
+            false
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            if let Some(enum_decl) = arena.get_enum(node) {
+                return has_declare_modifier_from_list(arena, &enum_decl.modifiers)
+                    || has_const_modifier_from_list(arena, &enum_decl.modifiers);
+            }
+            false
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            if let Some(module_decl) = arena.get_module(node) {
+                return has_declare_modifier_from_list(arena, &module_decl.modifiers)
+                    || !is_instantiated_module_for_exports(arena, module_decl.body);
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Check if a node has the `declare` modifier

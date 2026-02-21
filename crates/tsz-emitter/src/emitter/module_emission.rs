@@ -1345,8 +1345,15 @@ impl<'a> Printer<'a> {
                         let from = format!("({name} || ({name} = {{}}))");
                         let to = format!("({name} || (exports.{name} = {name} = {{}}))");
                         output = output.replacen(&from, &to, 1);
-                        self.write(output.trim_end_matches('\n'));
-                        self.write_line();
+                        let mut emit_text = output.trim_end_matches('\n');
+                        while let Some((first, rest)) = emit_text.split_once('\n') {
+                            if first.trim().is_empty() {
+                                emit_text = rest;
+                                continue;
+                            }
+                            break;
+                        }
+                        self.write(emit_text);
                     } else {
                         self.emit_enum_declaration(clause_node, export.export_clause);
                         self.write_line();

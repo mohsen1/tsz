@@ -378,7 +378,11 @@ var r = foo({ bar: 1, baz: '' });
         .filter(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .collect();
 
-    assert_eq!(errors.len(), 1, "Expected exactly one TS2322 diagnostic, got: {errors:?}");
+    assert_eq!(
+        errors.len(),
+        1,
+        "Expected exactly one TS2322 diagnostic, got: {errors:?}"
+    );
     let diag = errors[0];
     assert_eq!(
         diag.message_text,
@@ -389,8 +393,7 @@ var r = foo({ bar: 1, baz: '' });
         .find("baz: ''")
         .expect("expected test snippet to contain baz property");
     assert_eq!(
-        diag.start,
-        expected_start as u32,
+        diag.start, expected_start as u32,
         "Expected TS2322 on baz property node at offset {expected_start}"
     );
 }

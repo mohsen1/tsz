@@ -110,7 +110,6 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
-
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if self.should_suppress_assignability_diagnostic(source, target) {
             if tracing::enabled!(Level::TRACE) {
