@@ -46,7 +46,7 @@ Options:
   --workers N       Number of parallel workers (default: 16)
   --max N           Maximum number of tests to run (default: all)
   --offset N        Skip first N tests (default: 0)
-  --verbose         Show per-test results
+  --verbose         Show per-test results and print failing test file bodies (max 100 failures)
   --compare-fingerprints  Compare full diagnostic fingerprints (requires regenerated cache)
   --print-fingerprints    Print fingerprint deltas for failed tests
   --filter PAT      Filter test files by pattern
@@ -405,14 +405,13 @@ run_tests() {
         extra_args+=("$arg")
     done
 
-    # Always capture expected/actual/config (needed for last 10 failing tests section)
     extra_args+=(--print-test)
     local show_per_test=$verbose
     if [ "$print_fingerprints" = true ]; then
         show_per_test=true
     fi
 
-    # Always capture output to extract failing tests and their details
+    # Capture output to extract failing tests when --verbose is set
     local tmpfile
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" EXIT
@@ -426,91 +425,95 @@ run_tests() {
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
         --print-test-files \
-        "${extra_args[@]}"
+        "${extra_args[@]}" | tee "$tmpfile"
 
     local output
     output=$(cat "$tmpfile")
 
-    # Extract failing test paths (up to 10) from captured output
-    local failing_tests=()
-    while IFS= read -r line; do
-        if [[ "$line" =~ ^FAIL[[:space:]]+(.+) ]]; then
-            local rel_path="${BASH_REMATCH[1]}"
-            local test_path="$REPO_ROOT/$rel_path"
-            if [ -f "$test_path" ]; then
-                failing_tests+=("$test_path")
-                if [ ${#failing_tests[@]} -ge 10 ]; then
-                    break
+    # Only print failing test file bodies when --verbose is set
+    if [ "$verbose" = true ]; then
+        # Extract failing test paths from captured output
+        local failing_tests=()
+        local total_failing=0
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^FAIL[[:space:]]+(.+) ]]; then
+                total_failing=$((total_failing + 1))
+                local rel_path="${BASH_REMATCH[1]}"
+                local test_path="$REPO_ROOT/$rel_path"
+                if [ -f "$test_path" ]; then
+                    failing_tests+=("$test_path")
                 fi
             fi
-        fi
-    done <<< "$output"
+        done <<< "$output"
 
-    # Print test file contents with expected/actual/config for first 10 failing tests
-    if [ ${#failing_tests[@]} -gt 0 ]; then
-        echo ""
-        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-        echo -e "${YELLOW}Test File Contents (${#failing_tests[@]} failing tests)${NC}"
-        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
-        echo ""
-
-        for test_file in "${failing_tests[@]}"; do
-            local rel_path="${test_file#$REPO_ROOT/}"
-            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            echo -e "${GREEN}File: $rel_path${NC}"
-            
-            # Extract expected, actual, and config values for this test
-            local expected=""
-            local actual=""
-            local config=""
-            local in_test_block=false
-            while IFS= read -r line; do
-                # Match FAIL line with this test path (may have additional text after path)
-                if [[ "$line" =~ ^FAIL[[:space:]]+$rel_path(.*)$ ]]; then
-                    in_test_block=true
-                    continue
-                fi
-                if [ "$in_test_block" = true ]; then
-                    # Stop at next test result line
-                    if [[ "$line" =~ ^FAIL[[:space:]]+ ]] || [[ "$line" =~ ^PASS[[:space:]]+ ]] || [[ "$line" =~ ^SKIP[[:space:]]+ ]]; then
-                        break
-                    fi
-                    # Extract expected/actual/options values (indented with 2 spaces)
-                    if [[ "$line" =~ ^[[:space:]][[:space:]]expected:[[:space:]]+(.+) ]]; then
-                        expected="${BASH_REMATCH[1]}"
-                    elif [[ "$line" =~ ^[[:space:]][[:space:]]actual:[[:space:]]+(.+) ]]; then
-                        actual="${BASH_REMATCH[1]}"
-                    elif [[ "$line" =~ ^[[:space:]][[:space:]]options:[[:space:]]+(.+) ]]; then
-                        config="${BASH_REMATCH[1]}"
-                    fi
-                fi
-            done <<< "$output"
-            
-            # Print verbose expected, actual, and config values
-            if [ -n "$expected" ] || [ -n "$actual" ] || [ -n "$config" ]; then
-                echo ""
-                if [ -n "$expected" ]; then
-                    echo -e "  ${YELLOW}expected:${NC} $expected"
-                fi
-                if [ -n "$actual" ]; then
-                    echo -e "  ${YELLOW}actual:${NC} $actual"
-                fi
-                if [ -n "$config" ]; then
-                    echo -e "  ${YELLOW}config:${NC} $config"
-                fi
-            fi
-            
-            echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-            cat "$test_file"
+        if [ "$total_failing" -gt 100 ]; then
             echo ""
-        done
+            echo -e "${YELLOW}Skipping test file output: $total_failing failing tests exceeds limit of 100.${NC}"
+            echo -e "${YELLOW}Use --filter or --max to narrow down the test set first.${NC}"
+        elif [ ${#failing_tests[@]} -gt 0 ]; then
+            # Cap display at 10 files
+            local display_tests=("${failing_tests[@]:0:10}")
 
-        echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+            echo ""
+            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+            echo -e "${YELLOW}Test File Contents (${#display_tests[@]} of ${#failing_tests[@]} failing tests)${NC}"
+            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+            echo ""
+
+            for test_file in "${display_tests[@]}"; do
+                local rel_path="${test_file#$REPO_ROOT/}"
+                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                echo -e "${GREEN}File: $rel_path${NC}"
+
+                # Extract expected, actual, and config values for this test
+                local expected=""
+                local actual=""
+                local config=""
+                local in_test_block=false
+                while IFS= read -r line; do
+                    # Match FAIL line with this test path (may have additional text after path)
+                    if [[ "$line" =~ ^FAIL[[:space:]]+$rel_path(.*)$ ]]; then
+                        in_test_block=true
+                        continue
+                    fi
+                    if [ "$in_test_block" = true ]; then
+                        # Stop at next test result line
+                        if [[ "$line" =~ ^FAIL[[:space:]]+ ]] || [[ "$line" =~ ^PASS[[:space:]]+ ]] || [[ "$line" =~ ^SKIP[[:space:]]+ ]]; then
+                            break
+                        fi
+                        # Extract expected/actual/options values (indented with 2 spaces)
+                        if [[ "$line" =~ ^[[:space:]][[:space:]]expected:[[:space:]]+(.+) ]]; then
+                            expected="${BASH_REMATCH[1]}"
+                        elif [[ "$line" =~ ^[[:space:]][[:space:]]actual:[[:space:]]+(.+) ]]; then
+                            actual="${BASH_REMATCH[1]}"
+                        elif [[ "$line" =~ ^[[:space:]][[:space:]]options:[[:space:]]+(.+) ]]; then
+                            config="${BASH_REMATCH[1]}"
+                        fi
+                    fi
+                done <<< "$output"
+
+                # Print verbose expected, actual, and config values
+                if [ -n "$expected" ] || [ -n "$actual" ] || [ -n "$config" ]; then
+                    echo ""
+                    if [ -n "$expected" ]; then
+                        echo -e "  ${YELLOW}expected:${NC} $expected"
+                    fi
+                    if [ -n "$actual" ]; then
+                        echo -e "  ${YELLOW}actual:${NC} $actual"
+                    fi
+                    if [ -n "$config" ]; then
+                        echo -e "  ${YELLOW}config:${NC} $config"
+                    fi
+                fi
+
+                echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+                cat "$test_file"
+                echo ""
+            done
+
+            echo -e "${YELLOW}════════════════════════════════════════════════════════════${NC}"
+        fi
     fi
-
-    # Print final results block LAST
-    echo ""
-    sed -n '/^=\{10,\}/,/^=\{10,\}/p' "$tmpfile" 2>/dev/null || true
 
     rm -f "$tmpfile"
 
