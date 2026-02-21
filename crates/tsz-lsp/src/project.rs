@@ -5,7 +5,7 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 

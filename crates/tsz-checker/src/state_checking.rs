@@ -2,13 +2,13 @@
 
 use crate::state::CheckerState;
 use crate::statements::StatementChecker;
-use std::time::Instant;
 use tracing::{Level, span};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use web_time::Instant;
 
 /// Check if a name is a strict mode reserved word (ES5 §7.6.1.2).
 /// These identifiers cannot be used as variable/function/class names in strict mode.
