@@ -212,6 +212,9 @@ impl<'a> CheckerState<'a> {
             // Check for export assignment with other exports (2309)
             self.check_export_assignment(&sf.statements.nodes);
 
+            // Check for circular import aliases (2303)
+            self.check_circular_import_aliases();
+
             // Check for TS1148: module none errors
             if matches!(
                 self.ctx.compiler_options.module,
