@@ -49,7 +49,7 @@ language service feature coverage (completions, quickinfo, go-to-definition, etc
 
 <!-- FOURSLASH_START -->
 ```
-Progress: [███░░░░░░░░░░░░░░░░░] 14.6% (957 / 6,564 tests)
+Progress: [███░░░░░░░░░░░░░░░░░] 16.7% (1,094 / 6,564 tests)
 ```
 <!-- FOURSLASH_END -->
 
