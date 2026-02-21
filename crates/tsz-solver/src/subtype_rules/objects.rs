@@ -417,7 +417,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 SubtypeResult::True
             }
             None => {
-                // Target has string index, source doesn't
+                // Target has string index, source doesn't have a string index.
+                // Check if source has a number index — in TypeScript, a numeric index
+                // signature implies a string index (JS converts numeric keys to strings).
+                // So `{ [n: number]: T }` is assignable to `{ [s: string]: T }` when
+                // the value types are compatible.
+                if let Some(s_number_idx) = &source.number_index {
+                    if s_number_idx.readonly && !t_string_idx.readonly {
+                        return SubtypeResult::False;
+                    }
+                    return self.check_subtype(s_number_idx.value_type, t_string_idx.value_type);
+                }
+
                 // All source properties must be compatible with target's string index.
                 // Implicit Index Signature Rule: Source must have at least one property
                 // to satisfy the index signature requirement implicitly.
