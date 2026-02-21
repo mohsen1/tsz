@@ -68,6 +68,15 @@ if [ "$DRY_RUN" -eq 1 ]; then
 else
     echo "==> Publishing @mohsen-azimi/tsz-dev to npm..."
     cd "$PKG"
-    npm publish --access public
-    echo "==> Published successfully!"
+    if npm publish --access public 2>&1; then
+        echo "==> Published successfully!"
+    else
+        # Check if it failed because the version already exists (E403)
+        if npm view "@mohsen-azimi/tsz-dev" version 2>/dev/null | grep -q "$(node -p "require('./package.json').version")"; then
+            echo "==> Version already published — skipping (OK)"
+        else
+            echo "==> npm publish failed"
+            exit 1
+        fi
+    fi
 fi
