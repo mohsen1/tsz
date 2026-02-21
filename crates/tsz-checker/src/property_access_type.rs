@@ -290,7 +290,12 @@ impl<'a> CheckerState<'a> {
             if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                 let property_name = &ident.escaped_text;
                 if !property_name.starts_with('#') {
-                    self.error_property_not_exist_at(property_name, TypeId::NEVER, idx);
+                    // Report at the property name node, not the full expression (matches tsc behavior)
+                    self.error_property_not_exist_at(
+                        property_name,
+                        TypeId::NEVER,
+                        access.name_or_argument,
+                    );
                 }
             }
             return TypeId::NEVER;
@@ -414,7 +419,12 @@ impl<'a> CheckerState<'a> {
                 && !self.is_enum_instance_property_access(object_type, access.expression)
             {
                 if !access.question_dot_token && !property_name.starts_with('#') {
-                    self.error_property_not_exist_at(property_name, original_object_type, idx);
+                    // Report at the property name node, not the full expression (matches tsc behavior)
+                    self.error_property_not_exist_at(
+                        property_name,
+                        original_object_type,
+                        access.name_or_argument,
+                    );
                 }
                 return TypeId::ERROR;
             }
@@ -576,8 +586,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                             &[property_name, &object_type_str, &static_member_name],
                         );
+                        // Report at the property name node, not the full expression (matches tsc behavior)
                         self.error_at_node(
-                            idx,
+                            access.name_or_argument,
                             &message,
                             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                         );
@@ -603,8 +614,9 @@ impl<'a> CheckerState<'a> {
                             diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                             &[property_name, &object_type_str, &static_member_name],
                         );
+                        // Report at the property name node, not the full expression (matches tsc behavior)
                         self.error_at_node(
-                            idx,
+                            access.name_or_argument,
                             &message,
                             diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE_DID_YOU_MEAN_TO_ACCESS_THE_STATIC_MEMBER_INSTEAD,
                         );
@@ -617,7 +629,12 @@ impl<'a> CheckerState<'a> {
                         // TS2694 (namespace has no exported member) is for TYPE context only,
                         // which is handled separately in type name resolution.
                         // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                        self.error_property_not_exist_at(property_name, original_object_type, idx);
+                        // Report at the property name node, not the full expression (matches tsc behavior)
+                        self.error_property_not_exist_at(
+                            property_name,
+                            original_object_type,
+                            access.name_or_argument,
+                        );
                     }
                     TypeId::ERROR
                 }
@@ -748,7 +765,12 @@ impl<'a> CheckerState<'a> {
                 PropertyAccessResult::IsUnknown => {
                     // TS2339: Property does not exist on type 'unknown'
                     // Use the same error as TypeScript for property access on unknown
-                    self.error_property_not_exist_at(property_name, object_type_for_access, idx);
+                    // Report at the property name node, not the full expression (matches tsc behavior)
+                    self.error_property_not_exist_at(
+                        property_name,
+                        object_type_for_access,
+                        access.name_or_argument,
+                    );
                     TypeId::ERROR
                 }
             }
