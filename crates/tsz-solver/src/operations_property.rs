@@ -269,6 +269,14 @@ impl<'a> PropertyAccessEvaluator<'a> {
                                 .unwrap_or_else(|| self.interner().intern_string(prop_name));
                             Some(self.resolve_symbol_primitive_property(prop_name, prop_atom_inner))
                         }
+                        IntrinsicKind::Never => {
+                            let prop_atom_inner = prop_atom
+                                .unwrap_or_else(|| self.interner().intern_string(prop_name));
+                            Some(PropertyAccessResult::PropertyNotFound {
+                                type_id: obj_type,
+                                property_name: prop_atom_inner,
+                            })
+                        }
                         _ => None,
                     }
                 }
