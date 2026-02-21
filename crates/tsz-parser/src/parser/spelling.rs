@@ -90,7 +90,7 @@ pub const VIABLE_KEYWORD_SUGGESTIONS: &[&str] = &[
 pub fn get_spelling_suggestion<'a>(name: &str, candidates: &[&'a str]) -> Option<&'a str> {
     let name_len = name.len();
     let max_length_diff = (name_len * 34 / 100).max(2);
-    let mut best_distance = name_len * 4 + 10;
+    let mut best_distance = (name_len * 4 / 10) * 10 + 10;
     let mut best_candidate: Option<&str> = None;
 
     for &candidate in candidates {
