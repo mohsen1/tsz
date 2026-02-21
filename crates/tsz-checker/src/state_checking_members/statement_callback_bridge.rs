@@ -606,7 +606,31 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // Check the wrapped declaration
             if !export_decl.export_clause.is_none() {
                 let clause_idx = export_decl.export_clause;
+                let mut expected_type = None;
+                let mut prev_context = None;
+                if export_decl.is_default_export {
+                    expected_type = self.jsdoc_type_annotation_for_node(export_idx);
+                    if let Some(et) = expected_type {
+                        prev_context = self.ctx.contextual_type;
+                        self.ctx.contextual_type = Some(et);
+                    }
+                }
+
                 self.check_statement(clause_idx);
+
+                if let Some(et) = expected_type {
+                    let actual_type = self.get_type_of_node(clause_idx);
+                    self.ctx.contextual_type = prev_context;
+                    self.check_assignable_or_report(actual_type, et, clause_idx);
+                    if let Some(expr_node) = self.ctx.arena.get(clause_idx)
+                        && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                            self.check_object_literal_excess_properties(
+                                actual_type,
+                                et,
+                                clause_idx,
+                            );
+                        }
+                }
 
                 if export_decl.module_specifier.is_none()
                     && self
@@ -616,50 +640,6 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS)
                 {
                     self.check_local_named_exports(clause_idx);
-                }
-
-                let is_inline_object_literal =
-                    self.ctx.arena.get(clause_idx).is_some_and(|clause_node| {
-                        if clause_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                            return true;
-                        }
-                        if clause_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                            && let Some(paren) = self.ctx.arena.get_parenthesized(clause_node)
-                        {
-                            return self
-                                .ctx
-                                .arena
-                                .get(paren.expression)
-                                .is_some_and(|expr_node| {
-                                    expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                });
-                        }
-                        false
-                    });
-
-                if self.is_js_file()
-                    && let Some(expected_type) = self.jsdoc_type_annotation_for_node(export_idx)
-                {
-                    let source_type = self.get_type_of_node(clause_idx);
-                    if is_inline_object_literal
-                        && self.object_literal_has_excess_properties(
-                            source_type,
-                            expected_type,
-                            clause_idx,
-                        )
-                    {
-                        self.check_object_literal_excess_properties(
-                            source_type,
-                            expected_type,
-                            clause_idx,
-                        );
-                    } else if !self.check_assignable_or_report(
-                        source_type,
-                        expected_type,
-                        clause_idx,
-                    ) {
-                        // Diagnostic emitted by check_assignable_or_report.
-                    }
                 }
             }
         }

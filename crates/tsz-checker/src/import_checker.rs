@@ -940,6 +940,30 @@ impl<'a> CheckerState<'a> {
                                 diagnostic_codes::THE_EXPRESSION_OF_AN_EXPORT_ASSIGNMENT_MUST_BE_AN_IDENTIFIER_OR_QUALIFIED_NAME_I,
                             );
                         } else {
+                            if let Some(expected_type) =
+                                self.jsdoc_type_annotation_for_node(stmt_idx)
+                            {
+                                let prev_context = self.ctx.contextual_type;
+                                self.ctx.contextual_type = Some(expected_type);
+                                let actual_type = self.get_type_of_node(export_data.expression);
+                                self.ctx.contextual_type = prev_context;
+                                self.check_assignable_or_report(
+                                    actual_type,
+                                    expected_type,
+                                    export_data.expression,
+                                );
+                                if let Some(expr_node) = self.ctx.arena.get(export_data.expression)
+                                    && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                                    {
+                                        self.check_object_literal_excess_properties(
+                                            actual_type,
+                                            expected_type,
+                                            export_data.expression,
+                                        );
+                                    }
+                            } else {
+                                self.get_type_of_node(export_data.expression);
+                            }
                             self.get_type_of_node(export_data.expression);
                         }
                     }

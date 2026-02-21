@@ -166,6 +166,7 @@ pub fn prepare_test_dir(
                 // checkJs implies allowJs in tsc test harness behavior, even when
                 // @allowJs:false is present.
                 map.insert("allowJs".to_string(), serde_json::Value::Bool(true));
+                map.insert("checkJs".to_string(), serde_json::Value::Bool(true));
             } else if allow_js {
                 map.entry("allowJs")
                     .or_insert(serde_json::Value::Bool(true));
