@@ -495,7 +495,7 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
                                 );
                             }
-                        } else if exports_table.has("default") || exports_table.has("export=") {
+                        } else if exports_table.has("default") {
                             // TS2614: Symbol doesn't exist but a default export does
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
@@ -630,17 +630,20 @@ impl<'a> CheckerState<'a> {
         // Check if the symbol exists in the binder's file-level symbol table
         // (not just the arena, which doesn't include all declarations)
         let mut symbol_exists = binder.file_locals.has(import_name);
-        if symbol_exists
-            && let Some(sym_id) = binder.file_locals.get(import_name)
-            && let Some(sym) = self.get_symbol_globally(sym_id)
-            && let Some(augs) = self.ctx.binder.global_augmentations.get(import_name)
-        {
-            let all_are_global = sym
-                .declarations
-                .iter()
-                .all(|d| augs.iter().any(|a| a.node == *d));
-            if all_are_global {
+        if symbol_exists && let Some(sym_id) = binder.file_locals.get(import_name) {
+            if binder.get_symbol(sym_id).is_none() {
+                // Symbol doesn't belong to this binder (it's a global/lib symbol)
                 symbol_exists = false;
+            } else if let Some(sym) = binder.get_symbol(sym_id)
+                && let Some(augs) = self.ctx.binder.global_augmentations.get(import_name)
+            {
+                let all_are_global = sym
+                    .declarations
+                    .iter()
+                    .all(|d| augs.iter().any(|a| a.node == *d));
+                if all_are_global {
+                    symbol_exists = false;
+                }
             }
         }
         tracing::trace!(symbol_exists, "Checked if symbol exists in binder");
