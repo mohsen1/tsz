@@ -193,11 +193,13 @@ impl<'a> ScopeWalker<'a> {
             if let Some(stats) = stats.as_deref_mut() {
                 stats.record_hit();
             }
-            return Self::resolve_name_in_scopes(scopes, name);
+            return Self::resolve_name_in_scopes(scopes, name)
+                .or_else(|| self.binder.resolve_identifier(self.arena, target));
         }
 
         let scopes = self.get_scope_chain(root, target);
-        let symbol_id = Self::resolve_name_in_scopes(&scopes, name);
+        let symbol_id = Self::resolve_name_in_scopes(&scopes, name)
+            .or_else(|| self.binder.resolve_identifier(self.arena, target));
         cache.insert(target.0, scopes);
         if let Some(stats) = stats {
             stats.record_miss();
@@ -1430,7 +1432,9 @@ impl<'a> ScopeWalker<'a> {
             if let Some(node) = self.arena.get(current) {
                 if node.kind == SyntaxKind::Identifier as u16 {
                     if let Some(text) = self.arena.get_identifier_text(current) {
-                        return self.resolve_name(text);
+                        return self
+                            .resolve_name(text)
+                            .or_else(|| self.binder.resolve_identifier(self.arena, current));
                     }
                 } else if node.kind == SyntaxKind::PrivateIdentifier as u16 {
                     return self.binder.resolve_identifier(self.arena, current);

@@ -590,7 +590,11 @@ impl Server {
         &self,
         file_path: &str,
     ) -> Option<(NodeArena, BinderState, NodeIndex, String)> {
-        let content = self.open_files.get(file_path)?.clone();
+        let content = self
+            .open_files
+            .get(file_path)
+            .cloned()
+            .or_else(|| std::fs::read_to_string(file_path).ok())?;
         let mut parser = ParserState::new(file_path.to_string(), content.clone());
         let root = parser.parse_source_file();
         let arena = parser.into_arena();
@@ -626,8 +630,13 @@ impl Server {
         info: &tsz::lsp::definition::DefinitionInfo,
         file: &str,
     ) -> serde_json::Value {
+        let out_file = if info.location.file_path.is_empty() {
+            file.to_string()
+        } else {
+            info.location.file_path.clone()
+        };
         let mut result = serde_json::json!({
-            "file": file,
+            "file": out_file,
             "start": Self::lsp_to_tsserver_position(info.location.range.start),
             "end": Self::lsp_to_tsserver_position(info.location.range.end),
             "kind": info.kind,
@@ -637,8 +646,10 @@ impl Server {
             "isLocal": info.is_local,
             "isAmbient": info.is_ambient,
             "unverified": false,
-            "failedAliasResolution": false,
         });
+        if info.kind == "alias" {
+            result["failedAliasResolution"] = serde_json::json!(false);
+        }
         if let Some(ref ctx) = info.context_span {
             result["contextStart"] = Self::lsp_to_tsserver_position(ctx.start);
             result["contextEnd"] = Self::lsp_to_tsserver_position(ctx.end);
