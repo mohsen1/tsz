@@ -608,6 +608,20 @@ impl ParserState {
         // Parse first parameter, handling malformed forms
         let param_start = self.token_pos();
 
+        // TS1018: accessibility modifier on parameter
+        let mut param_modifiers = Vec::new();
+        while self.is_valid_parameter_modifier() {
+            param_modifiers.push(
+                self.arena
+                    .create_modifier(self.current_token, self.token_pos()),
+            );
+            self.parse_error_at_current_token(
+                "An index signature parameter cannot have an accessibility modifier.",
+                diagnostic_codes::AN_INDEX_SIGNATURE_PARAMETER_CANNOT_HAVE_AN_ACCESSIBILITY_MODIFIER,
+            );
+            self.next_token();
+        }
+
         // TS1017: rest parameter in index signature
         let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
         if dot_dot_dot_token {
@@ -718,7 +732,10 @@ impl ParserState {
         // Index signatures must have a type annotation (TS1021).
         // Suppress when the parameter type is already invalid (TS1268),
         // or when other index signature errors were already emitted — matches tsc behavior.
-        let has_param_errors = dot_dot_dot_token || question_token || has_multiple_params;
+        let has_param_errors = dot_dot_dot_token
+            || question_token
+            || has_multiple_params
+            || !param_modifiers.is_empty();
         let type_annotation = if self.parse_optional(SyntaxKind::ColonToken) {
             self.parse_type()
         } else if !has_invalid_param_type && !has_param_errors {
@@ -736,7 +753,11 @@ impl ParserState {
             param_start,
             param_end,
             ParameterData {
-                modifiers: None,
+                modifiers: if param_modifiers.is_empty() {
+                    None
+                } else {
+                    Some(self.make_node_list(param_modifiers))
+                },
                 dot_dot_dot_token,
                 name: param_name,
                 question_token,

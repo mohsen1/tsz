@@ -523,6 +523,14 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        if self.has_parameter_property_modifier(&param_data.modifiers) {
+            self.error_at_node(
+                param_idx,
+                "A parameter property is only allowed in a constructor implementation.",
+                diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
+            );
+        }
+
         // No type annotation means implicit any, which is allowed
         if param_data.type_annotation.is_none() {
             return;
