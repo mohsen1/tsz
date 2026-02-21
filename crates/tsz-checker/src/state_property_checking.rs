@@ -127,6 +127,55 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+
+        // Handle intersection targets
+        if let Some(members) = tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_target) {
+            let mut target_shapes = Vec::new();
+
+            for &member in members.iter() {
+                let resolved_member = self.resolve_type_for_property_access(member);
+                if let Some(shape) = query::object_shape(self.ctx.types, resolved_member) {
+                    if shape.string_index.is_some() || shape.number_index.is_some() {
+                        return;
+                    }
+                    target_shapes.push(shape.clone());
+                }
+            }
+
+            if target_shapes.is_empty() {
+                return;
+            }
+
+            for source_prop in source_props {
+                // For intersections, property exists if it's in ANY member's shape
+                let mut found = false;
+                let mut nested_target_types = Vec::new();
+
+                for shape in &target_shapes {
+                    if let Some(prop) = shape.properties.iter().find(|p| p.name == source_prop.name) {
+                        found = true;
+                        nested_target_types.push(prop.type_id);
+                    }
+                }
+
+                if !found {
+                    let prop_name = self.ctx.types.resolve_atom(source_prop.name);
+                    self.error_excess_property_at(&prop_name, target, idx);
+                } else {
+                    let nested_target = tsz_solver::utils::intersection_or_single(
+                        self.ctx.types,
+                        nested_target_types,
+                    );
+                    self.check_nested_object_literal_excess_properties(
+                        source_prop.name,
+                        Some(nested_target),
+                        idx,
+                    );
+                }
+            }
+            return;
+        }
+
         // Handle object targets using type_queries
         if let Some(target_shape) = query::object_shape(self.ctx.types, resolved_target) {
             let target_props = target_shape.properties.as_slice();
