@@ -151,3 +151,40 @@ let y = x + 1;  // Should not emit TS2362 - number literal union is valid for ar
         "Expected no TS2362/TS2363 errors for number literal union, got {error_count}"
     );
 }
+
+#[test]
+fn test_exact_primitive_arithmetic_pairs_no_errors() {
+    let source = r#"
+const a = 1 + 2;
+const b = "x" + "y";
+const c = 1n + 2n;
+const d = 4n * 3n;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        crate::context::CheckerOptions::default(),
+    );
+
+    checker.check_source_file(root);
+
+    let error_count = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code == 2362 || d.code == 2363 || d.code == 2365)
+        .count();
+    assert_eq!(
+        error_count, 0,
+        "Expected no TS2362/TS2363/TS2365 errors for exact primitive arithmetic pairs, got {error_count}"
+    );
+}

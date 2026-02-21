@@ -1063,9 +1063,14 @@ impl<'a> CheckerState<'a> {
     /// TS2872/TS2873: Check if condition is syntactically always truthy or falsy.
     /// Used for if-conditions and `!` operands.
     pub(crate) fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex) {
+        let ty = self.get_type_of_node(node_idx);
+        self.check_truthy_or_falsy_with_type(node_idx, ty);
+    }
+
+    /// Same as `check_truthy_or_falsy`, but reuses a caller-provided type.
+    pub(crate) fn check_truthy_or_falsy_with_type(&mut self, node_idx: NodeIndex, ty: TypeId) {
         use crate::diagnostics::diagnostic_codes;
 
-        let ty = self.get_type_of_node(node_idx);
         if ty == TypeId::VOID {
             self.error_at_node(
                 node_idx,
