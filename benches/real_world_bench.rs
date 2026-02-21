@@ -68,8 +68,7 @@ fn bench_large_synthetic_parse_emit(c: &mut Criterion) {
             let mut parser = ParserState::new("synthetic.ts".to_string(), source.clone());
             let root = parser.parse_source_file();
 
-            let capacity = source.len() * 3 / 2;
-            let mut printer = Printer::with_capacity(&parser.arena, capacity);
+            let mut printer = Printer::with_source_text_len(&parser.arena, source.len());
             printer.emit(root);
             black_box(printer.take_output())
         })
@@ -93,8 +92,7 @@ fn bench_large_synthetic_emit_only(c: &mut Criterion) {
 
     group.bench_function("synthetic_100_classes_emit_only", |b| {
         b.iter(|| {
-            let capacity = source.len() * 3 / 2;
-            let mut printer = Printer::with_capacity(&parser.arena, capacity);
+            let mut printer = Printer::with_source_text_len(&parser.arena, source.len());
             printer.emit(root);
             black_box(printer.take_output())
         })

@@ -309,9 +309,35 @@ pub struct Printer<'a> {
 }
 
 impl<'a> Printer<'a> {
+    const DEFAULT_OUTPUT_CAPACITY: usize = 1024;
+
+    fn estimate_output_capacity(source_len: usize) -> usize {
+        // Emit output can be slightly smaller (type erasure) or significantly larger
+        // (downlevel transforms/helpers). Bias toward ~1.5x while keeping a sane floor.
+        source_len
+            .saturating_mul(3)
+            .saturating_div(2)
+            .max(Self::DEFAULT_OUTPUT_CAPACITY)
+    }
+
     /// Create a new Printer.
     pub fn new(arena: &'a NodeArena) -> Self {
         Self::with_options(arena, PrinterOptions::default())
+    }
+
+    /// Create a new Printer with options and source-length-informed preallocation.
+    pub fn with_source_text_len_and_options(
+        arena: &'a NodeArena,
+        source_text_len: usize,
+        options: PrinterOptions,
+    ) -> Self {
+        let capacity = Self::estimate_output_capacity(source_text_len);
+        Self::with_capacity_and_options(arena, capacity, options)
+    }
+
+    /// Create a new Printer with source-length-informed preallocation.
+    pub fn with_source_text_len(arena: &'a NodeArena, source_text_len: usize) -> Self {
+        Self::with_source_text_len_and_options(arena, source_text_len, PrinterOptions::default())
     }
 
     /// Create a new Printer with pre-allocated output capacity
@@ -322,7 +348,7 @@ impl<'a> Printer<'a> {
 
     /// Create a new Printer with options.
     pub fn with_options(arena: &'a NodeArena, options: PrinterOptions) -> Self {
-        Self::with_capacity_and_options(arena, 1024, options)
+        Self::with_capacity_and_options(arena, Self::DEFAULT_OUTPUT_CAPACITY, options)
     }
 
     /// Create a new Printer with pre-allocated capacity and options.
@@ -445,7 +471,7 @@ impl<'a> Printer<'a> {
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);
-        let estimated = text.len().saturating_mul(3) / 2;
+        let estimated = Self::estimate_output_capacity(text.len());
         self.writer.ensure_output_capacity(estimated);
     }
 
@@ -1279,6 +1305,9 @@ impl<'a> Printer<'a> {
         let Some(source) = self.arena.get_source_file(node) else {
             return;
         };
+
+        self.writer
+            .ensure_output_capacity(Self::estimate_output_capacity(source.text.len()));
 
         // Auto-detect module: if enabled and module is None (not explicitly set),
         // switch to CommonJS when file has imports/exports.
