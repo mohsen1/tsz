@@ -2,6 +2,8 @@ pub mod state;
 pub mod state_checking;
 pub(crate) mod state_checking_members;
 pub(crate) mod state_class_checking;
+pub(crate) mod state_directive_checking;
+pub(crate) mod state_heritage_checking;
 pub(crate) mod state_property_checking;
 pub mod state_type_analysis;
 pub(crate) mod state_type_analysis_computed;
