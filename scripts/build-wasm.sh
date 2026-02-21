@@ -60,6 +60,10 @@ cat > "$PKG/package.json" <<EOF
   "keywords": ["typescript", "type-checker", "compiler", "wasm"],
   "main": "node/tsz_wasm.js",
   "types": "node/tsz_wasm.d.ts",
+  "bin": {
+    "tsz": "./bin/tsz.js",
+    "tsz-server": "./bin/tsz-server.js"
+  },
   "exports": {
     ".": {
       "require": "./node/tsz_wasm.js",
@@ -67,9 +71,15 @@ cat > "$PKG/package.json" <<EOF
       "types": "./node/tsz_wasm.d.ts"
     }
   },
-  "files": ["node/", "bundler/", "LICENSE.txt"]
+  "files": ["node/", "bundler/", "bin/", "LICENSE.txt"]
 }
 EOF
+
+# ─── Copy and chmod bin scripts ───────────────────────────────────────────────
+mkdir -p "$PKG/bin"
+cp "$PROJECT_ROOT/wasm/bin/tsz.js"        "$PKG/bin/tsz.js"
+cp "$PROJECT_ROOT/wasm/bin/tsz-server.js" "$PKG/bin/tsz-server.js"
+chmod +x "$PKG/bin/tsz.js" "$PKG/bin/tsz-server.js"
 
 # Copy root LICENSE into pkg/ so it is included in the npm tarball
 cp "$PROJECT_ROOT/LICENSE.txt" "$PKG/LICENSE.txt"
