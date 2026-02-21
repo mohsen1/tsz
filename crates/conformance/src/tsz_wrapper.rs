@@ -348,9 +348,10 @@ fn parse_diagnostic_fingerprints_from_text(
                     caps.name("file").map(|m| m.as_str()).unwrap_or_default(),
                     project_root,
                 );
-                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let message = normalize_message_paths(raw_message, project_root);
                 fingerprints.push(DiagnosticFingerprint::new(
-                    code, file, line_no, col_no, message,
+                    code, file, line_no, col_no, &message,
                 ));
             }
             continue;
@@ -361,13 +362,14 @@ fn parse_diagnostic_fingerprints_from_text(
                 .name("code")
                 .and_then(|m| m.as_str().parse::<u32>().ok())
             {
-                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let message = normalize_message_paths(raw_message, project_root);
                 fingerprints.push(DiagnosticFingerprint::new(
                     code,
                     String::new(),
                     0,
                     0,
-                    message,
+                    &message,
                 ));
             }
         }
@@ -447,6 +449,51 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
     }
 
     normalized
+}
+
+/// Strip temp directory paths embedded in diagnostic messages.
+///
+/// tsz resolves `/// <reference path="lib.ts" />` to an absolute path like
+/// `/private/var/.../lib.ts` in the error message. We strip the project root prefix
+/// so the message stores portable relative paths (e.g., `File 'lib.ts' not found.`).
+fn normalize_message_paths(message: &str, project_root: &Path) -> String {
+    // Build equivalent root prefixes (handles /private/var vs /var on macOS)
+    let mut roots = Vec::new();
+    roots.push(project_root.to_string_lossy().replace('\\', "/"));
+    if let Ok(canon_root) = project_root.canonicalize() {
+        roots.push(canon_root.to_string_lossy().replace('\\', "/"));
+    }
+
+    let mut expanded_roots = Vec::new();
+    for root in roots {
+        if root.is_empty() {
+            continue;
+        }
+        expanded_roots.push(root.clone());
+        if let Some(stripped) = root.strip_prefix("/private") {
+            if stripped.starts_with("/var/") {
+                expanded_roots.push(stripped.to_string());
+            }
+        }
+        if root.starts_with("/var/") {
+            expanded_roots.push(format!("/private{}", root));
+        }
+    }
+
+    // Sort longest first so we strip the most specific prefix
+    expanded_roots.sort_by_key(|r| std::cmp::Reverse(r.len()));
+    expanded_roots.dedup();
+
+    let mut result = message.to_string();
+    for root in &expanded_roots {
+        let root_slash = if root.ends_with('/') {
+            root.to_string()
+        } else {
+            format!("{}/", root)
+        };
+        result = result.replace(&root_slash, "");
+    }
+    result
 }
 
 /// Test harness-specific directives that should NOT be passed to tsconfig.json

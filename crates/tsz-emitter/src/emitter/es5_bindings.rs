@@ -1036,6 +1036,7 @@ impl<'a> Printer<'a> {
         source_expr: NodeIndex,
         _first: &mut bool,
     ) {
+        #[cfg(not(target_arch = "wasm32"))]
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
             debug!("emit_es5_destructuring_with_read_node entered");
         }
@@ -1116,6 +1117,7 @@ impl<'a> Printer<'a> {
             }
 
             let unwrapped_name = self.unwrap_parenthesized_binding_pattern(elem.name);
+            #[cfg(not(target_arch = "wasm32"))]
             if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                 let elem_kind = self.arena.get(elem.name).map(|n| n.kind).unwrap_or(0);
                 debug!(
@@ -1157,6 +1159,7 @@ impl<'a> Printer<'a> {
                     };
                     let elem_source = format!("{read_temp}[{index}]");
                     if unwrapped_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+                        #[cfg(not(target_arch = "wasm32"))]
                         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
                             debug!(
                                 "downlevel-nested-array index={} unwrapped={} source={}",

@@ -285,6 +285,20 @@ impl<'a> CheckerState<'a> {
             if let Some(name) = self.get_member_name(member_idx) {
                 class_members.insert(name, member_idx);
             }
+            if let Some(node) = self.ctx.arena.get(member_idx)
+                && node.kind == tsz_parser::parser::syntax_kind_ext::CONSTRUCTOR
+                && let Some(ctor) = self.ctx.arena.get_constructor(node)
+            {
+                for &param_idx in &ctor.parameters.nodes {
+                    if let Some(param_node) = self.ctx.arena.get(param_idx)
+                        && let Some(param) = self.ctx.arena.get_parameter(param_node)
+                        && self.has_parameter_property_modifier(&param.modifiers)
+                        && let Some(name) = self.get_property_name(param.name)
+                    {
+                        class_members.insert(name, param_idx);
+                    }
+                }
+            }
         }
         let mut class_member_types: rustc_hash::FxHashMap<NodeIndex, TypeId> =
             rustc_hash::FxHashMap::default();

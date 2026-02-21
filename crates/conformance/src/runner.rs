@@ -183,11 +183,6 @@ impl Runner {
                             // Buffer all output for this test so it prints atomically
                             let mut buf = String::new();
 
-                            // Prepend file preview if available
-                            if let Some(preview) = file_preview {
-                                buf.push_str(&preview);
-                            }
-
                             match result {
                                 TestResult::Pass => {
                                     stats.passed.fetch_add(1, Ordering::SeqCst);
@@ -205,6 +200,11 @@ impl Runner {
                                     options,
                                 } => {
                                     stats.failed.fetch_add(1, Ordering::SeqCst);
+
+                                    // Show file preview for failing tests only
+                                    if let Some(preview) = &file_preview {
+                                        buf.push_str(preview);
+                                    }
 
                                     // Filter by error code if specified
                                     let should_print = match error_code_filter {

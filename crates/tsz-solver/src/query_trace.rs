@@ -27,7 +27,16 @@ pub(crate) fn next_query_id() -> u64 {
 #[inline]
 fn run_id() -> &'static str {
     QUERY_RUN_ID
-        .get_or_init(|| std::env::var("TSZ_QUERY_RUN_ID").unwrap_or_else(|_| "default".to_string()))
+        .get_or_init(|| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                std::env::var("TSZ_QUERY_RUN_ID").unwrap_or_else(|_| "default".to_string())
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                "default".to_string()
+            }
+        })
         .as_str()
 }
 
