@@ -112,13 +112,20 @@ impl Server {
                 &options,
             ) {
                 Ok(edits) => {
+                    let line_map = LineMap::build(&source_text);
                     let body: Vec<serde_json::Value> = edits
                         .iter()
                         .map(|edit| {
+                            let (normalized_range, normalized_text) =
+                                Self::narrow_to_indentation_only_edit_if_possible(
+                                    &source_text,
+                                    &line_map,
+                                    edit,
+                                );
                             serde_json::json!({
-                                "start": Self::lsp_to_tsserver_position(edit.range.start),
-                                "end": Self::lsp_to_tsserver_position(edit.range.end),
-                                "newText": edit.new_text,
+                                "start": Self::lsp_to_tsserver_position(normalized_range.start),
+                                "end": Self::lsp_to_tsserver_position(normalized_range.end),
+                                "newText": normalized_text,
                             })
                         })
                         .collect();
@@ -128,6 +135,53 @@ impl Server {
             }
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
+    }
+
+    fn narrow_to_indentation_only_edit_if_possible(
+        source_text: &str,
+        line_map: &LineMap,
+        edit: &tsz::lsp::formatting::TextEdit,
+    ) -> (Range, String) {
+        let Some(start_off) = line_map.position_to_offset(edit.range.start, source_text) else {
+            return (edit.range, edit.new_text.clone());
+        };
+        let Some(end_off) = line_map.position_to_offset(edit.range.end, source_text) else {
+            return (edit.range, edit.new_text.clone());
+        };
+        if start_off >= end_off {
+            return (edit.range, edit.new_text.clone());
+        }
+
+        let Some(old_text) = source_text.get(start_off as usize..end_off as usize) else {
+            return (edit.range, edit.new_text.clone());
+        };
+        if old_text.contains('\n') || old_text.contains('\r') {
+            return (edit.range, edit.new_text.clone());
+        }
+        if edit.new_text.contains('\n') || edit.new_text.contains('\r') {
+            return (edit.range, edit.new_text.clone());
+        }
+
+        let old_trimmed = old_text.trim_start_matches([' ', '\t']);
+        let new_trimmed = edit.new_text.trim_start_matches([' ', '\t']);
+        if old_trimmed != new_trimmed {
+            return (edit.range, edit.new_text.clone());
+        }
+
+        let old_indent_len = old_text.len().saturating_sub(old_trimmed.len());
+        let new_indent_len = edit.new_text.len().saturating_sub(new_trimmed.len());
+        if old_indent_len == 0 && new_indent_len == 0 {
+            return (edit.range, edit.new_text.clone());
+        }
+
+        let indent_start = start_off;
+        let indent_end = start_off + old_indent_len as u32;
+        let start_pos = line_map.offset_to_position(indent_start, source_text);
+        let end_pos = line_map.offset_to_position(indent_end, source_text);
+        (
+            Range::new(start_pos, end_pos),
+            edit.new_text[..new_indent_len].to_string(),
+        )
     }
 
     pub(crate) fn handle_format_on_key(
