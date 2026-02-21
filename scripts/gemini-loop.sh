@@ -298,7 +298,17 @@ while true; do
 
   echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration final_exit_status=$status" | tee -a "$LOG_FILE"
 
-  # Optional: Stop on specific failures if needed, but usually loop continues.
-  
+  # Clean up dirty worktree between iterations so the next one starts fresh
+  if ! git -C "$WORKDIR" diff --quiet 2>/dev/null || ! git -C "$WORKDIR" diff --cached --quiet 2>/dev/null; then
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration cleanup=resetting_dirty_worktree" | tee -a "$LOG_FILE"
+    git -C "$WORKDIR" reset --hard HEAD >/dev/null 2>&1
+    git -C "$WORKDIR" clean -fd >/dev/null 2>&1
+  fi
+
+  # Sync to latest origin/main before next iteration
+  if git -C "$WORKDIR" fetch --quiet origin main >/dev/null 2>&1; then
+    git -C "$WORKDIR" rebase origin/main >/dev/null 2>&1 || git -C "$WORKDIR" reset --hard origin/main >/dev/null 2>&1
+  fi
+
   sleep "$SLEEP_SECONDS"
 done
