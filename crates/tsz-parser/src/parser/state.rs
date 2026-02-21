@@ -614,7 +614,8 @@ impl ParserState {
             // This bypasses the should_report_error() distance check.
             let force_emit = kind == SyntaxKind::CloseParenToken
                 && (self.is_token(SyntaxKind::OpenBraceToken)
-                    || self.is_token(SyntaxKind::CloseBraceToken));
+                    || self.is_token(SyntaxKind::CloseBraceToken)
+                    || self.is_token(SyntaxKind::EndOfFileToken));
 
             // Only emit error if we haven't already emitted one at this position
             // This prevents cascading errors like "';' expected" followed by "')' expected"
