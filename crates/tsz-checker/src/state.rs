@@ -384,7 +384,7 @@ impl<'a> CheckerState<'a> {
         };
         if decl_node.kind == SyntaxKind::Identifier as u16
             && let Some(ext) = self.ctx.arena.get_extended(value_decl)
-            && !ext.parent.is_none()
+            && ext.parent.is_some()
             && let Some(parent_node) = self.ctx.arena.get(ext.parent)
             && parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
         {
@@ -402,7 +402,7 @@ impl<'a> CheckerState<'a> {
         let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node) else {
             return true;
         };
-        if !var_decl.type_annotation.is_none() || var_decl.initializer.is_none() {
+        if var_decl.type_annotation.is_some() || var_decl.initializer.is_none() {
             return true;
         }
 
@@ -671,7 +671,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Only infer when there's no annotation and no default value.
-            if !param.type_annotation.is_none() || !param.initializer.is_none() {
+            if param.type_annotation.is_some() || param.initializer.is_some() {
                 continue;
             }
 

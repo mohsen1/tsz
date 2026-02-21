@@ -486,7 +486,7 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .filter_map(|&decl_idx| {
                         let constructor = self.ctx.arena.get_constructor_at(decl_idx)?;
-                        (!constructor.body.is_none()).then_some(decl_idx)
+                        (constructor.body.is_some()).then_some(decl_idx)
                     })
                     .collect();
 
@@ -1587,6 +1587,6 @@ impl<'a> CheckerState<'a> {
         let Some(func) = self.ctx.arena.get_function(node) else {
             return false;
         };
-        !func.body.is_none()
+        func.body.is_some()
     }
 }

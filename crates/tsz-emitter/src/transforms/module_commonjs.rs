@@ -368,7 +368,7 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
     }
 
     // Default import: import foo from "..."
-    if !clause.name.is_none()
+    if clause.name.is_some()
         && let Some(name) = get_identifier_text(arena, clause.name)
     {
         // Bind to the default value directly so local identifier references
@@ -377,14 +377,14 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
     }
 
     // Named bindings: import { a, b as c } from "..." or import * as ns from "..."
-    if !clause.named_bindings.is_none()
+    if clause.named_bindings.is_some()
         && let Some(named_node) = arena.get(clause.named_bindings)
     {
         // NamedImportsData handles both namespace and named imports
         if let Some(named_imports) = arena.get_named_imports(named_node) {
             // Check if it's a namespace import: import * as ns from "..."
             // Namespace imports have a name but no elements
-            if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
+            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 if let Some(name) = get_identifier_text(arena, named_imports.name) {
                     // Use __importStar helper for namespace imports
                     bindings.push(format!("var {name} = __importStar({module_var});"));

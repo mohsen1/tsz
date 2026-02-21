@@ -714,7 +714,7 @@ impl<'a> CheckerState<'a> {
                     || k == syntax_kind_ext::ARROW_FUNCTION =>
                 {
                     if let Some(func) = self.ctx.arena.get_function(parent_node)
-                        && !func.body.is_none()
+                        && func.body.is_some()
                         && block_has_use_strict(func.body, self)
                     {
                         return true;
@@ -778,7 +778,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // First check type annotation - this takes precedence
-        if !var_decl.type_annotation.is_none() {
+        if var_decl.type_annotation.is_some() {
             return self.get_type_from_type_node(var_decl.type_annotation);
         }
 
@@ -789,7 +789,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Infer from initializer
-        if !var_decl.initializer.is_none() {
+        if var_decl.initializer.is_some() {
             let init_type = self.get_type_of_node(var_decl.initializer);
 
             // Rule #10: Literal Widening (with freshness)
@@ -1037,9 +1037,9 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Get the type: either from annotation or inferred from initializer
-                if !prop.type_annotation.is_none() {
+                if prop.type_annotation.is_some() {
                     self.get_type_from_type_node(prop.type_annotation)
-                } else if !prop.initializer.is_none() {
+                } else if prop.initializer.is_some() {
                     self.get_type_of_node(prop.initializer)
                 } else {
                     TypeId::ANY
@@ -1067,7 +1067,7 @@ impl<'a> CheckerState<'a> {
                     return TypeId::ANY;
                 };
 
-                if !accessor.type_annotation.is_none() {
+                if accessor.type_annotation.is_some() {
                     self.get_type_from_type_node(accessor.type_annotation)
                 } else {
                     self.infer_getter_return_type(accessor.body)
@@ -1118,7 +1118,7 @@ impl<'a> CheckerState<'a> {
                 return TypeId::ANY;
             };
 
-            if !sig.type_annotation.is_none() {
+            if sig.type_annotation.is_some() {
                 return self.get_type_from_type_node(sig.type_annotation);
             }
             return TypeId::ANY;
@@ -1182,7 +1182,7 @@ impl<'a> CheckerState<'a> {
                 return factory.object(vec![prop]);
             }
 
-            let type_id = if !sig.type_annotation.is_none() {
+            let type_id = if sig.type_annotation.is_some() {
                 self.get_type_from_type_node(sig.type_annotation)
             } else {
                 TypeId::ANY

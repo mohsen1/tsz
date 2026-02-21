@@ -140,7 +140,7 @@ pub(super) fn convert_function_parameters(arena: &NodeArena, params: &NodeList) 
             let name = get_identifier_text(arena, param.name)?;
             let rest = param.dot_dot_dot_token;
             // Convert default value if present
-            let default_value = (!param.initializer.is_none())
+            let default_value = (param.initializer.is_some())
                 .then(|| Box::new(AstToIr::new(arena).convert_expression(param.initializer)));
             Some(IRParam {
                 name,
@@ -268,7 +268,7 @@ pub(super) fn convert_exported_variable_declarations(
                 if let Some(decl_node) = arena.get(decl_idx)
                     && let Some(decl) = arena.get_variable_declaration(decl_node)
                     && let Some(name) = get_identifier_text(arena, decl.name)
-                    && !decl.initializer.is_none()
+                    && decl.initializer.is_some()
                 {
                     let value = AstToIr::new(arena).convert_expression(decl.initializer);
                     assignment_targets.push((name, value));
@@ -325,7 +325,7 @@ pub(super) fn convert_variable_declarations(
                 {
                     // Use AstToIr for eager lowering of initializers
                     // This converts expressions to proper IR (NumericLiteral, CallExpr, etc.)
-                    let initializer = (!decl.initializer.is_none()).then(|| {
+                    let initializer = (decl.initializer.is_some()).then(|| {
                         Box::new(AstToIr::new(arena).convert_expression(decl.initializer))
                     });
 

@@ -429,7 +429,7 @@ impl<'a> Printer<'a> {
                 });
             } else {
                 self.emit(param.name);
-                if !param.initializer.is_none() {
+                if param.initializer.is_some() {
                     let name = self.get_identifier_text(param.name);
                     if !name.is_empty() {
                         plan.params.push(ParamTransform {
@@ -466,7 +466,7 @@ impl<'a> Printer<'a> {
             }
         }
 
-        let (class_name, es5_output) = if !class_data.name.is_none() {
+        let (class_name, es5_output) = if class_data.name.is_some() {
             let candidate = self.get_identifier_text(class_data.name);
             if candidate.is_empty() || !is_valid_identifier_name(&candidate) {
                 let temp_name = self.get_temp_var_name();

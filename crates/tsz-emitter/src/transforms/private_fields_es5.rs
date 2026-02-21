@@ -206,7 +206,7 @@ pub fn collect_private_fields(
                 fields.push(PrivateFieldInfo {
                     name: clean_name.to_string(),
                     weakmap_name,
-                    has_initializer: !prop_data.initializer.is_none(),
+                    has_initializer: prop_data.initializer.is_some(),
                     initializer: prop_data.initializer,
                     is_static,
                 });
@@ -286,11 +286,11 @@ pub fn collect_private_accessors(
 
             // Update based on accessor type
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
-                if !accessor_data.body.is_none() {
+                if accessor_data.body.is_some() {
                     entry.getter_body = Some(accessor_data.body);
                 }
             } else if member_node.kind == syntax_kind_ext::SET_ACCESSOR {
-                if !accessor_data.body.is_none() {
+                if accessor_data.body.is_some() {
                     entry.setter_body = Some(accessor_data.body);
                 }
                 // Get the first parameter from the setter

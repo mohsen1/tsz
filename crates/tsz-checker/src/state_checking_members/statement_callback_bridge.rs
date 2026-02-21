@@ -70,7 +70,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // TS1100: 'arguments' and 'eval' are invalid in function names in strict contexts.
         if self.is_strict_mode_for_node(func_idx)
-            && !func.name.is_none()
+            && func.name.is_some()
             && let Some(func_name_node) = self.ctx.arena.get(func.name)
             && let Some(ident) = self.ctx.arena.get_identifier(func_name_node)
         {
@@ -122,7 +122,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if function has 'declare' modifier but also has a body
         // Point error at the body (opening brace) to match tsc
-        if !func.body.is_none() && self.has_declare_modifier(&func.modifiers) {
+        if func.body.is_some() && self.has_declare_modifier(&func.modifiers) {
             use crate::diagnostics::diagnostic_codes;
             self.error_at_node(
                 func.body,
@@ -186,7 +186,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.check_rest_parameter_types(&func.parameters.nodes);
 
         // Check return type annotation for parameter properties in function types
-        if !func.type_annotation.is_none() {
+        if func.type_annotation.is_some() {
             self.check_type_for_parameter_properties(func.type_annotation);
             // Check for undefined type names in return type
             self.check_type_for_missing_names(func.type_annotation);
@@ -196,7 +196,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         for &param_idx in &func.parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
                 && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                && !param.type_annotation.is_none()
+                && param.type_annotation.is_some()
             {
                 self.check_type_for_parameter_properties(param.type_annotation);
                 // Check for undefined type names in parameter type
@@ -250,12 +250,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         self.check_non_impl_parameter_initializers(
             &func.parameters.nodes,
             self.has_declare_modifier(&func.modifiers),
-            !func.body.is_none(),
+            func.body.is_some(),
         );
 
         // Check function body if present
-        let has_type_annotation = !func.type_annotation.is_none();
-        if !func.body.is_none() {
+        let has_type_annotation = func.type_annotation.is_some();
+        if func.body.is_some() {
             let mut return_type = if has_type_annotation {
                 self.get_type_from_type_node(func.type_annotation)
             } else {
@@ -284,7 +284,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 } else {
                     false
                 };
-                if is_this && !param.type_annotation.is_none() {
+                if is_this && param.type_annotation.is_some() {
                     let this_type = self.get_type_from_type_node(param.type_annotation);
                     self.ctx.this_type_stack.push(this_type);
                     pushed_this_type = true;
@@ -326,7 +326,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     .is_some_and(|j| Self::jsdoc_has_type_annotations(j));
                 if !func.is_async && !has_jsdoc_return {
                     let func_name = self.get_function_name_from_node(func_idx);
-                    let name_node = (!func.name.is_none()).then_some(func.name);
+                    let name_node = (func.name.is_some()).then_some(func.name);
                     self.maybe_report_implicit_any_return(
                         func_name,
                         name_node,
@@ -480,7 +480,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             {
                 // TS7030: noImplicitReturns - not all code paths return a value
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                let error_node = if !func.name.is_none() {
+                let error_node = if func.name.is_some() {
                     func.name
                 } else {
                     func.body
@@ -507,7 +507,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let is_ambient =
                 self.has_declare_modifier(&func.modifiers) || self.ctx.file_name.ends_with(".d.ts");
             if let Some(func_name) = self.get_function_name_from_node(func_idx) {
-                let name_node = (!func.name.is_none()).then_some(func.name);
+                let name_node = (func.name.is_some()).then_some(func.name);
                 if is_ambient {
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node_msg(
@@ -532,7 +532,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
 
         // Check overload compatibility: implementation must be assignable to all overloads
         // This is the function implementation validation (TS2394)
-        if !func.body.is_none() {
+        if func.body.is_some() {
             // Only check for implementations (functions with bodies)
             self.check_overload_compatibility(func_idx);
         }
@@ -581,7 +581,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             }
 
             // TS1194: `export { ... }` / `export ... from` forms are not valid inside namespaces.
-            let is_reexport_syntax = !export_decl.module_specifier.is_none()
+            let is_reexport_syntax = export_decl.module_specifier.is_some()
                 || self
                     .ctx
                     .arena
@@ -599,12 +599,12 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             self.check_import_attributes_module_option(export_decl.attributes);
 
             // Check module specifier for unresolved modules (TS2792)
-            if !export_decl.module_specifier.is_none() {
+            if export_decl.module_specifier.is_some() {
                 self.check_export_module_specifier(export_idx);
             }
 
             // Check the wrapped declaration
-            if !export_decl.export_clause.is_none() {
+            if export_decl.export_clause.is_some() {
                 let clause_idx = export_decl.export_clause;
                 let mut expected_type = None;
                 let mut prev_context = None;
@@ -706,14 +706,14 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 self.check_async_modifier_on_declaration(&module.modifiers);
 
                 let is_ambient = self.has_declare_modifier(&module.modifiers);
-                if !module.body.is_none() {
+                if module.body.is_some() {
                     self.check_module_body(module.body);
                 }
 
                 // TS1038: Check for 'declare' modifiers inside ambient module/namespace
                 // TS1039: Check for initializers in ambient contexts
                 // Even if we don't fully check the body, we still need to emit these errors
-                if is_ambient && !module.body.is_none() {
+                if is_ambient && module.body.is_some() {
                     self.check_declare_modifiers_in_ambient_body(module.body);
                     self.check_initializers_in_ambient_body(module.body);
 
@@ -741,7 +741,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 // TS2300: Check for duplicate import aliases in non-ambient modules too
                 // This handles namespace { import X = ...; import X = ...; }
                 if !is_ambient
-                    && !module.body.is_none()
+                    && module.body.is_some()
                     && let Some(body_node) = self.ctx.arena.get(module.body)
                     && body_node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_BLOCK
                     && let Some(block) = self.ctx.arena.get_module_block(body_node)

@@ -49,7 +49,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?
@@ -64,7 +64,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if !member.initializer.is_none() {
+            if member.initializer.is_some() {
                 let Some(init_node) = self.ctx.arena.get(member.initializer) else {
                     continue;
                 };
@@ -102,7 +102,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check if member has an explicit initializer
-        if !member.initializer.is_none() {
+        if member.initializer.is_some() {
             let Some(init_node) = self.ctx.arena.get(member.initializer) else {
                 return TypeId::ERROR;
             };
@@ -275,13 +275,13 @@ impl<'a> CheckerState<'a> {
         }
         let decl_node = self.ctx.arena.get(symbol.value_declaration)?;
         let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
-        if !var_decl.type_annotation.is_none()
+        if var_decl.type_annotation.is_some()
             && let Some(class_sym) =
                 self.class_symbol_from_type_annotation(var_decl.type_annotation)
         {
             return Some(class_sym);
         }
-        if !var_decl.initializer.is_none()
+        if var_decl.initializer.is_some()
             && let Some(class_sym) = self.class_symbol_from_expression(var_decl.initializer)
         {
             return Some(class_sym);
@@ -318,7 +318,7 @@ impl<'a> CheckerState<'a> {
         if symbol.flags & symbol_flags::CLASS == 0 {
             return None;
         }
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?
@@ -939,15 +939,15 @@ impl<'a> CheckerState<'a> {
 
         for &decl_idx in &symbol.declarations {
             let func = self.ctx.arena.get_function_at(decl_idx)?;
-            if !func.body.is_none() {
+            if func.body.is_some() {
                 return Some(decl_idx);
             }
         }
 
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             let decl_idx = symbol.value_declaration;
             let func = self.ctx.arena.get_function_at(decl_idx)?;
-            if !func.body.is_none() {
+            if func.body.is_some() {
                 return Some(decl_idx);
             }
         }

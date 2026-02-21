@@ -1050,7 +1050,7 @@ pub(super) fn collect_export_signatures(
             }
 
             if export_decl.module_specifier.is_none() {
-                if !export_decl.export_clause.is_none() {
+                if export_decl.export_clause.is_some() {
                     let clause_node = export_decl.export_clause;
                     if arena.get_named_imports_at(clause_node).is_some() {
                         collect_local_named_export_signatures(
@@ -1124,7 +1124,7 @@ pub(super) fn collect_export_signatures(
         }
 
         if let Some(export_assignment) = arena.get_export_assignment(stmt)
-            && !export_assignment.expression.is_none()
+            && export_assignment.expression.is_some()
         {
             let type_id = checker.get_type_of_node(export_assignment.expression);
             let type_str = formatter.format(type_id);
@@ -1150,7 +1150,7 @@ pub(super) fn collect_local_named_export_signatures(
         let Some(spec) = arena.get_specifier_at(spec_idx) else {
             continue;
         };
-        let exported_name = if !spec.name.is_none() {
+        let exported_name = if spec.name.is_some() {
             arena.get_identifier_text(spec.name).unwrap_or("")
         } else {
             arena.get_identifier_text(spec.property_name).unwrap_or("")
@@ -1158,7 +1158,7 @@ pub(super) fn collect_local_named_export_signatures(
         if exported_name.is_empty() {
             continue;
         }
-        let local_name = if !spec.property_name.is_none() {
+        let local_name = if spec.property_name.is_some() {
             arena.get_identifier_text(spec.property_name).unwrap_or("")
         } else {
             exported_name

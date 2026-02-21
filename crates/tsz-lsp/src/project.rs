@@ -561,7 +561,7 @@ impl ProjectFile {
             let Some(export) = arena.get_export_decl(stmt_node) else {
                 continue;
             };
-            if !export.module_specifier.is_none() {
+            if export.module_specifier.is_some() {
                 continue;
             }
 
@@ -622,12 +622,12 @@ impl ProjectFile {
             let Some(export) = arena.get_export_decl(stmt_node) else {
                 continue;
             };
-            if !export.module_specifier.is_none() {
+            if export.module_specifier.is_some() {
                 continue;
             }
 
             if export.is_default_export {
-                if !export.export_clause.is_none()
+                if export.export_clause.is_some()
                     && self.resolve_symbol(export.export_clause) == Some(sym_id)
                 {
                     names.push("default".to_string());
@@ -649,7 +649,7 @@ impl ProjectFile {
                             continue;
                         };
 
-                        let local_ident = if !spec.property_name.is_none() {
+                        let local_ident = if spec.property_name.is_some() {
                             spec.property_name
                         } else {
                             spec.name
@@ -658,7 +658,7 @@ impl ProjectFile {
                             continue;
                         }
 
-                        let export_ident = if !spec.name.is_none() {
+                        let export_ident = if spec.name.is_some() {
                             spec.name
                         } else {
                             spec.property_name
@@ -714,7 +714,7 @@ impl ProjectFile {
                 continue;
             };
 
-            if !clause.name.is_none()
+            if clause.name.is_some()
                 && let Some(name) = arena.get_identifier_text(clause.name)
                 && name == local_name
             {
@@ -746,7 +746,7 @@ impl ProjectFile {
                 continue;
             };
 
-            if !named.name.is_none()
+            if named.name.is_some()
                 && let Some(name) = arena.get_identifier_text(named.name)
                 && name == local_name
             {
@@ -761,7 +761,7 @@ impl ProjectFile {
                     continue;
                 };
 
-                let local_ident = if !spec.name.is_none() {
+                let local_ident = if spec.name.is_some() {
                     spec.name
                 } else {
                     spec.property_name
@@ -773,7 +773,7 @@ impl ProjectFile {
                     continue;
                 }
 
-                let export_ident = if !spec.property_name.is_none() {
+                let export_ident = if spec.property_name.is_some() {
                     spec.property_name
                 } else {
                     spec.name
@@ -828,7 +828,7 @@ impl ProjectFile {
                 continue;
             };
 
-            let export_ident = if !spec.name.is_none() {
+            let export_ident = if spec.name.is_some() {
                 spec.name
             } else {
                 spec.property_name
@@ -840,7 +840,7 @@ impl ProjectFile {
                 continue;
             }
 
-            let local_ident = if !spec.property_name.is_none() {
+            let local_ident = if spec.property_name.is_some() {
                 spec.property_name
             } else {
                 spec.name

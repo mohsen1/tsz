@@ -330,7 +330,7 @@ impl StatementChecker {
                     state.set_reported_unreachable(prev_reported);
 
                     // Check else branch if present
-                    if !else_stmt.is_none() {
+                    if else_stmt.is_some() {
                         if condition_is_true {
                             state.set_unreachable(true);
                         }

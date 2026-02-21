@@ -67,7 +67,7 @@ impl<'a> CheckerState<'a> {
         let (type_params, type_param_updates) = self.push_type_parameters(&method.type_parameters);
         let (params, this_type) = self.extract_params_from_parameter_list(&method.parameters);
         let (return_type, type_predicate) =
-            if method.type_annotation.is_none() && !method.body.is_none() {
+            if method.type_annotation.is_none() && method.body.is_some() {
                 // Infer return type from body when there's no annotation
                 // Push the this type for proper resolution
                 let pushed_this = if let Some(this_ty) = explicit_this_type {
@@ -268,7 +268,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Resolve parameter type based on mode
-            let type_id = if !param.type_annotation.is_none() {
+            let type_id = if param.type_annotation.is_some() {
                 match mode {
                     ParamTypeResolutionMode::InTypeLiteral => {
                         self.get_type_from_type_node_in_type_literal(param.type_annotation)
@@ -308,7 +308,7 @@ impl<'a> CheckerState<'a> {
             let is_js_file =
                 self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx");
             let optional = param.question_token
-                || !param.initializer.is_none()
+                || param.initializer.is_some()
                 || (is_js_file && param.type_annotation.is_none());
             let rest = param.dot_dot_dot_token;
 

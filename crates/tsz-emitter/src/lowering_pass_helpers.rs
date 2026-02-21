@@ -263,7 +263,7 @@ impl<'a> LoweringPass<'a> {
             };
 
             param.dot_dot_dot_token
-                || !param.initializer.is_none()
+                || param.initializer.is_some()
                 || self.is_binding_pattern_idx(param.name)
         })
     }
@@ -783,7 +783,7 @@ impl<'a> LoweringPass<'a> {
             return false;
         }
 
-        if !clause.name.is_none() {
+        if clause.name.is_some() {
             return true;
         }
 
@@ -799,7 +799,7 @@ impl<'a> LoweringPass<'a> {
             return true;
         };
 
-        if !named.name.is_none() {
+        if named.name.is_some() {
             return true;
         }
 
@@ -854,7 +854,7 @@ impl<'a> LoweringPass<'a> {
         };
 
         if let Some(named) = self.arena.get_named_imports(clause_node) {
-            if !named.name.is_none() {
+            if named.name.is_some() {
                 return true;
             }
 
@@ -946,7 +946,7 @@ impl<'a> LoweringPass<'a> {
             return true;
         };
 
-        if !named.name.is_none() {
+        if named.name.is_some() {
             return true;
         }
 

@@ -326,7 +326,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         highlights.push(DocumentHighlight::text(self.keyword_range(if_kw_offset, 2)));
 
         // If there's an else clause, highlight the "else" keyword
-        if !if_data.else_statement.is_none()
+        if if_data.else_statement.is_some()
             && let Some(else_node) = self.arena.get(if_data.else_statement)
         {
             // The "else" keyword appears just before the else clause.
@@ -371,7 +371,7 @@ impl<'a> DocumentHighlightProvider<'a> {
             for (i, node) in self.arena.nodes.iter().enumerate() {
                 if node.kind == syntax_kind_ext::IF_STATEMENT
                     && let Some(if_data) = self.arena.get_if_statement(node)
-                    && !if_data.else_statement.is_none()
+                    && if_data.else_statement.is_some()
                     && let Some(else_node) = self.arena.get(if_data.else_statement)
                 {
                     let else_search_end = else_node.pos as usize;
@@ -423,7 +423,7 @@ impl<'a> DocumentHighlightProvider<'a> {
         ));
 
         // Highlight "catch" if present
-        if !try_data.catch_clause.is_none()
+        if try_data.catch_clause.is_some()
             && let Some(catch_node) = self.arena.get(try_data.catch_clause)
         {
             let catch_kw_offset = self.skip_whitespace_forward(catch_node.pos as usize) as u32;
@@ -433,12 +433,12 @@ impl<'a> DocumentHighlightProvider<'a> {
         }
 
         // Highlight "finally" if present
-        if !try_data.finally_block.is_none()
+        if try_data.finally_block.is_some()
             && let Some(finally_node) = self.arena.get(try_data.finally_block)
         {
             // The "finally" keyword is right before the finally block
             // We need to search backward from the block start
-            let search_start = if !try_data.catch_clause.is_none() {
+            let search_start = if try_data.catch_clause.is_some() {
                 if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
                     catch_node.end as usize
                 } else {
@@ -490,7 +490,7 @@ impl<'a> DocumentHighlightProvider<'a> {
             for (i, node) in self.arena.nodes.iter().enumerate() {
                 if node.kind == syntax_kind_ext::TRY_STATEMENT
                     && let Some(try_data) = self.arena.get_try(node)
-                    && !try_data.catch_clause.is_none()
+                    && try_data.catch_clause.is_some()
                     && let Some(catch_node) = self.arena.get(try_data.catch_clause)
                 {
                     let catch_kw_start = self.skip_whitespace_forward(catch_node.pos as usize);
@@ -507,12 +507,12 @@ impl<'a> DocumentHighlightProvider<'a> {
             for (i, node) in self.arena.nodes.iter().enumerate() {
                 if node.kind == syntax_kind_ext::TRY_STATEMENT
                     && let Some(try_data) = self.arena.get_try(node)
-                    && !try_data.finally_block.is_none()
+                    && try_data.finally_block.is_some()
                 {
                     // Check if the finally keyword is within this try statement
                     if node.pos <= offset && node.end > offset {
                         // Verify the finally keyword position
-                        let search_start = if !try_data.catch_clause.is_none() {
+                        let search_start = if try_data.catch_clause.is_some() {
                             if let Some(catch_node) = self.arena.get(try_data.catch_clause) {
                                 catch_node.end as usize
                             } else {
@@ -665,7 +665,7 @@ impl<'a> DocumentHighlightProvider<'a> {
                         // "while", so search a window before the condition node.
                         if let Some(loop_data) = self.arena.get_loop(node) {
                             // Try condition node position first
-                            if !loop_data.condition.is_none() {
+                            if loop_data.condition.is_some() {
                                 if let Some(cond_node) = self.arena.get(loop_data.condition) {
                                     let search_end = cond_node.pos as usize;
                                     let search_start = search_end.saturating_sub(20);
@@ -710,7 +710,7 @@ impl<'a> DocumentHighlightProvider<'a> {
                 && let Some(loop_data) = self.arena.get_loop(node)
             {
                 // Search using condition node position to avoid trivia issues
-                let found_kw = if !loop_data.condition.is_none() {
+                let found_kw = if loop_data.condition.is_some() {
                     if let Some(cond_node) = self.arena.get(loop_data.condition) {
                         let search_end = cond_node.pos as usize;
                         let search_start = search_end.saturating_sub(20);
