@@ -1567,46 +1567,117 @@ impl<'a> Printer<'a> {
         let Some(export_assign) = self.arena.get_export_assignment(export_assignment_node) else {
             return false;
         };
-        let Some(expr_node) = self.arena.get(export_assign.expression) else {
+        let Some(assigned_name) = self.get_module_root_name(export_assign.expression) else {
             return false;
         };
-        if expr_node.kind != SyntaxKind::Identifier as u16 {
-            return false;
-        }
-        let assigned_name = self.get_identifier_text_idx(export_assign.expression);
-        statements.nodes.iter().any(|&stmt_idx| {
+
+        let mut matched_type = false;
+        let mut matched_runtime = false;
+
+        for &stmt_idx in &statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                return false;
+                continue;
             };
             match stmt_node.kind {
-                k if k == syntax_kind_ext::INTERFACE_DECLARATION => self
-                    .arena
-                    .get_interface(stmt_node)
-                    .is_some_and(|iface| self.get_identifier_text_idx(iface.name) == assigned_name),
-                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => self
-                    .arena
-                    .get_type_alias(stmt_node)
-                    .is_some_and(|alias| self.get_identifier_text_idx(alias.name) == assigned_name),
-                k if k == syntax_kind_ext::EXPORT_DECLARATION => self
-                    .arena
-                    .get_export_decl(stmt_node)
-                    .and_then(|export| self.arena.get(export.export_clause))
-                    .is_some_and(|inner| {
-                        if inner.kind == syntax_kind_ext::INTERFACE_DECLARATION {
-                            return self.arena.get_interface(inner).is_some_and(|iface| {
+                k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
+                    if self.arena.get_interface(stmt_node).is_some_and(|iface| {
+                        self.get_identifier_text_idx(iface.name) == assigned_name
+                    }) {
+                        matched_type = true;
+                    }
+                }
+                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                    if self.arena.get_type_alias(stmt_node).is_some_and(|alias| {
+                        self.get_identifier_text_idx(alias.name) == assigned_name
+                    }) {
+                        matched_type = true;
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if self.arena.get_class(stmt_node).is_some_and(|class_decl| {
+                        self.get_identifier_text_idx(class_decl.name) == assigned_name
+                    }) && !self
+                        .arena
+                        .get_class(stmt_node)
+                        .is_some_and(|class_decl| self.has_declare_modifier(&class_decl.modifiers))
+                    {
+                        matched_runtime = true;
+                    }
+                }
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if self.arena.get_function(stmt_node).is_some_and(|func| {
+                        self.get_identifier_text_idx(func.name) == assigned_name
+                    }) && self.arena.get_function(stmt_node).is_some_and(|func| {
+                        func.body.is_some() && !self.has_declare_modifier(&func.modifiers)
+                    }) {
+                        matched_runtime = true;
+                    }
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    if self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
+                        self.get_identifier_text_idx(enum_decl.name) == assigned_name
+                    }) && self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
+                        !self.has_declare_modifier(&enum_decl.modifiers)
+                            && !self.has_modifier(
+                                &enum_decl.modifiers,
+                                SyntaxKind::ConstKeyword as u16,
+                            )
+                    }) {
+                        matched_runtime = true;
+                    }
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if self.arena.get_module(stmt_node).is_some_and(|module_decl| {
+                        self.get_identifier_text_idx(module_decl.name) == assigned_name
+                    }) && self.arena.get_module(stmt_node).is_some_and(|module_decl| {
+                        !self.has_declare_modifier(&module_decl.modifiers)
+                            && self.is_instantiated_module(module_decl.body)
+                    }) {
+                        matched_runtime = true;
+                    }
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if self.collect_variable_names_from_node(stmt_node).iter().any(|n| n == &assigned_name)
+                        && !self
+                            .arena
+                            .get_variable(stmt_node)
+                            .is_some_and(|var_decl| self.has_declare_modifier(&var_decl.modifiers))
+                    {
+                        matched_runtime = true;
+                    }
+                }
+                k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                    if self.arena.get_import_decl(stmt_node).is_some_and(|import_decl| {
+                        self.get_identifier_text_idx(import_decl.import_clause) == assigned_name
+                            && self.import_decl_has_runtime_value(import_decl)
+                    }) {
+                        matched_runtime = true;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    if let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                        && let Some(inner) = self.arena.get(export_decl.export_clause)
+                    {
+                        if inner.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                            && self.arena.get_interface(inner).is_some_and(|iface| {
                                 self.get_identifier_text_idx(iface.name) == assigned_name
-                            });
-                        }
-                        if inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                            return self.arena.get_type_alias(inner).is_some_and(|alias| {
+                            })
+                        {
+                            matched_type = true;
+                        } else if inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                            && self.arena.get_type_alias(inner).is_some_and(|alias| {
                                 self.get_identifier_text_idx(alias.name) == assigned_name
-                            });
+                            })
+                        {
+                            matched_type = true;
                         }
-                        false
-                    }),
-                _ => false,
+                    }
+                }
+                _ => {}
             }
-        })
+        }
+
+        matched_type && !matched_runtime
     }
 
     /// Check if a file is a module (has any import/export syntax).
@@ -1877,13 +1948,10 @@ impl<'a> Printer<'a> {
     /// TypeScript emits __esModule for ANY module syntax, including type-only
     /// imports/exports, declared exports, and exported interfaces/type aliases.
     pub(super) fn should_emit_es_module_marker(&self, statements: &NodeList) -> bool {
-        // First check: if file has export =, don't emit __esModule at all
-        for &stmt_idx in &statements.nodes {
-            if let Some(node) = self.arena.get(stmt_idx)
-                && node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
-            {
-                return false;
-            }
+        // If file has a runtime `export =`, do not emit __esModule.
+        // Type-only `export =` aliases (e.g. interface) are filtered out.
+        if self.has_export_assignment(statements) {
+            return false;
         }
 
         // Second check: look for ANY module syntax (including type-only)
@@ -1904,6 +1972,13 @@ impl<'a> Printer<'a> {
                     }
                     k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                         return true;
+                    }
+                    // Type-only `export =` still marks the file as a module and
+                    // TypeScript emits `__esModule` for it.
+                    k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                        if self.export_assignment_identifier_is_type_only(node, statements) {
+                            return true;
+                        }
                     }
                     // Check for export modifier on any declaration type
                     // (including declare and type-only declarations)
