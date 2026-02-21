@@ -177,11 +177,12 @@ impl<'a> CheckerState<'a> {
 
             // Check if the property value type is assignable to the target property type
             if !self.is_assignable_to(source_prop_type, target_prop_type) {
-                let source_prop_type_for_diagnostic = if self.is_fresh_literal_expression(prop_value_idx) {
-                    self.widen_literal_type(source_prop_type)
-                } else {
-                    source_prop_type
-                };
+                let source_prop_type_for_diagnostic =
+                    if self.is_fresh_literal_expression(prop_value_idx) {
+                        self.widen_literal_type(source_prop_type)
+                    } else {
+                        source_prop_type
+                    };
 
                 // Emit TS2322 on the property name node
                 self.error_type_not_assignable_at_with_anchor(
