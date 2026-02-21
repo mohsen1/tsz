@@ -106,6 +106,10 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
+        node_idx = self
+            .remap_import_equals_rhs_to_alias(node_idx)
+            .unwrap_or(node_idx);
+
         // 2. Resolve symbol using ScopeWalker
         let mut walker = ScopeWalker::new(self.arena, self.binder);
         let symbol_id = if let Some(scope_cache) = scope_cache {
@@ -284,6 +288,44 @@ impl<'a> HoverProvider<'a> {
         !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
     }
 
+    fn remap_import_equals_rhs_to_alias(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(node_idx)?;
+        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let parent_idx = self.arena.get_extended(node_idx)?.parent;
+        let parent = self.arena.get(parent_idx)?;
+        if parent.kind != tsz_parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return None;
+        }
+        let import_decl = self.arena.get_import_decl(parent)?;
+        if !self.is_descendant_of(node_idx, import_decl.module_specifier) {
+            return None;
+        }
+        import_decl
+            .import_clause
+            .is_some()
+            .then_some(import_decl.import_clause)
+    }
+
+    fn is_descendant_of(&self, mut node_idx: NodeIndex, ancestor: NodeIndex) -> bool {
+        if !ancestor.is_some() {
+            return false;
+        }
+        loop {
+            if node_idx == ancestor {
+                return true;
+            }
+            let Some(ext) = self.arena.get_extended(node_idx) else {
+                return false;
+            };
+            if !ext.parent.is_some() {
+                return false;
+            }
+            node_idx = ext.parent;
+        }
+    }
+
     /// Build the display string in tsserver quickinfo format.
     fn build_display_string(
         &self,
@@ -296,6 +338,26 @@ impl<'a> HoverProvider<'a> {
         let f = symbol.flags;
 
         if f & symbol_flags::ALIAS != 0 {
+            if decl_node_idx.is_some()
+                && let Some(decl_node) = self.arena.get(decl_node_idx)
+                && decl_node.kind == tsz_parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && let Some(import_decl) = self.arena.get_import_decl(decl_node)
+                && import_decl.module_specifier.is_some()
+                && let Some(module_ref_node) = self.arena.get(import_decl.module_specifier)
+                && module_ref_node.kind != tsz_scanner::SyntaxKind::StringLiteral as u16
+            {
+                let start = module_ref_node.pos as usize;
+                let end = module_ref_node.end as usize;
+                if end <= self.source_text.len() && start <= end {
+                    let module_ref = self.source_text[start..end].trim();
+                    if !module_ref.is_empty() {
+                        return format!(
+                            "namespace {module_ref}\nimport {} = {module_ref}",
+                            symbol.escaped_name
+                        );
+                    }
+                }
+            }
             if let Some(module_name) = symbol.import_module.as_deref() {
                 if decl_node_idx.is_some()
                     && let Some(decl_node) = self.arena.get(decl_node_idx)
@@ -361,6 +423,12 @@ impl<'a> HoverProvider<'a> {
             return format!("(method) {}{}", symbol.escaped_name, sig);
         }
         if f & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) != 0 {
+            if let Some(module_ref) = self.find_import_equals_module_ref_text(symbol) {
+                return format!(
+                    "namespace {}\nimport {} = {}",
+                    symbol.escaped_name, symbol.escaped_name, module_ref
+                );
+            }
             return format!("namespace {}", symbol.escaped_name);
         }
         if f & symbol_flags::BLOCK_SCOPED_VARIABLE != 0 {
@@ -384,6 +452,32 @@ impl<'a> HoverProvider<'a> {
         }
 
         format!("({}) {}: {}", kind, symbol.escaped_name, type_string)
+    }
+
+    fn find_import_equals_module_ref_text(&self, symbol: &tsz_binder::Symbol) -> Option<String> {
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind != tsz_parser::syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                continue;
+            }
+            let import_decl = self.arena.get_import_decl(decl_node)?;
+            if !import_decl.module_specifier.is_some() {
+                continue;
+            }
+            let module_ref_node = self.arena.get(import_decl.module_specifier)?;
+            if module_ref_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16 {
+                continue;
+            }
+            let start = module_ref_node.pos as usize;
+            let end = module_ref_node.end as usize;
+            if end <= self.source_text.len() && start <= end {
+                let module_ref = self.source_text[start..end].trim();
+                if !module_ref.is_empty() {
+                    return Some(module_ref.to_string());
+                }
+            }
+        }
+        None
     }
 
     /// Convert arrow notation `(params) => ret` to colon notation `(params): ret`.
