@@ -395,11 +395,21 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                         .unwrap_or(TypeId::ERROR)
                 };
                 if generator_base != TypeId::ERROR {
-                    let any_gen = self.ctx.types.factory().application(
-                        generator_base,
-                        vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
-                    );
-                    self.check_assignable_or_report(any_gen, return_type, func.type_annotation);
+                    let any_gen = self
+                        .ctx
+                        .types
+                        .factory()
+                        .application(generator_base, vec![TypeId::ANY, TypeId::ANY, TypeId::ANY]);
+
+                    // Fast path: if the return type is already recognized as a valid generator type,
+                    // we don't need to do the complex structural subtyping check that fails due to overloads.
+                    // If it is not (e.g. `number`), we run the check to emit the TS2322 assignability error.
+                    if self
+                        .get_generator_return_type_argument(return_type)
+                        .is_none()
+                    {
+                        self.check_assignable_or_report(any_gen, return_type, func.type_annotation);
+                    }
                 }
 
                 self.get_generator_return_type_argument(return_type)
