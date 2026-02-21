@@ -1573,7 +1573,7 @@ let foo = 2;
     setup_lib_contexts(&mut checker);
     checker.check_source_file(root);
 
-    // tsc emits TS2300 for the var declaration and TS2451 for the let (block-scoped) declaration
+    // tsc emits TS2300 twice (once for each declaration) because the first declaration is a var.
     let ts2300_count = checker
         .ctx
         .diagnostics
@@ -1587,13 +1587,13 @@ let foo = 2;
         .filter(|d| d.code == diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE)
         .count();
     assert_eq!(
-        ts2300_count, 1,
-        "Expected 1 TS2300 for var declaration, got: {:?}",
+        ts2300_count, 2,
+        "Expected 2 TS2300 for var followed by let, got: {:?}",
         checker.ctx.diagnostics
     );
     assert_eq!(
-        ts2451_count, 1,
-        "Expected 1 TS2451 for let declaration, got: {:?}",
+        ts2451_count, 0,
+        "Expected 0 TS2451 since the first declaration was var, got: {:?}",
         checker.ctx.diagnostics
     );
 }
