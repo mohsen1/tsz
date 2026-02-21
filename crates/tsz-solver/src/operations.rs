@@ -1411,8 +1411,21 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         match key {
             // Function and callable types are contextually sensitive (lambdas or objects
-            // with call signatures).
-            TypeData::Function(_) | TypeData::Callable(_) => true,
+            // with call signatures) ONLY if they have parameters. Parameterless functions
+            // do not need contextual typing for arguments and should participate in Round 1
+            // inference (e.g. `foo(() => 'hi')` should infer string immediately).
+            TypeData::Function(shape_id) => {
+                let shape = self.interner.function_shape(shape_id);
+                !shape.params.is_empty()
+            }
+            TypeData::Callable(shape_id) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| !sig.params.is_empty())
+            }
 
             // Union/Intersection: contextually sensitive if any member is
             TypeData::Union(members) | TypeData::Intersection(members) => {

@@ -26,9 +26,19 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
     };
 
     match node.kind {
-        // Functions are the primary sensitive nodes
+        // Functions are sensitive ONLY if they have at least one parameter without a type annotation
         k if k == syntax_kind_ext::ARROW_FUNCTION || k == syntax_kind_ext::FUNCTION_EXPRESSION => {
-            true
+            if let Some(func) = state.ctx.arena.get_function(node) {
+                func.parameters.nodes.iter().any(|&param_idx| {
+                    if let Some(param_node) = state.ctx.arena.get(param_idx)
+                        && let Some(param) = state.ctx.arena.get_parameter(param_node) {
+                            return param.type_annotation.is_none();
+                        }
+                    false
+                })
+            } else {
+                false
+            }
         }
 
         // Parentheses just pass through sensitivity
