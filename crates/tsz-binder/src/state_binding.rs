@@ -1189,12 +1189,21 @@ impl BinderState {
         self.bind_expression(arena, left);
         let after_left_flow = self.current_flow;
 
-        if operator == SyntaxKind::AmpersandAmpersandToken as u16 {
-            // For &&: right side is only evaluated when left is truthy
+        let is_assignment = operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+            || operator == SyntaxKind::BarBarEqualsToken as u16
+            || operator == SyntaxKind::QuestionQuestionEqualsToken as u16;
+
+        if operator == SyntaxKind::AmpersandAmpersandToken as u16
+            || operator == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+        {
+            // For && and &&=: right side is only evaluated when left is truthy
             let true_condition =
                 self.create_flow_condition(flow_flags::TRUE_CONDITION, after_left_flow, left);
             self.current_flow = true_condition;
             self.bind_expression(arena, right);
+            if is_assignment {
+                self.current_flow = self.create_flow_assignment(idx);
+            }
             let after_right_flow = self.current_flow;
 
             // Short-circuit path: left is falsy, right is not evaluated
@@ -1207,11 +1216,14 @@ impl BinderState {
             self.add_antecedent(merge, false_condition);
             self.current_flow = merge;
         } else {
-            // For || and ??: right side is only evaluated when left is falsy/nullish
+            // For ||, ??, ||=, ??=: right side is only evaluated when left is falsy/nullish
             let false_condition =
                 self.create_flow_condition(flow_flags::FALSE_CONDITION, after_left_flow, left);
             self.current_flow = false_condition;
             self.bind_expression(arena, right);
+            if is_assignment {
+                self.current_flow = self.create_flow_assignment(idx);
+            }
             let after_right_flow = self.current_flow;
 
             // Short-circuit path: left is truthy, right is not evaluated
@@ -1247,6 +1259,22 @@ impl BinderState {
                     if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
                         self.record_flow(idx);
                         if let Some(bin) = arena.get_binary_expr(node) {
+                            if bin.operator_token
+                                == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                                || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+                                || bin.operator_token
+                                    == SyntaxKind::QuestionQuestionEqualsToken as u16
+                            {
+                                self.bind_short_circuit_expression(
+                                    arena,
+                                    idx,
+                                    bin.left,
+                                    bin.right,
+                                    bin.operator_token,
+                                );
+                                continue;
+                            }
+
                             if Self::is_assignment_operator(bin.operator_token) {
                                 stack.push(WorkItem::PostAssign(idx));
                                 if bin.right.is_some() {
@@ -1304,6 +1332,20 @@ impl BinderState {
 
         if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
             if let Some(bin) = arena.get_binary_expr(node) {
+                if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
+                    || bin.operator_token == SyntaxKind::BarBarEqualsToken as u16
+                    || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
+                {
+                    self.bind_short_circuit_expression(
+                        arena,
+                        idx,
+                        bin.left,
+                        bin.right,
+                        bin.operator_token,
+                    );
+                    return;
+                }
+
                 if Self::is_assignment_operator(bin.operator_token) {
                     self.record_flow(idx);
                     self.bind_expression(arena, bin.left);

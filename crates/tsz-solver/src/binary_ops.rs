@@ -546,7 +546,7 @@ impl<'a> BinaryOpEvaluator<'a> {
                 }
             }
             "<" | ">" | "<=" | ">=" => self.evaluate_comparison(left, right),
-            "&&" | "||" => self.evaluate_logical(left, right, op),
+            "&&" | "||" | "??" => self.evaluate_logical(left, right, op),
             _ => BinaryOpResult::TypeError { left, right, op },
         }
     }
@@ -746,7 +746,7 @@ impl<'a> BinaryOpEvaluator<'a> {
             } else {
                 self.interner.union2(falsy_left, right)
             }
-        } else {
+        } else if op == "||" {
             // left || right
             let truthy_left = ctx.narrow_by_truthiness(left);
             let falsy_left = ctx.narrow_to_falsy(left);
@@ -757,6 +757,18 @@ impl<'a> BinaryOpEvaluator<'a> {
                 right
             } else {
                 self.interner.union2(truthy_left, right)
+            }
+        } else {
+            // left ?? right
+            let non_nullish_left = ctx.narrow_by_nullishness(left, false);
+            let nullish_left = ctx.narrow_by_nullishness(left, true);
+
+            if nullish_left == TypeId::NEVER {
+                left
+            } else if non_nullish_left == TypeId::NEVER {
+                right
+            } else {
+                self.interner.union2(non_nullish_left, right)
             }
         };
 
