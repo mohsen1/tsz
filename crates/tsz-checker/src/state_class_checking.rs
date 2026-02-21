@@ -1878,28 +1878,20 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        for (reference_path, line_num) in references {
+        for (reference_path, line_num, path_offset_in_line) in references {
             if !has_virtual_reference(&reference_path) {
-                // Calculate the position of the error (start of the line)
-                let mut pos = 0u32;
-                for (idx, _) in source_text.lines().enumerate() {
+                // Calculate the byte position of the path string in the source
+                let mut line_start = 0u32;
+                for (idx, line) in source_text.lines().enumerate() {
                     if idx == line_num {
                         break;
                     }
-                    pos += source_text.lines().nth(idx).map_or(0, |l| l.len() + 1) as u32;
+                    line_start += line.len() as u32 + 1; // +1 for newline
                 }
 
-                // Find the actual directive on the line to get accurate position
-                if let Some(line) = source_text.lines().nth(line_num)
-                    && let Some(directive_start) = line.find("///")
-                {
-                    pos += directive_start as u32;
-                }
-
-                let length = source_text
-                    .lines()
-                    .nth(line_num)
-                    .map_or(0, |l| l.len() as u32);
+                // TSC points the error span at the path value (after the opening quote)
+                let pos = line_start + path_offset_in_line as u32 + 1; // +1 to skip opening quote
+                let length = reference_path.len() as u32 + 2;
 
                 use crate::diagnostics::{diagnostic_codes, format_message};
                 let message = format_message("File '{0}' not found.", &[&reference_path]);

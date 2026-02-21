@@ -11,6 +11,10 @@ const x = 1;
     assert_eq!(refs.len(), 2);
     assert_eq!(refs[0].0, "./types.d.ts");
     assert_eq!(refs[1].0, "./other.ts");
+    // Verify path offset points to the opening quote
+    // `/// <reference path="./types.d.ts" />` — `path="` starts at col 20, quote at col 20
+    assert_eq!(refs[0].2, 20); // offset of opening quote in line
+    assert_eq!(refs[1].2, 20); // same structure, single quotes
 }
 
 #[test]
@@ -23,15 +27,15 @@ fn test_extract_no_references() {
 #[test]
 fn test_extract_quoted_path() {
     assert_eq!(
-        extract_quoted_path(r#"path="./file.ts""#),
+        extract_quoted_attr(r#"path="./file.ts""#, "path"),
         Some("./file.ts".to_string())
     );
     assert_eq!(
-        extract_quoted_path(r"path='./file.ts'"),
+        extract_quoted_attr(r"path='./file.ts'", "path"),
         Some("./file.ts".to_string())
     );
     assert_eq!(
-        extract_quoted_path(r#"  path  =  "./file.ts"  "#),
+        extract_quoted_attr(r#"  path  =  "./file.ts"  "#, "path"),
         Some("./file.ts".to_string())
     );
 }

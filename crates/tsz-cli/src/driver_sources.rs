@@ -451,7 +451,7 @@ pub(super) fn read_source_files(
         // Resolve /// <reference path="..." /> directives
         if !reference_paths.is_empty() {
             let base_dir = path.parent().unwrap_or_else(|| Path::new(""));
-            for (reference_path, _line_num) in reference_paths {
+            for (reference_path, _line_num, _path_offset) in reference_paths {
                 if reference_path.is_empty() {
                     continue;
                 }
