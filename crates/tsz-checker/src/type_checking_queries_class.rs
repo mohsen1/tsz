@@ -18,13 +18,19 @@ impl<'a> CheckerState<'a> {
 
     /// Pop type parameters from scope, restoring previous values.
     /// Used to restore the type parameter scope after exiting a generic context.
-    pub(crate) fn pop_type_parameters(&mut self, updates: Vec<(String, Option<TypeId>)>) {
-        for (name, previous) in updates.into_iter().rev() {
+    pub(crate) fn pop_type_parameters(&mut self, updates: Vec<(String, Option<TypeId>, bool)>) {
+        for (name, previous, shadowed_class_param) in updates.into_iter().rev() {
             if let Some(prev_type) = previous {
-                self.ctx.type_parameter_scope.insert(name, prev_type);
+                self.ctx
+                    .type_parameter_scope
+                    .insert(name.clone(), prev_type);
             } else {
                 self.ctx.type_parameter_scope.remove(&name);
             }
+            if shadowed_class_param
+                && let Some(ref mut c) = self.ctx.enclosing_class {
+                    c.type_param_names.push(name);
+                }
         }
     }
 

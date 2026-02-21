@@ -215,7 +215,7 @@ impl<'a> CheckerState<'a> {
         //   @template T
         //   @returns {T}
         // This enables return assignability checks for expression-bodied arrows.
-        let mut jsdoc_type_param_updates: Vec<(String, Option<TypeId>)> = Vec::new();
+        let mut jsdoc_type_param_updates: Vec<(String, Option<TypeId>, bool)> = Vec::new();
         if self.is_js_file()
             && type_params.is_empty()
             && let Some(ref jsdoc) = func_jsdoc
@@ -238,7 +238,7 @@ impl<'a> CheckerState<'a> {
                     // Register in type_parameter_scope so inline JSDoc casts
                     // like `/** @type {T} */(expr)` can resolve `T`.
                     let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-                    jsdoc_type_param_updates.push((name, previous));
+                    jsdoc_type_param_updates.push((name, previous, false));
                 }
                 type_params = jsdoc_type_params;
             }
@@ -1169,7 +1169,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn push_enclosing_type_parameters(
         &mut self,
         func_idx: NodeIndex,
-    ) -> Vec<(String, Option<TypeId>)> {
+    ) -> Vec<(String, Option<TypeId>, bool)> {
         use tsz_parser::parser::syntax_kind_ext;
 
         // Collect enclosing type parameter node indices (inner-to-outer order)
@@ -1266,7 +1266,7 @@ impl<'a> CheckerState<'a> {
                 // Only add if not already in scope (inner scope should shadow outer)
                 if !self.ctx.type_parameter_scope.contains_key(&name) {
                     let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-                    updates.push((name, previous));
+                    updates.push((name, previous, false));
                     added_params.push(param_idx);
                 }
             }

@@ -41,7 +41,13 @@ impl<'a> CheckerState<'a> {
         {
             if has_type_args {
                 let sym_id = match self.resolve_qualified_symbol_in_type_position(type_name_idx) {
-                    TypeSymbolResolution::Type(sym_id) => sym_id,
+                    TypeSymbolResolution::Type(sym_id) => {
+                        self.check_for_static_member_class_type_param_reference(
+                            sym_id,
+                            type_name_idx,
+                        );
+                        sym_id
+                    }
                     TypeSymbolResolution::ValueOnly(_) => {
                         let name = self
                             .entity_name_text(type_name_idx)
@@ -115,6 +121,7 @@ impl<'a> CheckerState<'a> {
             if let TypeSymbolResolution::Type(sym_id) =
                 self.resolve_qualified_symbol_in_type_position(type_name_idx)
             {
+                self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
                 let required_count = self.count_required_type_params(sym_id);
                 if required_count > 0 {
                     let name = self
@@ -174,11 +181,28 @@ impl<'a> CheckerState<'a> {
                 let type_param = self.lookup_type_parameter(name);
                 if type_param.is_some() {
                     self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
+                    if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
+                        && enclosing_class.in_static_member
+                            && enclosing_class.type_param_names.iter().any(|n| n == name)
+                        {
+                            use crate::diagnostics::diagnostic_codes;
+                            self.error_at_node(
+                                type_name_idx,
+                                "Static members cannot reference class type parameters.",
+                                diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                            );
+                        }
                 }
                 let type_resolution =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
                 let sym_id = match type_resolution {
-                    TypeSymbolResolution::Type(sym_id) => Some(sym_id),
+                    TypeSymbolResolution::Type(sym_id) => {
+                        self.check_for_static_member_class_type_param_reference(
+                            sym_id,
+                            type_name_idx,
+                        );
+                        Some(sym_id)
+                    }
                     TypeSymbolResolution::ValueOnly(_) => {
                         self.error_value_only_type_at(name, type_name_idx);
                         return TypeId::ERROR;
@@ -481,6 +505,17 @@ impl<'a> CheckerState<'a> {
             // Type parameter (generic like T in function<T>)
             if let Some(type_param) = self.lookup_type_parameter(name) {
                 self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
+                if let Some(enclosing_class) = self.ctx.enclosing_class.as_ref()
+                    && enclosing_class.in_static_member
+                        && enclosing_class.type_param_names.iter().any(|n| n == name)
+                    {
+                        use crate::diagnostics::diagnostic_codes;
+                        self.error_at_node(
+                            type_name_idx,
+                            "Static members cannot reference class type parameters.",
+                            diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                        );
+                    }
                 return type_param;
             }
 
@@ -599,6 +634,7 @@ impl<'a> CheckerState<'a> {
         if name != "Array" && name != "ReadonlyArray" && name != "ConcatArray" {
             match self.resolve_identifier_symbol_in_type_position(type_name_idx) {
                 TypeSymbolResolution::Type(sym_id) => {
+                    self.check_for_static_member_class_type_param_reference(sym_id, type_name_idx);
                     if self.symbol_is_namespace_only(sym_id) {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
