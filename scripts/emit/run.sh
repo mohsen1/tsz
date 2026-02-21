@@ -12,6 +12,8 @@
 #   --filter=PATTERN      Filter tests by name
 #   --concurrency=N, -jN  Parallel workers (default: CPU count)
 #   --timeout=MS          Per-test timeout in ms (default: 5000)
+#   --skip-build, --no-build
+#                         Skip tsz/baseline rebuild checks (requires prebuilt artifacts)
 #   --verbose             Detailed output
 #   --js-only             Test JavaScript emit only
 #   --dts-only            Test declaration emit only
@@ -43,8 +45,46 @@ log_step()    { echo -e "${CYAN}→${RESET}  $*"; }
 
 die() { log_error "$@"; exit 2; }
 
+# Files that can affect tsz semantic output.
+TSZ_WATCH_PATHS=(
+    "$ROOT_DIR/src"
+    "$ROOT_DIR/crates/tsz-cli/src"
+    "$ROOT_DIR/crates/tsz-emitter/src"
+    "$ROOT_DIR/crates/tsz-checker/src"
+    "$ROOT_DIR/crates/tsz-solver/src"
+    "$ROOT_DIR/crates/tsz-parser/src"
+    "$ROOT_DIR/crates/tsz-scanner/src"
+    "$ROOT_DIR/crates/tsz-common/src"
+    "$ROOT_DIR/Cargo.toml"
+    "$ROOT_DIR/Cargo.lock"
+)
+RUNNER_WATCH_PATHS=(
+    "$SCRIPT_DIR/src"
+    "$SCRIPT_DIR/tsconfig.json"
+    "$SCRIPT_DIR/../package.json"
+    "$SCRIPT_DIR/../package-lock.json"
+)
+
 # Check for required tools
 command -v node &>/dev/null || die "Node.js is required"
+
+print_help() {
+    cat <<'EOF'
+Usage: ./run.sh [options]
+
+Options:
+  --max=N               Maximum tests (default: all)
+  --filter=PATTERN      Filter tests by name
+  --concurrency=N, -jN  Parallel workers (default: CPU count)
+  --timeout=MS          Per-test timeout in ms (default: 5000)
+  --skip-build, --no-build
+                        Skip rebuild checks for tsz and runner (requires prebuilt artifacts)
+  --verbose, -v         Detailed output with diffs
+  --js-only             Test JavaScript emit only
+  --dts-only            Test declaration emit only
+  --help, -h            Show this help
+EOF
+}
 
 resolve_tsc_binary() {
     local scripts_dir
@@ -116,21 +156,38 @@ ensure_tsz_binary() {
 
     local tsz_bin="$TSZ_BIN"
     local stale=0
+    local current_head
+    local state_file="$(dirname "$tsz_bin")/.tsz_binary_head"
 
-    # Rebuild automatically when emitter/checker/cli sources changed after the binary.
-    if find \
-        "$ROOT_DIR/src" \
-        "$ROOT_DIR/crates/tsz-cli/src" \
-        "$ROOT_DIR/crates/tsz-emitter/src" \
-        "$ROOT_DIR/crates/tsz-checker/src" \
-        "$ROOT_DIR/crates/tsz-solver/src" \
-        "$ROOT_DIR/crates/tsz-parser/src" \
-        "$ROOT_DIR/crates/tsz-scanner/src" \
-        "$ROOT_DIR/crates/tsz-common/src" \
-        "$ROOT_DIR/Cargo.toml" \
-        "$ROOT_DIR/Cargo.lock" \
-        -type f -newer "$tsz_bin" 2>/dev/null | grep -q .; then
-        stale=1
+    if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+        if ! git -C "$ROOT_DIR" diff --quiet -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null; then
+            stale=1
+        elif [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
+            stale=1
+        else
+            current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+            if [[ -z "$current_head" ]]; then
+                stale=1
+            elif [[ ! -f "$state_file" ]]; then
+                stale=1
+            elif [[ "$current_head" != "$(cat "$state_file")" ]]; then
+                stale=1
+            fi
+        fi
+    else
+        # Fallback when not in a git checkout: use filesystem mtime checks.
+        if find "${TSZ_WATCH_PATHS[@]}" -type f -newer "$tsz_bin" 2>/dev/null | grep -q .; then
+            stale=1
+        fi
+    fi
+
+    if [[ "$stale" -eq 0 ]]; then
+        current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        if [[ -n "$current_head" ]]; then
+            mkdir -p "$(dirname "$state_file")"
+            printf '%s\n' "$current_head" > "$state_file"
+        fi
+        return 0
     fi
 
     if [[ "$stale" -eq 1 ]]; then
@@ -140,29 +197,51 @@ ensure_tsz_binary() {
             log_error "Failed to resolve tsz binary after rebuild"
             exit 1
         }
+        current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        if [[ -n "$current_head" ]]; then
+            mkdir -p "$(dirname "$state_file")"
+            printf '%s\n' "$current_head" > "$state_file"
+        fi
     fi
 }
 
 # Build TypeScript runner
 build_runner() {
     local dist_runner="$SCRIPT_DIR/dist/runner.js"
-    local should_build=0
+    local stale=0
+    local current_head
+    local state_file="$(dirname "$dist_runner")/.runner_build_head"
 
     if [[ ! -f "$dist_runner" ]]; then
-        should_build=1
+        stale=1
     else
-        if find "$SCRIPT_DIR/src" -type f -name '*.ts' -newer "$dist_runner" | grep -q .; then
-            should_build=1
-        elif [[ -f "$SCRIPT_DIR/../package.json" && "$SCRIPT_DIR/../package.json" -nt "$dist_runner" ]]; then
-            should_build=1
-        elif [[ -f "$SCRIPT_DIR/../package-lock.json" && "$SCRIPT_DIR/../package-lock.json" -nt "$dist_runner" ]]; then
-            should_build=1
+        if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+            if ! git -C "$ROOT_DIR" diff --quiet -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null; then
+                stale=1
+            elif [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
+                stale=1
+            else
+                current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+                if [[ -z "$current_head" || ! -f "$state_file" || "$current_head" != "$(cat "$state_file")" ]]; then
+                    stale=1
+                fi
+            fi
+        else
+            # Fallback when not in a git checkout: use filesystem mtime checks.
+            if find "${RUNNER_WATCH_PATHS[@]}" -type f -newer "$dist_runner" 2>/dev/null | grep -q .; then
+                stale=1
+            fi
         fi
-    fi
 
-    if [[ "$should_build" -eq 0 ]]; then
-        log_success "Runner up to date"
-        return 0
+        if [[ "$stale" -eq 0 ]]; then
+            current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+            if [[ -n "$current_head" ]]; then
+                mkdir -p "$(dirname "$state_file")"
+                printf '%s\n' "$current_head" > "$state_file"
+            fi
+            log_success "Runner up to date"
+            return 0
+        fi
     fi
 
     log_step "Building emit runner..."
@@ -216,19 +295,47 @@ build_runner() {
         # Use tsc from scripts or emit fallback node_modules.
         "$TSC_BIN" -p tsconfig.json
     )
+    current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+    if [[ -n "$current_head" ]]; then
+        mkdir -p "$(dirname "$state_file")"
+        printf '%s\n' "$current_head" > "$state_file"
+    fi
     log_success "Runner built"
 }
 
 # Main
 main() {
+    local skip_build=0
+    local show_help=0
+    for arg in "$@"; do
+        case "$arg" in
+            --skip-build|--no-build) skip_build=1 ;;
+            --help|-h) show_help=1 ;;
+        esac
+    done
+
+    if [[ "$show_help" -eq 1 ]]; then
+        print_help
+        return 0
+    fi
+
     # Check baselines exist
     local baselines_dir="$ROOT_DIR/TypeScript/tests/baselines/reference"
     if [[ ! -d "$baselines_dir" ]]; then
         die "TypeScript baselines not found. Run: ./scripts/setup-ts-submodule.sh"
     fi
 
-    ensure_tsz_binary
-    build_runner
+    if [[ "$skip_build" -eq 0 ]]; then
+        ensure_tsz_binary
+        build_runner
+    else
+        if ! resolve_tsz_binary; then
+            die "tsz binary not found. Run once without --skip-build/--no-build."
+        fi
+        if [[ ! -f "$SCRIPT_DIR/dist/runner.js" ]]; then
+            die "Runner JS not built. Run once without --skip-build/--no-build."
+        fi
+    fi
 
     log_step "Running emit tests..."
     echo ""
