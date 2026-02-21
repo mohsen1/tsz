@@ -17,10 +17,13 @@ SESSION_NAME=""           # "" = use existing session.sh, else load from scripts
 TIMEOUT_SECONDS=3600      # 1 hour
 COOLDOWN_FALLBACK=1800    # 30 min fallback when reset time can't be parsed
 LOOP_SLEEP=10             # seconds between loop iterations
+MAX_LOG_MB=500            # prune oldest logs when total exceeds this
+MIN_DISK_GB=5             # warn and skip run if free disk below this
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 SESSION_SCRIPT="$PROJECT_DIR/session.sh"
+INSTANCE_ID="$$"          # PID-based instance isolation
 
 # Log directory: logs/sessions/YYYYMMDD/
 LOG_BASE="$PROJECT_DIR/logs/sessions"
@@ -140,11 +143,20 @@ run_with_capture() {
 
 # ─── Cleanup trap ────────────────────────────────────────────────────────────
 TMPFILES=()
+CHILD_PID=""
+
 cleanup() {
+  # Kill child process tree if still running
+  if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
+    kill -- -"$CHILD_PID" 2>/dev/null || kill "$CHILD_PID" 2>/dev/null || true
+    wait "$CHILD_PID" 2>/dev/null || true
+  fi
+  # Remove temp files
   local f
   for f in "${TMPFILES[@]+"${TMPFILES[@]}"}"; do
     [[ -f "$f" ]] && rm -f "$f"
   done
+  TMPFILES=()
 }
 trap cleanup EXIT INT TERM
 
@@ -153,6 +165,69 @@ mktmp() {
   f="$(mktemp)"
   TMPFILES+=("$f")
   echo "$f"
+}
+
+# Clean temp files from previous iteration (prevents unbounded array growth)
+clean_tmpfiles() {
+  local f
+  for f in "${TMPFILES[@]+"${TMPFILES[@]}"}"; do
+    [[ -f "$f" ]] && rm -f "$f"
+  done
+  TMPFILES=()
+}
+
+# ─── Health checks ──────────────────────────────────────────────────────────
+
+# Check available disk space (returns false if below MIN_DISK_GB)
+check_disk_space() {
+  local avail_kb
+  avail_kb="$(df -k "$PROJECT_DIR" | awk 'NR==2 {print $4}')"
+  local min_kb=$(( MIN_DISK_GB * 1024 * 1024 ))
+  if (( avail_kb < min_kb )); then
+    warn "Low disk space: $(( avail_kb / 1024 ))MB available (minimum: ${MIN_DISK_GB}GB)"
+    return 1
+  fi
+  return 0
+}
+
+# Remove stale .git/index.lock (older than 10 minutes = dead process)
+clean_stale_git_lock() {
+  local lockfile="$PROJECT_DIR/.git/index.lock"
+  if [[ -f "$lockfile" ]]; then
+    # Check if the lock is stale (older than 10 minutes)
+    local lock_age
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      lock_age=$(( $(date +%s) - $(stat -f %m "$lockfile") ))
+    else
+      lock_age=$(( $(date +%s) - $(stat -c %Y "$lockfile") ))
+    fi
+    if (( lock_age > 600 )); then
+      warn "Removing stale git lock (${lock_age}s old): $lockfile"
+      rm -f "$lockfile"
+    else
+      log "Git lock exists (${lock_age}s old), waiting..."
+      return 1
+    fi
+  fi
+  return 0
+}
+
+# Prune log directory if total size exceeds MAX_LOG_MB
+prune_logs() {
+  [[ -d "$LOG_BASE" ]] || return 0
+  local total_kb
+  total_kb="$(du -sk "$LOG_BASE" 2>/dev/null | awk '{print $1}')"
+  local max_kb=$(( MAX_LOG_MB * 1024 ))
+  if (( total_kb > max_kb )); then
+    log "Log directory ${total_kb}KB exceeds ${MAX_LOG_MB}MB cap, pruning oldest..."
+    # Delete oldest files until under limit
+    find "$LOG_BASE" -type f -name '*.log' -print0 \
+      | xargs -0 ls -t 2>/dev/null \
+      | tail -n +100 \
+      | xargs rm -f 2>/dev/null || true
+    # Remove empty day directories
+    find "$LOG_BASE" -type d -empty -delete 2>/dev/null || true
+  fi
 }
 
 # ─── Auto-discover runners ──────────────────────────────────────────────────
@@ -508,15 +583,18 @@ run_cycle() {
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 main() {
-  # If --session NAME was given, copy template to session.sh
+  # If --session NAME was given, use a per-instance copy to avoid races
+  # when multiple run-session.sh instances run concurrently
   if [[ -n "$SESSION_NAME" ]]; then
     local template="$SCRIPT_DIR/sessions/${SESSION_NAME}.sh"
     if [[ ! -f "$template" ]]; then
       die "Session template not found: $template"
     fi
+    SESSION_SCRIPT="$PROJECT_DIR/.session-${INSTANCE_ID}.sh"
     cp "$template" "$SESSION_SCRIPT"
     chmod +x "$SESSION_SCRIPT"
-    log "Loaded session template: $SESSION_NAME"
+    TMPFILES+=("$SESSION_SCRIPT")  # cleaned up on exit
+    log "Loaded session template: $SESSION_NAME (instance $INSTANCE_ID)"
   fi
 
   discover_runners
@@ -552,11 +630,39 @@ main() {
     echo "${C_CYAN}${C_BOLD}  Iteration #$iteration  $(date '+%Y-%m-%d %H:%M:%S')${C_RESET}" >&2
     echo "${C_CYAN}${C_BOLD}════════════════════════════════════════════════════════════════${C_RESET}" >&2
 
-    # Periodic cleanup: every 10 iterations, run clean.sh to remove
-    # accumulated session/bench/profiling leftovers
+    # ── Pre-flight health checks ──
+    # Clean temp files from previous iteration (prevents unbounded array growth)
+    clean_tmpfiles
+
+    # Check disk space — skip this iteration if critically low
+    if ! check_disk_space; then
+      err "Disk space critically low — running emergency cleanup"
+      "$SCRIPT_DIR/clean.sh" --quiet || true
+      if ! check_disk_space; then
+        err "Still low after cleanup. Sleeping 5m before retry..."
+        sleep 300
+        continue
+      fi
+    fi
+
+    # Clear stale git locks left by crashed sessions
+    if ! clean_stale_git_lock; then
+      log "Git lock held by another process, sleeping ${LOOP_SLEEP}s..."
+      sleep "$LOOP_SLEEP"
+      continue
+    fi
+
+    # Periodic cleanup: every 10 iterations, run clean.sh + prune logs
     if (( iteration % 10 == 0 )); then
       log "Periodic cleanup (iteration $iteration)..."
       "$SCRIPT_DIR/clean.sh" --quiet || true
+      prune_logs
+    fi
+
+    # Re-copy session template each iteration so git-pulled updates take effect
+    if [[ -n "$SESSION_NAME" ]]; then
+      local template="$SCRIPT_DIR/sessions/${SESSION_NAME}.sh"
+      [[ -f "$template" ]] && cp "$template" "$SESSION_SCRIPT" && chmod +x "$SESSION_SCRIPT"
     fi
 
     # Reload prompt each iteration (picks up changes to session.sh)
