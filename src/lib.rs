@@ -580,6 +580,9 @@ impl CompilerOptions {
             no_types_and_symbols: false,
             target: self.resolve_target(),
             module: crate::common::ModuleKind::None,
+            jsx_factory: "React.createElement".to_string(),
+            jsx_fragment_factory: "React.Fragment".to_string(),
+
             es_module_interop: false,
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,
