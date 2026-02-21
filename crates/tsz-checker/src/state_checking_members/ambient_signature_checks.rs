@@ -547,8 +547,15 @@ impl<'a> CheckerState<'a> {
                 self.ctx.exit_async_context();
             }
 
-            let check_return_type =
+            let mut check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
+            if is_async
+                && check_return_type == return_type
+                && has_type_annotation
+                && self.return_type_annotation_looks_like_promise(method.type_annotation)
+            {
+                check_return_type = TypeId::VOID;
+            }
             let requires_return = self.requires_return_value(check_return_type);
             let has_return = self.body_has_return_with_value(method.body);
             let falls_through = self.function_body_falls_through(method.body);
@@ -1122,11 +1129,18 @@ impl<'a> CheckerState<'a> {
                 // Check if this is an async getter
                 let is_async = self.has_async_modifier(&accessor.modifiers);
                 // For async getters, extract the inner type from Promise<T>
-                let check_return_type = self.return_type_for_implicit_return_check(
+                let mut check_return_type = self.return_type_for_implicit_return_check(
                     return_type,
                     is_async,
                     false, // getters cannot be generators
                 );
+                if is_async
+                    && check_return_type == return_type
+                    && has_type_annotation
+                    && self.return_type_annotation_looks_like_promise(accessor.type_annotation)
+                {
+                    check_return_type = TypeId::VOID;
+                }
                 let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(accessor.body);
                 let falls_through = self.function_body_falls_through(accessor.body);

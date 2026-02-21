@@ -781,11 +781,21 @@ impl<'a> CheckerState<'a> {
                     (false, false)
                 };
 
-                let check_return_type = self.return_type_for_implicit_return_check(
-                    annotated_return_type.unwrap_or(return_type),
+                let effective_return_type = annotated_return_type.unwrap_or(return_type);
+                let mut check_return_type = self.return_type_for_implicit_return_check(
+                    effective_return_type,
                     is_async,
                     is_generator,
                 );
+                // For async functions, if we couldn't unwrap Promise<T> (e.g. lib files not loaded),
+                // fall back to the annotation syntax. If it looks like Promise<...>, suppress TS2355.
+                if is_async
+                    && check_return_type == effective_return_type
+                    && has_type_annotation
+                    && self.return_type_annotation_looks_like_promise(type_annotation)
+                {
+                    check_return_type = TypeId::VOID;
+                }
                 let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(body);
                 let falls_through = self.function_body_falls_through(body);
