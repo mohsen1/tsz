@@ -775,6 +775,8 @@ impl<'a> CheckerState<'a> {
 
         // Collect properties from the object literal (later entries override earlier ones)
         let mut properties: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
+        let mut string_index_types: Vec<TypeId> = Vec::new();
+        let mut number_index_types: Vec<TypeId> = Vec::new();
         let mut has_spread = false;
         // Track getter/setter names to allow getter+setter pairs with the same name
         let mut getter_names: rustc_hash::FxHashSet<Atom> = rustc_hash::FxHashSet::default();
@@ -969,12 +971,13 @@ impl<'a> CheckerState<'a> {
                     // should contextually type `y` as `string` from the string index signature.
                     self.check_computed_property_name(prop.name);
 
+                    let mut prop_name_type = TypeId::ANY;
                     if let Some(prop_name_node) = self.ctx.arena.get(prop.name)
                         && prop_name_node.kind
                             == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
-                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        prop_name_type = self.get_type_of_node(computed.expression);
                         if let Some(atom) =
                             crate::query_boundaries::type_computation_access::literal_property_name(
                                 self.ctx.types,
@@ -1012,8 +1015,16 @@ impl<'a> CheckerState<'a> {
                     };
                     let prev_context = self.ctx.contextual_type;
                     self.ctx.contextual_type = index_ctx_type;
-                    self.get_type_of_node(prop.initializer);
+                    let value_type = self.get_type_of_node(prop.initializer);
                     self.ctx.contextual_type = prev_context;
+
+                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+                        number_index_types.push(value_type);
+                    } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
+                        || self.is_assignable_to(prop_name_type, TypeId::ANY)
+                    {
+                        string_index_types.push(value_type);
+                    }
                 }
             }
             // Shorthand property: { x } - identifier is both name and value
@@ -1272,12 +1283,13 @@ impl<'a> CheckerState<'a> {
                     // should contextually type `y` as `string` from the string index signature.
                     self.check_computed_property_name(method.name);
 
+                    let mut prop_name_type = TypeId::ANY;
                     if let Some(prop_name_node) = self.ctx.arena.get(method.name)
                         && prop_name_node.kind
                             == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
-                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        prop_name_type = self.get_type_of_node(computed.expression);
                         if let Some(atom) =
                             crate::query_boundaries::type_computation_access::literal_property_name(
                                 self.ctx.types,
@@ -1311,8 +1323,16 @@ impl<'a> CheckerState<'a> {
                             .types
                             .contextual_property_type(ctx_type, "__@computed");
                     }
-                    self.get_type_of_function(elem_idx);
+                    let method_type = self.get_type_of_function(elem_idx);
                     self.ctx.contextual_type = prev_context;
+
+                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+                        number_index_types.push(method_type);
+                    } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
+                        || self.is_assignable_to(prop_name_type, TypeId::ANY)
+                    {
+                        string_index_types.push(method_type);
+                    }
                 }
             }
             // Accessor: { get foo() {} } or { set foo(v) {} }
@@ -1582,12 +1602,13 @@ impl<'a> CheckerState<'a> {
                     // Computed accessor name - still type-check the expression and body
                     self.check_computed_property_name(accessor.name);
 
+                    let mut prop_name_type = TypeId::ANY;
                     if let Some(prop_name_node) = self.ctx.arena.get(accessor.name)
                         && prop_name_node.kind
                             == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
-                        let prop_name_type = self.get_type_of_node(computed.expression);
+                        prop_name_type = self.get_type_of_node(computed.expression);
                         if let Some(atom) =
                             crate::query_boundaries::type_computation_access::literal_property_name(
                                 self.ctx.types,
@@ -1621,7 +1642,8 @@ impl<'a> CheckerState<'a> {
                             explicit_property_names.insert(atom);
                         }
                     }
-                    if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
+
+                    let accessor_type = if elem_node.kind == syntax_kind_ext::GET_ACCESSOR {
                         self.get_type_of_function(elem_idx);
 
                         // TS2378: A 'get' accessor must return a value.
@@ -1637,6 +1659,35 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                         }
+
+                        if accessor.type_annotation.is_none() {
+                            self.infer_getter_return_type(accessor.body)
+                        } else {
+                            self.get_type_from_type_node(accessor.type_annotation)
+                        }
+                    } else {
+                        self.get_type_of_function(elem_idx);
+                        accessor
+                            .parameters
+                            .nodes
+                            .first()
+                            .and_then(|&param_idx| {
+                                let param = self.ctx.arena.get_parameter_at(param_idx)?;
+                                if param.type_annotation.is_none() {
+                                    None
+                                } else {
+                                    Some(self.get_type_from_type_node(param.type_annotation))
+                                }
+                            })
+                            .unwrap_or(TypeId::ANY)
+                    };
+
+                    if self.is_assignable_to(prop_name_type, TypeId::NUMBER) {
+                        number_index_types.push(accessor_type);
+                    } else if self.is_assignable_to(prop_name_type, TypeId::STRING)
+                        || self.is_assignable_to(prop_name_type, TypeId::ANY)
+                    {
+                        string_index_types.push(accessor_type);
                     }
                 }
             }
@@ -1709,10 +1760,49 @@ impl<'a> CheckerState<'a> {
 
         let properties: Vec<PropertyInfo> = properties.into_values().collect();
         // Object literals with spreads are not fresh (no excess property checking)
-        let object_type = if has_spread {
-            self.ctx.types.factory().object(properties)
+
+        let object_type = if string_index_types.is_empty() && number_index_types.is_empty() {
+            if has_spread {
+                self.ctx.types.factory().object(properties)
+            } else {
+                self.ctx.types.factory().object_fresh(properties)
+            }
         } else {
-            self.ctx.types.factory().object_fresh(properties)
+            use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
+
+            let string_index = if !string_index_types.is_empty() {
+                Some(IndexSignature {
+                    key_type: TypeId::STRING,
+                    value_type: self.ctx.types.factory().union(string_index_types),
+                    readonly: false,
+                })
+            } else {
+                None
+            };
+
+            let number_index = if !number_index_types.is_empty() {
+                Some(IndexSignature {
+                    key_type: TypeId::NUMBER,
+                    value_type: self.ctx.types.factory().union(number_index_types),
+                    readonly: false,
+                })
+            } else {
+                None
+            };
+
+            let flags = if has_spread {
+                ObjectFlags::empty()
+            } else {
+                ObjectFlags::FRESH_LITERAL
+            };
+
+            self.ctx.types.factory().object_with_index(ObjectShape {
+                flags,
+                properties,
+                string_index,
+                number_index,
+                symbol: None,
+            })
         };
 
         // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
