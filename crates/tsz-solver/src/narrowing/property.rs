@@ -5,7 +5,7 @@
 //! - Property type lookup for narrowing
 //! - Object-like type detection for instanceof support
 
-use crate::narrowing::NarrowingContext;
+use super::NarrowingContext;
 use crate::types::{ObjectShapeId, PropertyInfo, TypeId, Visibility};
 use crate::visitor::{
     intersection_list_id, object_shape_id, object_with_index_shape_id, type_param_info,

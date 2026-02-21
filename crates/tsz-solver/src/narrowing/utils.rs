@@ -3,7 +3,7 @@
 //! Contains the `NarrowingVisitor` (`TypeVisitor` implementation for structural narrowing)
 //! and standalone public utility functions for nullish/falsy type handling.
 
-use crate::narrowing::{DiscriminantInfo, NarrowingContext};
+use super::{DiscriminantInfo, NarrowingContext};
 use crate::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId, TypeListId, TypeParamInfo};
 use crate::visitor::{TypeVisitor, is_object_like_type_db, literal_value, union_list_id};

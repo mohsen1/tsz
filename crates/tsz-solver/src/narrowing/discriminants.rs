@@ -9,7 +9,7 @@
 //! - `narrow_by_discriminant`: Narrows to matching union members
 //! - `narrow_by_excluding_discriminant`: Excludes matching union members
 
-use crate::narrowing::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
+use super::{DiscriminantInfo, NarrowingContext, union_or_single_preserve};
 use crate::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::subtype::is_subtype_of;
 use crate::type_queries::{

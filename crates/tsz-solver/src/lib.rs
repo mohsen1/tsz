@@ -41,10 +41,6 @@ mod intern_normalize;
 mod intern_template;
 pub mod judge;
 mod narrowing;
-mod narrowing_compound;
-mod narrowing_discriminants;
-mod narrowing_property;
-mod narrowing_utils;
 mod object_literal;
 pub mod objects;
 pub mod operations;
@@ -189,7 +185,7 @@ mod intersection_union_tests;
 #[cfg(test)]
 #[path = "../tests/mapped_key_remap_tests.rs"]
 mod mapped_key_remap_tests;
-// narrowing_tests: loaded from narrowing.rs
+// narrowing_tests: loaded from narrowing/mod.rs
 // operations_tests: loaded from operations.rs
 // subtype_tests: loaded from subtype.rs
 #[cfg(test)]
