@@ -116,7 +116,7 @@ impl<'a> CheckerState<'a> {
                 self.resolve_qualified_symbol_in_type_position(type_name_idx)
             {
                 let required_count = self.count_required_type_params(sym_id);
-                if required_count > 0 && !self.is_direct_heritage_type_reference(idx) {
+                if required_count > 0 {
                     let name = self
                         .entity_name_text(type_name_idx)
                         .unwrap_or_else(|| "<unknown>".to_string());
@@ -605,7 +605,7 @@ impl<'a> CheckerState<'a> {
                     }
                     let type_params = self.get_type_params_for_symbol(sym_id);
                     let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
-                    if required_count > 0 && !self.is_direct_heritage_type_reference(idx) {
+                    if required_count > 0 {
                         self.error_generic_type_requires_type_arguments_at(
                             name,
                             required_count,
