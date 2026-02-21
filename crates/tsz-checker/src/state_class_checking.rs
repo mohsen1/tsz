@@ -340,6 +340,17 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::TYPE_IS_NOT_A_CONSTRUCTOR_FUNCTION_TYPE,
                                 );
                             }
+                        } else if !is_class_declaration
+                            && symbol_type != TypeId::ERROR
+                            && symbol_type != TypeId::ANY
+                            && tsz_solver::type_queries::is_mapped_type(self.ctx.types, symbol_type)
+                        {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                expr_idx,
+                                diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                            );
                         }
                     }
                 } else {
@@ -562,16 +573,26 @@ impl<'a> CheckerState<'a> {
                             if self.is_property_access_on_unresolved_import(expr_idx) {
                                 continue;
                             }
-                            // TS2422: For implements clauses referencing type parameters,
-                            // emit "A class may only implement another class or interface"
+                            // TS2422: For implements clauses referencing type parameters
                             if !is_extends_clause
                                 && is_class_declaration
                                 && class_type_param_names.contains(&name)
                             {
-                                use crate::diagnostics::diagnostic_codes;
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                                 self.error_at_node(
                                     expr_idx,
-                                    "A class may only implement another class or interface.",
+                                    diagnostic_messages::A_CLASS_CAN_ONLY_IMPLEMENT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH_S,
+                                    diagnostic_codes::A_CLASS_CAN_ONLY_IMPLEMENT_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH_S,
+                                );
+                                continue;
+                            }
+
+                            // Emit TS2312 for interface extending a type parameter
+                            if !is_class_declaration && class_type_param_names.contains(&name) {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.error_at_node(
+                                    expr_idx,
+                                    diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
                                     diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
                                 );
                                 continue;
