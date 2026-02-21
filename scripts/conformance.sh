@@ -36,23 +36,18 @@ Commands:
   generate    Generate TSC cache locally (if not checked in)
   run         Run conformance tests against TSC cache
   analyze     Analyze failures: categorize, rank by impact, find easy wins
-              Shows which error codes to implement for maximum conformance gain
-  areas       Analyze pass/fail rates by test directory area (parser, types, salsa, etc.)
-              Shows which feature areas need the most attention
+  areas       Analyze pass/fail rates by test directory area
   all         Generate cache (if needed) and run tests (default)
   clean       Remove cache file
 
-Options:
-  --workers N       Number of parallel workers (default: 16)
+Run options:
+  --verbose         Show file bodies, fingerprint deltas, and expected/actual for failures
+  --filter PAT      Filter test files by pattern
   --max N           Maximum number of tests to run (default: all)
   --offset N        Skip first N tests (default: 0)
-  --verbose         Show per-test results and print failing test file bodies (max 100 failures)
-  --compare-fingerprints  Compare full diagnostic fingerprints (requires regenerated cache)
-  --print-fingerprints    Print fingerprint deltas for failed tests
-  --filter PAT      Filter test files by pattern
-  --error-code N    Only show tests with this error code (e.g., 2304)
+  --workers N       Number of parallel workers (default: 16)
+  --profile NAME    Cargo build profile (default: dist-fast)
   --no-cache        Force cache regeneration even if cache exists
-  --profile NAME    Use specific cargo profile (default: dist-fast, available: dist-fast, dist, release, dev)
 
 Analyze options:
   --category CAT    Filter by category: false-positive, all-missing, wrong-code, close
@@ -64,32 +59,15 @@ Areas options:
   --drilldown AREA  Drill into a specific area (e.g., "types", "statements")
 
 Examples:
-  ./scripts/conformance.sh run --max 100              # Test first 100 files
+  ./scripts/conformance.sh run --max 100              # Quick smoke test
+  ./scripts/conformance.sh run --max 20 --verbose     # Verbose with file bodies
   ./scripts/conformance.sh run --filter "strict"      # Run tests matching "strict"
-  ./scripts/conformance.sh run --error-code 2304      # Only show tests with TS2304
-  ./scripts/conformance.sh run --compare-fingerprints --print-fingerprints  # Rich diagnostic parity
-  ./scripts/conformance.sh analyze                    # Full analysis with impact report
-  ./scripts/conformance.sh analyze --offset 0 --max 3101  # Analyze slice failures
-  ./scripts/conformance.sh analyze --category false-positive  # Show only false positives
-  ./scripts/conformance.sh analyze --category close    # Tests closest to passing
-  ./scripts/conformance.sh analyze --top 30            # Show top 30 items per section
+  ./scripts/conformance.sh analyze                    # Full failure analysis
+  ./scripts/conformance.sh areas --depth 2            # Sub-area breakdown
 
-  ./scripts/conformance.sh areas                         # Top-level area pass/fail rates
-  ./scripts/conformance.sh areas --depth 2               # Sub-area breakdown
-  ./scripts/conformance.sh areas --drilldown types        # Drill into 'types' sub-areas
-  ./scripts/conformance.sh areas --min-tests 20           # Only show areas with 20+ tests
-
-Analysis output includes:
-  - Error codes NOT IMPLEMENTED (never emitted by tsz) - highest priority!
-  - Error codes that appear TOGETHER in tests - implement groups for more impact
-  - QUICK WINS - tests missing just one error code
-  - Impact estimation - how many tests each code affects
-
-Note: Binaries are automatically built if not found.
-      Cache (scripts/tsc-cache-full.json) is checked into the repo.
-
-Cache location: scripts/tsc-cache-full.json
-Test directory: TypeScript/tests/cases/conformance
+Note: Fingerprint comparison (code + location + message) is always enabled.
+      Binaries are automatically built if not found.
+      Cache: scripts/tsc-cache-full.json
 EOF
 }
 
@@ -359,13 +337,9 @@ run_tests() {
     echo ""
 
     cd "$REPO_ROOT"
-    # Filter out --workers and --no-cache from passed args to avoid duplication
+    # Filter out flags already handled at the top level
     local extra_args=()
     local verbose=false
-    local print_fingerprints=false
-    local has_error_code=false
-    local has_max=false
-    local prev_arg=""
     local skip_next=false
     for arg in "$@"; do
         if [ "$skip_next" = true ]; then
@@ -373,42 +347,29 @@ run_tests() {
             continue
         fi
         if [ "$arg" = "--workers" ]; then
-            # Skip --workers and its value (we use our own)
             skip_next=true
-            prev_arg=""
             continue
         fi
         if [[ "$arg" == --workers=* ]]; then
-            prev_arg=""
             continue
         fi
         if [ "$arg" = "--no-cache" ]; then
-            # Skip --no-cache (already handled)
-            prev_arg=""
             continue
         fi
         if [[ "$arg" == --verbose ]]; then
             verbose=true
+            # Don't add --verbose here; we build the runner flags below
+            continue
         fi
-        if [[ "$arg" == --print-fingerprints ]]; then
-            print_fingerprints=true
-        fi
-        # Check for --error-code (either --error-code N or --error-code=N)
-        if [[ "$arg" == --error-code* ]] || [ "$prev_arg" = "--error-code" ]; then
-            has_error_code=true
-        fi
-        # Check for --max (either --max N or --max=N)
-        if [[ "$arg" == --max* ]] || [ "$prev_arg" = "--max" ]; then
-            has_max=true
-        fi
-        prev_arg="$arg"
         extra_args+=("$arg")
     done
 
-    extra_args+=(--print-test)
-    local show_per_test=$verbose
-    if [ "$print_fingerprints" = true ]; then
-        show_per_test=true
+    # Build runner flags based on mode
+    #   quiet (default): FAIL lines + summary only
+    #   verbose: FAIL lines with expected/actual, file bodies, fingerprint deltas
+    local runner_flags=()
+    if [ "$verbose" = true ]; then
+        runner_flags+=(--print-test --print-test-files --print-fingerprints --verbose)
     fi
 
     # Capture output to extract failing tests when --verbose is set
@@ -416,15 +377,12 @@ run_tests() {
     tmpfile=$(mktemp)
     trap "rm -f '$tmpfile'" EXIT
 
-    local runner_exit=0
-    export RUST_LOG=tsz_checker=trace
-    export RUST_BACKTRACE=1
     $RUNNER_BIN \
         --test-dir "$TEST_DIR" \
         --cache-file "$CACHE_FILE" \
         --tsz-binary "$TSZ_BIN" \
         --workers $WORKERS \
-        --print-test-files \
+        "${runner_flags[@]}" \
         "${extra_args[@]}" | tee "$tmpfile"
 
     local output
@@ -471,17 +429,14 @@ run_tests() {
                 local config=""
                 local in_test_block=false
                 while IFS= read -r line; do
-                    # Match FAIL line with this test path (may have additional text after path)
                     if [[ "$line" =~ ^FAIL[[:space:]]+$rel_path(.*)$ ]]; then
                         in_test_block=true
                         continue
                     fi
                     if [ "$in_test_block" = true ]; then
-                        # Stop at next test result line
                         if [[ "$line" =~ ^FAIL[[:space:]]+ ]] || [[ "$line" =~ ^PASS[[:space:]]+ ]] || [[ "$line" =~ ^SKIP[[:space:]]+ ]]; then
                             break
                         fi
-                        # Extract expected/actual/options values (indented with 2 spaces)
                         if [[ "$line" =~ ^[[:space:]][[:space:]]expected:[[:space:]]+(.+) ]]; then
                             expected="${BASH_REMATCH[1]}"
                         elif [[ "$line" =~ ^[[:space:]][[:space:]]actual:[[:space:]]+(.+) ]]; then
@@ -492,7 +447,6 @@ run_tests() {
                     fi
                 done <<< "$output"
 
-                # Print verbose expected, actual, and config values
                 if [ -n "$expected" ] || [ -n "$actual" ] || [ -n "$config" ]; then
                     echo ""
                     if [ -n "$expected" ]; then
@@ -690,9 +644,6 @@ while [ $i -lt ${#@} ]; do
     arg="${@:$((i+1)):1}"
     if [ "$arg" = "--no-cache" ]; then
         NO_CACHE=true
-    elif [ "$arg" = "--no-download" ]; then
-        # Kept for backward compatibility, now a no-op
-        true
     elif [ "$arg" = "--workers" ]; then
         i=$((i + 1))
         WORKERS="${@:$((i+1)):1}"

@@ -73,11 +73,6 @@ pub struct Args {
     #[arg(long, default_value_t = 10)]
     pub timeout: u64,
 
-    /// Compare full diagnostic fingerprints (code + location + message key),
-    /// not just error-code sets.
-    #[arg(long)]
-    pub compare_fingerprints: bool,
-
     /// Print fingerprint deltas for failed tests (when available).
     #[arg(long)]
     pub print_fingerprints: bool,

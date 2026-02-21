@@ -138,7 +138,6 @@ impl Runner {
 
         let error_code_filter = self.args.error_code;
         let timeout_secs = self.args.timeout;
-        let compare_fingerprints = self.args.compare_fingerprints;
         let print_fingerprints = self.args.print_fingerprints;
         let write_diff_artifacts = self.args.write_diff_artifacts;
         let diff_artifacts_dir = PathBuf::from(&self.args.diff_artifacts_dir);
@@ -170,7 +169,6 @@ impl Runner {
                         cache,
                         tsz_binary,
                         pool,
-                        compare_fingerprints,
                         print_test_files,
                         timeout_secs,
                     )
@@ -183,7 +181,7 @@ impl Runner {
                             match result {
                                 TestResult::Pass => {
                                     stats.passed.fetch_add(1, Ordering::SeqCst);
-                                    if print_test {
+                                    if print_test && !verbose {
                                         println!("PASS {}", rel_path);
                                     }
                                 }
@@ -218,17 +216,6 @@ impl Runner {
                                                 actual.iter().map(|c| format!("TS{}", c)).collect();
                                             println!("  expected: [{}]", expected_str.join(", "));
                                             println!("  actual:   [{}]", actual_str.join(", "));
-
-                                            // Print resolved compiler options
-                                            if !options.is_empty() {
-                                                let opts_str: Vec<String> = options
-                                                    .iter()
-                                                    .map(|(k, v)| format!("{}: {}", k, v))
-                                                    .collect();
-                                                println!("  options:  {{{}}}", opts_str.join(", "));
-                                            } else {
-                                                println!("  options:  {{}}");
-                                            }
                                         }
 
                                         if print_fingerprints {
@@ -491,7 +478,6 @@ impl Runner {
         cache: Arc<crate::cache::TscCache>,
         tsz_binary: String,
         pool: Option<Arc<ProcessPool>>,
-        compare_fingerprints: bool,
         print_test_files: bool,
         timeout_secs: u64,
     ) -> anyhow::Result<TestResult> {
@@ -689,8 +675,7 @@ impl Runner {
                             .iter()
                             .cloned()
                             .collect();
-                    let use_fingerprint_compare =
-                        compare_fingerprints && !tsc_fingerprints.is_empty();
+                    let use_fingerprint_compare = !tsc_fingerprints.is_empty();
                     let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
                         if use_fingerprint_compare {
                             tsc_fingerprints
@@ -842,7 +827,57 @@ impl Runner {
                     let missing: Vec<_> = tsc_codes.difference(&tsz_codes).cloned().collect();
                     let extra: Vec<_> = tsz_codes.difference(&tsc_codes).cloned().collect();
 
-                    if missing.is_empty() && extra.is_empty() {
+                    let tsc_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
+                        tsc_result.diagnostic_fingerprints.iter().cloned().collect();
+                    let tsz_fingerprints: std::collections::HashSet<DiagnosticFingerprint> =
+                        compile_result
+                            .diagnostic_fingerprints
+                            .iter()
+                            .cloned()
+                            .collect();
+                    let use_fingerprint_compare = !tsc_fingerprints.is_empty();
+                    let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
+                        if use_fingerprint_compare {
+                            tsc_fingerprints
+                                .difference(&tsz_fingerprints)
+                                .cloned()
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+                    let mut extra_fingerprints: Vec<DiagnosticFingerprint> =
+                        if use_fingerprint_compare {
+                            tsz_fingerprints
+                                .difference(&tsc_fingerprints)
+                                .cloned()
+                                .collect()
+                        } else {
+                            vec![]
+                        };
+                    missing_fingerprints.sort_by_key(|f| {
+                        (
+                            f.code,
+                            f.file.clone(),
+                            f.line,
+                            f.column,
+                            f.message_key.clone(),
+                        )
+                    });
+                    extra_fingerprints.sort_by_key(|f| {
+                        (
+                            f.code,
+                            f.file.clone(),
+                            f.line,
+                            f.column,
+                            f.message_key.clone(),
+                        )
+                    });
+
+                    if missing.is_empty()
+                        && extra.is_empty()
+                        && (!use_fingerprint_compare
+                            || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
+                    {
                         Ok(TestResult::Pass)
                     } else {
                         let mut expected = tsc_result.error_codes.clone();
@@ -854,8 +889,8 @@ impl Runner {
                             actual,
                             missing,
                             extra,
-                            missing_fingerprints: vec![],
-                            extra_fingerprints: vec![],
+                            missing_fingerprints,
+                            extra_fingerprints,
                             options: HashMap::new(),
                         })
                     }
@@ -951,8 +986,7 @@ impl Runner {
                             .iter()
                             .cloned()
                             .collect();
-                    let use_fingerprint_compare =
-                        compare_fingerprints && !tsc_fingerprints.is_empty();
+                    let use_fingerprint_compare = !tsc_fingerprints.is_empty();
                     let mut missing_fingerprints: Vec<DiagnosticFingerprint> =
                         if use_fingerprint_compare {
                             tsc_fingerprints
