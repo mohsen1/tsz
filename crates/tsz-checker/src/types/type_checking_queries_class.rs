@@ -1376,6 +1376,7 @@ impl<'a> CheckerState<'a> {
                 // Many identifiers repeat across merged lib declarations.
                 let def_id_cache =
                     RefCell::new(FxHashMap::<tsz_binder::SymbolId, tsz_solver::DefId>::default());
+                let resolver_cache = RefCell::new(FxHashMap::<NodeIndex, Option<u32>>::default());
                 let get_cached_def_id = |symbol_id: tsz_binder::SymbolId| -> tsz_solver::DefId {
                     if let Some(def_id) = def_id_cache.borrow().get(&symbol_id).copied() {
                         return def_id;
@@ -1385,6 +1386,10 @@ impl<'a> CheckerState<'a> {
                     def_id
                 };
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
+                    if let Some(cached) = resolver_cache.borrow().get(&node_idx) {
+                        return *cached;
+                    }
+
                     // For merged declarations, we need to check the arena for this specific node.
                     // IMPORTANT: NodeIndex values are arena-specific — the same index can refer
                     // to different nodes in different arenas. We must check ALL arenas and only
@@ -1397,7 +1402,9 @@ impl<'a> CheckerState<'a> {
                                 continue;
                             }
                             if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                return Some(found_sym.0);
+                                let resolved = Some(found_sym.0);
+                                resolver_cache.borrow_mut().insert(node_idx, resolved);
+                                return resolved;
                             }
                             // Don't break - another arena may have a different identifier
                             // at the same NodeIndex that resolves successfully
@@ -1406,12 +1413,16 @@ impl<'a> CheckerState<'a> {
                     // Also try fallback arena
                     if let Some(ident_name) = fallback_arena.get_identifier_text(node_idx) {
                         if is_compiler_managed_type(ident_name) {
+                            resolver_cache.borrow_mut().insert(node_idx, None);
                             return None;
                         }
                         if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                            return Some(found_sym.0);
+                            let resolved = Some(found_sym.0);
+                            resolver_cache.borrow_mut().insert(node_idx, resolved);
+                            return resolved;
                         }
                     }
+                    resolver_cache.borrow_mut().insert(node_idx, None);
                     None
                 };
 
@@ -1607,6 +1618,31 @@ impl<'a> CheckerState<'a> {
             // Helper: lower augmentation declarations using a given arena
             let mut lower_with_arena = |arena_ref: &NodeArena, decls: &[NodeIndex]| {
                 let decl_binder = binder_for_arena(arena_ref).unwrap_or(binder_ref);
+                let symbol_lookup_cache =
+                    RefCell::new(FxHashMap::<String, Option<tsz_binder::SymbolId>>::default());
+                let resolve_name_symbol = |ident_name: &str| -> Option<tsz_binder::SymbolId> {
+                    if let Some(cached) = symbol_lookup_cache.borrow().get(ident_name) {
+                        return *cached;
+                    }
+
+                    let found = decl_binder.file_locals.get(ident_name).or_else(|| {
+                        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
+                            for binder in all_binders.iter() {
+                                if let Some(found_sym) = binder.file_locals.get(ident_name) {
+                                    return Some(found_sym);
+                                }
+                            }
+                        }
+                        lib_contexts
+                            .iter()
+                            .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
+                    });
+
+                    symbol_lookup_cache
+                        .borrow_mut()
+                        .insert(ident_name.to_string(), found);
+                    found
+                };
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
                         return Some(sym_id.0);
@@ -1618,29 +1654,7 @@ impl<'a> CheckerState<'a> {
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
-                        return Some(found_sym.0);
-                    }
-                    if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                        for binder in all_binders.iter() {
-                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                return Some(found_sym.0);
-                            }
-                        }
-                    }
-                    if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                        for binder in all_binders.iter() {
-                            if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                return Some(found_sym.0);
-                            }
-                        }
-                    }
-                    for ctx in &lib_contexts {
-                        if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
-                            return Some(found_sym.0);
-                        }
-                    }
-                    None
+                    resolve_name_symbol(ident_name).map(|sym| sym.0)
                 };
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
                     if let Some(sym_id) = decl_binder.get_node_symbol(node_idx) {
@@ -1656,18 +1670,7 @@ impl<'a> CheckerState<'a> {
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    let sym_id = decl_binder.file_locals.get(ident_name).or_else(|| {
-                        if let Some(all_binders) = self.ctx.all_binders.as_ref() {
-                            for binder in all_binders.iter() {
-                                if let Some(found_sym) = binder.file_locals.get(ident_name) {
-                                    return Some(found_sym);
-                                }
-                            }
-                        }
-                        lib_contexts
-                            .iter()
-                            .find_map(|ctx| ctx.binder.file_locals.get(ident_name))
-                    })?;
+                    let sym_id = resolve_name_symbol(ident_name)?;
                     Some(
                         self.ctx
                             .get_or_create_def_id(tsz_binder::SymbolId(sym_id.0)),
