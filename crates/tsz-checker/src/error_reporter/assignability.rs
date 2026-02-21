@@ -492,12 +492,14 @@ impl<'a> CheckerState<'a> {
                             &[&src, &tgt],
                         )
                     };
-                    let message = format!("{base} {prop_message} {nested_message}");
+                    // tsc emits property type mismatch elaboration as related information
+                    let _prop_message = prop_message;
+                    let _nested_message = nested_message;
                     return Diagnostic::error(
                         file_name,
                         start,
                         length,
-                        message,
+                        base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     );
                 }
@@ -542,16 +544,16 @@ impl<'a> CheckerState<'a> {
                         &[&source_str, &target_str],
                     );
                     let prop_name = self.ctx.types.resolve_atom_ref(*property_name);
-                    let detail = format_message(
+                    let _detail = format_message(
                         diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[&prop_name, &source_str, &target_str],
                     );
-                    let message = format!("{base} {detail}");
+                    // tsc emits elaboration as related information, not in the main message
                     Diagnostic::error(
                         file_name,
                         start,
                         length,
-                        message,
+                        base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     )
                 } else {
@@ -617,12 +619,13 @@ impl<'a> CheckerState<'a> {
                         &[&prop_name],
                     ),
                 };
-                let message = format!("{base} {detail}");
+                // tsc emits visibility elaboration as related information, not in the main message
+                let _detail = detail;
                 Diagnostic::error(
                     file_name,
                     start,
                     length,
-                    message,
+                    base,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
@@ -665,12 +668,13 @@ impl<'a> CheckerState<'a> {
                         &[&prop_name],
                     ),
                 };
-                let message = format!("{base} {detail}");
+                // tsc emits nominal mismatch elaboration as related information
+                let _detail = detail;
                 Diagnostic::error(
                     file_name,
                     start,
                     length,
-                    message,
+                    base,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 )
             }
@@ -891,26 +895,27 @@ impl<'a> CheckerState<'a> {
                                 &[&member_name, &target_str, &source_str],
                             ),
                         };
-                        let message = format!("{base} {detail}");
+                        // tsc emits constructor param visibility as related information
+                        let _detail = detail;
                         return Diagnostic::error(
                             file_name,
                             start,
                             length,
-                            message,
+                            base,
                             diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                         );
                     }
                 }
 
                 if depth == 0
-                    && let Some(detail) = self.elaborate_type_mismatch_detail(source, target)
+                    && let Some(_detail) = self.elaborate_type_mismatch_detail(source, target)
                 {
-                    let message = format!("{base} {detail}");
+                    // tsc emits elaboration as related information, not in the main message
                     Diagnostic::error(
                         file_name,
                         start,
                         length,
-                        message,
+                        base,
                         diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                     )
                 } else {
