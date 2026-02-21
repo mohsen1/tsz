@@ -616,6 +616,10 @@ impl<'a> CheckerState<'a> {
                     return_type
                 }
             }
+            CallResult::NonVoidFunctionCalledWithNew => {
+                self.error_non_void_function_called_with_new_at(callee_expr);
+                TypeId::ANY
+            }
             CallResult::NotCallable { .. } => {
                 // super() calls now use resolve_new() which checks construct signatures,
                 // so NotCallable for super() means the base class has no constructor.
