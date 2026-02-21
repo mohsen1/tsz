@@ -45,6 +45,18 @@ for arg in "$@"; do
     esac
 done
 
+is_already_published() {
+    local crate="$1"
+    local version
+    version=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+    # Returns 0 (true) if this exact version already exists on crates.io
+    local http_status
+    http_status=$(curl -s -o /dev/null -w "%{http_code}" \
+        "https://crates.io/api/v1/crates/${crate}/${version}" \
+        -H "User-Agent: tsz-publish-script/1.0")
+    [ "$http_status" = "200" ]
+}
+
 publish_crate() {
     local crate="$1"
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -54,12 +66,16 @@ publish_crate() {
         echo "  [dry-run] cargo package --list --no-verify -p $crate"
         cargo package --list --no-verify -p "$crate"
     else
-        echo "  cargo publish -p $crate"
-        cargo publish -p "$crate"
-        # crates.io needs a moment to index each crate before dependents can
-        # reference the new version.
-        echo "  Waiting 20 s for crates.io to index $crate ..."
-        sleep 20
+        if is_already_published "$crate"; then
+            echo "  [skip] $crate is already published at this version"
+        else
+            echo "  cargo publish -p $crate"
+            cargo publish -p "$crate"
+            # crates.io needs a moment to index each crate before dependents can
+            # reference the new version.
+            echo "  Waiting 20 s for crates.io to index $crate ..."
+            sleep 20
+        fi
     fi
 }
 

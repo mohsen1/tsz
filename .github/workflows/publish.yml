@@ -18,6 +18,11 @@ on:
           - patch
           - minor
           - major
+      force_publish:
+        description: 'Publish even if version has not changed (re-publish missing crates)'
+        required: false
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -95,6 +100,11 @@ jobs:
             echo "Version bumped to $BUMPED_VERSION by bump-version job"
             echo "version_changed=true"       >> "$GITHUB_OUTPUT"
             echo "version=$BUMPED_VERSION"    >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.force_publish }}" = "true" ]; then
+            CURR=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+            echo "force_publish=true — treating version $CURR as changed"
+            echo "version_changed=true"  >> "$GITHUB_OUTPUT"
+            echo "version=$CURR"         >> "$GITHUB_OUTPUT"
           else
             PREV=$(git show HEAD^:Cargo.toml 2>/dev/null | grep '^version' | head -1 | sed 's/.*"\(.*\)"/\1/' || echo "")
             CURR=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
