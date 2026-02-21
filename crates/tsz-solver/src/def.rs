@@ -420,7 +420,7 @@ impl DefinitionStore {
 
     /// Get definition info by `DefId`.
     pub fn get(&self, id: DefId) -> Option<DefinitionInfo> {
-        self.definitions.get(&id).map(|r| r.clone())
+        self.definitions.get(&id).as_deref().cloned()
     }
 
     /// Get the binder SymbolId for a `DefId`.

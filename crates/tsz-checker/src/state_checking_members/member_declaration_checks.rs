@@ -1220,18 +1220,21 @@ impl<'a> CheckerState<'a> {
         }
 
         let is_static_member = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                let decl = self.ctx.arena.get_property_decl(node).unwrap();
-                self.has_static_modifier(&decl.modifiers)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                let decl = self.ctx.arena.get_method_decl(node).unwrap();
-                self.has_static_modifier(&decl.modifiers)
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                let decl = self.ctx.arena.get_accessor(node).unwrap();
-                self.has_static_modifier(&decl.modifiers)
-            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .is_some_and(|decl| self.has_static_modifier(&decl.modifiers)),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .is_some_and(|decl| self.has_static_modifier(&decl.modifiers)),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .is_some_and(|decl| self.has_static_modifier(&decl.modifiers)),
             k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
             _ => false,
         };
@@ -1334,26 +1337,43 @@ impl<'a> CheckerState<'a> {
         };
 
         let (modifiers, parameters) = match node.kind {
-            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
-                let decl = self.ctx.arena.get_property_decl(node).unwrap();
-                (decl.modifiers.as_ref(), None)
-            }
-            k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                let decl = self.ctx.arena.get_method_decl(node).unwrap();
-                (decl.modifiers.as_ref(), Some(&decl.parameters))
-            }
-            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
-                let decl = self.ctx.arena.get_accessor(node).unwrap();
-                (decl.modifiers.as_ref(), Some(&decl.parameters))
-            }
-            k if k == syntax_kind_ext::CONSTRUCTOR => {
-                let decl = self.ctx.arena.get_constructor(node).unwrap();
-                (decl.modifiers.as_ref(), Some(&decl.parameters))
-            }
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .ctx
+                .arena
+                .get_property_decl(node)
+                .map_or((None, None), |decl| (decl.modifiers.as_ref(), None)),
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .ctx
+                .arena
+                .get_method_decl(node)
+                .map_or((None, None), |decl| {
+                    (decl.modifiers.as_ref(), Some(&decl.parameters))
+                }),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .ctx
+                .arena
+                .get_accessor(node)
+                .map_or((None, None), |decl| {
+                    (decl.modifiers.as_ref(), Some(&decl.parameters))
+                }),
+            k if k == syntax_kind_ext::CONSTRUCTOR => self
+                .ctx
+                .arena
+                .get_constructor(node)
+                .map_or((None, None), |decl| {
+                    (decl.modifiers.as_ref(), Some(&decl.parameters))
+                }),
             _ => (None, None),
         };
 
-        let is_abstract = modifiers.is_some_and(|m| self.has_abstract_modifier(&Some(m.clone())));
+        let is_abstract = modifiers.is_some_and(|m| {
+            m.nodes.iter().any(|&mod_idx| {
+                self.ctx
+                    .arena
+                    .get(mod_idx)
+                    .is_some_and(|n| n.kind == tsz_scanner::SyntaxKind::AbstractKeyword as u16)
+            })
+        });
 
         let is_ambient =
             self.ctx
@@ -1651,29 +1671,11 @@ impl<'a> CheckerState<'a> {
                 if let Some(method) = self.ctx.arena.get_method_decl(node)
                     && self.has_static_modifier(&method.modifiers)
                 {
-                    // Exclude the method's own type parameters (they shadow class ones)
-                    let own_params = self.collect_type_param_names(&method.type_parameters);
-                    let filtered: Vec<String> = class_type_param_names
-                        .iter()
-                        .filter(|n| !own_params.contains(n))
-                        .cloned()
-                        .collect();
-                    if filtered.is_empty() {
-                        return;
-                    }
-                    for &param_idx in &method.parameters.nodes {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                        {
-                            self.check_type_node_for_class_type_param_refs(
-                                param.type_annotation,
-                                &filtered,
-                            );
-                        }
-                    }
-                    self.check_type_node_for_class_type_param_refs(
+                    self.check_callable_for_class_type_param_refs(
+                        &class_type_param_names,
+                        &method.type_parameters,
+                        &method.parameters,
                         method.type_annotation,
-                        &filtered,
                     );
                 }
             }
@@ -1681,34 +1683,45 @@ impl<'a> CheckerState<'a> {
                 if let Some(accessor) = self.ctx.arena.get_accessor(node)
                     && self.has_static_modifier(&accessor.modifiers)
                 {
-                    // Exclude the accessor's own type parameters (they shadow class ones)
-                    let own_params = self.collect_type_param_names(&accessor.type_parameters);
-                    let filtered: Vec<String> = class_type_param_names
-                        .iter()
-                        .filter(|n| !own_params.contains(n))
-                        .cloned()
-                        .collect();
-                    if filtered.is_empty() {
-                        return;
-                    }
-                    for &param_idx in &accessor.parameters.nodes {
-                        if let Some(param_node) = self.ctx.arena.get(param_idx)
-                            && let Some(param) = self.ctx.arena.get_parameter(param_node)
-                        {
-                            self.check_type_node_for_class_type_param_refs(
-                                param.type_annotation,
-                                &filtered,
-                            );
-                        }
-                    }
-                    self.check_type_node_for_class_type_param_refs(
+                    self.check_callable_for_class_type_param_refs(
+                        &class_type_param_names,
+                        &accessor.type_parameters,
+                        &accessor.parameters,
                         accessor.type_annotation,
-                        &filtered,
                     );
                 }
             }
             _ => {}
         }
+    }
+
+    /// Shared logic for checking a callable member (method/accessor) for class
+    /// type parameter references in its parameters and return type (TS2302).
+    fn check_callable_for_class_type_param_refs(
+        &mut self,
+        class_type_param_names: &[String],
+        type_parameters: &Option<tsz_parser::parser::NodeList>,
+        parameters: &tsz_parser::parser::NodeList,
+        type_annotation: NodeIndex,
+    ) {
+        // Exclude the member's own type parameters (they shadow class ones)
+        let own_params = self.collect_type_param_names(type_parameters);
+        let filtered: Vec<String> = class_type_param_names
+            .iter()
+            .filter(|n| !own_params.contains(n))
+            .cloned()
+            .collect();
+        if filtered.is_empty() {
+            return;
+        }
+        for &param_idx in &parameters.nodes {
+            if let Some(param_node) = self.ctx.arena.get(param_idx)
+                && let Some(param) = self.ctx.arena.get_parameter(param_node)
+            {
+                self.check_type_node_for_class_type_param_refs(param.type_annotation, &filtered);
+            }
+        }
+        self.check_type_node_for_class_type_param_refs(type_annotation, &filtered);
     }
 
     /// Check that all method overload signatures in a group share the same abstract modifier
