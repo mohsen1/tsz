@@ -444,8 +444,14 @@ impl<'a> CheckerState<'a> {
                             crate::diagnostics::diagnostic_messages::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
                             &[&object_str, &index_str],
                         );
+                        let error_node = self
+                            .ctx
+                            .arena
+                            .get(element_data.property_name)
+                            .and_then(|prop_node| self.ctx.arena.get_computed_property(prop_node))
+                            .map_or(element_data.property_name, |computed| computed.expression);
                         self.error_at_node(
-                            element_data.property_name,
+                            error_node,
                             &message,
                             crate::diagnostics::diagnostic_codes::TYPE_HAS_NO_MATCHING_INDEX_SIGNATURE_FOR_TYPE,
                         );
