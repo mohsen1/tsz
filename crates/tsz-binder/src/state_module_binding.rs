@@ -403,101 +403,109 @@ impl BinderState {
                                     .get(target_name)
                                     .or_else(|| self.file_locals.get(target_name))
                             {
-                                exported_symbols.push(("export=".to_string(), sym_id));
+                                if assign.is_export_equals {
+                                    exported_symbols.push(("export=".to_string(), sym_id));
 
-                                // Also expose members of the export-assignment target for
-                                // named import compatibility (e.g. `export = alias; import { f }`).
-                                let mut target_sym_id = sym_id;
+                                    // Also expose members of the export-assignment target for
+                                    // named import compatibility (e.g. `export = alias; import { f }`).
+                                    let mut target_sym_id = sym_id;
 
-                                if let Some(target_sym) = self.symbols.get(sym_id)
-                                    && (target_sym.flags & symbol_flags::ALIAS) != 0
-                                {
-                                    let decl_idx = if target_sym.value_declaration.is_none() {
-                                        target_sym
-                                            .declarations
-                                            .first()
-                                            .copied()
-                                            .unwrap_or(NodeIndex::NONE)
-                                    } else {
-                                        target_sym.value_declaration
-                                    };
-
-                                    if decl_idx.is_some()
-                                        && let Some(decl_node) = arena.get(decl_idx)
-                                        && decl_node.kind
-                                            == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                                        && let Some(import_decl) = arena.get_import_decl(decl_node)
+                                    if let Some(target_sym) = self.symbols.get(sym_id)
+                                        && (target_sym.flags & symbol_flags::ALIAS) != 0
                                     {
-                                        let module_ref = import_decl.module_specifier;
-                                        if let Some(module_ref_node) = arena.get(module_ref)
-                                            && module_ref_node.kind
-                                                != SyntaxKind::StringLiteral as u16
-                                            && let Some(ref_name) =
-                                                Self::get_identifier_name(arena, module_ref)
-                                            && let Some(resolved) = self
-                                                .current_scope
-                                                .get(ref_name)
-                                                .or_else(|| self.file_locals.get(ref_name))
+                                        let decl_idx = if target_sym.value_declaration.is_none() {
+                                            target_sym
+                                                .declarations
+                                                .first()
+                                                .copied()
+                                                .unwrap_or(NodeIndex::NONE)
+                                        } else {
+                                            target_sym.value_declaration
+                                        };
+
+                                        if decl_idx.is_some()
+                                            && let Some(decl_node) = arena.get(decl_idx)
+                                            && decl_node.kind
+                                                == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                                            && let Some(import_decl) =
+                                                arena.get_import_decl(decl_node)
                                         {
-                                            target_sym_id = resolved;
+                                            let module_ref = import_decl.module_specifier;
+                                            if let Some(module_ref_node) = arena.get(module_ref)
+                                                && module_ref_node.kind
+                                                    != SyntaxKind::StringLiteral as u16
+                                                && let Some(ref_name) =
+                                                    Self::get_identifier_name(arena, module_ref)
+                                                && let Some(resolved) = self
+                                                    .current_scope
+                                                    .get(ref_name)
+                                                    .or_else(|| self.file_locals.get(ref_name))
+                                            {
+                                                target_sym_id = resolved;
+                                            }
                                         }
                                     }
-                                }
 
-                                if let Some(target_symbol) = self.symbols.get(target_sym_id) {
-                                    let collect_members_from_symbol =
-                                        |symbol: &Symbol,
-                                         exported_symbols: &mut Vec<(String, SymbolId)>| {
-                                            if let Some(exports) = symbol.exports.as_ref() {
-                                                for (export_name, &export_sym_id) in exports.iter() {
-                                                    if export_name != "export=" {
-                                                        exported_symbols.push((
-                                                            export_name.clone(),
-                                                            export_sym_id,
-                                                        ));
+                                    if let Some(target_symbol) = self.symbols.get(target_sym_id) {
+                                        let collect_members_from_symbol =
+                                            |symbol: &Symbol,
+                                             exported_symbols: &mut Vec<(String, SymbolId)>| {
+                                                if let Some(exports) = symbol.exports.as_ref() {
+                                                    for (export_name, &export_sym_id) in exports.iter() {
+                                                        if export_name != "export=" {
+                                                            exported_symbols.push((
+                                                                export_name.clone(),
+                                                                export_sym_id,
+                                                            ));
+                                                        }
                                                     }
                                                 }
-                                            }
-                                            if let Some(members) = symbol.members.as_ref() {
-                                                for (member_name, &member_sym_id) in members.iter() {
-                                                    exported_symbols
-                                                        .push((member_name.clone(), member_sym_id));
+                                                if let Some(members) = symbol.members.as_ref() {
+                                                    for (member_name, &member_sym_id) in members.iter() {
+                                                        exported_symbols
+                                                            .push((member_name.clone(), member_sym_id));
+                                                    }
                                                 }
-                                            }
-                                        };
+                                            };
 
-                                    collect_members_from_symbol(
-                                        target_symbol,
-                                        &mut exported_symbols,
-                                    );
-
-                                    // Some declaration patterns keep value and namespace halves in
-                                    // sibling symbols with the same name (e.g. function + namespace).
-                                    // Include namespace-shaped siblings so `export = X` exposes all
-                                    // merged members for named import compatibility.
-                                    for candidate_id in
-                                        self.symbols.find_all_by_name(&target_symbol.escaped_name)
-                                    {
-                                        if candidate_id == target_sym_id {
-                                            continue;
-                                        }
-                                        let Some(candidate_symbol) = self.symbols.get(candidate_id)
-                                        else {
-                                            continue;
-                                        };
-                                        if (candidate_symbol.flags
-                                            & (symbol_flags::MODULE
-                                                | symbol_flags::NAMESPACE_MODULE
-                                                | symbol_flags::VALUE_MODULE))
-                                            == 0
-                                        {
-                                            continue;
-                                        }
                                         collect_members_from_symbol(
-                                            candidate_symbol,
+                                            target_symbol,
                                             &mut exported_symbols,
                                         );
+
+                                        // Some declaration patterns keep value and namespace halves in
+                                        // sibling symbols with the same name (e.g. function + namespace).
+                                        // Include namespace-shaped siblings so `export = X` exposes all
+                                        // merged members for named import compatibility.
+                                        for candidate_id in self
+                                            .symbols
+                                            .find_all_by_name(&target_symbol.escaped_name)
+                                        {
+                                            if candidate_id == target_sym_id {
+                                                continue;
+                                            }
+                                            let Some(candidate_symbol) =
+                                                self.symbols.get(candidate_id)
+                                            else {
+                                                continue;
+                                            };
+                                            if (candidate_symbol.flags
+                                                & (symbol_flags::MODULE
+                                                    | symbol_flags::NAMESPACE_MODULE
+                                                    | symbol_flags::VALUE_MODULE))
+                                                == 0
+                                            {
+                                                continue;
+                                            }
+                                            collect_members_from_symbol(
+                                                candidate_symbol,
+                                                &mut exported_symbols,
+                                            );
+                                        }
                                     }
+                                } else {
+                                    // export default target_name;
+                                    exported_symbols.push(("default".to_string(), sym_id));
                                 }
                             }
                         }
@@ -506,127 +514,147 @@ impl BinderState {
                                 && export_decl.export_clause.is_some()
                                 && let Some(clause_node) = arena.get(export_decl.export_clause)
                             {
-                                match clause_node.kind {
-                                    syntax_kind_ext::VARIABLE_STATEMENT => {
-                                        if let Some(var_stmt) = arena.get_variable(clause_node) {
-                                            collect_var_exports(var_stmt);
-                                        }
+                                if export_decl.is_default_export {
+                                    if let Some(sym_id) = self.current_scope.get("default") {
+                                        exported_symbols.push(("default".to_string(), sym_id));
                                     }
-                                    syntax_kind_ext::FUNCTION_DECLARATION => {
-                                        if let Some(func) = arena.get_function(clause_node)
-                                            && let Some(name) =
-                                                Self::get_identifier_name(arena, func.name)
-                                        {
-                                            exported_names.push(name.to_string());
-                                            if let Some(&sym_id) =
-                                                self.node_symbols.get(&export_decl.export_clause.0)
+                                } else {
+                                    match clause_node.kind {
+                                        syntax_kind_ext::VARIABLE_STATEMENT => {
+                                            if let Some(var_stmt) = arena.get_variable(clause_node)
                                             {
-                                                exported_symbols.push((name.to_string(), sym_id));
+                                                collect_var_exports(var_stmt);
                                             }
                                         }
-                                    }
-                                    syntax_kind_ext::CLASS_DECLARATION => {
-                                        if let Some(class) = arena.get_class(clause_node)
-                                            && let Some(name) =
-                                                Self::get_identifier_name(arena, class.name)
-                                        {
-                                            exported_names.push(name.to_string());
-                                            if let Some(&sym_id) =
-                                                self.node_symbols.get(&export_decl.export_clause.0)
+                                        syntax_kind_ext::FUNCTION_DECLARATION => {
+                                            if let Some(func) = arena.get_function(clause_node)
+                                                && let Some(name) =
+                                                    Self::get_identifier_name(arena, func.name)
                                             {
-                                                exported_symbols.push((name.to_string(), sym_id));
-                                            }
-                                        }
-                                    }
-                                    syntax_kind_ext::ENUM_DECLARATION => {
-                                        if let Some(enm) = arena.get_enum(clause_node)
-                                            && let Some(name) =
-                                                Self::get_identifier_name(arena, enm.name)
-                                        {
-                                            exported_names.push(name.to_string());
-                                            if let Some(&sym_id) =
-                                                self.node_symbols.get(&export_decl.export_clause.0)
-                                            {
-                                                exported_symbols.push((name.to_string(), sym_id));
-                                            }
-                                        }
-                                    }
-                                    syntax_kind_ext::INTERFACE_DECLARATION => {
-                                        if let Some(iface) = arena.get_interface(clause_node)
-                                            && let Some(name) =
-                                                Self::get_identifier_name(arena, iface.name)
-                                        {
-                                            exported_names.push(name.to_string());
-                                            if let Some(&sym_id) =
-                                                self.node_symbols.get(&export_decl.export_clause.0)
-                                            {
-                                                exported_symbols.push((name.to_string(), sym_id));
-                                            }
-                                        }
-                                    }
-                                    syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                                        if let Some(alias) = arena.get_type_alias(clause_node)
-                                            && let Some(name) =
-                                                Self::get_identifier_name(arena, alias.name)
-                                        {
-                                            exported_names.push(name.to_string());
-                                            if let Some(&sym_id) =
-                                                self.node_symbols.get(&export_decl.export_clause.0)
-                                            {
-                                                exported_symbols.push((name.to_string(), sym_id));
-                                            }
-                                        }
-                                    }
-                                    syntax_kind_ext::MODULE_DECLARATION => {
-                                        if let Some(module) = arena.get_module(clause_node) {
-                                            let name =
-                                                Self::get_identifier_name(arena, module.name)
-                                                    .map(str::to_string)
-                                                    .or_else(|| {
-                                                        arena
-                                                            .get(module.name)
-                                                            .and_then(|name_node| {
-                                                                arena.get_literal(name_node)
-                                                            })
-                                                            .map(|lit| lit.text.clone())
-                                                    });
-                                            if let Some(name) = name {
-                                                exported_names.push(name.clone());
+                                                exported_names.push(name.to_string());
                                                 if let Some(&sym_id) = self
                                                     .node_symbols
                                                     .get(&export_decl.export_clause.0)
                                                 {
-                                                    exported_symbols.push((name.clone(), sym_id));
+                                                    exported_symbols
+                                                        .push((name.to_string(), sym_id));
                                                 }
                                             }
                                         }
-                                    }
-                                    syntax_kind_ext::NAMED_EXPORTS => {
-                                        if let Some(named_exports) =
-                                            arena.get_named_imports(clause_node)
-                                        {
-                                            for &specifier_idx in &named_exports.elements.nodes {
-                                                if let Some(spec_node) = arena.get(specifier_idx)
-                                                    && let Some(spec) =
-                                                        arena.get_specifier(spec_node)
+                                        syntax_kind_ext::CLASS_DECLARATION => {
+                                            if let Some(class) = arena.get_class(clause_node)
+                                                && let Some(name) =
+                                                    Self::get_identifier_name(arena, class.name)
+                                            {
+                                                exported_names.push(name.to_string());
+                                                if let Some(&sym_id) = self
+                                                    .node_symbols
+                                                    .get(&export_decl.export_clause.0)
                                                 {
-                                                    let name_idx = if spec.name.is_none() {
-                                                        spec.property_name
-                                                    } else {
-                                                        spec.name
-                                                    };
-                                                    if let Some(name_node) = arena.get(name_idx)
-                                                        && let Some(ident) =
-                                                            arena.get_identifier(name_node)
+                                                    exported_symbols
+                                                        .push((name.to_string(), sym_id));
+                                                }
+                                            }
+                                        }
+                                        syntax_kind_ext::ENUM_DECLARATION => {
+                                            if let Some(enm) = arena.get_enum(clause_node)
+                                                && let Some(name) =
+                                                    Self::get_identifier_name(arena, enm.name)
+                                            {
+                                                exported_names.push(name.to_string());
+                                                if let Some(&sym_id) = self
+                                                    .node_symbols
+                                                    .get(&export_decl.export_clause.0)
+                                                {
+                                                    exported_symbols
+                                                        .push((name.to_string(), sym_id));
+                                                }
+                                            }
+                                        }
+                                        syntax_kind_ext::INTERFACE_DECLARATION => {
+                                            if let Some(iface) = arena.get_interface(clause_node)
+                                                && let Some(name) =
+                                                    Self::get_identifier_name(arena, iface.name)
+                                            {
+                                                exported_names.push(name.to_string());
+                                                if let Some(&sym_id) = self
+                                                    .node_symbols
+                                                    .get(&export_decl.export_clause.0)
+                                                {
+                                                    exported_symbols
+                                                        .push((name.to_string(), sym_id));
+                                                }
+                                            }
+                                        }
+                                        syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
+                                            if let Some(alias) = arena.get_type_alias(clause_node)
+                                                && let Some(name) =
+                                                    Self::get_identifier_name(arena, alias.name)
+                                            {
+                                                exported_names.push(name.to_string());
+                                                if let Some(&sym_id) = self
+                                                    .node_symbols
+                                                    .get(&export_decl.export_clause.0)
+                                                {
+                                                    exported_symbols
+                                                        .push((name.to_string(), sym_id));
+                                                }
+                                            }
+                                        }
+                                        syntax_kind_ext::MODULE_DECLARATION => {
+                                            if let Some(module) = arena.get_module(clause_node) {
+                                                let name =
+                                                    Self::get_identifier_name(arena, module.name)
+                                                        .map(str::to_string)
+                                                        .or_else(|| {
+                                                            arena
+                                                                .get(module.name)
+                                                                .and_then(|name_node| {
+                                                                    arena.get_literal(name_node)
+                                                                })
+                                                                .map(|lit| lit.text.clone())
+                                                        });
+                                                if let Some(name) = name {
+                                                    exported_names.push(name.clone());
+                                                    if let Some(&sym_id) = self
+                                                        .node_symbols
+                                                        .get(&export_decl.export_clause.0)
                                                     {
-                                                        exported_names
-                                                            .push(ident.escaped_text.clone());
+                                                        exported_symbols
+                                                            .push((name.clone(), sym_id));
                                                     }
                                                 }
                                             }
                                         }
+                                        syntax_kind_ext::NAMED_EXPORTS => {
+                                            if let Some(named_exports) =
+                                                arena.get_named_imports(clause_node)
+                                            {
+                                                for &specifier_idx in &named_exports.elements.nodes
+                                                {
+                                                    if let Some(spec_node) =
+                                                        arena.get(specifier_idx)
+                                                        && let Some(spec) =
+                                                            arena.get_specifier(spec_node)
+                                                    {
+                                                        let name_idx = if spec.name.is_none() {
+                                                            spec.property_name
+                                                        } else {
+                                                            spec.name
+                                                        };
+                                                        if let Some(name_node) = arena.get(name_idx)
+                                                            && let Some(ident) =
+                                                                arena.get_identifier(name_node)
+                                                        {
+                                                            exported_names
+                                                                .push(ident.escaped_text.clone());
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
-                                    _ => {}
                                 }
                             }
                         }
