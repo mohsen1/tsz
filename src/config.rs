@@ -871,8 +871,8 @@ fn find_key_offset_in_source(source: &str, key: &str) -> u32 {
     // Look for the key after "compilerOptions" to avoid matching in other sections
     let compiler_opts_pos = source.find("compilerOptions").unwrap_or(0);
     if let Some(pos) = source[compiler_opts_pos..].find(&search) {
-        // +1 to point inside the quote (at the key name), matching tsc behavior
-        (compiler_opts_pos + pos + 1) as u32
+        // Point at the opening quote of the key, matching tsc behavior
+        (compiler_opts_pos + pos) as u32
     } else {
         0
     }

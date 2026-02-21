@@ -525,6 +525,10 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
         }
     }
 
+    // Sort properties alphabetically for deterministic tsconfig output.
+    // This ensures TS5025 line numbers are reproducible across runs.
+    opts.sort_keys();
+
     serde_json::Value::Object(opts)
 }
 
