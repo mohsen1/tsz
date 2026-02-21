@@ -1531,23 +1531,25 @@ impl<'a> Printer<'a> {
         // TypeScript emits "use strict" when:
         // 1. CommonJS AND the file is actually an ES module (has import/export).
         //    Script files (no import/export) don't get "use strict".
-        // 2. alwaysStrict is on AND the file is not already an ES module output.
+        // 2. AMD/UMD output (except synthesized define-wrapper bundles where strict
+        //    appears in each factory body).
+        // 3. alwaysStrict is on AND the file is not already an ES module output.
         let is_file_module = self.file_is_module(&source.statements);
-        let starts_with_amd_define_wrapper = source
-            .statements
-            .nodes
-            .first()
-            .and_then(|&idx| self.arena.get(idx))
-            .and_then(|stmt| self.arena.get_expression_statement(stmt))
-            .and_then(|expr_stmt| self.arena.get(expr_stmt.expression))
-            .and_then(|expr| self.arena.get_call_expr(expr))
-            .and_then(|call| self.arena.get(call.expression))
-            .and_then(|callee| self.arena.get_identifier(callee))
-            .is_some_and(|ident| ident.escaped_text.as_str() == "define");
+        let has_define_wrapper_stmt = source.statements.nodes.iter().any(|&idx| {
+            self.arena
+                .get(idx)
+                .and_then(|stmt| self.arena.get_expression_statement(stmt))
+                .and_then(|expr_stmt| self.arena.get(expr_stmt.expression))
+                .and_then(|expr| self.arena.get_call_expr(expr))
+                .and_then(|call| self.arena.get(call.expression))
+                .and_then(|callee| self.arena.get_identifier(callee))
+                .is_some_and(|ident| ident.escaped_text.as_str() == "define")
+        });
         let should_emit_use_strict = !source_has_use_strict
-            && !starts_with_amd_define_wrapper
             && ((is_top_level_cjs && is_file_module)
+                || (is_amd_or_umd && !has_define_wrapper_stmt)
                 || (self.ctx.options.always_strict
+                    && !has_define_wrapper_stmt
                     && self.ctx.original_module_kind.is_none()
                     && !is_amd_or_umd
                     && !(is_es_module_output && is_file_module)));
