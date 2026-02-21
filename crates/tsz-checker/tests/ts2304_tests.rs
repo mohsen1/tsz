@@ -389,7 +389,6 @@ function A(): (x: B) => C {
     assert_eq!(
         ts2304_errors.len(),
         2,
-        "Should have TS2304 for both 'B' and 'C', got: {:?}",
-        ts2304_errors
+        "Should have TS2304 for both 'B' and 'C', got: {ts2304_errors:?}"
     );
 }
