@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 801
+Count: 802
+- 802: class parser recovery emit parity fix
 - 801: emit alias runtime parity fix
 - 800: run.sh optimization loop
 - 799: run.sh optimization loop

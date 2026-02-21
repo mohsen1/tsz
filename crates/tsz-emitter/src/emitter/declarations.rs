@@ -970,6 +970,14 @@ impl<'a> Printer<'a> {
         if assignment_prefix.is_some() {
             self.write(";");
         }
+        if let Some(recovery_name) = self.class_var_function_recovery_name(node) {
+            self.write_line();
+            self.write("var ");
+            self.write(&recovery_name);
+            self.write(";");
+            self.write_line();
+            self.write("() => { };");
+        }
 
         // Emit static field initializers after class body: ClassName.field = value;
         if !static_field_inits.is_empty() {
@@ -1036,6 +1044,80 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    /// Parser recovery parity for malformed class members like:
+    /// `var constructor() { }`
+    /// which TypeScript preserves as:
+    /// `var constructor;`
+    /// `() => { };`
+    fn class_var_function_recovery_name(&self, class_node: &Node) -> Option<String> {
+        let text = self.source_text?;
+        let start = std::cmp::min(class_node.pos as usize, text.len());
+        let end = std::cmp::min(class_node.end as usize, text.len());
+        if start >= end {
+            return None;
+        }
+
+        let slice = &text[start..end];
+        let mut i = 0usize;
+        let bytes = slice.as_bytes();
+
+        while i < bytes.len() {
+            if bytes[i].is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+            if i + 3 > bytes.len() || &slice[i..i + 3] != "var" {
+                i += 1;
+                continue;
+            }
+            i += 3;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let ident_start = i;
+            while i < bytes.len()
+                && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'$')
+            {
+                i += 1;
+            }
+            if ident_start == i {
+                continue;
+            }
+            let ident = &slice[ident_start..i];
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'(' {
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b')' {
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'{' {
+                continue;
+            }
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= bytes.len() || bytes[i] != b'}' {
+                continue;
+            }
+
+            return Some(ident.to_string());
+        }
+
+        None
     }
 
     // =========================================================================
