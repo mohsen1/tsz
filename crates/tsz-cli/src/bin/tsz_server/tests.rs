@@ -3,6 +3,10 @@ use super::*;
 fn make_server() -> Server {
     Server {
         completion_import_module_specifier_ending: None,
+        import_module_specifier_preference: None,
+        organize_imports_type_order: None,
+        organize_imports_ignore_case: false,
+        auto_import_file_exclude_patterns: Vec::new(),
         lib_dir: PathBuf::from("/nonexistent"),
         tests_lib_dir: PathBuf::from("/nonexistent"),
         lib_cache: FxHashMap::default(),
