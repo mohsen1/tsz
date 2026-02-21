@@ -11,7 +11,7 @@ use crate::query_boundaries::assignability::{
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
 use tracing::trace;
-use tsz_common::interner::Atom;
+
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::node_flags;
@@ -27,30 +27,6 @@ use tsz_solver::visitor::{collect_lazy_def_ids, collect_type_queries};
 // =============================================================================
 
 impl<'a> CheckerState<'a> {
-    fn get_keyof_type_keys(
-        &mut self,
-        type_id: TypeId,
-        db: &dyn tsz_solver::TypeDatabase,
-    ) -> FxHashSet<Atom> {
-        if let Some(keyof_type) = tsz_solver::type_queries::get_keyof_type(db, type_id)
-            && let Some(key_type) =
-                tsz_solver::type_queries::keyof_object_properties(db, keyof_type)
-            && let Some(members) = tsz_solver::type_queries::get_union_members(db, key_type)
-        {
-            return members
-                .into_iter()
-                .filter_map(|m| {
-                    if let Some(str_lit) = tsz_solver::type_queries::get_string_literal_value(db, m)
-                    {
-                        return Some(str_lit);
-                    }
-                    None
-                })
-                .collect();
-        }
-        FxHashSet::default()
-    }
-
     fn skip_parenthesized_for_assignability(&self, idx: NodeIndex) -> NodeIndex {
         self.skip_parenthesized_expression(idx)
     }
@@ -747,19 +723,6 @@ impl<'a> CheckerState<'a> {
         }
         if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
             return true;
-        }
-
-        if tsz_solver::type_queries::is_keyof_type(self.ctx.types, target)
-            && let Some(str_lit) =
-                tsz_solver::type_queries::get_string_literal_value(self.ctx.types, source)
-        {
-            let keyof_type =
-                tsz_solver::type_queries::get_keyof_type(self.ctx.types, target).unwrap();
-            let allowed_keys = self.get_keyof_type_keys(keyof_type, self.ctx.types);
-            if !allowed_keys.contains(&str_lit) {
-                self.error_type_not_assignable_with_reason_at(source, target, diag_idx);
-                return false;
-            }
         }
 
         if self.is_assignable_to(source, target)
