@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/publish-crates.sh            # publish all crates
-#   ./scripts/publish-crates.sh --dry-run  # dry-run each crate (no network writes)
+#   ./scripts/publish-crates.sh --dry-run  # package each crate (no network writes, no registry resolution)
 #   ./scripts/publish-crates.sh tsz-common # publish a single named crate
 #
 # Prerequisites:
@@ -48,10 +48,10 @@ done
 publish_crate() {
     local crate="$1"
     if [ "$DRY_RUN" -eq 1 ]; then
-        # --no-verify skips the dep-resolution/compile check that would fail
-        # because earlier crates in the chain aren't on crates.io yet.
-        echo "  [dry-run] cargo publish --dry-run --no-verify -p $crate"
-        cargo publish --dry-run --no-verify -p "$crate"
+        # `cargo package` validates file inclusion and metadata without
+        # resolving internal deps against the registry (unlike --dry-run).
+        echo "  [dry-run] cargo package --no-verify -p $crate"
+        cargo package --no-verify -p "$crate"
     else
         echo "  cargo publish -p $crate"
         cargo publish -p "$crate"
