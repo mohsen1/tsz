@@ -1120,7 +1120,10 @@ impl ParserState {
         all_modifiers.push(declare_modifier);
 
         // Parse the inner declaration based on what follows 'declare'
-        match self.token() {
+        let saved_flags = self.context_flags;
+        self.context_flags |= crate::parser::state::CONTEXT_FLAG_AMBIENT;
+
+        let node = match self.token() {
             SyntaxKind::FunctionKeyword => {
                 let modifiers = Some(self.make_node_list(vec![declare_modifier]));
                 self.parse_function_declaration_with_async(false, modifiers)
@@ -1170,7 +1173,10 @@ impl ParserState {
                 self.error_declaration_expected();
                 self.parse_expression_statement()
             }
-        }
+        };
+
+        self.context_flags = saved_flags;
+        node
     }
 
     /// Parse module or namespace declaration: module "name" { } or namespace X { }
