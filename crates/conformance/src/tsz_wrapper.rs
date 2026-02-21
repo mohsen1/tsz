@@ -976,10 +976,6 @@ fn rewrite_bare_specifiers(
     static FROM_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r#"(from\s+)(['"])([^'"\./][^'"]*)['"]"#).unwrap());
 
-    // Match: import "module" or import 'module' (side-effect imports)
-    static IMPORT_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r#"(import\s+)(['"])([^'"\./][^'"]*)['"]"#).unwrap());
-
     // Match: require("module") or require('module')
     static REQUIRE_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r#"(require\()(['"])([^'"\./][^'"]*)['"](\))"#).unwrap());
@@ -1036,11 +1032,6 @@ fn rewrite_bare_specifiers(
             }
         })
         .into_owned();
-
-    // NOTE: Side-effect imports (`import "module"`) are intentionally NOT rewritten.
-    // In tsc, bare side-effect imports don't resolve to files in the same directory —
-    // they are treated as external module references and emit TS2882 when unresolvable.
-    // Rewriting them to relative paths would suppress the expected TS2882 error.
 
     result = REQUIRE_RE
         .replace_all(&result, |caps: &regex::Captures| {

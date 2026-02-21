@@ -301,7 +301,7 @@ fn test_rewrite_bare_specifiers() {
     // Test side-effect import
     let content = r#"import "server";"#;
     let result = rewrite_bare_specifiers(content, "client.ts", &filenames);
-    assert_eq!(result, r#"import "./server";"#);
+    assert_eq!(result, r#"import "server";"#);
 
     // Test require
     let content = r#"const x = require("server");"#;

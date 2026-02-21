@@ -26,6 +26,7 @@ use tsz::lib_loader::LibFile;
 use tsz::module_resolver::ModuleResolver;
 use tsz::span::Span;
 use tsz_binder::state::BinderStateScopeInputs;
+use tsz_common::common::ModuleKind;
 // Re-export functions that other modules (e.g. watch) access via `driver::`.
 use crate::driver_resolution::{
     EmitOutputsContext, ModuleResolutionCache, canonicalize_or_owned, collect_export_binding_nodes,
@@ -708,6 +709,18 @@ fn compile_inner(
             .and_then(|cfg| cfg.compiler_options.as_ref()),
     )?;
     apply_cli_overrides(&mut resolved, args)?;
+    if config.is_none() && args.module.is_none() && matches!(resolved.printer.module, ModuleKind::None)
+    {
+        // When no tsconfig is present, align with tsc's computed module default:
+        // ES2015+ targets -> ES2015 modules, older targets -> CommonJS.
+        let default_module = if resolved.printer.target.supports_es2015() {
+            ModuleKind::ES2015
+        } else {
+            ModuleKind::CommonJS
+        };
+        resolved.printer.module = default_module;
+        resolved.checker.module = default_module;
+    }
 
     if let Some(diag) = check_module_resolution_compatibility(&resolved, tsconfig_path.as_deref()) {
         return Ok(CompilationResult {
@@ -1444,8 +1457,10 @@ use driver_sources::{
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
 };
 pub(crate) use driver_sources::{
-    config_base_dir, has_no_types_and_symbols_directive, load_config, resolve_tsconfig_path,
+    config_base_dir, load_config, resolve_tsconfig_path,
 };
+#[cfg(test)]
+pub(crate) use driver_sources::has_no_types_and_symbols_directive;
 
 #[path = "driver_check.rs"]
 mod driver_check;
