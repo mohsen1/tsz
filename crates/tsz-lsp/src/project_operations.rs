@@ -2283,7 +2283,7 @@ impl Project {
     }
 
     fn module_specifier_from_files(&self, from_file: &str, target_file: &str) -> Option<String> {
-        if let Some(package_specifier) = package_specifier_from_node_modules(target_file) {
+        if let Some(package_specifier) = self.package_specifier_from_node_modules(target_file) {
             return Some(package_specifier);
         }
 
@@ -2396,6 +2396,77 @@ impl Project {
 
         candidates
     }
+
+    fn package_specifier_from_node_modules(&self, target_file: &str) -> Option<String> {
+        let normalized = target_file.replace('\\', "/");
+        let marker = "/node_modules/";
+        let marker_idx = normalized.find(marker)?;
+        let package_path = &normalized[marker_idx + marker.len()..];
+        if package_path.is_empty() {
+            return None;
+        }
+
+        let (package_root, _package_suffix) = split_node_modules_package_path(package_path)?;
+        let package_root = normalize_node_modules_package_specifier(&package_root);
+        let package_prefix = &normalized[..marker_idx + marker.len()];
+        let package_json_path = format!("{package_prefix}{package_root}/package.json");
+        if self.package_has_root_only_exports(&package_json_path) {
+            return Some(package_root);
+        }
+
+        let package_path = strip_ts_extension(Path::new(package_path));
+        let mut spec = path_to_string(&package_path).replace('\\', "/");
+        if let Some(stripped) = spec.strip_suffix("/index") {
+            spec = stripped.to_string();
+        }
+
+        if let Some(stripped) = spec.strip_prefix("@types/") {
+            let mut parts = stripped.splitn(2, '/');
+            let package_name = parts.next().unwrap_or_default();
+            let rest = parts.next();
+
+            let package_name = if let Some((scope, name)) = package_name.split_once("__") {
+                format!("@{scope}/{name}")
+            } else {
+                package_name.to_string()
+            };
+
+            spec = match rest {
+                Some(rest) if !rest.is_empty() && rest != "index" => {
+                    format!("{package_name}/{rest}")
+                }
+                _ => package_name,
+            };
+        }
+
+        if spec.is_empty() { None } else { Some(spec) }
+    }
+
+    fn package_has_root_only_exports(&self, package_json_path: &str) -> bool {
+        let package_json_text = if let Some(file) = self.files.get(package_json_path) {
+            Some(file.source_text().to_string())
+        } else {
+            std::fs::read_to_string(package_json_path).ok()
+        };
+
+        let Some(package_json_text) = package_json_text else {
+            return false;
+        };
+        let Some(package_json) = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()
+        else {
+            return false;
+        };
+
+        let Some(exports_value) = package_json.get("exports") else {
+            return false;
+        };
+
+        match exports_value {
+            serde_json::Value::String(_) => true,
+            serde_json::Value::Object(map) => map.len() == 1 && map.contains_key("."),
+            _ => false,
+        }
+    }
 }
 
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
@@ -2448,23 +2519,26 @@ fn strip_ts_extension(path: &Path) -> PathBuf {
 
     path.to_path_buf()
 }
-
-fn package_specifier_from_node_modules(target_file: &str) -> Option<String> {
-    let normalized = target_file.replace('\\', "/");
-    let marker = "/node_modules/";
-    let marker_idx = normalized.find(marker)?;
-    let package_path = &normalized[marker_idx + marker.len()..];
-    if package_path.is_empty() {
+fn split_node_modules_package_path(package_path: &str) -> Option<(String, String)> {
+    let mut segments = package_path.split('/');
+    let first = segments.next()?;
+    if first.is_empty() {
         return None;
     }
 
-    let package_path = strip_ts_extension(Path::new(package_path));
-    let mut spec = path_to_string(&package_path).replace('\\', "/");
-    if let Some(stripped) = spec.strip_suffix("/index") {
-        spec = stripped.to_string();
+    if first.starts_with('@') {
+        let second = segments.next()?;
+        let package_root = format!("{first}/{second}");
+        let suffix = segments.collect::<Vec<_>>().join("/");
+        Some((package_root, suffix))
+    } else {
+        let suffix = segments.collect::<Vec<_>>().join("/");
+        Some((first.to_string(), suffix))
     }
+}
 
-    if let Some(stripped) = spec.strip_prefix("@types/") {
+fn normalize_node_modules_package_specifier(package_specifier: &str) -> String {
+    if let Some(stripped) = package_specifier.strip_prefix("@types/") {
         let mut parts = stripped.splitn(2, '/');
         let package_name = parts.next().unwrap_or_default();
         let rest = parts.next();
@@ -2475,7 +2549,7 @@ fn package_specifier_from_node_modules(target_file: &str) -> Option<String> {
             package_name.to_string()
         };
 
-        spec = match rest {
+        return match rest {
             Some(rest) if !rest.is_empty() && rest != "index" => {
                 format!("{package_name}/{rest}")
             }
@@ -2483,7 +2557,7 @@ fn package_specifier_from_node_modules(target_file: &str) -> Option<String> {
         };
     }
 
-    if spec.is_empty() { None } else { Some(spec) }
+    package_specifier.to_string()
 }
 
 fn has_ts_extension(module_text: &str) -> bool {
