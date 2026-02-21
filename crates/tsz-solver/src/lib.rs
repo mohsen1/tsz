@@ -14,6 +14,7 @@
 mod apparent;
 mod application;
 pub mod binary_ops;
+mod caches;
 pub mod canonicalize;
 mod class_hierarchy;
 pub mod compat;
@@ -24,22 +25,21 @@ pub mod def;
 mod diagnostics;
 pub mod element_access;
 mod evaluate;
-pub mod evaluate_rules;
+pub mod evaluation;
 pub mod expression_ops;
 mod flow_analysis;
 mod format;
 pub mod freshness;
 mod index_signatures;
 mod infer;
-mod infer_bct;
-mod infer_resolve;
+mod inference;
 pub mod inheritance;
 mod instantiate;
+mod instantiation;
 mod intern;
 mod intern_normalize;
 mod intern_template;
 pub mod judge;
-mod lawyer;
 mod narrowing;
 mod narrowing_compound;
 mod narrowing_discriminants;
@@ -58,14 +58,9 @@ mod operations_property_readonly;
 mod operations_property_visitor;
 mod query_trace;
 pub mod recursion;
-pub mod relation_queries;
+mod relations;
 pub mod sound;
 mod subtype;
-mod subtype_explain;
-mod subtype_helpers;
-mod subtype_overlap;
-mod subtype_rules;
-mod subtype_visitor;
 pub mod tracer;
 mod type_factory;
 pub mod type_queries;
@@ -79,11 +74,11 @@ pub mod unsoundness_audit;
 pub mod utils;
 pub mod variance;
 pub mod visitor;
-mod visitor_extract;
+mod visitors;
 pub mod widening;
 pub use intern::TypeInterner;
 pub use operations::infer_generic_function;
-pub use visitor::{
+pub use visitors::visitor::{
     ConstAssertionVisitor, ObjectTypeKind, RecursiveTypeCollector, TypeCollectorVisitor, TypeKind,
     TypeKindVisitor, TypePredicateVisitor, TypeVisitor, application_id, array_element_type,
     bound_parameter_index, callable_shape_id, classify_object_type, collect_all_types,
@@ -110,12 +105,13 @@ pub use apparent::{
 };
 pub use application::*;
 pub use binary_ops::*;
+pub use caches::db::{
+    QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase,
+};
 pub use canonicalize::*;
 pub use class_hierarchy::*;
-pub use compat::*;
 pub use compound_assignment::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type};
-pub use db::{QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase};
 pub use def::*;
 pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::{
@@ -123,19 +119,17 @@ pub use diagnostics::{
     PendingDiagnosticBuilder, SourceLocation, SourceSpan, SpannedDiagnosticBuilder,
 };
 pub use element_access::*;
-pub use evaluate::*;
+pub use evaluation::evaluate::*;
 pub use flow_analysis::*;
 pub use format::TypeFormatter;
 pub use freshness::*;
 pub use index_signatures::*;
-pub use infer::*;
+pub use inference::infer::*;
 pub use inheritance::*;
-pub use instantiate::{
+pub use instantiation::instantiate::{
     MAX_INSTANTIATION_DEPTH, TypeInstantiator, TypeSubstitution, instantiate_type,
     substitute_this_type,
 };
-pub use judge::*;
-pub use lawyer::AnyPropagationRules;
 pub use narrowing::*;
 pub use object_literal::ObjectLiteralBuilder;
 pub use objects::*;
@@ -143,12 +137,15 @@ pub use operations::{
     AssignabilityChecker, CallEvaluator, CallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
     get_contextual_signature_with_compat_checker,
 };
-pub use relation_queries::*;
-pub use sound::*;
-pub use subtype::{
+pub use relations::compat::*;
+pub use relations::judge::*;
+pub use relations::lawyer::AnyPropagationRules;
+pub use relations::relation_queries::*;
+pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of,
 };
+pub use sound::*;
 pub use type_factory::*;
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,
