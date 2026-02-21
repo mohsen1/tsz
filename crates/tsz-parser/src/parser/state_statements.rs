@@ -403,7 +403,9 @@ impl ParserState {
             SyntaxKind::ForKeyword => self.parse_for_statement(),
             SyntaxKind::SemicolonToken => self.parse_empty_statement(),
             SyntaxKind::ExportKeyword => {
-                if self.in_block_context() {
+                // Keep parity with tsc recovery for malformed `export =` in blocks:
+                // prefer the parse error from export assignment over generic TS1184.
+                if self.in_block_context() && !self.look_ahead_is_export_assignment() {
                     self.parse_error_at_current_token(
                         "Modifiers cannot appear here.",
                         diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE,
@@ -782,6 +784,17 @@ impl ParserState {
     /// Look ahead to see if we have "import (" (dynamic import call)
     pub(crate) fn look_ahead_is_import_call(&mut self) -> bool {
         look_ahead_is_import_call(&mut self.scanner, self.current_token)
+    }
+
+    /// Look ahead to see if we have `export =`.
+    fn look_ahead_is_export_assignment(&mut self) -> bool {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token(); // skip `export`
+        let result = self.is_token(SyntaxKind::EqualsToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
     }
 
     /// Look ahead to see if "namespace"/"module" starts a declaration.
