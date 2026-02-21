@@ -16,7 +16,18 @@ impl<'a> CheckerState<'a> {
 
     /// Report a type not assignable error (delegates to `diagnose_assignment_failure`).
     pub fn error_type_not_assignable_at(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
-        self.diagnose_assignment_failure(source, target, idx);
+        let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+        self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
+    }
+
+    /// Report a type not assignable error at an exact AST node anchor.
+    pub fn error_type_not_assignable_at_with_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
+        self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
     }
     pub fn error_type_does_not_satisfy_the_expected_type(
         &mut self,
@@ -88,6 +99,17 @@ impl<'a> CheckerState<'a> {
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx = self.assignment_diagnostic_anchor_idx(idx);
+        self.diagnose_assignment_failure_with_anchor(source, target, anchor_idx);
+    }
+
+    /// Internal helper that reports a detailed assignability failure using an
+    /// already-resolved diagnostic anchor.
+    fn diagnose_assignment_failure_with_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        anchor_idx: NodeIndex,
+    ) {
 
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if self.should_suppress_assignability_diagnostic(source, target) {
@@ -95,7 +117,7 @@ impl<'a> CheckerState<'a> {
                 trace!(
                     source = source.0,
                     target = target.0,
-                    node_idx = idx.0,
+                    node_idx = anchor_idx.0,
                     file = %self.ctx.file_name,
                     "suppressing TS2322 for non-actionable source/target types"
                 );
