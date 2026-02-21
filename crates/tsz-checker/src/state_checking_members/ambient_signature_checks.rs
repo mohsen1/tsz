@@ -428,6 +428,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&method.parameters);
+        self.check_binding_pattern_optionality(&method.parameters.nodes, method.body.is_some());
 
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&method.parameters.nodes);
@@ -784,6 +785,7 @@ impl<'a> CheckerState<'a> {
 
         // Check for required parameters following optional parameters (TS1016)
         self.check_parameter_ordering(&ctor.parameters);
+        self.check_binding_pattern_optionality(&ctor.parameters.nodes, ctor.body.is_some());
 
         // Check that rest parameters have array types (TS2370)
         self.check_rest_parameter_types(&ctor.parameters.nodes);

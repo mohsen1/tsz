@@ -115,6 +115,7 @@ impl<'a> CheckerState<'a> {
         if !is_function_declaration && !is_method_or_constructor {
             // Check for required parameters following optional parameters (TS1016)
             self.check_parameter_ordering(parameters);
+            self.check_binding_pattern_optionality(&parameters.nodes, body.is_some());
             // Check that rest parameters have array types (TS2370)
             self.check_rest_parameter_types(&parameters.nodes);
             self.check_strict_mode_reserved_parameter_names(
