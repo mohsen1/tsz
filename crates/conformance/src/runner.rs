@@ -174,15 +174,25 @@ impl Runner {
                     )
                     .await
                     {
-                        Ok(result) => {
+                        Ok((result, file_preview)) => {
+                            use std::fmt::Write;
+
                             // Update stats
                             stats.total.fetch_add(1, Ordering::SeqCst);
+
+                            // Buffer all output for this test so it prints atomically
+                            let mut buf = String::new();
+
+                            // Prepend file preview if available
+                            if let Some(preview) = file_preview {
+                                buf.push_str(&preview);
+                            }
 
                             match result {
                                 TestResult::Pass => {
                                     stats.passed.fetch_add(1, Ordering::SeqCst);
                                     if print_test && !verbose {
-                                        println!("PASS {}", rel_path);
+                                        writeln!(buf, "PASS {}", rel_path).ok();
                                     }
                                 }
                                 TestResult::Fail {
@@ -205,7 +215,7 @@ impl Runner {
                                     };
 
                                     if should_print {
-                                        println!("FAIL {}", rel_path);
+                                        writeln!(buf, "FAIL {}", rel_path).ok();
 
                                         if print_test {
                                             let expected_str: Vec<String> = expected
@@ -214,25 +224,25 @@ impl Runner {
                                                 .collect();
                                             let actual_str: Vec<String> =
                                                 actual.iter().map(|c| format!("TS{}", c)).collect();
-                                            println!("  expected: [{}]", expected_str.join(", "));
-                                            println!("  actual:   [{}]", actual_str.join(", "));
+                                            writeln!(buf, "  expected: [{}]", expected_str.join(", ")).ok();
+                                            writeln!(buf, "  actual:   [{}]", actual_str.join(", ")).ok();
                                         }
 
                                         if print_fingerprints {
                                             if missing_fingerprints.is_empty() {
-                                                println!("  missing-fingerprints: []");
+                                                writeln!(buf, "  missing-fingerprints: []").ok();
                                             } else {
-                                                println!("  missing-fingerprints:");
+                                                writeln!(buf, "  missing-fingerprints:").ok();
                                                 for fingerprint in &missing_fingerprints {
-                                                    println!("    - {}", fingerprint.display_key());
+                                                    writeln!(buf, "    - {}", fingerprint.display_key()).ok();
                                                 }
                                             }
                                             if extra_fingerprints.is_empty() {
-                                                println!("  extra-fingerprints: []");
+                                                writeln!(buf, "  extra-fingerprints: []").ok();
                                             } else {
-                                                println!("  extra-fingerprints:");
+                                                writeln!(buf, "  extra-fingerprints:").ok();
                                                 for fingerprint in &extra_fingerprints {
-                                                    println!("    - {}", fingerprint.display_key());
+                                                    writeln!(buf, "    - {}", fingerprint.display_key()).ok();
                                                 }
                                             }
                                         }
@@ -285,22 +295,23 @@ impl Runner {
                                 TestResult::Skipped(reason) => {
                                     stats.skipped.fetch_add(1, Ordering::SeqCst);
                                     if verbose {
-                                        println!("SKIP {} ({})", rel_path, reason);
+                                        writeln!(buf, "SKIP {} ({})", rel_path, reason).ok();
                                     }
                                 }
                                 TestResult::Crashed => {
                                     stats.crashed.fetch_add(1, Ordering::SeqCst);
                                     problems.crashed.lock().unwrap().push(rel_path.clone());
-                                    println!("CRASH {}", rel_path);
+                                    writeln!(buf, "CRASH {}", rel_path).ok();
                                 }
                                 TestResult::Timeout => {
                                     stats.timeout.fetch_add(1, Ordering::SeqCst);
                                     problems.timed_out.lock().unwrap().push(rel_path.clone());
-                                    println!(
-                                        "⏱️  TIMEOUT {} (exceeded {}s)",
-                                        rel_path, timeout_secs
-                                    );
+                                    writeln!(buf, "TIMEOUT {} (exceeded {}s)", rel_path, timeout_secs).ok();
                                 }
+                            }
+
+                            if !buf.is_empty() {
+                                print!("{}", buf);
                             }
                         }
                         Err(e) => {
@@ -471,7 +482,9 @@ impl Runner {
         Ok(files)
     }
 
-    /// Run a single test
+    /// Run a single test.
+    /// Returns `(result, file_preview)` where `file_preview` is the numbered
+    /// source listing when `print_test_files` is true.
     async fn run_test(
         path: &Path,
         test_dir: &Path,
@@ -480,22 +493,26 @@ impl Runner {
         pool: Option<Arc<ProcessPool>>,
         print_test_files: bool,
         timeout_secs: u64,
-    ) -> anyhow::Result<TestResult> {
+    ) -> anyhow::Result<(TestResult, Option<String>)> {
         // Read and decode file content (UTF-8/UTF-8 BOM/UTF-16 BOM).
         let bytes = tokio::fs::read(path).await?;
         let key =
             cache::cache_key(path, test_dir).unwrap_or_else(|| path.to_string_lossy().to_string());
 
+        // Build file preview if requested (printed atomically by caller)
+        let mut file_preview: Option<String> = None;
+
         match decode_source_text(&bytes) {
             DecodedSourceText::Text(content) => {
-                // Print test file content with line numbers if requested
                 if print_test_files {
-                    println!("\n📄 Test file: {}", path.display());
-                    println!("{}", "-".repeat(60));
+                    use std::fmt::Write;
+                    let mut buf = String::new();
+                    writeln!(buf, "\n--- {} ---", path.display()).ok();
                     for (i, line) in content.lines().enumerate() {
-                        println!("{:4}: {}", i + 1, line);
+                        writeln!(buf, "{:4}: {}", i + 1, line).ok();
                     }
-                    println!("{}", "-".repeat(60));
+                    writeln!(buf, "---").ok();
+                    file_preview = Some(buf);
                 }
 
                 // Parse directives
@@ -503,7 +520,7 @@ impl Runner {
 
                 // Check if should skip
                 if let Some(reason) = should_skip_test(&parsed.directives) {
-                    return Ok(TestResult::Skipped(reason));
+                    return Ok((TestResult::Skipped(reason), file_preview.take()));
                 }
 
                 if let Some(tsc_result) = cache::lookup(&cache, &key) {
@@ -554,8 +571,12 @@ impl Runner {
                                     prepared.temp_dir.path(),
                                     variant,
                                 ),
-                                BatchOutcome::Crashed => return Ok(TestResult::Crashed),
-                                BatchOutcome::Timeout => return Ok(TestResult::Timeout),
+                                BatchOutcome::Crashed => {
+                                    return Ok((TestResult::Crashed, file_preview.take()))
+                                }
+                                BatchOutcome::Timeout => {
+                                    return Ok((TestResult::Timeout, file_preview.take()))
+                                }
                             }
                         } else {
                             // Subprocess fallback — spawn fresh tsz per compilation
@@ -578,7 +599,9 @@ impl Runner {
                                 .await
                                 {
                                     Ok(result) => result?,
-                                    Err(_) => return Ok(TestResult::Timeout),
+                                    Err(_) => {
+                                        return Ok((TestResult::Timeout, file_preview.take()))
+                                    }
                                 }
                             } else {
                                 child.wait_with_output().await?
@@ -591,7 +614,7 @@ impl Runner {
                             )
                         };
                         if compile_result.crashed {
-                            return Ok(TestResult::Crashed);
+                            return Ok((TestResult::Crashed, file_preview.take()));
                         }
 
                         all_codes.extend(compile_result.error_codes);
@@ -718,42 +741,41 @@ impl Runner {
                         && (!use_fingerprint_compare
                             || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
                     {
-                        Ok(TestResult::Pass)
+                        Ok((TestResult::Pass, file_preview.take()))
                     } else {
                         // Sort the codes for consistent display
                         let mut expected = tsc_result.error_codes.clone();
                         let mut actual = compile_result.error_codes.clone();
                         expected.sort();
                         actual.sort();
-                        Ok(TestResult::Fail {
-                            expected,
-                            actual,
-                            missing,
-                            extra,
-                            missing_fingerprints,
-                            extra_fingerprints,
-                            options: compile_result.options,
-                        })
+                        Ok((
+                            TestResult::Fail {
+                                expected,
+                                actual,
+                                missing,
+                                extra,
+                                missing_fingerprints,
+                                extra_fingerprints,
+                                options: compile_result.options,
+                            },
+                            file_preview.take(),
+                        ))
                     }
                 } else {
                     debug!("Cache miss for {}", path.display());
 
                     // Cache miss - run tsz anyway (but we can't compare without TSC results)
                     // Return Skipped with reason "no TSC cache"
-                    Ok(TestResult::Skipped("no TSC cache"))
+                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
                 }
             }
             DecodedSourceText::TextWithOriginalBytes(_decoded_text, original_bytes) => {
-                // UTF-16 with BOM: directives were parsed from decoded text, but
-                // we write the original bytes so tsz detects the BOM and emits TS1490.
                 if print_test_files {
-                    println!("\n📄 Test file (UTF-16 BOM): {}", path.display());
-                    println!("{}", "-".repeat(60));
-                    println!(
-                        "(UTF-16 file: {} bytes, preserving original encoding)",
+                    file_preview = Some(format!(
+                        "\n--- {} (UTF-16 BOM, {} bytes) ---\n",
+                        path.display(),
                         original_bytes.len()
-                    );
-                    println!("{}", "-".repeat(60));
+                    ));
                 }
 
                 if let Some(tsc_result) = cache::lookup(&cache, &key) {
@@ -783,8 +805,12 @@ impl Runner {
                                 prepared.temp_dir.path(),
                                 options,
                             ),
-                            BatchOutcome::Crashed => return Ok(TestResult::Crashed),
-                            BatchOutcome::Timeout => return Ok(TestResult::Timeout),
+                            BatchOutcome::Crashed => {
+                                return Ok((TestResult::Crashed, file_preview.take()))
+                            }
+                            BatchOutcome::Timeout => {
+                                return Ok((TestResult::Timeout, file_preview.take()))
+                            }
                         }
                     } else {
                         let child = tokio::process::Command::new(&tsz_binary)
@@ -806,7 +832,7 @@ impl Runner {
                             .await
                             {
                                 Ok(result) => result?,
-                                Err(_) => return Ok(TestResult::Timeout),
+                                Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
                             }
                         } else {
                             child.wait_with_output().await?
@@ -816,7 +842,7 @@ impl Runner {
                     };
 
                     if compile_result.crashed {
-                        return Ok(TestResult::Crashed);
+                        return Ok((TestResult::Crashed, file_preview.take()));
                     }
 
                     let tsc_codes: std::collections::HashSet<_> =
@@ -878,35 +904,36 @@ impl Runner {
                         && (!use_fingerprint_compare
                             || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
                     {
-                        Ok(TestResult::Pass)
+                        Ok((TestResult::Pass, file_preview.take()))
                     } else {
                         let mut expected = tsc_result.error_codes.clone();
                         let mut actual = compile_result.error_codes.clone();
                         expected.sort();
                         actual.sort();
-                        Ok(TestResult::Fail {
-                            expected,
-                            actual,
-                            missing,
-                            extra,
-                            missing_fingerprints,
-                            extra_fingerprints,
-                            options: HashMap::new(),
-                        })
+                        Ok((
+                            TestResult::Fail {
+                                expected,
+                                actual,
+                                missing,
+                                extra,
+                                missing_fingerprints,
+                                extra_fingerprints,
+                                options: HashMap::new(),
+                            },
+                            file_preview.take(),
+                        ))
                     }
                 } else {
-                    Ok(TestResult::Skipped("no TSC cache"))
+                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
                 }
             }
             DecodedSourceText::Binary(binary) => {
                 if print_test_files {
-                    println!("\n📄 Test file (binary): {}", path.display());
-                    println!("{}", "-".repeat(60));
-                    println!(
-                        "(binary file: {} bytes, preserving for compiler input)",
+                    file_preview = Some(format!(
+                        "\n--- {} (binary, {} bytes) ---\n",
+                        path.display(),
                         binary.len()
-                    );
-                    println!("{}", "-".repeat(60));
+                    ));
                 }
 
                 if let Some(tsc_result) = cache::lookup(&cache, &key) {
@@ -936,8 +963,12 @@ impl Runner {
                                 prepared.temp_dir.path(),
                                 options,
                             ),
-                            BatchOutcome::Crashed => return Ok(TestResult::Crashed),
-                            BatchOutcome::Timeout => return Ok(TestResult::Timeout),
+                            BatchOutcome::Crashed => {
+                                return Ok((TestResult::Crashed, file_preview.take()))
+                            }
+                            BatchOutcome::Timeout => {
+                                return Ok((TestResult::Timeout, file_preview.take()))
+                            }
                         }
                     } else {
                         let child = tokio::process::Command::new(&tsz_binary)
@@ -959,7 +990,7 @@ impl Runner {
                             .await
                             {
                                 Ok(result) => result?,
-                                Err(_) => return Ok(TestResult::Timeout),
+                                Err(_) => return Ok((TestResult::Timeout, file_preview.take())),
                             }
                         } else {
                             child.wait_with_output().await?
@@ -968,7 +999,7 @@ impl Runner {
                         tsz_wrapper::parse_tsz_output(&output, prepared.temp_dir.path(), options)
                     };
                     if compile_result.crashed {
-                        return Ok(TestResult::Crashed);
+                        return Ok((TestResult::Crashed, file_preview.take()));
                     }
 
                     let tsc_codes: std::collections::HashSet<_> =
@@ -1029,25 +1060,28 @@ impl Runner {
                         && (!use_fingerprint_compare
                             || (missing_fingerprints.is_empty() && extra_fingerprints.is_empty()))
                     {
-                        Ok(TestResult::Pass)
+                        Ok((TestResult::Pass, file_preview.take()))
                     } else {
                         let mut expected = tsc_result.error_codes.clone();
                         let mut actual = compile_result.error_codes.clone();
                         expected.sort();
                         actual.sort();
-                        Ok(TestResult::Fail {
-                            expected,
-                            actual,
-                            missing,
-                            extra,
-                            missing_fingerprints,
-                            extra_fingerprints,
-                            options: compile_result.options,
-                        })
+                        Ok((
+                            TestResult::Fail {
+                                expected,
+                                actual,
+                                missing,
+                                extra,
+                                missing_fingerprints,
+                                extra_fingerprints,
+                                options: compile_result.options,
+                            },
+                            file_preview.take(),
+                        ))
                     }
                 } else {
                     debug!("Cache miss for {}", path.display());
-                    Ok(TestResult::Skipped("no TSC cache"))
+                    Ok((TestResult::Skipped("no TSC cache"), file_preview.take()))
                 }
             }
         }
