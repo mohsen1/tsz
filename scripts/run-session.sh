@@ -13,6 +13,7 @@ set -euo pipefail
 DRY_RUN=false
 RUN_ONCE=false
 RUNNER_FILTER=""          # "" = all, "claude" or "codex"
+SESSION_NAME=""           # "" = use existing session.sh, else load from scripts/sessions/
 TIMEOUT_SECONDS=3600      # 1 hour
 COOLDOWN_FALLBACK=1800    # 30 min fallback when reset time can't be parsed
 LOOP_SLEEP=10             # seconds between loop iterations
@@ -48,6 +49,7 @@ Runs ./session.sh prompt through available Claude/Codex accounts,
 cycling to the next when one is drained or rate-limited.
 
 Options:
+  --session NAME     Use a session template from scripts/sessions/NAME.sh
   --dry-run          Show what would run without executing
   --once             Run once and exit (default: loop forever)
   --runner TYPE      Filter to "claude" or "codex" only
@@ -55,6 +57,14 @@ Options:
   --cooldown N       Fallback cooldown seconds (default: 1800)
   --sleep N          Seconds between loop iterations (default: 10)
   -h, --help         Show this help
+
+Available sessions:
+  architect          Architecture audit + CI health check
+  conformance-1      Conformance parity (first half, --max 6000)
+  conformance-2      Conformance parity (second half, --offset 6000)
+  emit               Emitter correctness
+  lsp                LSP / fourslash tests
+  perf               Performance benchmarking + optimization
 
 Runners are auto-discovered from:
   ~/.claude            Default Claude Code account
@@ -67,6 +77,7 @@ EOF
 # ─── Argument parsing ────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --session)    SESSION_NAME="${2:?'--session requires a value'}"; shift 2 ;;
     --dry-run)    DRY_RUN=true; shift ;;
     --once)       RUN_ONCE=true; shift ;;
     --runner)     RUNNER_FILTER="${2:?'--runner requires a value'}"; shift 2 ;;
@@ -446,6 +457,17 @@ run_cycle() {
 
 # ─── Main ────────────────────────────────────────────────────────────────────
 main() {
+  # If --session NAME was given, copy template to session.sh
+  if [[ -n "$SESSION_NAME" ]]; then
+    local template="$SCRIPT_DIR/sessions/${SESSION_NAME}.sh"
+    if [[ ! -f "$template" ]]; then
+      die "Session template not found: $template"
+    fi
+    cp "$template" "$SESSION_SCRIPT"
+    chmod +x "$SESSION_SCRIPT"
+    log "Loaded session template: $SESSION_NAME"
+  fi
+
   discover_runners
 
   if [[ ${#RUNNERS[@]} -eq 0 ]]; then
