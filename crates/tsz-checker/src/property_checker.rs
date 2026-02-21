@@ -104,7 +104,16 @@ impl<'a> CheckerState<'a> {
                 current_class_idx == Some(access_info.declaring_class_idx)
             }
             MemberAccessLevel::Protected => match current_class_idx {
-                None => false,
+                None => {
+                    // In free functions with an explicit `this: Class` parameter,
+                    // TypeScript allows protected access through contextual `this`.
+                    self.is_this_expression(object_expr)
+                        && self
+                            .resolve_class_for_access(object_expr, object_type)
+                            .is_some_and(|(receiver_class_idx, _)| {
+                                receiver_class_idx == access_info.declaring_class_idx
+                            })
+                }
                 Some(current_class_idx) => {
                     if current_class_idx == access_info.declaring_class_idx {
                         true
