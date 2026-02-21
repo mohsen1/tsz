@@ -137,6 +137,11 @@ impl<'a> Printer<'a> {
         Some(cooked_fallback)
     }
 
+    /// Check whether the source text has a closing `}` for this template span.
+    ///
+    /// The literal node (TemplateMiddle/TemplateTail) starts at the `}` character
+    /// in the source. We check `lit_node.pos` directly, then scan the range
+    /// between `expr_node.end` and `lit_node.pos` (inclusive) as a fallback.
     fn template_span_has_closing_brace(
         &self,
         span: &tsz_parser::parser::node::TemplateSpanData,
@@ -144,30 +149,20 @@ impl<'a> Printer<'a> {
         let Some(text) = self.source_text else {
             return true;
         };
-        let Some(expr_node) = self.arena.get(span.expression) else {
-            return true;
-        };
         let Some(lit_node) = self.arena.get(span.literal) else {
             return false;
         };
 
-        let start = std::cmp::min(expr_node.end as usize, text.len());
-        let end = std::cmp::min(lit_node.pos as usize, text.len());
-        if start < end {
-            return text[start..end].contains('}');
-        }
-
-        if start < text.len() && text.as_bytes()[start] == b'}' {
-            return true;
-        }
-        if end < text.len() && text.as_bytes()[end] == b'}' {
+        // The literal node's pos should be at the `}` character.
+        let pos = lit_node.pos as usize;
+        if pos < text.len() && text.as_bytes()[pos] == b'}' {
             return true;
         }
 
-        let boundary = std::cmp::min(end, text.len());
-        if boundary > 0 {
+        // Fallback: scan backwards from the literal position past whitespace.
+        if pos > 0 {
             let bytes = text.as_bytes();
-            let mut i = boundary;
+            let mut i = pos;
             while i > 0 && bytes[i - 1].is_ascii_whitespace() {
                 i -= 1;
             }
@@ -179,17 +174,28 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Check whether the source text has a closing backtick for a `TemplateTail`.
+    ///
+    /// The `TemplateTail` node spans from `}` through the closing `` ` ``. The
+    /// backtick should be the last character at `node.end - 1`.
     fn template_tail_has_backtick(&self, node: &Node) -> bool {
         let Some(text) = self.source_text else {
             return true;
         };
-        let start = std::cmp::min(node.pos as usize, text.len());
-        let end = std::cmp::min(node.end as usize, text.len());
+        let end = node.end as usize;
 
-        if start < end && text[start..end].contains('`') {
+        // The backtick should be at end - 1 (the last character of the tail token).
+        if end > 0 && end <= text.len() && text.as_bytes()[end - 1] == b'`' {
             return true;
         }
 
-        end < text.len() && text.as_bytes()[end] == b'`'
+        // Fallback: check within the node's range.
+        let start = std::cmp::min(node.pos as usize, text.len());
+        let end_clamped = std::cmp::min(end, text.len());
+        if start < end_clamped && text[start..end_clamped].contains('`') {
+            return true;
+        }
+
+        false
     }
 }
