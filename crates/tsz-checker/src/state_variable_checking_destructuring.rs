@@ -490,7 +490,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     NodeIndex::NONE
                 };
-                self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                if element_data.initializer.is_none() {
+                    self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                }
             }
             return TypeId::UNKNOWN;
         }
@@ -509,7 +511,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         NodeIndex::NONE
                     };
-                    self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                    if element_data.initializer.is_none() {
+                        self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
+                    }
                     TypeId::ANY
                 }
                 PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
