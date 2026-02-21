@@ -56,6 +56,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         target: TypeId,
         priority: crate::types::InferencePriority,
     ) {
+        tracing::trace!(
+            "constrain_types_impl: source={:?} target={:?} target_is_var={} source_is_var={} priority={:?} source_key={:?} target_key={:?}",
+            source,
+            target,
+            var_map.contains_key(&target),
+            var_map.contains_key(&source),
+            priority,
+            self.interner.lookup(source),
+            self.interner.lookup(target)
+        );
+
         if source == target {
             return;
         }

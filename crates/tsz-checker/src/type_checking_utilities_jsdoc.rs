@@ -659,7 +659,7 @@ impl<'a> CheckerState<'a> {
             if expr != "Object" && expr != "object" {
                 return self.jsdoc_type_from_expression(expr);
             }
-            Some(self.jsdoc_type_from_expression(expr).unwrap_or(TypeId::ANY))
+            None
         } else {
             None
         };
