@@ -548,6 +548,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
 
         // Property access on union: partition into nullable and non-nullable members
         let mut valid_results = Vec::new();
+        let mut valid_write_results = Vec::new();
+        let mut any_has_divergent_write_type = false;
         let mut nullable_causes = Vec::new();
         let mut any_from_index = false; // Track if any member used index signature
 
@@ -566,10 +568,16 @@ impl<'a> PropertyAccessEvaluator<'a> {
             match self.resolve_property_access_inner(member, prop_name, Some(prop_atom)) {
                 PropertyAccessResult::Success {
                     type_id,
+                    write_type,
                     from_index_signature,
-                    ..
                 } => {
                     valid_results.push(type_id);
+                    if let Some(wt) = write_type {
+                        valid_write_results.push(wt);
+                        any_has_divergent_write_type = true;
+                    } else {
+                        valid_write_results.push(type_id);
+                    }
                     if from_index_signature {
                         any_from_index = true; // Propagate: if ANY member uses index, flag it
                     }
@@ -580,6 +588,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
                 } => {
                     if let Some(t) = property_type {
                         valid_results.push(t);
+                        valid_write_results.push(t);
                     }
                     nullable_causes.push(cause);
                 }
@@ -663,10 +672,24 @@ impl<'a> PropertyAccessEvaluator<'a> {
             type_id = self.add_undefined_if_unchecked(type_id);
         }
 
+        let write_type = if any_has_divergent_write_type {
+            let mut wt = self.interner().union(valid_write_results);
+            if any_from_index && self.no_unchecked_indexed_access {
+                wt = self.add_undefined_if_unchecked(wt);
+            }
+            if wt != type_id {
+                Some(wt)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Union of all result types
         Some(PropertyAccessResult::Success {
             type_id,
-            write_type: None,
+            write_type,
             from_index_signature: any_from_index, // Contagious across union members
         })
     }
