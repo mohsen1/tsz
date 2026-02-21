@@ -114,6 +114,13 @@ pub fn get_boolean_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Opti
 /// A valid index type must be string/number/symbol (or compatible literal forms).
 pub fn is_invalid_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     let mut visited = FxHashSet::default();
+    is_invalid_index_type_inner(db, type_id, &mut visited).is_some()
+}
+
+/// Returns the specific `TypeId` within the given type (e.g., inside a union)
+/// that makes it invalid for indexing.
+pub fn get_invalid_index_type_member(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    let mut visited = FxHashSet::default();
     is_invalid_index_type_inner(db, type_id, &mut visited)
 }
 
@@ -121,19 +128,19 @@ fn is_invalid_index_type_inner(
     db: &dyn TypeDatabase,
     type_id: TypeId,
     visited: &mut FxHashSet<TypeId>,
-) -> bool {
+) -> Option<TypeId> {
     if !visited.insert(type_id) {
-        return false;
+        return None;
     }
 
     if matches!(
         type_id,
         TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
     ) {
-        return false;
+        return None;
     }
 
-    match db.lookup(type_id) {
+    let is_invalid = match db.lookup(type_id) {
         Some(TypeData::Intrinsic(kind)) => matches!(
             kind,
             crate::IntrinsicKind::Void
@@ -157,14 +164,29 @@ fn is_invalid_index_type_inner(
             | TypeData::Callable(_)
             | TypeData::Lazy(_),
         ) => true,
-        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
-            .type_list(list_id)
-            .iter()
-            .any(|&member| is_invalid_index_type_inner(db, member, visited)),
-        Some(TypeData::TypeParameter(info)) => info
-            .constraint
-            .is_some_and(|constraint| is_invalid_index_type_inner(db, constraint, visited)),
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            for &member in db.type_list(list_id).iter() {
+                if let Some(invalid_member) = is_invalid_index_type_inner(db, member, visited) {
+                    return Some(invalid_member);
+                }
+            }
+            false
+        }
+        Some(TypeData::TypeParameter(info)) => {
+            if let Some(constraint) = info.constraint {
+                if let Some(invalid_member) = is_invalid_index_type_inner(db, constraint, visited) {
+                    return Some(invalid_member);
+                }
+            }
+            false
+        }
         _ => false,
+    };
+
+    if is_invalid {
+        Some(type_id)
+    } else {
+        None
     }
 }
 

@@ -218,9 +218,9 @@ impl<'a> CheckerState<'a> {
         }
 
         // TS2538: Type cannot be used as an index type
-        if self.type_is_invalid_index_type(index_type) {
+        if let Some(invalid_member) = self.type_get_invalid_index_type_member(index_type) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-            let index_type_str = self.format_type(index_type);
+            let index_type_str = self.format_type(invalid_member);
             let message = format_message(
                 diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
                 &[&index_type_str],
