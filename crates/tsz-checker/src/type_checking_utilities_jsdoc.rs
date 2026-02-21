@@ -988,6 +988,56 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check if a node has a `/** @override */` JSDoc annotation.
+    pub(crate) fn has_jsdoc_override_tag(&self, idx: NodeIndex) -> bool {
+        let is_js_file = self.ctx.file_name.ends_with(".js")
+            || self.ctx.file_name.ends_with(".jsx")
+            || self.ctx.file_name.ends_with(".mjs")
+            || self.ctx.file_name.ends_with(".cjs");
+        if !is_js_file {
+            return false;
+        }
+
+        let sf = match self.ctx.arena.source_files.first() {
+            Some(sf) => sf,
+            None => return false,
+        };
+        let source_text: &str = &sf.text;
+        let comments = &sf.comments;
+        let node = match self.ctx.arena.get(idx) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        let mut jsdoc = self.try_leading_jsdoc(comments, node.pos, source_text);
+        if jsdoc.is_none() {
+            let mut current = idx;
+            for _ in 0..4 {
+                let Some(ext) = self.ctx.arena.get_extended(current) else {
+                    break;
+                };
+                let parent = ext.parent;
+                if parent.is_none() {
+                    break;
+                }
+                let Some(parent_node) = self.ctx.arena.get(parent) else {
+                    break;
+                };
+                jsdoc = self.try_leading_jsdoc(comments, parent_node.pos, source_text);
+                if jsdoc.is_some() {
+                    break;
+                }
+                current = parent;
+            }
+        }
+
+        if let Some(content) = jsdoc {
+            content.contains("@override")
+        } else {
+            false
+        }
+    }
+
     /// Check if a `JSDoc` comment has a `@param {type}` annotation for the given parameter name.
     ///
     /// Returns true if the `JSDoc` contains `@param {someType} paramName`.

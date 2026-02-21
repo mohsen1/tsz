@@ -250,7 +250,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 };
 
-                let has_override = self.has_override_modifier(&param.modifiers);
+                let has_override = self.has_override_modifier(&param.modifiers)
+                    || self.has_jsdoc_override_tag(param_idx);
                 let base_member = base_class_idx.and_then(|base_idx| {
                     self.find_member_in_class_chain(base_idx, &param_name, false, 0, true)
                 });
@@ -351,7 +352,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: false,
                     is_abstract,
-                    has_override: self.has_override_modifier(&prop.modifiers),
+                    has_override: self.has_override_modifier(&prop.modifiers)
+                        || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(prop.name),
                 })
             }
@@ -391,7 +393,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: false,
                     is_abstract,
-                    has_override: self.has_override_modifier(&method.modifiers),
+                    has_override: self.has_override_modifier(&method.modifiers)
+                        || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(method.name),
                 })
             }
@@ -424,7 +427,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: true,
                     is_abstract,
-                    has_override: self.has_override_modifier(&accessor.modifiers),
+                    has_override: self.has_override_modifier(&accessor.modifiers)
+                        || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                 })
             }
@@ -464,7 +468,8 @@ impl<'a> CheckerState<'a> {
                     is_static,
                     is_accessor: true,
                     is_abstract,
-                    has_override: self.has_override_modifier(&accessor.modifiers),
+                    has_override: self.has_override_modifier(&accessor.modifiers)
+                        || self.has_jsdoc_override_tag(member_idx),
                     has_dynamic_name: self.is_computed_name_dynamic(accessor.name),
                 })
             }

@@ -801,7 +801,8 @@ impl<'a> CheckerState<'a> {
                             is_static: false,
                             is_accessor: false,
                             is_abstract: false,
-                            has_override: self.has_override_modifier(&param.modifiers),
+                            has_override: self.has_override_modifier(&param.modifiers)
+                                || self.has_jsdoc_override_tag(param_idx),
                             has_dynamic_name: false,
                         };
                         guard.leave(class_idx);
