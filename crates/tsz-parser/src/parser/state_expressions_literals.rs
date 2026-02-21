@@ -1085,8 +1085,17 @@ impl ParserState {
             } else {
                 let elem = self.parse_assignment_expression();
                 if elem.is_none() {
-                    // Emit TS1109 for missing array element: [a, , ] vs [a, b]
-                    self.error_expression_expected();
+                    // tsc uses TS1137 ("Expression or comma expected") when a closing
+                    // delimiter from an outer context terminates the array (e.g. `[)` or
+                    // `[...}\n}`), and TS1109 ("Expression expected") otherwise.
+                    if matches!(
+                        self.token(),
+                        SyntaxKind::CloseParenToken | SyntaxKind::CloseBraceToken
+                    ) {
+                        self.error_expression_or_comma_expected();
+                    } else {
+                        self.error_expression_expected();
+                    }
                     // Continue parsing with empty element for error recovery
                 }
                 elements.push(elem);

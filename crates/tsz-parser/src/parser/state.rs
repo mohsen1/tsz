@@ -1207,6 +1207,18 @@ impl ParserState {
         }
     }
 
+    /// Error: Expression or comma expected (TS1137)
+    /// Used in array literal element parsing where tsc uses TS1137 instead of TS1109.
+    pub(crate) fn error_expression_or_comma_expected(&mut self) {
+        if self.should_report_error() {
+            use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+            self.parse_error_at_current_token(
+                diagnostic_messages::EXPRESSION_OR_COMMA_EXPECTED,
+                diagnostic_codes::EXPRESSION_OR_COMMA_EXPECTED,
+            );
+        }
+    }
+
     /// Error: Argument expression expected (TS1135)
     /// Used in function call argument list parsing instead of generic TS1109.
     pub(crate) fn error_argument_expression_expected(&mut self) {
