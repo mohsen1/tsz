@@ -21,6 +21,7 @@ mod state_import_export;
 mod state_lib_merge;
 mod state_module_binding;
 mod state_node_binding;
+mod state_resolution;
 pub use state::{
     BinderOptions, BinderState, DeclarationArenaMap, FileFeatures, GlobalAugmentation, LibContext,
     ModuleAugmentation, ValidationError,
