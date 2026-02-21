@@ -16,17 +16,17 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
-tsz-common = { path = "crates/tsz-common" }
-tsz-scanner = { path = "crates/tsz-scanner" }
-tsz-parser = { path = "crates/tsz-parser" }
-tsz-binder = { path = "crates/tsz-binder" }
-tsz-solver = { path = "crates/tsz-solver" }
-tsz-lowering = { path = "crates/tsz-lowering" }
-tsz-checker = { path = "crates/tsz-checker" }
-tsz-emitter = { path = "crates/tsz-emitter" }
-tsz-lsp = { path = "crates/tsz-lsp" }
-tsz-cli = { path = "crates/tsz-cli" }
-tsz-wasm = { path = "crates/tsz-wasm" }
+tsz-common = { path = "crates/tsz-common", version = "0.1.0" }
+tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.0" }
+tsz-parser = { path = "crates/tsz-parser", version = "0.1.0" }
+tsz-binder = { path = "crates/tsz-binder", version = "0.1.0" }
+tsz-solver = { path = "crates/tsz-solver", version = "0.1.0" }
+tsz-lowering = { path = "crates/tsz-lowering", version = "0.1.0" }
+tsz-checker = { path = "crates/tsz-checker", version = "0.1.0" }
+tsz-emitter = { path = "crates/tsz-emitter", version = "0.1.0" }
+tsz-lsp = { path = "crates/tsz-lsp", version = "0.1.0" }
+tsz-cli = { path = "crates/tsz-cli", version = "0.1.0" }
+tsz-wasm = { path = "crates/tsz-wasm", version = "0.1.0" }
 
 # External dependencies (shared versions)
 anyhow = "1.0"
