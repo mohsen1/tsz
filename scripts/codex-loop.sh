@@ -118,7 +118,8 @@ fi
 if printf '%s\n' "$MODEL" | tr '[:upper:]' '[:lower:]' | grep -q 'spark'; then
   REASONING_EFFORT="xhigh"
 else
-  REASONING_EFFORT="minimal"
+  # gpt-5.3-codex rejects minimal in some CLI/API combinations; low is safe.
+  REASONING_EFFORT="low"
 fi
 
 mkdir -p logs
@@ -163,6 +164,10 @@ while true; do
 
   PROMPT_TEXT="$(build_prompt)"
   CMD=( "$CODEX_BIN" exec --model "$MODEL" -c "model_reasoning_effort=$REASONING_EFFORT" -C "$WORKDIR" )
+  # The OpenAI Responses API rejects web_search with minimal reasoning effort.
+  if [[ "$REASONING_EFFORT" == "minimal" ]]; then
+    CMD+=( -c 'web_search="disabled"' )
+  fi
 
   set +e
   if command -v timeout >/dev/null 2>&1; then
