@@ -361,7 +361,7 @@ impl<'a> CheckerState<'a> {
 
             if let Some(usage_node) = self.ctx.arena.get(idx) {
                 // If usage is textually at or after declaration, it's assigned
-                if usage_node.pos >= decl_node.pos {
+                if usage_node.pos >= decl_node.end {
                     return false;
                 }
                 // If usage is inside a nested function relative to the declaration, skip
@@ -745,7 +745,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // If usage is after declaration, it's valid
-        if usage_node.pos >= decl_node.pos {
+        if usage_node.pos >= decl_node.end {
             return false;
         }
 
@@ -811,7 +811,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if usage_node.pos >= decl_node.pos {
+        if usage_node.pos >= decl_node.end {
             return false;
         }
 
@@ -881,7 +881,7 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        if usage_node.pos >= decl_node.pos {
+        if usage_node.pos >= decl_node.end {
             return false;
         }
 
@@ -1010,8 +1010,18 @@ impl<'a> CheckerState<'a> {
         }
 
         // Only flag if usage is before declaration in source order
+        // EXCEPT for block-scoped variables, which are also in TDZ during their own initializer.
+        // For classes and enums, usage >= pos is always safe (handled by other specific TDZ checks
+        // for computed properties, heritage clauses, etc.).
+        let is_var = symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE != 0;
+        let mut could_be_in_initializer = false;
         if !is_cross_file && usage_node.pos >= decl_node.pos {
-            return false;
+            if is_var && usage_node.pos <= decl_node.end {
+                // It might be in the initializer. We will confirm via AST walk.
+                could_be_in_initializer = true;
+            } else {
+                return false;
+            }
         }
 
         // Find the declaration's enclosing function-like container (or source file).
@@ -1028,10 +1038,14 @@ impl<'a> CheckerState<'a> {
         // If we reach the declaration's container without crossing a function
         // boundary, the usage executes immediately and IS a violation.
         let mut current = usage_idx;
+        let mut found_decl_in_path = false;
         while current.is_some() {
             let Some(node) = self.ctx.arena.get(current) else {
                 break;
             };
+            if current == decl_idx {
+                found_decl_in_path = true;
+            }
             // If we reached the declaration container, stop - same scope means TDZ
             if Some(current) == decl_container {
                 break;
@@ -1071,6 +1085,12 @@ impl<'a> CheckerState<'a> {
                 break;
             }
             current = ext.parent;
+        }
+
+        if could_be_in_initializer && !found_decl_in_path {
+            // It was >= pos, but wasn't actually inside the declaration's AST.
+            // This means it's strictly AFTER the declaration.
+            return false;
         }
 
         true
