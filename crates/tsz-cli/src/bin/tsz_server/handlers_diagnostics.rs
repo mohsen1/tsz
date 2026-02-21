@@ -828,6 +828,29 @@ impl Server {
     }
 
     fn annotate_callable_params_line(line: &str, params: &[(String, String)]) -> Option<String> {
+        if let Some(arrow) = line.find("=>") {
+            let before_arrow = &line[..arrow];
+            if !before_arrow.contains('(') {
+                let eq = before_arrow.rfind('=')?;
+                let raw_param = before_arrow[eq + 1..].trim();
+                if raw_param.contains('/') {
+                    return None;
+                }
+                let name_len = raw_param
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .count();
+                if name_len == 0 {
+                    return None;
+                }
+                let name = &raw_param[..name_len];
+                let (_, ty) = params.iter().find(|(param_name, _)| param_name == name)?;
+                let prefix = before_arrow[..eq + 1].trim_end();
+                let suffix = &line[arrow..];
+                return Some(format!("{prefix} ({name}: {ty}) {suffix}"));
+            }
+        }
+
         let open = line.find('(')?;
         let close = line.rfind(')')?;
         if close <= open {
