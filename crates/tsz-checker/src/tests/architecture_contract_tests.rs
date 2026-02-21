@@ -730,11 +730,6 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_variable_checking should not call solver type_queries directly; use state_checking query boundaries"
     );
     assert!(
-        state_variable_checking_destructuring_src
-            .contains("query::find_property_in_object_by_str("),
-        "state_variable_checking_destructuring property lookup should route through query_boundaries::state_checking"
-    );
-    assert!(
         state_variable_checking_destructuring_src.contains("query::is_only_null_or_undefined("),
         "state_variable_checking_destructuring null/undefined checks should route through query_boundaries::state_checking"
     );

@@ -388,17 +388,6 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        let property_optional_type = |property_type: TypeId, optional: bool| {
-            if optional {
-                self.ctx
-                    .types
-                    .factory()
-                    .union(vec![property_type, TypeId::UNDEFINED])
-            } else {
-                property_type
-            }
-        };
-
         // Get the property name or index
         if element_data.property_name.is_some() {
             // For computed keys in object binding patterns (e.g. `{ [k]: v }`),
@@ -507,28 +496,26 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(ref prop_name_str) = property_name {
-            // Look up the property type in the parent type.
-            // For union types, resolve the property in each member and union the results.
-            if let Some(members) = query::union_members(self.ctx.types, parent_type) {
-                let mut prop_types = Vec::new();
-                for member in members {
-                    if let Some(prop) =
-                        query::find_property_in_object_by_str(self.ctx.types, member, prop_name_str)
-                    {
-                        prop_types.push(property_optional_type(prop.type_id, prop.optional));
-                    }
-                }
-                if prop_types.is_empty() {
+            use tsz_solver::operations_property::PropertyAccessResult;
+            let prop_access_result =
+                self.resolve_property_access_with_env(parent_type, prop_name_str);
+            match prop_access_result {
+                PropertyAccessResult::Success { type_id, .. } => type_id,
+                PropertyAccessResult::PropertyNotFound { .. } => {
+                    let error_node = if element_data.property_name.is_some() {
+                        element_data.property_name
+                    } else if element_data.name.is_some() {
+                        element_data.name
+                    } else {
+                        NodeIndex::NONE
+                    };
+                    self.error_property_not_exist_at(prop_name_str, parent_type, error_node);
                     TypeId::ANY
-                } else {
-                    tsz_solver::utils::union_or_single(self.ctx.types, prop_types)
                 }
-            } else if let Some(prop) =
-                query::find_property_in_object_by_str(self.ctx.types, parent_type, prop_name_str)
-            {
-                property_optional_type(prop.type_id, prop.optional)
-            } else {
-                TypeId::ANY
+                PropertyAccessResult::PossiblyNullOrUndefined { property_type, .. } => {
+                    property_type.unwrap_or(TypeId::ANY)
+                }
+                PropertyAccessResult::IsUnknown => TypeId::ANY,
             }
         } else {
             TypeId::ANY
