@@ -38,7 +38,7 @@ WORKDIR="$(pwd)"
 SANDBOX_MODE="${CODEX_LOOP_SANDBOX:-danger-full-access}"
 APPROVAL_POLICY="${CODEX_LOOP_APPROVAL:-never}"
 BYPASS_APPROVALS_AND_SANDBOX="${CODEX_LOOP_BYPASS:-0}"
-TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-300}"
+TIMEOUT_SECONDS="${CODEX_LOOP_TIMEOUT:-900}"
 SLEEP_SECONDS="${CODEX_LOOP_SLEEP:-2}"
 CONF_QUARTERS="${CODEX_LOOP_CONFORMANCE_QUARTERS:-}"
 CONF_TOTAL_TESTS="${CODEX_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
@@ -121,32 +121,32 @@ if [[ -n "$SESSION_ID" ]] && ! [[ "$SESSION_ID" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
-if [[ -z "$SESSION_ID" ]]; then
-  parent_dir="$(dirname "$WORKDIR")"
-  base_name="$(basename "$WORKDIR")"
-  if [[ "$base_name" =~ ^tsz-[0-9]+$ ]]; then
-    if command -v sort >/dev/null 2>&1 && sort -V </dev/null >/dev/null 2>&1; then
-      sort_cmd="sort -V"
-    else
-      sort_cmd="sort"
-    fi
+parent_dir="$(dirname "$WORKDIR")"
+base_name="$(basename "$WORKDIR")"
+if [[ "$base_name" =~ ^tsz-[0-9]+$ ]]; then
+  if command -v sort >/dev/null 2>&1 && sort -V </dev/null >/dev/null 2>&1; then
+    sort_cmd="sort -V"
+  else
+    sort_cmd="sort"
+  fi
 
-    IFS=$'\n' read -r -d '' -a siblings < <(find "$parent_dir" -maxdepth 1 -type d -name "tsz-[0-9]*" -exec basename {} \; | $sort_cmd && printf '\0')
-    total_shards=${#siblings[@]}
-    my_index=-1
-    for i in "${!siblings[@]}"; do
-      if [[ "${siblings[$i]}" == "$base_name" ]]; then
-        my_index=$i
-        break
-      fi
-    done
-    if [[ $my_index -ge 0 ]]; then
-      SESSION_ID=$((my_index + 1))
-      if [[ -z "$CONF_QUARTERS" ]]; then
-        CONF_QUARTERS="$total_shards"
-      fi
-      echo "Auto-detected sharding: Session $SESSION_ID of $CONF_QUARTERS (based on $base_name among $total_shards siblings)"
+  IFS=$'\n' read -r -d '' -a siblings < <(find "$parent_dir" -maxdepth 1 -type d -name "tsz-[0-9]*" -exec basename {} \; | $sort_cmd && printf '\0')
+  total_shards=${#siblings[@]}
+  my_index=-1
+  for i in "${!siblings[@]}"; do
+    if [[ "${siblings[$i]}" == "$base_name" ]]; then
+      my_index=$i
+      break
     fi
+  done
+  if [[ -z "$CONF_QUARTERS" && "$total_shards" -gt 0 ]]; then
+    CONF_QUARTERS="$total_shards"
+  fi
+  if [[ -z "$SESSION_ID" && $my_index -ge 0 ]]; then
+    SESSION_ID=$((my_index + 1))
+  fi
+  if [[ $my_index -ge 0 ]]; then
+    echo "Auto-detected sharding: Session ${SESSION_ID:-$((my_index + 1))} of ${CONF_QUARTERS:-$total_shards} (based on $base_name among $total_shards siblings)"
   fi
 fi
 
