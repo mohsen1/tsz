@@ -344,14 +344,51 @@ impl<'a> CheckerState<'a> {
                         } else if !is_class_declaration
                             && symbol_type != TypeId::ERROR
                             && symbol_type != TypeId::ANY
-                            && class_query::is_mapped_type(self.ctx.types, symbol_type)
                         {
-                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
-                            self.error_at_node(
-                                expr_idx,
-                                diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
-                                diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
-                            );
+                            let mut instantiated_type = symbol_type;
+                            if let Some(args) = type_args {
+                                let mut evaluated_args = Vec::new();
+                                for &arg_idx in &args.nodes {
+                                    evaluated_args.push(self.get_type_from_type_node(arg_idx));
+                                }
+                                let base_type_params =
+                                    self.get_type_params_for_symbol(sym_to_check);
+                                if evaluated_args.len() < base_type_params.len() {
+                                    for param in base_type_params.iter().skip(evaluated_args.len())
+                                    {
+                                        let fallback = param
+                                            .default
+                                            .or(param.constraint)
+                                            .unwrap_or(TypeId::UNKNOWN);
+                                        evaluated_args.push(fallback);
+                                    }
+                                }
+                                if evaluated_args.len() > base_type_params.len() {
+                                    evaluated_args.truncate(base_type_params.len());
+                                }
+                                let substitution = tsz_solver::TypeSubstitution::from_args(
+                                    self.ctx.types,
+                                    &base_type_params,
+                                    &evaluated_args,
+                                );
+                                instantiated_type = tsz_solver::instantiate_type(
+                                    self.ctx.types,
+                                    symbol_type,
+                                    &substitution,
+                                );
+                            }
+
+                            if class_query::is_mapped_type(
+                                self.ctx.types,
+                                self.ctx.types.evaluate_type(instantiated_type),
+                            ) {
+                                use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                                self.error_at_node(
+                                    expr_idx,
+                                    diagnostic_messages::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                    diagnostic_codes::AN_INTERFACE_CAN_ONLY_EXTEND_AN_OBJECT_TYPE_OR_INTERSECTION_OF_OBJECT_TYPES_WITH,
+                                );
+                            }
                         }
                     }
                 } else {
