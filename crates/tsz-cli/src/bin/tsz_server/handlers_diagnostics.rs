@@ -639,28 +639,65 @@ impl Server {
 
         let mut i = 0usize;
         while i < lines.len() {
-            let line = lines[i].clone();
-
-            if let Some(jsdoc_type) = Self::extract_jsdoc_tag_type(&line, "type")
-                && let Some(j) = Self::next_non_empty_line_index(&lines, i + 1)
-                && let Some(updated) =
-                    Self::annotate_variable_or_property_line(&lines[j], &jsdoc_type)
-            {
-                lines[j] = updated;
-                changed = true;
+            if !lines[i].contains("/**") {
+                i += 1;
+                continue;
             }
 
-            if let Some(jsdoc_type) = Self::extract_jsdoc_tag_type(&line, "return")
-                .or_else(|| Self::extract_jsdoc_tag_type(&line, "returns"))
-                && let Some(j) = Self::next_non_empty_line_index(&lines, i + 1)
-                && let Some(updated) =
-                    Self::annotate_callable_return_line(&lines[j], &jsdoc_type)
-            {
-                lines[j] = updated;
-                changed = true;
+            let block_start = i;
+            let mut block_end = i;
+            while block_end < lines.len() && !lines[block_end].contains("*/") {
+                block_end += 1;
+            }
+            if block_end >= lines.len() {
+                break;
             }
 
-            i += 1;
+            let mut type_tag: Option<String> = None;
+            let mut return_tag: Option<String> = None;
+            let mut param_tags: Vec<(String, String)> = Vec::new();
+            for line in &lines[block_start..=block_end] {
+                if type_tag.is_none() {
+                    type_tag = Self::extract_jsdoc_tag_type(line, "type");
+                }
+                if return_tag.is_none() {
+                    return_tag = Self::extract_jsdoc_tag_type(line, "return")
+                        .or_else(|| Self::extract_jsdoc_tag_type(line, "returns"));
+                }
+                if let Some(param_tag) = Self::extract_jsdoc_param_tag(line) {
+                    param_tags.push(param_tag);
+                }
+            }
+
+            if let Some(target_line) = Self::next_non_empty_line_index(&lines, block_end + 1) {
+                if let Some(ty) = type_tag
+                    && let Some(updated) =
+                        Self::annotate_variable_or_property_line(&lines[target_line], &ty)
+                {
+                    lines[target_line] = updated;
+                    changed = true;
+                }
+
+                if !param_tags.is_empty()
+                    && let Some(updated) =
+                        Self::annotate_callable_params_line(&lines[target_line], &param_tags)
+                    && updated != lines[target_line]
+                {
+                    lines[target_line] = updated;
+                    changed = true;
+                }
+
+                if let Some(ty) = return_tag
+                    && let Some(updated) =
+                        Self::annotate_callable_return_line(&lines[target_line], &ty)
+                    && updated != lines[target_line]
+                {
+                    lines[target_line] = updated;
+                    changed = true;
+                }
+            }
+
+            i = block_end + 1;
         }
 
         if !changed {
@@ -716,6 +753,28 @@ impl Server {
         (start..lines.len()).find(|&idx| !lines[idx].trim().is_empty())
     }
 
+    fn extract_jsdoc_param_tag(line: &str) -> Option<(String, String)> {
+        let marker = "@param {";
+        let start = line.find(marker)?;
+        let rest = &line[start + marker.len()..];
+        let close = rest.find('}')?;
+        let ty = Self::normalize_jsdoc_type(rest[..close].trim());
+        let after = rest[close + 1..].trim();
+        let token = after.split_whitespace().next()?;
+        let mut name = token.trim_matches(|ch| ch == '[' || ch == ']');
+        if let Some(eq) = name.find('=') {
+            name = &name[..eq];
+        }
+        name = name.trim_start_matches("...");
+        if let Some(dot) = name.find('.') {
+            name = &name[..dot];
+        }
+        if name.is_empty() {
+            return None;
+        }
+        Some((name.to_string(), ty))
+    }
+
     fn annotate_variable_or_property_line(line: &str, ty: &str) -> Option<String> {
         if let Some(var_pos) = line.find("var ") {
             let prefix = &line[..var_pos + 4];
@@ -767,10 +826,82 @@ impl Server {
         Some(format!("{indent}{name}: {ty}{suffix}"))
     }
 
-    fn annotate_callable_return_line(line: &str, ty: &str) -> Option<String> {
-        if line.contains("=>") {
+    fn annotate_callable_params_line(line: &str, params: &[(String, String)]) -> Option<String> {
+        let open = line.find('(')?;
+        let close = line.rfind(')')?;
+        if close <= open {
             return None;
         }
+        let param_text = &line[open + 1..close];
+        if param_text.trim().is_empty() {
+            return None;
+        }
+
+        let mut changed = false;
+        let updated_params: Vec<String> = param_text
+            .split(',')
+            .map(|segment| {
+                if segment.contains(':') {
+                    return segment.to_string();
+                }
+
+                let mut working = segment.to_string();
+                let trimmed = segment.trim();
+                let mut core = trimmed.trim_start_matches("readonly ").trim();
+                let is_rest = core.starts_with("...");
+                if is_rest {
+                    core = core.trim_start_matches("...");
+                }
+                let name_len = core
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                    .count();
+                if name_len == 0 {
+                    return segment.to_string();
+                }
+                let name = &core[..name_len];
+                let Some((_, ty)) = params.iter().find(|(param_name, _)| param_name == name) else {
+                    return segment.to_string();
+                };
+                let lookup = if is_rest {
+                    format!("...{name}")
+                } else {
+                    name.to_string()
+                };
+                if let Some(pos) = working.find(&lookup) {
+                    let insert_at = pos + lookup.len();
+                    working.insert_str(insert_at, &format!(": {ty}"));
+                    changed = true;
+                }
+                working
+            })
+            .collect();
+
+        if !changed {
+            return None;
+        }
+
+        Some(format!(
+            "{}{}{}",
+            &line[..open + 1],
+            updated_params.join(","),
+            &line[close..]
+        ))
+    }
+
+    fn annotate_callable_return_line(line: &str, ty: &str) -> Option<String> {
+        if let Some(arrow) = line.find("=>") {
+            let before_arrow = &line[..arrow];
+            let close_paren = before_arrow.rfind(')')?;
+            let between = &before_arrow[close_paren + 1..];
+            if between.contains(':') {
+                return None;
+            }
+            let head = before_arrow.trim_end();
+            let spacing = &before_arrow[head.len()..];
+            return Some(format!("{head}: {ty}{spacing}{}", &line[arrow..]));
+        }
+
         let close_paren = line.rfind(')')?;
         let brace_pos = line[close_paren..].find('{')?;
         let between = &line[close_paren + 1..close_paren + brace_pos];
