@@ -69,6 +69,18 @@ impl Server {
             .and_then(|p| p.get("importModuleSpecifierPreference"))
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
+        self.organize_imports_type_order = request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("organizeImportsTypeOrder"))
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+        self.organize_imports_ignore_case = request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("organizeImportsIgnoreCase"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true);
         self.auto_import_file_exclude_patterns =
             Self::extract_auto_import_file_exclude_patterns(request).unwrap_or_default();
 
@@ -792,6 +804,7 @@ impl Server {
                 });
                 response_actions.push(action);
             }
+            self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
 
             if !response_actions.is_empty() {
                 return TsServerResponse {
@@ -1230,13 +1243,22 @@ impl Server {
         binder: &tsz::binder::BinderState,
     ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
         let mut diagnostics = Vec::new();
+        let mut seen_spans = std::collections::HashSet::new();
         let mut offset = 0usize;
 
         for line_with_newline in content.split_inclusive('\n') {
             let line = line_with_newline.trim_end_matches(['\r', '\n']);
+            let trimmed = line.trim_start();
+            let skip_scanning = trimmed.starts_with("import ")
+                || trimmed.starts_with("export ")
+                || trimmed.starts_with("interface ")
+                || trimmed.starts_with("type ")
+                || trimmed.starts_with("class ")
+                || trimmed.starts_with("function ");
             if let Some((column, name)) = parse_bare_identifier_expression(line)
                 && binder.file_locals.get(name).is_none()
                 && self.has_potential_auto_import_symbol(file_path, name)
+                && seen_spans.insert((offset + column, name.len()))
             {
                 diagnostics.push(tsz::checker::diagnostics::Diagnostic {
                     category: DiagnosticCategory::Error,
@@ -1247,6 +1269,62 @@ impl Server {
                     message_text: format!("Cannot find name '{name}'."),
                     related_information: Vec::new(),
                 });
+            }
+            if !skip_scanning {
+                let bytes = line.as_bytes();
+                let mut i = 0usize;
+                while i < bytes.len() {
+                    let ch = bytes[i] as char;
+                    if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+                        i += 1;
+                        continue;
+                    }
+                    let start = i;
+                    i += 1;
+                    while i < bytes.len() {
+                        let next = bytes[i] as char;
+                        if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                            i += 1;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let Some(name) = line.get(start..i) else {
+                        continue;
+                    };
+                    let prev = start
+                        .checked_sub(1)
+                        .and_then(|idx| line.as_bytes().get(idx));
+                    if prev.is_some_and(|b| matches!(*b as char, '.' | '\'' | '"' | '`' | '#')) {
+                        continue;
+                    }
+                    if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                        continue;
+                    }
+                    if !is_identifier(name) {
+                        continue;
+                    }
+                    if binder.file_locals.get(name).is_some() {
+                        continue;
+                    }
+                    if !self.has_potential_auto_import_symbol(file_path, name) {
+                        continue;
+                    }
+                    if !seen_spans.insert((offset + start, name.len())) {
+                        continue;
+                    }
+
+                    diagnostics.push(tsz::checker::diagnostics::Diagnostic {
+                        category: DiagnosticCategory::Error,
+                        code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                        file: file_path.to_string(),
+                        start: (offset + start) as u32,
+                        length: name.len() as u32,
+                        message_text: format!("Cannot find name '{name}'."),
+                        related_information: Vec::new(),
+                    });
+                }
             }
             offset += line_with_newline.len();
         }
@@ -2846,6 +2924,122 @@ impl Server {
         !is_path_excluded_with_patterns(&reexport_file_path, auto_import_file_exclude_patterns)
     }
 
+    fn rewrite_import_fixes_for_type_order(
+        &self,
+        content: &str,
+        response_actions: &mut [serde_json::Value],
+    ) {
+        let Some(type_order) = self.organize_imports_type_order.as_deref() else {
+            return;
+        };
+        for action in response_actions {
+            Self::rewrite_single_import_fix_action(
+                content,
+                action,
+                type_order,
+                self.organize_imports_ignore_case,
+            );
+        }
+    }
+
+    fn rewrite_single_import_fix_action(
+        content: &str,
+        action: &mut serde_json::Value,
+        type_order: &str,
+        ignore_case: bool,
+    ) {
+        if action.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            return;
+        }
+        let Some(changes) = action
+            .get_mut("changes")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            return;
+        };
+        if changes.len() != 1 {
+            return;
+        }
+        let Some(file_change) = changes.get_mut(0) else {
+            return;
+        };
+        let Some(text_changes) = file_change
+            .get_mut("textChanges")
+            .and_then(serde_json::Value::as_array_mut)
+        else {
+            return;
+        };
+        if text_changes.len() != 1 {
+            return;
+        }
+        let Some(text_change) = text_changes.get_mut(0) else {
+            return;
+        };
+
+        let start_line = text_change
+            .get("start")
+            .and_then(|v| v.get("line"))
+            .and_then(serde_json::Value::as_u64)
+            .map(|n| n as usize);
+        let Some(start_line) = start_line else {
+            return;
+        };
+        if start_line == 0 {
+            return;
+        }
+        let lines: Vec<&str> = content.split('\n').collect();
+        let Some(original_line) = lines.get(start_line - 1).copied() else {
+            return;
+        };
+        let line = original_line.trim_end_matches('\r');
+        let Some((mut specs, module_specifier, quote)) = parse_named_import_line(line) else {
+            return;
+        };
+
+        let inserted_text = text_change
+            .get("newText")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let Some(inserted_spec) = parse_inserted_import_spec(inserted_text) else {
+            return;
+        };
+        if specs
+            .iter()
+            .any(|spec| spec.local_name == inserted_spec.local_name)
+        {
+            return;
+        }
+
+        if import_specs_are_sorted(&specs, type_order, ignore_case) {
+            let inserted_key = import_spec_sort_key(&inserted_spec, type_order, ignore_case);
+            let idx = specs
+                .iter()
+                .position(|spec| inserted_key < import_spec_sort_key(spec, type_order, ignore_case))
+                .unwrap_or(specs.len());
+            specs.insert(idx, inserted_spec);
+        } else {
+            specs.push(inserted_spec);
+        }
+
+        let joined = specs
+            .iter()
+            .map(|spec| spec.raw.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let rewritten_line =
+            format!("import {{ {joined} }} from {quote}{module_specifier}{quote};");
+        let end_offset = line.len() as u64 + 1;
+        text_change["start"] = serde_json::json!({
+            "line": start_line,
+            "offset": 1
+        });
+        text_change["end"] = serde_json::json!({
+            "line": start_line,
+            "offset": end_offset
+        });
+        text_change["newText"] = serde_json::json!(rewritten_line);
+    }
+
     fn inject_unknown_before_as_assertions(content: &str) -> String {
         let mut out = String::with_capacity(content.len() + 32);
         let mut i = 0usize;
@@ -3603,6 +3797,118 @@ fn wildcard_match(pattern: &str, text: &str) -> bool {
     }
 
     dp[p.len()][t.len()]
+}
+
+#[derive(Clone)]
+struct ImportSpecifierEntry {
+    raw: String,
+    local_name: String,
+    is_type_only: bool,
+}
+
+fn parse_named_import_line(line: &str) -> Option<(Vec<ImportSpecifierEntry>, String, char)> {
+    let trimmed = line.trim();
+    if !trimmed.starts_with("import ") {
+        return None;
+    }
+    let open_brace = trimmed.find('{')?;
+    let close_brace_rel = trimmed[open_brace + 1..].find('}')?;
+    let close_brace = open_brace + 1 + close_brace_rel;
+    let import_segment = &trimmed[open_brace + 1..close_brace];
+    let from_segment = &trimmed[close_brace + 1..];
+    let module_specifier = extract_quoted_text(from_segment)?.to_string();
+    let quote = from_segment.find('\'').map(|_| '\'').unwrap_or('"');
+
+    let mut specs = Vec::new();
+    for part in import_segment.split(',') {
+        if let Some(spec) = parse_import_spec_entry(part) {
+            specs.push(spec);
+        }
+    }
+    Some((specs, module_specifier, quote))
+}
+
+fn parse_inserted_import_spec(new_text: &str) -> Option<ImportSpecifierEntry> {
+    let trimmed = new_text
+        .trim()
+        .trim_start_matches(',')
+        .trim_end_matches(',')
+        .trim();
+    parse_import_spec_entry(trimmed)
+}
+
+fn parse_import_spec_entry(text: &str) -> Option<ImportSpecifierEntry> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let is_type_only = trimmed.starts_with("type ");
+    let without_type = trimmed.trim_start_matches("type ").trim();
+    let local_name = if let Some((_, local)) = without_type.split_once(" as ") {
+        local.trim().to_string()
+    } else {
+        without_type.to_string()
+    };
+    if !is_identifier(&local_name) {
+        return None;
+    }
+    Some(ImportSpecifierEntry {
+        raw: trimmed.to_string(),
+        local_name,
+        is_type_only,
+    })
+}
+
+fn import_specs_are_sorted(
+    specs: &[ImportSpecifierEntry],
+    type_order: &str,
+    ignore_case: bool,
+) -> bool {
+    specs.windows(2).all(|pair| {
+        import_spec_sort_key(&pair[0], type_order, ignore_case)
+            <= import_spec_sort_key(&pair[1], type_order, ignore_case)
+    })
+}
+
+fn import_spec_sort_key(
+    spec: &ImportSpecifierEntry,
+    type_order: &str,
+    ignore_case: bool,
+) -> (u8, String, u8, String) {
+    let group = match type_order {
+        "last" => {
+            if spec.is_type_only {
+                1
+            } else {
+                0
+            }
+        }
+        "first" => {
+            if spec.is_type_only {
+                0
+            } else {
+                1
+            }
+        }
+        _ => 0,
+    };
+    let (folded, case_rank, original) = if ignore_case {
+        let folded = spec.local_name.to_ascii_lowercase();
+        let case_rank = if spec
+            .local_name
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_lowercase())
+        {
+            0
+        } else {
+            1
+        };
+        (folded, case_rank, String::new())
+    } else {
+        (spec.local_name.clone(), 0, String::new())
+    };
+    (group, folded, case_rank, original)
 }
 
 fn position_leq(a: tsz::lsp::position::Position, b: tsz::lsp::position::Position) -> bool {

@@ -514,6 +514,12 @@ pub(crate) struct Server {
     pub(crate) open_files: FxHashMap<String, String>,
     /// Completion preference: import module specifier ending (e.g. "js")
     pub(crate) completion_import_module_specifier_ending: Option<String>,
+    /// Completion/codefix preference: import module specifier preference.
+    pub(crate) import_module_specifier_preference: Option<String>,
+    /// Import ordering preference used by import code fixes.
+    pub(crate) organize_imports_type_order: Option<String>,
+    /// Case sensitivity preference used by import ordering.
+    pub(crate) organize_imports_ignore_case: bool,
     /// Auto-import exclusion patterns (tsserver preference: autoImportFileExcludePatterns)
     pub(crate) auto_import_file_exclude_patterns: Vec<String>,
     /// Server mode
@@ -573,6 +579,9 @@ impl Server {
             response_seq: 0,
             open_files: FxHashMap::default(),
             completion_import_module_specifier_ending: None,
+            import_module_specifier_preference: None,
+            organize_imports_type_order: None,
+            organize_imports_ignore_case: true,
             auto_import_file_exclude_patterns: Vec::new(),
             _server_mode: server_mode,
             _log_config: log_config,
@@ -616,6 +625,26 @@ impl Server {
         let line = args.get("line")?.as_u64()? as u32;
         let offset = args.get("offset")?.as_u64()? as u32;
         Some((file, line, offset))
+    }
+
+    fn add_project_config_files(
+        files: &mut rustc_hash::FxHashMap<String, String>,
+        file_path: &str,
+    ) {
+        let mut current = std::path::Path::new(file_path).parent();
+        while let Some(dir) = current {
+            for config_name in ["package.json", "tsconfig.json"] {
+                let config_path = dir.join(config_name);
+                let key = config_path.to_string_lossy().to_string();
+                if files.contains_key(&key) {
+                    continue;
+                }
+                if let Ok(content) = std::fs::read_to_string(&config_path) {
+                    files.insert(key, content);
+                }
+            }
+            current = dir.parent();
+        }
     }
 
     /// Convert tsserver 1-based line/offset to 0-based LSP Position.
