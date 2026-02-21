@@ -43,11 +43,10 @@ impl<'a> CommonJsTransformContext<'a> {
     /// Transform a source file's statements to `CommonJS` IR
     pub fn transform_source_file(&mut self, statements: &[NodeIndex]) -> Vec<IRNode> {
         // Collect export names for initialization
-        let mut exports =
-            crate::transforms::module_commonjs::collect_export_names(self.arena, statements);
-
-        // TypeScript emits void 0 initialization in reverse declaration order
-        exports.reverse();
+        let (_func_exports, other_exports) =
+            crate::transforms::module_commonjs::collect_export_names_categorized(
+                self.arena, statements,
+            );
 
         // Transform statements
         let mut lowered_statements = Vec::new();
@@ -58,7 +57,7 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Fully erased type-only module syntax should produce no runtime IR.
-        if exports.is_empty() && lowered_statements.is_empty() {
+        if other_exports.is_empty() && lowered_statements.is_empty() {
             return Vec::new();
         }
 
@@ -69,11 +68,11 @@ impl<'a> CommonJsTransformContext<'a> {
         result.push(IRNode::EsesModuleMarker);
 
         // Initialize exports
-        if !exports.is_empty() {
+        if !other_exports.is_empty() {
             // Combined export initialization: exports.a = exports.b = ... = void 0;
             result.push(IRNode::Raw(format!(
                 "exports.{} = void 0;",
-                exports.join(" = exports.")
+                other_exports.join(" = exports.")
             )));
         }
         result.extend(lowered_statements);
