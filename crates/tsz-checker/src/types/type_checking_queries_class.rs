@@ -3,6 +3,7 @@
 
 use crate::state::CheckerState;
 use rustc_hash::FxHashMap;
+use std::cell::RefCell;
 use std::sync::Arc;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1323,7 +1324,6 @@ impl<'a> CheckerState<'a> {
         let mut lib_type_id: Option<TypeId> = None;
         let factory = self.ctx.types.factory();
 
-        // Clone lib_contexts to allow access within the resolver closure
         let lib_contexts = self.ctx.lib_contexts.clone();
         // Collect lowered types from the symbol's declarations.
         // The main file's binder already has merged declarations from all lib files.
@@ -1372,6 +1372,18 @@ impl<'a> CheckerState<'a> {
                 // Create resolver that looks up names in the MAIN file's binder
                 // CRITICAL: Use self.ctx.binder, not lib_contexts binders, to avoid SymbolId collisions
                 let binder = &self.ctx.binder;
+                // Resolver hot path: cache SymbolId -> DefId for this lowering run.
+                // Many identifiers repeat across merged lib declarations.
+                let def_id_cache =
+                    RefCell::new(FxHashMap::<tsz_binder::SymbolId, tsz_solver::DefId>::default());
+                let get_cached_def_id = |symbol_id: tsz_binder::SymbolId| -> tsz_solver::DefId {
+                    if let Some(def_id) = def_id_cache.borrow().get(&symbol_id).copied() {
+                        return def_id;
+                    }
+                    let def_id = self.ctx.get_or_create_def_id(symbol_id);
+                    def_id_cache.borrow_mut().insert(symbol_id, def_id);
+                    def_id
+                };
                 let resolver = |node_idx: NodeIndex| -> Option<u32> {
                     // For merged declarations, we need to check the arena for this specific node.
                     // IMPORTANT: NodeIndex values are arena-specific — the same index can refer
@@ -1406,8 +1418,7 @@ impl<'a> CheckerState<'a> {
                 // Create def_id_resolver that converts SymbolIds to DefIds
                 // This is required for Phase 4.2 which uses TypeData::Lazy(DefId) everywhere
                 let def_id_resolver = |node_idx: NodeIndex| -> Option<tsz_solver::DefId> {
-                    resolver(node_idx)
-                        .map(|sym_id| self.ctx.get_or_create_def_id(tsz_binder::SymbolId(sym_id)))
+                    resolver(node_idx).map(|sym_id| get_cached_def_id(tsz_binder::SymbolId(sym_id)))
                 };
 
                 // Name-based resolver: resolves identifier text directly without NodeIndex.
@@ -1417,10 +1428,7 @@ impl<'a> CheckerState<'a> {
                     if is_compiler_managed_type(name) {
                         return None;
                     }
-                    binder
-                        .file_locals
-                        .get(name)
-                        .map(|sym_id| self.ctx.get_or_create_def_id(sym_id))
+                    binder.file_locals.get(name).map(&get_cached_def_id)
                 };
 
                 // Create base lowering with the fallback arena and both resolvers
@@ -1453,7 +1461,7 @@ impl<'a> CheckerState<'a> {
                                 // Cache type params for Application expansion
                                 let file_sym_id =
                                     self.ctx.binder.file_locals.get(name).unwrap_or(sym_id);
-                                let def_id = self.ctx.get_or_create_def_id(file_sym_id);
+                                let def_id = get_cached_def_id(file_sym_id);
                                 self.ctx.insert_def_type_params(def_id, params);
                             }
 
@@ -1474,7 +1482,7 @@ impl<'a> CheckerState<'a> {
                                     alias_lowering.lower_type_alias_declaration(alias);
                                 if ty != TypeId::ERROR {
                                     // Cache type parameters for Application expansion
-                                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                                    let def_id = get_cached_def_id(sym_id);
                                     self.ctx.insert_def_type_params(def_id, params.clone());
 
                                     // CRITICAL: Register the type body in TypeEnvironment so that

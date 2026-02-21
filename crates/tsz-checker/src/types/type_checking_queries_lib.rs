@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::TypeSubstitution;
 
         let factory = self.ctx.types.factory();
-        let lib_contexts = self.ctx.lib_contexts.clone();
+        let lib_contexts = &self.ctx.lib_contexts;
         let binder_for_arena = |arena_ref: &NodeArena| -> Option<&tsz_binder::BinderState> {
             let arenas = self.ctx.all_arenas.as_ref()?;
             let binders = self.ctx.all_binders.as_ref()?;
@@ -46,7 +46,7 @@ impl<'a> CheckerState<'a> {
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
 
-        for lib_ctx in &lib_contexts {
+        for lib_ctx in lib_contexts {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
@@ -84,7 +84,7 @@ impl<'a> CheckerState<'a> {
                             if is_compiler_managed_type(ident_name) {
                                 return None;
                             }
-                            for ctx in &lib_contexts {
+                            for ctx in lib_contexts {
                                 if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
                                     return Some(found_sym.0);
                                 }
@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
                     if is_compiler_managed_type(ident_name) {
                         return None;
                     }
-                    for ctx in &lib_contexts {
+                    for ctx in lib_contexts {
                         if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
                             return Some(found_sym.0);
                         }
@@ -275,7 +275,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(found_sym) = decl_binder.file_locals.get(ident_name) {
                         return Some(found_sym.0);
                     }
-                    for ctx in &lib_contexts {
+                    for ctx in lib_contexts {
                         if let Some(found_sym) = ctx.binder.file_locals.get(ident_name) {
                             return Some(found_sym.0);
                         }

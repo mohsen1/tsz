@@ -103,9 +103,9 @@ pub(crate) use types_domain::{
     property_access_type, type_checking_declarations, type_checking_declarations_utils,
     type_checking_global, type_checking_property_init, type_checking_queries,
     type_checking_queries_binding, type_checking_queries_class, type_checking_queries_lib,
-    type_checking_unused, type_checking_utilities, type_checking_utilities_enum,
-    type_checking_utilities_jsdoc, type_computation_access, type_computation_call,
-    type_computation_call_helpers, type_computation_complex,
+    type_checking_queries_lib_prime, type_checking_unused, type_checking_utilities,
+    type_checking_utilities_enum, type_checking_utilities_jsdoc, type_computation_access,
+    type_computation_call, type_computation_call_helpers, type_computation_complex,
 };
 
 pub mod diagnostics {

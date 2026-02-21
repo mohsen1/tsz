@@ -13,6 +13,7 @@ pub(crate) mod type_checking_queries;
 pub(crate) mod type_checking_queries_binding;
 pub(crate) mod type_checking_queries_class;
 pub(crate) mod type_checking_queries_lib;
+pub(crate) mod type_checking_queries_lib_prime;
 pub(crate) mod type_checking_unused;
 pub(crate) mod type_checking_utilities;
 pub(crate) mod type_checking_utilities_enum;
