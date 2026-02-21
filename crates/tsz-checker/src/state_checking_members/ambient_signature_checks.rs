@@ -1,5 +1,6 @@
 //! Ambient, ambient signatures, and overload validation checks.
 
+use crate::error_handler::ErrorHandler;
 use crate::query_boundaries::assignability::{
     get_function_return_type, replace_function_return_type, rewrite_function_error_slots_to_any,
 };
@@ -149,11 +150,20 @@ impl<'a> CheckerState<'a> {
 
             // TS1264: ! without type annotation is meaningless
             if prop.type_annotation.is_none() {
-                self.error_at_node(
-                    prop.name,
-                    diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
-                    diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
-                );
+                if let Some(name_node) = self.ctx.arena.get(prop.name) {
+                    self.emit_error_at(
+                        name_node.pos.saturating_add(1),
+                        1,
+                        diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                    );
+                } else {
+                    self.error_at_node(
+                        prop.name,
+                        diagnostic_messages::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                        diagnostic_codes::DECLARATIONS_WITH_DEFINITE_ASSIGNMENT_ASSERTIONS_MUST_ALSO_HAVE_TYPE_ANNOTATIONS,
+                    );
+                }
             }
         }
 
