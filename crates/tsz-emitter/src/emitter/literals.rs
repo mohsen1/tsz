@@ -41,6 +41,12 @@ impl<'a> Printer<'a> {
                 self.write(&ns_name);
                 self.write(".");
                 self.write_identifier(original_text);
+            } else if self.ctx.is_commonjs()
+                && !self.suppress_commonjs_named_import_substitution
+                && let Some(subst) = self.commonjs_named_import_substitutions.get(original_text)
+            {
+                let subst = subst.clone();
+                self.write(&subst);
             } else {
                 self.write_identifier(original_text);
             }
