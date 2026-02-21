@@ -549,8 +549,7 @@ impl<'a> CheckerState<'a> {
             let has_return = self.body_has_return_with_value(method.body);
             let falls_through = self.function_body_falls_through(method.body);
 
-            // TS2355: Skip for async methods - they implicitly return Promise<void>
-            if has_type_annotation && requires_return && falls_through && !is_async {
+            if has_type_annotation && requires_return && falls_through {
                 if !has_return {
                     self.error_at_node(
                         method.type_annotation,

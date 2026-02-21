@@ -767,28 +767,29 @@ impl<'a> CheckerState<'a> {
             // TS2366 (not all code paths return value) for function expressions and arrow functions
             // Check if all code paths return a value when return type requires it
             if !is_function_declaration && body.is_some() {
-                let check_return_type = return_type;
+                // Determine if this is an async function or generator
+                let (is_async, is_generator) = if let Some(func) = self.ctx.arena.get_function(node)
+                {
+                    (func.is_async, func.asterisk_token)
+                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
+                    (
+                        self.has_async_modifier(&method.modifiers),
+                        method.asterisk_token,
+                    )
+                } else {
+                    (false, false)
+                };
+
+                let check_return_type =
+                    self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
                 let requires_return = self.requires_return_value(check_return_type);
                 let has_return = self.body_has_return_with_value(body);
                 let falls_through = self.function_body_falls_through(body);
 
-                // Determine if this is an async function
-                let is_async = if let Some(func) = self.ctx.arena.get_function(node) {
-                    func.is_async
-                } else if let Some(method) = self.ctx.arena.get_method_decl(node) {
-                    self.has_async_modifier(&method.modifiers)
-                } else {
-                    false
-                };
-
-                // TS2355: Skip for async functions - they implicitly return Promise<void>
-                // Async functions without a return statement automatically resolve to Promise<void>
-                // so they should not emit "function must return a value" errors
                 if has_type_annotation
                     && requires_return
                     && falls_through
-                    && !is_async
-                    && return_type != TypeId::VOID
+                    && check_return_type != TypeId::VOID
                 {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     if !has_return {
