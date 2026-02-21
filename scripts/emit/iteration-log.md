@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 802
+Count: 803
+- 803: template span boundary recovery parity fix
 - 802: class parser recovery emit parity fix
 - 801: emit alias runtime parity fix
 - 800: run.sh optimization loop

@@ -153,11 +153,30 @@ impl<'a> Printer<'a> {
 
         let start = std::cmp::min(expr_node.end as usize, text.len());
         let end = std::cmp::min(lit_node.pos as usize, text.len());
-        if start >= end {
-            return false;
+        if start < end {
+            return text[start..end].contains('}');
         }
 
-        text[start..end].contains('}')
+        if start < text.len() && text.as_bytes()[start] == b'}' {
+            return true;
+        }
+        if end < text.len() && text.as_bytes()[end] == b'}' {
+            return true;
+        }
+
+        let boundary = std::cmp::min(end, text.len());
+        if boundary > 0 {
+            let bytes = text.as_bytes();
+            let mut i = boundary;
+            while i > 0 && bytes[i - 1].is_ascii_whitespace() {
+                i -= 1;
+            }
+            if i > 0 && bytes[i - 1] == b'}' {
+                return true;
+            }
+        }
+
+        false
     }
 
     fn template_tail_has_backtick(&self, node: &Node) -> bool {
