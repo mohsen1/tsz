@@ -3,7 +3,7 @@
 //! Given a position in the source, finds where the symbol at that position is defined.
 
 use crate::resolver::{ScopeCache, ScopeCacheStats, ScopeWalker};
-use crate::utils::{find_node_at_offset, is_symbol_query_node};
+use crate::utils::{find_node_at_or_before_offset, is_symbol_query_node};
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_common::position::{Location, Position, Range};
 use tsz_parser::NodeIndex;
@@ -221,10 +221,23 @@ impl<'a> GoToDefinition<'a> {
             .line_map
             .position_to_offset(position, self.source_text)?;
 
-        // 2. Find the most specific node at this offset
-        let node_idx = find_node_at_offset(self.arena, offset);
+        // 2. Find the most specific node at this offset (or nearest preceding symbol node)
+        let mut node_idx = find_node_at_or_before_offset(self.arena, offset, self.source_text);
+        if node_idx.is_none()
+            && let Some(adjusted) = self.find_symbol_query_node_at_or_before(offset)
+        {
+            node_idx = adjusted;
+        }
+
         if node_idx.is_none() {
             return None;
+        }
+
+        if !is_symbol_query_node(self.arena, node_idx)
+            && (self.is_comment_context(offset) || self.should_backtrack_to_previous_symbol(offset))
+            && let Some(adjusted) = self.find_symbol_query_node_at_or_before(offset)
+        {
+            node_idx = adjusted;
         }
 
         if !is_symbol_query_node(self.arena, node_idx) {
@@ -536,9 +549,22 @@ impl<'a> GoToDefinition<'a> {
             .line_map
             .position_to_offset(position, self.source_text)?;
 
-        let node_idx = find_node_at_offset(self.arena, offset);
+        let mut node_idx = find_node_at_or_before_offset(self.arena, offset, self.source_text);
+        if node_idx.is_none()
+            && let Some(adjusted) = self.find_symbol_query_node_at_or_before(offset)
+        {
+            node_idx = adjusted;
+        }
+
         if node_idx.is_none() {
             return None;
+        }
+
+        if !is_symbol_query_node(self.arena, node_idx)
+            && (self.is_comment_context(offset) || self.should_backtrack_to_previous_symbol(offset))
+            && let Some(adjusted) = self.find_symbol_query_node_at_or_before(offset)
+        {
+            node_idx = adjusted;
         }
 
         if !is_symbol_query_node(self.arena, node_idx) {
@@ -760,6 +786,83 @@ impl<'a> GoToDefinition<'a> {
 
         // If we can't find a name node, use the declaration span for both
         (context_range, context_range)
+    }
+
+    fn find_symbol_query_node_at_or_before(&self, offset: u32) -> Option<NodeIndex> {
+        let mut probe = offset.min(self.source_text.len() as u32);
+        let bytes = self.source_text.as_bytes();
+        let mut remaining = 256u32;
+
+        while probe > 0 && remaining > 0 {
+            probe -= 1;
+            remaining -= 1;
+
+            let candidate = find_node_at_or_before_offset(self.arena, probe, self.source_text);
+            if candidate.is_some() && is_symbol_query_node(self.arena, candidate) {
+                return Some(candidate);
+            }
+
+            let ch = bytes[probe as usize];
+            if ch == b'\n' || ch == b'\r' {
+                break;
+            }
+        }
+
+        None
+    }
+
+    fn is_comment_context(&self, offset: u32) -> bool {
+        let bytes = self.source_text.as_bytes();
+        if bytes.is_empty() {
+            return false;
+        }
+        let idx = (offset as usize).min(bytes.len());
+
+        if idx > 0 {
+            let prev = bytes[idx - 1];
+            if prev == b'/' || prev == b'*' {
+                return true;
+            }
+        }
+        if idx < bytes.len() {
+            let current = bytes[idx];
+            if current == b'/' || current == b'*' {
+                return true;
+            }
+        }
+
+        let prefix = &self.source_text[..idx];
+        if let Some(start) = prefix.rfind("/*")
+            && prefix[start + 2..].rfind("*/").is_none()
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn should_backtrack_to_previous_symbol(&self, offset: u32) -> bool {
+        let bytes = self.source_text.as_bytes();
+        if bytes.is_empty() {
+            return false;
+        }
+
+        let idx = (offset as usize).min(bytes.len());
+        if idx == 0 {
+            return false;
+        }
+
+        let prev = bytes[idx - 1];
+        if !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$') {
+            return false;
+        }
+
+        if idx >= bytes.len() {
+            return true;
+        }
+
+        let current = bytes[idx];
+        !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
     }
 
     /// Get the span for the context (the full declaration statement).

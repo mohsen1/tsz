@@ -335,3 +335,60 @@ fn test_hover_type_alias_display_string() {
         info.kind
     );
 }
+
+#[test]
+fn test_hover_import_alias_default_and_named_from_ambient_module() {
+    let source = r#"declare module "jquery" {}
+import foo, { bar } from "jquery";
+foo/*useFoo*/(bar/*useBar*/);"#;
+
+    let foo_info =
+        get_hover_at(source, 2, 5).expect("Should find hover info for default import marker");
+    assert_eq!(
+        foo_info.display_string,
+        "(alias) module \"jquery\"\nimport foo"
+    );
+    assert_eq!(foo_info.kind, "alias");
+
+    let bar_info =
+        get_hover_at(source, 2, 19).expect("Should find hover info for named import marker");
+    assert_eq!(
+        bar_info.display_string,
+        "(alias) module \"jquery\"\nimport bar"
+    );
+    assert_eq!(bar_info.kind, "alias");
+}
+
+#[test]
+fn test_hover_import_equals_alias_from_ambient_module() {
+    let source = r#"declare module "jquery" {}
+import bang = require("jquery");
+bang/*useBang*/;"#;
+
+    let info = get_hover_at(source, 2, 6).expect("Should find hover info for import= alias marker");
+    assert_eq!(
+        info.display_string,
+        "(alias) module \"jquery\"\nimport bang = require(\"jquery\")"
+    );
+    assert_eq!(info.kind, "alias");
+}
+
+#[test]
+fn test_hover_import_alias_without_resolved_module() {
+    let source = r#"import foo, { bar } from "jquery";
+foo(bar);"#;
+
+    let foo_info = get_hover_at(source, 1, 0)
+        .expect("Should find hover info for unresolved default import alias");
+    assert_eq!(
+        foo_info.display_string,
+        "(alias) module \"jquery\"\nimport foo"
+    );
+
+    let bar_info =
+        get_hover_at(source, 1, 4).expect("Should find hover info for unresolved named import");
+    assert_eq!(
+        bar_info.display_string,
+        "(alias) module \"jquery\"\nimport bar"
+    );
+}

@@ -14,6 +14,247 @@ use tsz::parser::node::NodeAccess;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn extract_alias_module_name(display_string: &str) -> Option<String> {
+        let prefix = "(alias) module \"";
+        let rest = display_string.strip_prefix(prefix)?;
+        let end = rest.find('"')?;
+        Some(rest[..end].to_string())
+    }
+
+    fn extract_alias_name(display_string: &str) -> Option<String> {
+        let import_line = display_string
+            .lines()
+            .find(|line| line.starts_with("import "))?;
+        let rest = import_line.strip_prefix("import ")?;
+        if let Some(eq_idx) = rest.find(" = ") {
+            return Some(rest[..eq_idx].trim().to_string());
+        }
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == ',' || c == '{' || c == ';')
+            .unwrap_or(rest.len());
+        if end == 0 {
+            return None;
+        }
+        Some(rest[..end].trim().to_string())
+    }
+
+    fn extract_quoted_after(haystack: &str, token: &str) -> Option<String> {
+        let idx = haystack.find(token)?;
+        let after = &haystack[idx + token.len()..];
+        for quote in ['"', '\''] {
+            if let Some(start) = after.find(quote) {
+                let rem = &after[start + 1..];
+                if let Some(end) = rem.find(quote) {
+                    return Some(rem[..end].to_string());
+                }
+            }
+        }
+        None
+    }
+
+    fn extract_module_name_from_source_for_alias(
+        source_text: &str,
+        alias_name: &str,
+    ) -> Option<String> {
+        for line in source_text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("import ") || !trimmed.contains(alias_name) {
+                continue;
+            }
+            if let Some(module_name) = Self::extract_quoted_after(trimmed, "require(") {
+                return Some(module_name);
+            }
+            if let Some(module_name) = Self::extract_quoted_after(trimmed, " from ") {
+                return Some(module_name);
+            }
+        }
+        None
+    }
+
+    fn find_namespace_alias_decl_offsets(
+        source_text: &str,
+        alias_name: &str,
+    ) -> Option<(u32, u32, u32, u32)> {
+        let needle = format!("import * as {alias_name}");
+        let stmt_start = source_text.find(&needle)?;
+        let alias_rel = needle.find(alias_name)?;
+        let alias_start = stmt_start + alias_rel;
+        let alias_end = alias_start + alias_name.len();
+        let context_start = source_text[..stmt_start].rfind('\n').map_or(0, |i| i + 1);
+        let context_end = source_text[stmt_start..]
+            .find('\n')
+            .map_or(source_text.len(), |i| stmt_start + i);
+        Some((
+            alias_start as u32,
+            alias_end as u32,
+            context_start as u32,
+            context_end as u32,
+        ))
+    }
+
+    fn find_ambient_module_offsets(
+        source_text: &str,
+        module_name: &str,
+    ) -> Option<(u32, u32, u32, u32)> {
+        for quote in ['"', '\''] {
+            let needle = format!("declare module {quote}{module_name}{quote}");
+            if let Some(stmt_start) = source_text.find(&needle) {
+                let literal_start = stmt_start + "declare module ".len();
+                let literal_end = literal_start + module_name.len() + 2;
+                let context_start = source_text[..stmt_start].rfind('\n').map_or(0, |i| i + 1);
+                let context_end = source_text[stmt_start..]
+                    .find('\n')
+                    .map_or(source_text.len(), |i| stmt_start + i);
+                return Some((
+                    literal_start as u32,
+                    literal_end as u32,
+                    context_start as u32,
+                    context_end as u32,
+                ));
+            }
+        }
+        None
+    }
+
+    fn find_ambient_module_definition_info(
+        &self,
+        module_name: &str,
+    ) -> Option<tsz::lsp::definition::DefinitionInfo> {
+        for (file_path, source_text) in &self.open_files {
+            let Some((name_start, name_end, context_start, context_end)) =
+                Self::find_ambient_module_offsets(source_text, module_name)
+            else {
+                continue;
+            };
+            let line_map = LineMap::build(source_text);
+            let name_range = tsz::lsp::position::Range::new(
+                line_map.offset_to_position(name_start, source_text),
+                line_map.offset_to_position(name_end, source_text),
+            );
+            let context_range = tsz::lsp::position::Range::new(
+                line_map.offset_to_position(context_start, source_text),
+                line_map.offset_to_position(context_end, source_text),
+            );
+            return Some(tsz::lsp::definition::DefinitionInfo {
+                location: tsz_common::position::Location {
+                    file_path: file_path.clone(),
+                    range: name_range,
+                },
+                context_span: Some(context_range),
+                name: format!("\"{module_name}\""),
+                kind: "module".to_string(),
+                container_name: String::new(),
+                container_kind: String::new(),
+                is_local: false,
+                is_ambient: true,
+            });
+        }
+        None
+    }
+
+    fn maybe_remap_alias_to_ambient_module(
+        &self,
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        line_map: &LineMap,
+        root: tsz::parser::NodeIndex,
+        source_text: &str,
+        file: &str,
+        position: tsz_common::position::Position,
+        infos: &[tsz::lsp::definition::DefinitionInfo],
+    ) -> Option<Vec<tsz::lsp::definition::DefinitionInfo>> {
+        let interner = TypeInterner::new();
+        let provider = HoverProvider::new(
+            arena,
+            binder,
+            line_map,
+            &interner,
+            source_text,
+            file.to_string(),
+        );
+        let mut type_cache = None;
+        let hover = provider.get_hover(root, position, &mut type_cache);
+        let mut alias_name = hover
+            .as_ref()
+            .and_then(|hover_info| Self::extract_alias_name(&hover_info.display_string));
+        if alias_name.is_none() {
+            alias_name = hover.as_ref().and_then(|hover_info| {
+                let range = hover_info.range?;
+                let start = line_map.position_to_offset(range.start, source_text)?;
+                let end = line_map.position_to_offset(range.end, source_text)?;
+                if start >= end || end as usize > source_text.len() {
+                    return None;
+                }
+                Some(source_text[start as usize..end as usize].to_string())
+            });
+        }
+        if alias_name.is_none() {
+            alias_name = infos.first().map(|info| info.name.clone());
+        }
+        if alias_name
+            .as_deref()
+            .is_some_and(|name| name.chars().any(char::is_whitespace))
+        {
+            alias_name = None;
+        }
+        let alias_name = alias_name.or_else(|| infos.first().map(|info| info.name.clone()))?;
+        let namespace_decl = Self::find_namespace_alias_decl_offsets(source_text, &alias_name);
+        let offset = line_map.position_to_offset(position, source_text)?;
+        let on_declaration = if let Some(first) = infos.first() {
+            if first.kind != "alias" {
+                return None;
+            }
+            match (
+                line_map.position_to_offset(first.location.range.start, source_text),
+                line_map.position_to_offset(first.location.range.end, source_text),
+            ) {
+                (Some(start), Some(end)) => offset >= start && offset <= end,
+                _ => false,
+            }
+        } else if let Some((alias_start, alias_end, _, _)) = namespace_decl {
+            offset >= alias_start && offset <= alias_end
+        } else {
+            false
+        };
+
+        // Namespace import usages should navigate to the namespace import declaration.
+        if let Some((alias_start, alias_end, context_start, context_end)) = namespace_decl
+            && !on_declaration
+        {
+            let alias_range = tsz::lsp::position::Range::new(
+                line_map.offset_to_position(alias_start, source_text),
+                line_map.offset_to_position(alias_end, source_text),
+            );
+            let context_range = tsz::lsp::position::Range::new(
+                line_map.offset_to_position(context_start, source_text),
+                line_map.offset_to_position(context_end, source_text),
+            );
+            return Some(vec![tsz::lsp::definition::DefinitionInfo {
+                location: tsz_common::position::Location {
+                    file_path: file.to_string(),
+                    range: alias_range,
+                },
+                context_span: Some(context_range),
+                name: alias_name,
+                kind: "alias".to_string(),
+                container_name: String::new(),
+                container_kind: String::new(),
+                is_local: true,
+                is_ambient: false,
+            }]);
+        }
+
+        let module_name = hover
+            .as_ref()
+            .and_then(|hover_info| Self::extract_alias_module_name(&hover_info.display_string))
+            .or_else(|| {
+                Self::extract_module_name_from_source_for_alias(source_text, &alias_name)
+            })?;
+
+        self.find_ambient_module_definition_info(&module_name)
+            .map(|info| vec![info])
+    }
+
     pub(crate) fn handle_quickinfo(
         &mut self,
         seq: u64,
@@ -146,7 +387,24 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let infos = provider.get_definition_info(root, position)?;
+            let mut infos = provider
+                .get_definition_info(root, position)
+                .unwrap_or_default();
+            if let Some(remapped) = self.maybe_remap_alias_to_ambient_module(
+                &arena,
+                &binder,
+                &line_map,
+                root,
+                &source_text,
+                &file,
+                position,
+                &infos,
+            ) {
+                infos = remapped;
+            }
+            if infos.is_empty() {
+                return None;
+            }
             let body: Vec<serde_json::Value> = infos
                 .iter()
                 .map(|info| Self::definition_info_to_json(info, &file))
@@ -168,7 +426,24 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
-            let infos = provider.get_definition_info(root, position)?;
+            let mut infos = provider
+                .get_definition_info(root, position)
+                .unwrap_or_default();
+            if let Some(remapped) = self.maybe_remap_alias_to_ambient_module(
+                &arena,
+                &binder,
+                &line_map,
+                root,
+                &source_text,
+                &file,
+                position,
+                &infos,
+            ) {
+                infos = remapped;
+            }
+            if infos.is_empty() {
+                return None;
+            }
 
             // Build definitions array with rich metadata
             let definitions: Vec<serde_json::Value> = infos
@@ -176,29 +451,55 @@ impl Server {
                 .map(|info| Self::definition_info_to_json(info, &file))
                 .collect();
 
-            // Compute the textSpan for the word at the cursor position
-            let ref_offset = line_map.position_to_offset(position, &source_text)?;
-            let node_idx = tsz::lsp::utils::find_node_at_offset(&arena, ref_offset);
-            let text_span = if node_idx.is_some() {
-                if let Some(node) = arena.get(node_idx) {
-                    let start_pos = line_map.offset_to_position(node.pos, &source_text);
-                    let end_pos = line_map.offset_to_position(node.end, &source_text);
+            // Compute textSpan from hover range for symbol-accurate bound spans.
+            let interner = TypeInterner::new();
+            let hover_provider =
+                HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file);
+            let mut type_cache = None;
+            let hover_range = hover_provider
+                .get_hover(root, position, &mut type_cache)
+                .and_then(|info| info.range)
+                .filter(|range| range.start != range.end);
+            let symbol_range = hover_range.or_else(|| {
+                let mut probe = line_map.position_to_offset(position, &source_text)?;
+                let max = source_text.len() as u32;
+                let mut remaining = 256u32;
+                while probe < max && remaining > 0 {
+                    let node_idx =
+                        tsz::lsp::utils::find_node_at_or_before_offset(&arena, probe, &source_text);
+                    if node_idx.is_some()
+                        && tsz::lsp::utils::is_symbol_query_node(&arena, node_idx)
+                        && let Some(node) = arena.get(node_idx)
+                    {
+                        let start = line_map.offset_to_position(node.pos, &source_text);
+                        let end = line_map.offset_to_position(node.end, &source_text);
+                        if start != end {
+                            return Some(tsz::lsp::position::Range::new(start, end));
+                        }
+                    }
+
+                    let ch = source_text.as_bytes()[probe as usize];
+                    if ch == b'\n' || ch == b'\r' {
+                        break;
+                    }
+                    probe += 1;
+                    remaining -= 1;
+                }
+                None
+            });
+            let text_span = symbol_range
+                .map(|range| {
                     serde_json::json!({
-                        "start": Self::lsp_to_tsserver_position(start_pos),
-                        "end": Self::lsp_to_tsserver_position(end_pos),
+                        "start": Self::lsp_to_tsserver_position(range.start),
+                        "end": Self::lsp_to_tsserver_position(range.end),
                     })
-                } else {
+                })
+                .unwrap_or_else(|| {
                     serde_json::json!({
                         "start": Self::lsp_to_tsserver_position(position),
                         "end": Self::lsp_to_tsserver_position(position),
                     })
-                }
-            } else {
-                serde_json::json!({
-                    "start": Self::lsp_to_tsserver_position(position),
-                    "end": Self::lsp_to_tsserver_position(position),
-                })
-            };
+                });
 
             Some(serde_json::json!({
                 "definitions": definitions,
