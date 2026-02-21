@@ -16,6 +16,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 # Internal workspace crates
+tsz = { path = ".", version = "0.1.0" }
 tsz-common = { path = "crates/tsz-common", version = "0.1.0" }
 tsz-scanner = { path = "crates/tsz-scanner", version = "0.1.0" }
 tsz-parser = { path = "crates/tsz-parser", version = "0.1.0" }
