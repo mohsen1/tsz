@@ -7,6 +7,7 @@
 use std::path::Path;
 use web_time::{Duration, Instant};
 
+use globset::Glob;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::code_actions::{
@@ -1009,6 +1010,40 @@ fn apply_text_edits(source: &str, line_map: &LineMap, edits: &[TextEdit]) -> Opt
     Some(result)
 }
 
+fn normalize_auto_import_exclude_pattern(pattern: &str) -> Option<String> {
+    let normalized = pattern.trim().replace('\\', "/");
+    let stripped = normalized.strip_prefix("./").unwrap_or(&normalized).trim();
+    (!stripped.is_empty()).then_some(stripped.to_string())
+}
+
+fn contains_glob_meta(pattern: &str) -> bool {
+    pattern.contains('*') || pattern.contains('?') || pattern.contains('[') || pattern.contains(']')
+}
+
+fn should_add_recursive_exclude_variant(pattern: &str) -> bool {
+    if pattern.ends_with("/**") || pattern.ends_with("/**/*") {
+        return false;
+    }
+
+    let base = pattern.trim_end_matches('/');
+    let last_segment = base.rsplit('/').next().unwrap_or(base);
+
+    !last_segment.is_empty() && !contains_glob_meta(last_segment) && !last_segment.contains('.')
+}
+
+fn expand_auto_import_exclude_pattern(pattern: &str) -> Vec<String> {
+    let base = pattern.trim_end_matches('/').to_string();
+    if base.is_empty() {
+        return Vec::new();
+    }
+
+    let mut expanded = vec![base.clone()];
+    if should_add_recursive_exclude_variant(&base) {
+        expanded.push(format!("{base}/**"));
+    }
+    expanded
+}
+
 /// Multi-file container for LSP operations.
 pub struct Project {
     pub(crate) files: FxHashMap<String, ProjectFile>,
@@ -1017,6 +1052,7 @@ pub struct Project {
     pub(crate) performance: ProjectPerformance,
     pub(crate) strict: bool,
     pub(crate) import_module_specifier_ending: Option<String>,
+    pub(crate) auto_import_file_exclude_matchers: Vec<globset::GlobMatcher>,
 }
 
 impl Project {
@@ -1029,6 +1065,7 @@ impl Project {
             performance: ProjectPerformance::default(),
             strict: false,
             import_module_specifier_ending: None,
+            auto_import_file_exclude_matchers: Vec::new(),
         }
     }
 
@@ -1041,6 +1078,7 @@ impl Project {
             performance: ProjectPerformance::default(),
             strict: false,
             import_module_specifier_ending: None,
+            auto_import_file_exclude_matchers: Vec::new(),
         }
     }
 
@@ -1061,6 +1099,23 @@ impl Project {
     /// Set completion module-specifier ending preference (e.g. "js").
     pub fn set_import_module_specifier_ending(&mut self, ending: Option<String>) {
         self.import_module_specifier_ending = ending;
+    }
+
+    /// Set auto-import exclusion patterns used by completions and import fixes.
+    pub fn set_auto_import_file_exclude_patterns(&mut self, patterns: Vec<String>) {
+        self.auto_import_file_exclude_matchers.clear();
+        for pattern in patterns {
+            let Some(normalized) = normalize_auto_import_exclude_pattern(&pattern) else {
+                continue;
+            };
+            for expanded in expand_auto_import_exclude_pattern(&normalized) {
+                let Ok(glob) = Glob::new(&expanded) else {
+                    continue;
+                };
+                self.auto_import_file_exclude_matchers
+                    .push(glob.compile_matcher());
+            }
+        }
     }
 
     /// Total number of files tracked by the project.
@@ -1752,6 +1807,35 @@ impl Project {
         );
 
         result
+    }
+
+    /// Resolve import candidates for missing-name diagnostics in a file.
+    pub fn get_import_candidates_for_diagnostics(
+        &self,
+        file_name: &str,
+        diagnostics: &[LspDiagnostic],
+    ) -> Vec<crate::code_actions::ImportCandidate> {
+        let Some(file) = self.files.get(file_name) else {
+            return Vec::new();
+        };
+        self.import_candidates_for_diagnostics(file, diagnostics)
+    }
+
+    /// Resolve auto-import candidates by symbol prefix.
+    pub fn get_import_candidates_for_prefix(
+        &self,
+        file_name: &str,
+        prefix: &str,
+    ) -> Vec<crate::code_actions::ImportCandidate> {
+        let Some(file) = self.files.get(file_name) else {
+            return Vec::new();
+        };
+
+        let mut output = Vec::new();
+        let mut seen = FxHashSet::default();
+        let existing = FxHashSet::default();
+        self.collect_import_candidates_for_prefix(file, prefix, &existing, &mut output, &mut seen);
+        output
     }
 
     /// Get diagnostics for all files that have stale (dirty) diagnostics.

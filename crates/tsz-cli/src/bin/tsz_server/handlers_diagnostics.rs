@@ -5,9 +5,9 @@
 
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::checker::diagnostics::DiagnosticCategory;
+use tsz::lsp::Project;
 use tsz::lsp::code_actions::{
     CodeActionContext, CodeActionKind, CodeActionProvider, CodeFixRegistry, ImportCandidate,
-    ImportCandidateKind,
 };
 use tsz::lsp::position::LineMap;
 use tsz::parser::ParserState;
@@ -39,6 +39,19 @@ struct ObjectParamNode {
 }
 
 impl Server {
+    fn extract_auto_import_file_exclude_patterns(request: &TsServerRequest) -> Option<Vec<String>> {
+        request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("autoImportFileExcludePatterns"))
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+    }
+
     pub(crate) fn handle_configure(
         &mut self,
         seq: u64,
@@ -50,6 +63,8 @@ impl Server {
             .and_then(|p| p.get("importModuleSpecifierEnding"))
             .and_then(|v| v.as_str())
             .map(std::string::ToString::to_string);
+        self.auto_import_file_exclude_patterns =
+            Self::extract_auto_import_file_exclude_patterns(request).unwrap_or_default();
 
         // Accept configuration; selected completion preferences are wired.
         TsServerResponse {
@@ -419,7 +434,14 @@ impl Server {
                 .collect();
             let no_filtered_diagnostics = filtered_diagnostics.is_empty();
 
-            let import_candidates = self.collect_import_candidates(file_path);
+            let auto_import_file_exclude_patterns =
+                Self::extract_auto_import_file_exclude_patterns(request)
+                    .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
+            let import_candidates = self.collect_import_candidates(
+                file_path,
+                &filtered_diagnostics,
+                &auto_import_file_exclude_patterns,
+            );
 
             let context = CodeActionContext {
                 diagnostics: filtered_diagnostics,
@@ -2560,72 +2582,58 @@ impl Server {
         ))
     }
 
-    fn collect_import_candidates(&self, current_file_path: &str) -> Vec<ImportCandidate> {
-        let mut candidates = Vec::new();
-        let current_path = std::path::Path::new(current_file_path);
-        let current_dir = current_path.parent().unwrap_or(std::path::Path::new("."));
+    fn collect_import_candidates(
+        &self,
+        current_file_path: &str,
+        diagnostics: &[tsz::lsp::diagnostics::LspDiagnostic],
+        auto_import_file_exclude_patterns: &[String],
+    ) -> Vec<ImportCandidate> {
+        let mut files = self.open_files.clone();
+        if !files.contains_key(current_file_path)
+            && let Ok(content) = std::fs::read_to_string(current_file_path)
+        {
+            files.insert(current_file_path.to_string(), content);
+        }
+        if files.is_empty() {
+            return Vec::new();
+        }
 
-        for (path, content) in &self.open_files {
-            if path == current_file_path {
-                continue;
-            }
+        let mut project = Project::new();
+        project.set_import_module_specifier_ending(
+            self.completion_import_module_specifier_ending.clone(),
+        );
+        project.set_auto_import_file_exclude_patterns(auto_import_file_exclude_patterns.to_vec());
+        for (path, text) in files {
+            project.set_file(path, text);
+        }
 
-            let mut parser = ParserState::new(path.clone(), content.clone());
-            let root = parser.parse_source_file();
-            let arena = parser.into_arena();
+        let mut candidates =
+            project.get_import_candidates_for_diagnostics(current_file_path, diagnostics);
+        let fallback_candidates = project.get_import_candidates_for_prefix(current_file_path, "");
 
-            let mut binder = tsz::binder::BinderState::new();
-            binder.bind_source_file(&arena, root);
+        let mut seen: rustc_hash::FxHashSet<(String, String, String, bool)> =
+            rustc_hash::FxHashSet::default();
+        let mut deduped = Vec::with_capacity(candidates.len() + fallback_candidates.len());
 
-            let mut exports = Vec::new();
-            // file_locals is SymbolTable. iter() returns iterator of (&String, &SymbolId).
-            for (name, &sym_id) in binder.file_locals.iter() {
-                if let Some(sym) = binder.symbols.get(sym_id) {
-                    // Check if exported
-                    // Simple heuristic: if it's in file_locals and marked exported
-                    // Or if it's explicitly exported via export declaration
-                    if sym.is_exported {
-                        // Check if type only
-                        let is_type_only = sym.is_type_only;
-                        exports.push((name.clone(), is_type_only));
-                    }
+        for candidate in candidates.drain(..).chain(fallback_candidates) {
+            let kind_key = match &candidate.kind {
+                tsz::lsp::code_actions::ImportCandidateKind::Named { export_name } => {
+                    format!("named:{export_name}")
                 }
-            }
-
-            // Compute module specifier relative to current file
-            let other_path = std::path::Path::new(path);
-            let rel_path = if let Ok(p) = other_path.strip_prefix(current_dir) {
-                let s = p.to_string_lossy();
-                if !s.starts_with('.') {
-                    format!("./{}", s)
-                } else {
-                    s.into_owned()
-                }
-            } else {
-                path.clone()
+                tsz::lsp::code_actions::ImportCandidateKind::Default => "default".to_string(),
+                tsz::lsp::code_actions::ImportCandidateKind::Namespace => "namespace".to_string(),
             };
-
-            // Remove extension for import specifier
-            let module_specifier = if rel_path.ends_with(".ts") {
-                rel_path[..rel_path.len() - 3].to_string()
-            } else if rel_path.ends_with(".d.ts") {
-                rel_path[..rel_path.len() - 5].to_string()
-            } else if rel_path.ends_with(".tsx") {
-                rel_path[..rel_path.len() - 4].to_string()
-            } else {
-                rel_path
-            };
-
-            for (name, is_type_only) in exports {
-                candidates.push(ImportCandidate {
-                    module_specifier: module_specifier.clone(),
-                    local_name: name.clone(),
-                    kind: ImportCandidateKind::Named { export_name: name },
-                    is_type_only,
-                });
+            if seen.insert((
+                candidate.module_specifier.clone(),
+                candidate.local_name.clone(),
+                kind_key,
+                candidate.is_type_only,
+            )) {
+                deduped.push(candidate);
             }
         }
-        candidates
+
+        deduped
     }
 
     pub(crate) fn handle_get_combined_code_fix(
@@ -2680,8 +2688,15 @@ impl Server {
                 })
                 .collect();
 
+            let auto_import_file_exclude_patterns =
+                Self::extract_auto_import_file_exclude_patterns(request)
+                    .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
             let import_candidates = if fix_id == "fixMissingImport" {
-                self.collect_import_candidates(file_path)
+                self.collect_import_candidates(
+                    file_path,
+                    &filtered_diagnostics,
+                    &auto_import_file_exclude_patterns,
+                )
             } else {
                 Vec::new()
             };
