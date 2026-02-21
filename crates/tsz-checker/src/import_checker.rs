@@ -1006,18 +1006,33 @@ impl<'a> CheckerState<'a> {
             self.ctx.file_name.ends_with(".js") || self.ctx.file_name.ends_with(".jsx");
         let is_cjs_extension =
             self.ctx.file_name.ends_with(".cts") || self.ctx.file_name.ends_with(".cjs");
-        if self.ctx.compiler_options.module.is_es_module()
+
+        let is_system_module = matches!(
+            self.ctx.compiler_options.module,
+            tsz_common::common::ModuleKind::System
+        );
+        let is_es_module = self.ctx.compiler_options.module.is_es_module();
+
+        if (is_es_module || is_system_module)
             && !is_declaration_file
             && !is_js_file
             && !is_cjs_extension
         {
             for &export_idx in &export_assignment_indices {
                 if !self.is_ambient_declaration(export_idx) {
-                    self.error_at_node(
-                        export_idx,
-                        "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
-                        diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
-                    );
+                    if is_system_module {
+                        self.error_at_node(
+                            export_idx,
+                            "Export assignment is not supported when '--module' flag is 'system'.",
+                            diagnostic_codes::EXPORT_ASSIGNMENT_IS_NOT_SUPPORTED_WHEN_MODULE_FLAG_IS_SYSTEM,
+                        );
+                    } else {
+                        self.error_at_node(
+                            export_idx,
+                            "Export assignment cannot be used when targeting ECMAScript modules. Consider using 'export default' or another module format instead.",
+                            diagnostic_codes::EXPORT_ASSIGNMENT_CANNOT_BE_USED_WHEN_TARGETING_ECMASCRIPT_MODULES_CONSIDER_USIN,
+                        );
+                    }
                 }
             }
         }

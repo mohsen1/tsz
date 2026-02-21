@@ -251,7 +251,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_binder::symbol_flags;
         use tsz_parser::parser::node::NodeAccess;
-        use tsz_scanner::SyntaxKind;
+        
 
         // TS2454 is only emitted under strictNullChecks (matches tsc behavior)
         if !self.ctx.strict_null_checks() {
@@ -424,8 +424,11 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // Walk up the parent chain to check:
-        // 1. Skip definite assignment checks in ambient declarations (declare const/let)
+        // 1. Skip definite assignment checks in ambient declarations (declare const/let, declare module)
+        if self.is_ambient_declaration(decl_id_to_check) {
+            return false;
+        }
+
         // 2. Anchor checks to a function-like or source-file container
         let mut current = decl_id_to_check;
         let mut found_container_scope = false;
@@ -434,21 +437,6 @@ impl<'a> CheckerState<'a> {
                 break;
             };
             if let Some(node) = self.ctx.arena.get(current) {
-                // Check for ambient declarations
-                if (node.kind == syntax_kind_ext::VARIABLE_STATEMENT
-                    || node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST)
-                    && let Some(var_data) = self.ctx.arena.get_variable(node)
-                    && let Some(mods) = &var_data.modifiers
-                {
-                    for &mod_idx in &mods.nodes {
-                        if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                            && mod_node.kind == SyntaxKind::DeclareKeyword as u16
-                        {
-                            return false;
-                        }
-                    }
-                }
-
                 // Check if we're inside a function-like or source-file container scope
                 if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                     || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
