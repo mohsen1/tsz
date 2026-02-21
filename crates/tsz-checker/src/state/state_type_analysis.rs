@@ -87,7 +87,7 @@ impl<'a> CheckerState<'a> {
         // Resolve the left side (could be Identifier or another QualifiedName)
         let left_type = if let Some(left_node) = self.ctx.arena.get(qn.left) {
             let left_name = self.entity_name_text(qn.left).unwrap_or_default();
-            
+
             let sym_res = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                 self.resolve_qualified_symbol_in_type_position(qn.left)
             } else if left_node.kind == SyntaxKind::Identifier as u16 {
@@ -95,11 +95,12 @@ impl<'a> CheckerState<'a> {
             } else {
                 TypeSymbolResolution::NotFound
             };
-            
+
             match sym_res {
                 TypeSymbolResolution::Type(sym_id) => {
                     let lib_binders = self.get_lib_binders();
-                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders)
+                    {
                         use tsz_binder::symbol_flags;
                         let valid_namespace_flags = symbol_flags::MODULE
                             | symbol_flags::NAMESPACE_MODULE
@@ -109,7 +110,7 @@ impl<'a> CheckerState<'a> {
                             | symbol_flags::REGULAR_ENUM
                             | symbol_flags::CONST_ENUM
                             | symbol_flags::ENUM_MEMBER;
-                        
+
                         if (symbol.flags & valid_namespace_flags) == 0 {
                             let right_name = if let Some(right_node) = self.ctx.arena.get(qn.right)
                                 && let Some(id) = self.ctx.arena.get_identifier(right_node)
@@ -118,10 +119,13 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 String::new()
                             };
-                            
+
                             // Get rightmost name of the left side
-                            let left_rightmost_name = if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
-                                if let Some(left_qn) = self.ctx.arena.get_qualified_name(left_node) {
+                            let left_rightmost_name = if left_node.kind
+                                == syntax_kind_ext::QUALIFIED_NAME
+                            {
+                                if let Some(left_qn) = self.ctx.arena.get_qualified_name(left_node)
+                                {
                                     if let Some(rn) = self.ctx.arena.get(left_qn.right)
                                         && let Some(id) = self.ctx.arena.get_identifier(rn)
                                     {
@@ -135,7 +139,7 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 left_name.clone()
                             };
-                            
+
                             use crate::diagnostics::diagnostic_codes;
                             self.error_at_node_msg(
                                 idx, // The entire qualified name node
@@ -146,7 +150,7 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     self.type_reference_symbol_type(sym_id)
-                },
+                }
                 TypeSymbolResolution::ValueOnly(_) | TypeSymbolResolution::NotFound => {
                     if left_node.kind == syntax_kind_ext::QUALIFIED_NAME {
                         self.resolve_qualified_name(qn.left)
