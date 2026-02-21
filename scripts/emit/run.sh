@@ -160,9 +160,7 @@ ensure_tsz_binary() {
     local state_file="$(dirname "$tsz_bin")/.tsz_binary_head"
 
     if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
-        if ! git -C "$ROOT_DIR" diff --quiet -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null; then
-            stale=1
-        elif [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
+        if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
             stale=1
         else
             current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
@@ -215,10 +213,8 @@ build_runner() {
     if [[ ! -f "$dist_runner" ]]; then
         stale=1
     else
-        if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
-            if ! git -C "$ROOT_DIR" diff --quiet -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null; then
-                stale=1
-            elif [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
+    if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+            if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
                 stale=1
             else
                 current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
