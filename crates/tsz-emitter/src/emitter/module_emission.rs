@@ -976,6 +976,14 @@ impl<'a> Printer<'a> {
             if self.export_clause_is_type_only(clause_node) {
                 return;
             }
+            if export.is_default_export
+                && (clause_node.kind == SyntaxKind::Identifier as u16
+                    || clause_node.kind == syntax_kind_ext::QUALIFIED_NAME)
+                && !self.namespace_alias_target_has_runtime_value(export.export_clause, None)
+            {
+                // `export default T` where `T` is type-only has no JS runtime emit.
+                return;
+            }
 
             if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                 self.emit_import_equals_declaration(clause_node);
