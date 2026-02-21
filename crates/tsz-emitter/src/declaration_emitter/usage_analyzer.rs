@@ -1062,11 +1062,7 @@ impl<'a> UsageAnalyzer<'a> {
         let mut usages = FxHashMap::default();
         self.collect_direct_symbol_usages(type_id, &mut usages);
 
-        let mut result: Arc<[(SymbolId, UsageKind)]> = Arc::from_iter(
-            usages
-                .iter()
-                .map(|(&sym_id, &usage_kind)| (sym_id, usage_kind)),
-        );
+        let mut result = Self::freeze_symbol_usages(&usages);
         self.type_symbol_cache.insert(type_id, result.clone());
 
         let mut children = Vec::new();
@@ -1084,9 +1080,20 @@ impl<'a> UsageAnalyzer<'a> {
 
         self.memoizing_types.remove(&type_id);
 
-        result = Arc::from_iter(usages);
+        result = Self::freeze_symbol_usages(&usages);
         self.type_symbol_cache.insert(type_id, result.clone());
         result
+    }
+
+    fn freeze_symbol_usages(
+        usages: &FxHashMap<SymbolId, UsageKind>,
+    ) -> Arc<[(SymbolId, UsageKind)]> {
+        let mut frozen: Vec<(SymbolId, UsageKind)> = usages
+            .iter()
+            .map(|(&sym_id, &usage_kind)| (sym_id, usage_kind))
+            .collect();
+        frozen.sort_unstable_by_key(|(sym_id, usage_kind)| (sym_id.0, usage_kind.bits));
+        Arc::from(frozen)
     }
 
     /// Walk a `TypeId` to extract all referenced symbols.
