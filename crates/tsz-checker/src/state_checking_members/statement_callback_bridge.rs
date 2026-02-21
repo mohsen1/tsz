@@ -437,7 +437,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             let is_generator = func.asterisk_token;
             let check_return_type =
                 self.return_type_for_implicit_return_check(return_type, is_async, is_generator);
-            let check_explicit_return_paths = has_type_annotation && !is_async;
+            let check_explicit_return_paths = has_type_annotation;
             let requires_return = if check_explicit_return_paths {
                 self.requires_return_value(check_return_type)
             } else {
@@ -455,7 +455,6 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 (false, false)
             };
 
-            // TS2355: Skip for async functions - they implicitly return Promise<void>
             if check_explicit_return_paths && requires_return && falls_through {
                 if !has_return {
                     use crate::diagnostics::diagnostic_codes;
