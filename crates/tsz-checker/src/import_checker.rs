@@ -954,13 +954,13 @@ impl<'a> CheckerState<'a> {
                                 );
                                 if let Some(expr_node) = self.ctx.arena.get(export_data.expression)
                                     && expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                    {
-                                        self.check_object_literal_excess_properties(
-                                            actual_type,
-                                            expected_type,
-                                            export_data.expression,
-                                        );
-                                    }
+                                {
+                                    self.check_object_literal_excess_properties(
+                                        actual_type,
+                                        expected_type,
+                                        export_data.expression,
+                                    );
+                                }
                             } else {
                                 self.get_type_of_node(export_data.expression);
                             }
