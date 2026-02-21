@@ -293,6 +293,9 @@ pub fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Returns true for string literals, number literals, and unique symbol types.
 /// This corresponds to TypeScript's `isTypeUsableAsPropertyName` check.
 pub fn is_type_usable_as_property_name(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::ANY {
+        return true;
+    }
     matches!(
         db.lookup(type_id),
         Some(

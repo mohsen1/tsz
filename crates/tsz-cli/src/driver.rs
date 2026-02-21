@@ -898,6 +898,7 @@ fn compile_inner(
     // compiling files directly), so keep detection for harness plumbing only.
     let _no_types_and_symbols =
         resolved.checker.no_types_and_symbols || sources_have_no_types_and_symbols(&sources);
+    resolved.checker.no_types_and_symbols = _no_types_and_symbols;
     let lib_paths: Vec<PathBuf> =
         if (resolved.checker.no_lib && resolved.lib_is_default) || disable_default_libs {
             Vec::new()
