@@ -385,6 +385,53 @@ impl<'a> TypeLowering<'a> {
         (result, collected_params)
     }
 
+    /// Collect type parameters from merged interface declarations without lowering members.
+    ///
+    /// This is a lightweight path used when callers only need generic parameter metadata
+    /// (names/constraints/defaults) and not the full interface body.
+    pub fn collect_merged_interface_type_parameters(
+        &self,
+        declarations: &[(NodeIndex, &NodeArena)],
+    ) -> Vec<TypeParamInfo> {
+        for (decl_idx, decl_arena) in declarations {
+            let Some(node) = decl_arena.get(*decl_idx) else {
+                continue;
+            };
+            let Some(interface) = decl_arena.get_interface(node) else {
+                continue;
+            };
+            let Some(params) = &interface.type_parameters else {
+                continue;
+            };
+            if params.nodes.is_empty() {
+                continue;
+            }
+
+            self.push_type_param_scope();
+            let lowerer = self.with_arena(decl_arena);
+            let collected = lowerer.collect_type_parameters(params);
+            self.pop_type_param_scope();
+            return collected;
+        }
+
+        Vec::new()
+    }
+
+    /// Collect type parameters for a type alias declaration without lowering the alias body.
+    pub fn collect_type_alias_type_parameters(&self, alias: &TypeAliasData) -> Vec<TypeParamInfo> {
+        let Some(params) = alias.type_parameters.as_ref() else {
+            return Vec::new();
+        };
+        if params.nodes.is_empty() {
+            return Vec::new();
+        }
+
+        self.push_type_param_scope();
+        let collected = self.collect_type_parameters(params);
+        self.pop_type_param_scope();
+        collected
+    }
+
     /// Check if the operation limit has been exceeded
     fn check_limit(&self) -> bool {
         if *self.limit_exceeded.borrow() {

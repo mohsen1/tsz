@@ -139,9 +139,7 @@ impl<'a> CheckerState<'a> {
             "ThisParameterType",
             "OmitThisParameter",
         ] {
-            // resolve_lib_type_with_params internally caches type params via
-            // insert_def_type_params, making them available for constraint checking
-            let _ = self.resolve_lib_type_with_params(type_name);
+            self.prime_lib_type_params(type_name);
         }
 
         // The Array type from lib.d.ts is a Callable with instance methods as properties
