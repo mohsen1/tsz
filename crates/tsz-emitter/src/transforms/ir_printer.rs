@@ -427,10 +427,7 @@ impl<'a> IRPrinter<'a> {
                 let is_multiline = if let Some((pos, end)) = source_range {
                     !self.is_single_line_range(*pos, *end)
                 } else {
-                    // Generated namespace-IIFE object literals should stay multiline
-                    // to match TypeScript baseline formatting for declaration-derived
-                    // namespace value initialization.
-                    self.in_namespace_iife_body && properties.len() > 1
+                    false
                 };
 
                 if is_multiline {
