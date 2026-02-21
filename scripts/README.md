@@ -39,6 +39,27 @@ node scripts/help.mjs
 | `scripts/arch_guard.py` | Run architecture boundary checks used by CI |
 | `scripts/arch_guard.py --json-report <path>` | Run architecture checks and emit machine-readable report JSON |
 
+## Loop Runners
+
+Use these for continuous agent-driven improvement loops:
+
+```bash
+# Codex
+./scripts/codex-loop.sh --conformance --session 1
+
+# Gemini
+./scripts/gemini-loop.sh --conformance --session 1
+
+# Claude (supports aliases/functions via --claude-command)
+./scripts/claude-loop.sh --conformance --session 1 --claude-command "my-claude-alias"
+```
+
+Loop logs are separated by provider under:
+
+- `logs/loops/codex/`
+- `logs/loops/gemini/`
+- `logs/loops/claude/`
+
 ## Resource Protection
 
 Test and benchmark scripts apply resource limits to protect the host:

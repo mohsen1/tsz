@@ -33,6 +33,7 @@ SLEEP_SECONDS="${GEMINI_LOOP_SLEEP:-5}"
 CONF_CHUNKS="${GEMINI_LOOP_CONFORMANCE_CHUNKS:-}"
 CONF_TOTAL_TESTS="${GEMINI_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
 PROJECT_DIRECTIVES="${GEMINI_LOOP_PROJECT_DIRECTIVES:-Use tracing infrastructure (spans/events) instead of ad-hoc print debugging. This is a performance-first project: prioritize throughput, latency, and memory, and avoid regressions. The project is pre-release, so no backward compatibility constraints are required; prefer cleaner, faster designs over compatibility shims.}"
+LOG_ROOT="${GEMINI_LOOP_LOG_ROOT:-logs/loops/gemini}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -165,12 +166,12 @@ fi
 
 MODEL="${MODEL_OVERRIDE:-gemini-3.1-pro-preview}"
 
-mkdir -p logs
+mkdir -p "$LOG_ROOT"
 if [[ -n "$SESSION_ID" ]]; then
-  LOG_FILE="logs/gemini-loop.session-${SESSION_ID}.${MODE}.log"
+  LOG_FILE="${LOG_ROOT}/session-${SESSION_ID}.${MODE}.log"
   SESSION_TAG=" session=$SESSION_ID"
 else
-  LOG_FILE="logs/gemini-loop.${MODE}.log"
+  LOG_FILE="${LOG_ROOT}/${MODE}.log"
   SESSION_TAG=""
 fi
 
