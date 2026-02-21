@@ -7,11 +7,12 @@
 use crate::def::DefId;
 use crate::types::{
     CallableShapeId, ConditionalTypeId, FunctionShapeId, IntrinsicKind, LiteralValue, MappedTypeId,
-    ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TupleListId,
+    ObjectShapeId, OrderedFloat, StringIntrinsicKind, TemplateLiteralId, TemplateSpan, TupleListId,
     TypeApplicationId, TypeListId, TypeParamInfo,
 };
 use crate::visitor::TypeVisitor;
 use crate::{SymbolRef, TypeData, TypeDatabase, TypeId};
+use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
 struct TypeDataDataVisitor<F, T>
@@ -337,4 +338,200 @@ pub fn callable_shape_id(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Ca
         TypeData::Callable(shape_id) => Some(*shape_id),
         _ => None,
     })
+}
+
+/// Recursively walk the type graph and collect all `Infer` type bindings.
+///
+/// Returns a list of `(name, type_id)` pairs — one for each `TypeData::Infer`
+/// encountered during deep traversal. This handles cycle detection via a visited
+/// set and walks into all composite type structures (unions, objects, functions,
+/// conditionals, mapped types, etc.).
+///
+/// This is the solver-owned utility for type-graph traversal that was previously
+/// duplicated in the lowering crate. Per architecture rules, type-graph walking
+/// belongs in the solver.
+pub fn collect_infer_bindings(types: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId)> {
+    let mut result = Vec::new();
+    let mut visited = FxHashSet::default();
+    collect_infer_bindings_inner(types, type_id, &mut result, &mut visited);
+    result
+}
+
+fn collect_infer_bindings_inner(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+    result: &mut Vec<(Atom, TypeId)>,
+    visited: &mut FxHashSet<TypeId>,
+) {
+    if !visited.insert(type_id) {
+        return;
+    }
+
+    let key = match types.lookup(type_id) {
+        Some(key) => key,
+        None => return,
+    };
+
+    match key {
+        TypeData::Infer(info) => {
+            result.push((info.name, type_id));
+            if let Some(constraint) = info.constraint {
+                collect_infer_bindings_inner(types, constraint, result, visited);
+            }
+            if let Some(default) = info.default {
+                collect_infer_bindings_inner(types, default, result, visited);
+            }
+        }
+        TypeData::Array(elem) => {
+            collect_infer_bindings_inner(types, elem, result, visited);
+        }
+        TypeData::Tuple(elements) => {
+            let elements = types.tuple_list(elements);
+            for element in elements.iter() {
+                collect_infer_bindings_inner(types, element.type_id, result, visited);
+            }
+        }
+        TypeData::Union(members) | TypeData::Intersection(members) => {
+            let members = types.type_list(members);
+            for member in members.iter() {
+                collect_infer_bindings_inner(types, *member, result, visited);
+            }
+        }
+        TypeData::Object(shape_id) => {
+            let shape = types.object_shape(shape_id);
+            for prop in &shape.properties {
+                collect_infer_bindings_inner(types, prop.type_id, result, visited);
+            }
+        }
+        TypeData::ObjectWithIndex(shape_id) => {
+            let shape = types.object_shape(shape_id);
+            for prop in &shape.properties {
+                collect_infer_bindings_inner(types, prop.type_id, result, visited);
+            }
+            if let Some(index) = &shape.string_index {
+                collect_infer_bindings_inner(types, index.key_type, result, visited);
+                collect_infer_bindings_inner(types, index.value_type, result, visited);
+            }
+            if let Some(index) = &shape.number_index {
+                collect_infer_bindings_inner(types, index.key_type, result, visited);
+                collect_infer_bindings_inner(types, index.value_type, result, visited);
+            }
+        }
+        TypeData::Function(shape_id) => {
+            let shape = types.function_shape(shape_id);
+            for param in &shape.params {
+                collect_infer_bindings_inner(types, param.type_id, result, visited);
+            }
+            collect_infer_bindings_inner(types, shape.return_type, result, visited);
+            for param in &shape.type_params {
+                if let Some(constraint) = param.constraint {
+                    collect_infer_bindings_inner(types, constraint, result, visited);
+                }
+                if let Some(default) = param.default {
+                    collect_infer_bindings_inner(types, default, result, visited);
+                }
+            }
+        }
+        TypeData::Callable(shape_id) => {
+            let shape = types.callable_shape(shape_id);
+            for sig in &shape.call_signatures {
+                collect_infer_sig(types, sig, result, visited);
+            }
+            for sig in &shape.construct_signatures {
+                collect_infer_sig(types, sig, result, visited);
+            }
+            for prop in &shape.properties {
+                collect_infer_bindings_inner(types, prop.type_id, result, visited);
+            }
+        }
+        TypeData::TypeParameter(info) => {
+            if let Some(constraint) = info.constraint {
+                collect_infer_bindings_inner(types, constraint, result, visited);
+            }
+            if let Some(default) = info.default {
+                collect_infer_bindings_inner(types, default, result, visited);
+            }
+        }
+        TypeData::Application(app_id) => {
+            let app = types.type_application(app_id);
+            collect_infer_bindings_inner(types, app.base, result, visited);
+            for &arg in &app.args {
+                collect_infer_bindings_inner(types, arg, result, visited);
+            }
+        }
+        TypeData::Conditional(cond_id) => {
+            let cond = types.conditional_type(cond_id);
+            collect_infer_bindings_inner(types, cond.check_type, result, visited);
+            collect_infer_bindings_inner(types, cond.extends_type, result, visited);
+            collect_infer_bindings_inner(types, cond.true_type, result, visited);
+            collect_infer_bindings_inner(types, cond.false_type, result, visited);
+        }
+        TypeData::Mapped(mapped_id) => {
+            let mapped = types.mapped_type(mapped_id);
+            if let Some(constraint) = mapped.type_param.constraint {
+                collect_infer_bindings_inner(types, constraint, result, visited);
+            }
+            if let Some(default) = mapped.type_param.default {
+                collect_infer_bindings_inner(types, default, result, visited);
+            }
+            collect_infer_bindings_inner(types, mapped.constraint, result, visited);
+            if let Some(name_type) = mapped.name_type {
+                collect_infer_bindings_inner(types, name_type, result, visited);
+            }
+            collect_infer_bindings_inner(types, mapped.template, result, visited);
+        }
+        TypeData::IndexAccess(obj, idx) => {
+            collect_infer_bindings_inner(types, obj, result, visited);
+            collect_infer_bindings_inner(types, idx, result, visited);
+        }
+        TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            collect_infer_bindings_inner(types, inner, result, visited);
+        }
+        TypeData::TemplateLiteral(spans) => {
+            let spans = types.template_list(spans);
+            for span in spans.iter() {
+                if let TemplateSpan::Type(inner) = span {
+                    collect_infer_bindings_inner(types, *inner, result, visited);
+                }
+            }
+        }
+        TypeData::StringIntrinsic { type_arg, .. } => {
+            collect_infer_bindings_inner(types, type_arg, result, visited);
+        }
+        TypeData::Enum(_def_id, member_type) => {
+            collect_infer_bindings_inner(types, member_type, result, visited);
+        }
+        TypeData::Intrinsic(_)
+        | TypeData::Literal(_)
+        | TypeData::Lazy(_)
+        | TypeData::Recursive(_)
+        | TypeData::BoundParameter(_)
+        | TypeData::TypeQuery(_)
+        | TypeData::UniqueSymbol(_)
+        | TypeData::ThisType
+        | TypeData::ModuleNamespace(_)
+        | TypeData::Error => {}
+    }
+}
+
+/// Helper to collect infer bindings from a call signature's params, return type,
+/// and type params.
+fn collect_infer_sig(
+    types: &dyn TypeDatabase,
+    sig: &crate::types::CallSignature,
+    result: &mut Vec<(Atom, TypeId)>,
+    visited: &mut FxHashSet<TypeId>,
+) {
+    for param in &sig.params {
+        collect_infer_bindings_inner(types, param.type_id, result, visited);
+    }
+    collect_infer_bindings_inner(types, sig.return_type, result, visited);
+    for param in &sig.type_params {
+        if let Some(constraint) = param.constraint {
+            collect_infer_bindings_inner(types, constraint, result, visited);
+        }
+        if let Some(default) = param.default {
+            collect_infer_bindings_inner(types, default, result, visited);
+        }
+    }
 }
