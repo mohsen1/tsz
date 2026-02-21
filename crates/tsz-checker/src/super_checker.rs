@@ -915,11 +915,12 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if is_super_call
-            && self.is_in_constructor(idx)
-            && let Some(ref mut class_info) = self.ctx.enclosing_class
-        {
-            class_info.has_super_call_in_current_constructor = true;
+        if is_super_call && self.is_in_constructor(idx) {
+            // Only count as a valid super call if it's a root-level statement
+            if self.is_super_call_root_level_statement_in_constructor(idx)
+                && let Some(ref mut class_info) = self.ctx.enclosing_class {
+                    class_info.has_super_call_in_current_constructor = true;
+                }
         }
 
         // Find the enclosing class by walking up the parent chain
