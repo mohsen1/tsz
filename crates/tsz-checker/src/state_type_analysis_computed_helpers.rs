@@ -284,15 +284,12 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
-        // When symbols are empty but we're inside a class scope, check if the object type
-        // itself has private properties matching the name. This handles cases like:
-        //   let a: A2 = this;
-        //   a.#prop;  // Should work if A2 has #prop
+        // If `symbols.is_empty()`, the private identifier was not declared in any enclosing lexical class scope.
+        // Therefore, this access is invalid, regardless of whether the object type actually has the property.
         if symbols.is_empty() {
-            // Resolve type references (Ref, TypeQuery, etc.) before property access lookup
             let resolved_type = self.resolve_type_for_property_access(object_type_for_check);
+            let mut found = false;
 
-            // Try to find the property directly in the resolved object type
             use tsz_solver::operations_property::PropertyAccessResult;
             match self
                 .ctx
@@ -300,27 +297,9 @@ impl<'a> CheckerState<'a> {
                 .property_access_type(resolved_type, &property_name)
             {
                 PropertyAccessResult::Success { .. } => {
-                    // Property exists in the type, but if we're outside a class, it's TS18013
-                    if !saw_class_scope {
-                        self.report_private_identifier_outside_class(
-                            name_idx,
-                            &property_name,
-                            original_object_type,
-                        );
-                        return TypeId::ERROR;
-                    }
-                    // Property exists in the type and we're in a class scope, proceed with the access
-                    return self.get_type_of_property_access_by_name(
-                        idx,
-                        access,
-                        resolved_type,
-                        &property_name,
-                    );
+                    found = true;
                 }
                 _ => {
-                    // FALLBACK: Manually check if the property exists in the callable type
-                    // This fixes cases where property_access_type fails due to atom comparison issues
-                    // The property IS in the type (as shown by error messages), but the lookup fails
                     if let Some(shape) =
                         crate::query_boundaries::state_type_analysis::callable_shape_for_type(
                             self.ctx.types,
@@ -330,45 +309,36 @@ impl<'a> CheckerState<'a> {
                         let prop_atom = self.ctx.types.intern_string(&property_name);
                         for prop in &shape.properties {
                             if prop.name == prop_atom {
-                                // Property found in the callable's properties list!
-                                // But if we're outside a class, it's TS18013
-                                if !saw_class_scope {
-                                    self.report_private_identifier_outside_class(
-                                        name_idx,
-                                        &property_name,
-                                        original_object_type,
-                                    );
-                                    return TypeId::ERROR;
-                                }
-                                // Return the property type (handle optional and write_type)
-                                let prop_type = if prop.optional {
-                                    factory.union(vec![prop.type_id, TypeId::UNDEFINED])
-                                } else {
-                                    prop.type_id
-                                };
-                                return self.apply_flow_narrowing(idx, prop_type);
+                                found = true;
+                                break;
                             }
                         }
                     }
-
-                    // Property not found, emit error if appropriate
-                    if saw_class_scope {
-                        // Use original_object_type to preserve nominal identity (e.g., D<string>)
-                        self.error_property_not_exist_at(
-                            &property_name,
-                            original_object_type,
-                            name_idx,
-                        );
-                    } else {
-                        self.report_private_identifier_outside_class(
-                            name_idx,
-                            &property_name,
-                            original_object_type,
-                        );
-                    }
-                    return TypeId::ERROR;
                 }
             }
+
+            if found {
+                // Property exists, but we are not in the declaring scope (TS18013)
+                self.report_private_identifier_outside_class(
+                    name_idx,
+                    &property_name,
+                    original_object_type,
+                );
+            } else if !saw_class_scope
+                && (resolved_type == TypeId::ANY || resolved_type == TypeId::UNKNOWN)
+            {
+                // TS18016: Private identifiers are not allowed outside class bodies.
+                use crate::diagnostics::diagnostic_codes;
+                self.error_at_node(
+                    name_idx,
+                    "Private identifiers are not allowed outside class bodies.",
+                    diagnostic_codes::PRIVATE_IDENTIFIERS_ARE_NOT_ALLOWED_OUTSIDE_CLASS_BODIES,
+                );
+            } else {
+                // TS2339: Property does not exist
+                self.error_property_not_exist_at(&property_name, original_object_type, name_idx);
+            }
+            return TypeId::ERROR;
         }
 
         let declaring_type = match self.private_member_declaring_type(symbols[0]) {
