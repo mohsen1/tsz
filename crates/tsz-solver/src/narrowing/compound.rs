@@ -7,8 +7,8 @@
 //! - falsy narrowing (keeping only falsy types)
 //! - `Array.isArray()` narrowing
 
-use crate::narrowing::NarrowingContext;
-use crate::narrowing_utils::NarrowingVisitor;
+use super::NarrowingContext;
+use super::utils::NarrowingVisitor;
 use crate::subtype::{SubtypeChecker, is_subtype_of};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{LiteralValue, TypeData, TypeId};
@@ -322,8 +322,7 @@ impl<'a> NarrowingContext<'a> {
             }
         }
 
-        let (non_nullish, null_part) =
-            crate::narrowing_utils::split_nullish_type(self.db, source_type);
+        let (non_nullish, null_part) = super::utils::split_nullish_type(self.db, source_type);
         if nullish {
             null_part.unwrap_or(TypeId::NEVER)
         } else {
