@@ -10,8 +10,8 @@
 //! 1. **AST Walk**: For explicit type annotations (e.g., `x: SomeType`)
 //! 2. **Semantic Walk**: For inferred types using `TypeId` analysis
 //!
-//! The semantic walk leverages `collect_all_types()` from the solver to extract
-//! all referenced types, then maps `DefId` -> `SymbolId` via `TypeResolver`.
+//! The semantic walk uses solver visitors to traverse referenced types and maps
+//! `DefId` -> `SymbolId` via `TypeResolver`.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;
@@ -82,6 +82,10 @@ pub struct UsageAnalyzer<'a> {
     visited_nodes: FxHashSet<NodeIndex>,
     /// Visited `TypeIds` (for cycle detection)
     visited_types: FxHashSet<tsz_solver::TypeId>,
+    /// Memoized transitive symbol usages per `TypeId`.
+    type_symbol_cache: FxHashMap<tsz_solver::TypeId, Arc<[(SymbolId, UsageKind)]>>,
+    /// TypeIds currently being memoized (cycle guard).
+    memoizing_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Arc<NodeArena>,
     /// Set of symbols from other modules that need imports
@@ -123,6 +127,8 @@ impl<'a> UsageAnalyzer<'a> {
             used_symbols: FxHashMap::default(),
             visited_nodes: FxHashSet::default(),
             visited_types: FxHashSet::default(),
+            type_symbol_cache: FxHashMap::default(),
+            memoizing_types: FxHashSet::default(),
             current_arena,
             foreign_symbols: FxHashSet::default(),
             in_value_pos: false,
@@ -965,7 +971,7 @@ impl<'a> UsageAnalyzer<'a> {
 
     /// Walk an inferred type from the type cache.
     ///
-    /// This is the semantic walk - uses `TypeId` analysis via `collect_all_types`.
+    /// This is the semantic walk over inferred `TypeId`s.
     fn walk_inferred_type(&mut self, node_idx: NodeIndex) {
         // Look up the inferred TypeId for this node
         debug!("[DEBUG] walk_inferred_type: node_idx={:?}", node_idx);
@@ -980,119 +986,124 @@ impl<'a> UsageAnalyzer<'a> {
         }
     }
 
+    fn add_symbol_usage(
+        usages: &mut FxHashMap<SymbolId, UsageKind>,
+        sym_id: SymbolId,
+        usage_kind: UsageKind,
+    ) {
+        usages
+            .entry(sym_id)
+            .and_modify(|kind| *kind |= usage_kind)
+            .or_insert(usage_kind);
+    }
+
+    fn collect_direct_symbol_usages(
+        &self,
+        type_id: tsz_solver::TypeId,
+        usages: &mut FxHashMap<SymbolId, UsageKind>,
+    ) {
+        if let Some(def_id) = visitor::lazy_def_id(self.type_interner, type_id)
+            && let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id)
+        {
+            Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
+        }
+
+        if let Some((def_id, _)) = visitor::enum_components(self.type_interner, type_id)
+            && let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id)
+        {
+            Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
+        }
+
+        if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, type_id) {
+            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::VALUE);
+        }
+
+        if let Some(sym_ref) = visitor::unique_symbol_ref(self.type_interner, type_id) {
+            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::TYPE);
+        }
+
+        if let Some(sym_ref) = visitor::module_namespace_symbol_ref(self.type_interner, type_id) {
+            Self::add_symbol_usage(usages, tsz_binder::SymbolId(sym_ref.0), UsageKind::TYPE);
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.type_interner, type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.type_interner, type_id))
+        {
+            let shape = self.type_interner.object_shape(shape_id);
+            if let Some(sym_id) = shape.symbol {
+                Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
+            }
+        }
+
+        if let Some(shape_id) = visitor::callable_shape_id(self.type_interner, type_id) {
+            let shape = self.type_interner.callable_shape(shape_id);
+            if let Some(sym_id) = shape.symbol {
+                Self::add_symbol_usage(usages, sym_id, UsageKind::TYPE);
+            }
+        }
+    }
+
+    fn collect_symbol_usages_for_type(
+        &mut self,
+        type_id: tsz_solver::TypeId,
+    ) -> Arc<[(SymbolId, UsageKind)]> {
+        if let Some(cached) = self.type_symbol_cache.get(&type_id) {
+            return cached.clone();
+        }
+
+        if !self.memoizing_types.insert(type_id) {
+            return self
+                .type_symbol_cache
+                .get(&type_id)
+                .cloned()
+                .unwrap_or_else(|| Arc::from([]));
+        }
+
+        let mut usages = FxHashMap::default();
+        self.collect_direct_symbol_usages(type_id, &mut usages);
+
+        let mut result = Self::freeze_symbol_usages(&usages);
+        self.type_symbol_cache.insert(type_id, result.clone());
+
+        let mut children = Vec::new();
+        if let Some(type_data) = self.type_interner.lookup(type_id) {
+            visitor::for_each_child(self.type_interner, &type_data, |child| {
+                children.push(child);
+            });
+        }
+
+        for child in children {
+            for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(child).iter() {
+                Self::add_symbol_usage(&mut usages, sym_id, usage_kind);
+            }
+        }
+
+        self.memoizing_types.remove(&type_id);
+
+        result = Self::freeze_symbol_usages(&usages);
+        self.type_symbol_cache.insert(type_id, result.clone());
+        result
+    }
+
+    fn freeze_symbol_usages(
+        usages: &FxHashMap<SymbolId, UsageKind>,
+    ) -> Arc<[(SymbolId, UsageKind)]> {
+        let mut frozen: Vec<(SymbolId, UsageKind)> = usages
+            .iter()
+            .map(|(&sym_id, &usage_kind)| (sym_id, usage_kind))
+            .collect();
+        frozen.sort_unstable_by_key(|(sym_id, usage_kind)| (sym_id.0, usage_kind.bits));
+        Arc::from(frozen)
+    }
+
     /// Walk a `TypeId` to extract all referenced symbols.
-    ///
-    /// Uses `collect_all_types()` to get all `TypeIds`, then extracts DefIds/SymbolIds.
     fn walk_type_id(&mut self, type_id: tsz_solver::TypeId) {
         if !self.visited_types.insert(type_id) {
             return;
         }
 
-        debug!("[DEBUG] walk_type_id: type_id={:?}", type_id);
-
-        // Collect all types reachable from this TypeId
-        let all_types = visitor::collect_all_types(self.type_interner, type_id);
-
-        debug!("[DEBUG] walk_type_id: collected {} types", all_types.len());
-        debug!("[DEBUG] walk_type_id: all_types = {:?}", all_types);
-
-        // Debug: Print def_to_symbol map
-        debug!(
-            "[DEBUG] walk_type_id: def_to_symbol map = {:?}",
-            self.type_cache.def_to_symbol
-        );
-
-        // Extract DefIds/SymbolIds from each type
-        for other_type_id in all_types {
-            // Extract Lazy(DefId)
-            if let Some(def_id) = visitor::lazy_def_id(self.type_interner, other_type_id) {
-                debug!("[DEBUG] walk_type_id: found Lazy(DefId={:?})", def_id);
-                if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
-                    debug!(
-                        "[DEBUG] walk_type_id: DefId({:?}) -> SymbolId({:?})",
-                        def_id, sym_id
-                    );
-                    self.mark_symbol_used(
-                        sym_id,
-                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                    );
-                } else {
-                    debug!(
-                        "[DEBUG] walk_type_id: def_id={:?} NOT in def_to_symbol",
-                        def_id
-                    );
-                }
-            }
-
-            // Extract Enum(DefId, _)
-            if let Some((def_id, _)) = visitor::enum_components(self.type_interner, other_type_id) {
-                debug!("[DEBUG] walk_type_id: found Enum(def_id={:?})", def_id);
-                if let Some(&sym_id) = self.type_cache.def_to_symbol.get(&def_id) {
-                    self.mark_symbol_used(
-                        sym_id,
-                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                    );
-                }
-            }
-
-            // Extract TypeQuery(SymbolRef) - marks as value usage
-            if let Some(sym_ref) = visitor::type_query_symbol(self.type_interner, other_type_id) {
-                let sym_id = tsz_binder::SymbolId(sym_ref.0);
-                self.mark_symbol_used(
-                    sym_id,
-                    crate::declaration_emitter::usage_analyzer::UsageKind::VALUE,
-                );
-            }
-
-            // Extract UniqueSymbol(SymbolRef)
-            if let Some(sym_ref) = visitor::unique_symbol_ref(self.type_interner, other_type_id) {
-                let sym_id = tsz_binder::SymbolId(sym_ref.0);
-                self.mark_symbol_used(
-                    sym_id,
-                    crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                );
-            }
-
-            // Extract ModuleNamespace(SymbolRef) - marks namespace import as used
-            if let Some(sym_ref) =
-                visitor::module_namespace_symbol_ref(self.type_interner, other_type_id)
-            {
-                let sym_id = tsz_binder::SymbolId(sym_ref.0);
-                self.mark_symbol_used(
-                    sym_id,
-                    crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                );
-            }
-
-            // Extract Object nominal symbols (Class instances)
-            // This handles cases like x: MyClass where the type is an ObjectShape
-            if let Some(shape_id) = visitor::object_shape_id(self.type_interner, other_type_id)
-                .or_else(|| visitor::object_with_index_shape_id(self.type_interner, other_type_id))
-            {
-                let shape = self.type_interner.object_shape(shape_id);
-                debug!(
-                    "[DEBUG] walk_type_id: ObjectShapeId={:?}, symbol={:?}",
-                    shape_id, shape.symbol
-                );
-                if let Some(sym_id) = shape.symbol {
-                    self.mark_symbol_used(
-                        sym_id,
-                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                    );
-                }
-            }
-
-            // Extract Callable nominal symbols (Class constructors/statics)
-            // This handles cases like typeof MyClass, constructor signatures
-            if let Some(shape_id) = visitor::callable_shape_id(self.type_interner, other_type_id) {
-                let shape = self.type_interner.callable_shape(shape_id);
-                if let Some(sym_id) = shape.symbol {
-                    self.mark_symbol_used(
-                        sym_id,
-                        crate::declaration_emitter::usage_analyzer::UsageKind::TYPE,
-                    );
-                }
-            }
+        for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(type_id).iter() {
+            self.mark_symbol_used(sym_id, usage_kind);
         }
     }
 
