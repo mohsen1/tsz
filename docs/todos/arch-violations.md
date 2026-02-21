@@ -1,7 +1,7 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (6th audit)
-**Branch**: main (commit f3109a0ce)
+**Date**: 2026-02-21 (7th audit)
+**Branch**: main (commit 9c7e23019)
 **Status**: ALL CLEAR — no violations found
 
 ---
@@ -14,6 +14,8 @@ Checked all architecture rules from CLAUDE.md and NORTH_STAR.md:
 2. Solver imports in binder
 3. Checker files exceeding 2000 LOC
 4. Forbidden cross-layer imports (emitter->checker, binder->solver, checker->solver internals, CLI->checker internals)
+5. Checker pattern-matching on low-level type internals
+6. TS2322 routing compliance
 
 ---
 
@@ -29,9 +31,9 @@ No `TypeKey` or `TypeData` type imports found outside the solver crate. All refe
 
 ### 2. Solver Imports in Binder — CLEAN
 
-The binder crate (`tsz-binder`) depends only on `tsz-common`, `tsz-scanner`, and `tsz-parser`. Zero imports of solver or checker types found. No `TypeId`, `TypeData`, `TypeInterner`, or solver module references in any binder source file (13 files audited).
+The binder crate (`tsz-binder`) depends only on `tsz-common`, `tsz-scanner`, and `tsz-parser`. Zero imports of solver or checker types found. No `TypeId`, `TypeData`, `TypeInterner`, or solver module references in any binder source file.
 
-### 3. Checker File Sizes — COMPLIANT (8 files in yellow zone)
+### 3. Checker File Sizes — COMPLIANT (11 near-threshold files)
 
 All checker files are under the 2000-line limit. Eleven files are approaching the threshold and need monitoring:
 
@@ -51,6 +53,8 @@ All checker files are under the 2000-line limit. Eleven files are approaching th
 
 Total checker codebase: ~127 files, ~106,405 LOC.
 
+No change from 6th audit — no new code has been added since then.
+
 ### 4. Cross-Layer Imports — CLEAN
 
 - **Emitter -> Checker**: No `tsz_checker` imports in emitter. Emitter depends on parser, binder, solver only.
@@ -62,24 +66,32 @@ Total checker codebase: ~127 files, ~106,405 LOC.
 
 **Note on TypeInterner usage**: LSP, CLI, and Emitter import `TypeInterner` from `tsz-solver`. This is **expected architecture** — `TypeInterner` is the public read-only type store. What's forbidden is importing `TypeData` variants or performing direct type construction, not read-only type store access.
 
-### 5. Previously Fixed: TypeData Traversal in tsz-lowering — REMAINS FIXED
+### 5. Checker Type Internals Pattern-Matching — CLEAN
 
-The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solver/src/visitors/visitor_extract.rs` in commit f5aa685e7. The lowering crate now calls the solver-owned utility. No regression.
+- All type shape inspection delegated to solver queries via query boundaries
+- Type traversal properly routed through `tsz_solver::visitor::` helpers (`collect_lazy_def_ids`, `collect_type_queries`, `collect_referenced_types`, `collect_enum_def_ids`, `is_template_literal_type`)
+- Architecture contract tests in `architecture_contract_tests.rs` actively prevent direct `TypeData::Array`, `TypeData::ReadonlyType`, `TypeData::KeyOf`, `TypeData::IndexAccess`, `TypeData::Lazy(DefId)`, and `TypeData::TypeParameter` construction in checker
 
 ### 6. TS2322 Routing — COMPLIANT
 
 - `CompatChecker` is only instantiated from `query_boundaries/call_checker.rs` and `query_boundaries/assignability.rs`
 - No direct `CompatChecker` calls in checker feature modules
 - Assignability checks route through the centralized gateway
+- 26 query_boundaries modules properly gate all solver access
+
+### 7. Previously Fixed: TypeData Traversal in tsz-lowering — REMAINS FIXED
+
+The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solver/src/visitors/visitor_extract.rs` in commit f5aa685e7. The lowering crate now calls the solver-owned utility. No regression.
 
 ---
 
 ## CI Health
 
-Latest CI run (d755ae809) completed successfully. Three older runs are still in progress.
+Latest CI run (9c7e23019) completed successfully. Three older runs remain in-progress (likely stuck/slow runners).
 
 | Run | Status | Description |
 |-----|--------|-------------|
+| 22264708570 | completed/success | docs(arch): 6th architecture audit |
 | 22264633879 | completed/success | docs(arch): 5th architecture audit |
 | 22264560766 | completed/success | docs: automated README metrics update |
 | 22264546925 | in_progress | docs(arch): update audit report and fix stale TypeKeys comment |
@@ -95,4 +107,4 @@ Latest CI run (d755ae809) completed successfully. Three older runs are still in 
    - `member_declaration_checks.rs` (1,994 lines) — consider extracting method signature validation
    - `type_computation_call.rs` (1,994 lines) — consider extracting overload resolution logic
 2. **Monitor 8 additional near-threshold files** in the 1,803-1,972 range for growth.
-3. **New files approaching threshold since last audit**: `control_flow_narrowing.rs` (1,883), `context.rs` (1,830), `class_type.rs` (1,803) — these were not flagged in the 5th audit but are now within the monitoring zone.
+3. **Investigate stuck CI runs**: Three runs (22264546925, 22264518667, 22264427753) have been in-progress for 14-22+ minutes. Consider canceling if they remain stuck.
