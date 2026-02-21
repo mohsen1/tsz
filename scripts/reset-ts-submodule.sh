@@ -28,15 +28,22 @@ if [ -z "$PINNED_SHA" ]; then
     exit 1
 fi
 
-# Get actual submodule HEAD
+# Get actual submodule HEAD and worktree state
 ACTUAL_SHA=$(git -C "$ROOT_DIR/TypeScript" rev-parse HEAD 2>/dev/null || echo "")
+DIRTY_STATE=$(git -C "$ROOT_DIR/TypeScript" status --porcelain 2>/dev/null || true)
 
-if [ "$ACTUAL_SHA" = "$PINNED_SHA" ]; then
-    exit 0  # already correct, nothing to do
+if [ "$ACTUAL_SHA" = "$PINNED_SHA" ] && [ -z "$DIRTY_STATE" ]; then
+    exit 0  # already correct and clean, nothing to do
 fi
 
 echo "Resetting TypeScript submodule to pinned SHA: ${PINNED_SHA:0:12}..."
 cd "$ROOT_DIR"
 git submodule update --init --force -- TypeScript
 git -C TypeScript checkout "$PINNED_SHA" --quiet
+git -C TypeScript reset --hard --quiet
+git -C TypeScript checkout -- .
+if [ "$(git -C TypeScript config --get core.sparseCheckout 2>/dev/null || echo "false")" = "true" ]; then
+    git -C TypeScript sparse-checkout reapply
+fi
+git -C TypeScript clean -fd --quiet
 echo "TypeScript submodule reset to $PINNED_SHA"
