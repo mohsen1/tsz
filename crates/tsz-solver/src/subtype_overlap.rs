@@ -180,8 +180,34 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return self.are_template_literals_overlapping(a_spans, b_spans);
         }
 
+        if let Some(crate::types::TypeData::Union(list_id)) = self.interner.lookup(a_resolved) {
+            return self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.are_types_overlapping(member, b_resolved));
+        }
+
+        if let Some(crate::types::TypeData::Union(list_id)) = self.interner.lookup(b_resolved) {
+            return self
+                .interner
+                .type_list(list_id)
+                .iter()
+                .any(|&member| self.are_types_overlapping(a_resolved, member));
+        }
+
+        if let Some(crate::types::TypeData::Enum(_, underlying)) = self.interner.lookup(a_resolved)
+        {
+            return self.are_types_overlapping(underlying, b_resolved);
+        }
+
+        if let Some(crate::types::TypeData::Enum(_, underlying)) = self.interner.lookup(b_resolved)
+        {
+            return self.are_types_overlapping(a_resolved, underlying);
+        }
+
         // Conservative: assume overlap for complex types we haven't fully handled yet
-        // (unions, intersections, generics, etc.)
+        // (intersections, generics, etc.)
         // Better to miss some TS2367 errors than to emit them incorrectly
         true
     }
