@@ -6,6 +6,8 @@ Hard requirements for this run:
 2) Implement a minimal targeted fix.
 3) Run targeted conformance for that case.
 4) Run a broader safety slice (offset 0 max 500) to catch regressions.
-5) If improved or fixed without regression, create ONE small commit.
-6) Sync with main using: git pull --rebase origin main, then git push origin main.
-7) Do not ask user questions. Keep going until this run is complete.
+5) Before starting new work, if any diff is left from the previous iteration, continue from that diff and include it in this iteration.
+6) End this iteration with exactly ONE commit.
+7) Sync with main and push to main using: git pull --rebase origin main, then git push origin HEAD:main.
+8) If there are no file changes, create an empty checkpoint commit with: git commit --allow-empty -m "chore(loop): iteration checkpoint".
+9) Do not ask user questions. Keep going until this run is complete.

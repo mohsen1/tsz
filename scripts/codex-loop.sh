@@ -197,6 +197,17 @@ build_prompt() {
     prompt="${prompt} Parallel conformance sharding: you own quarter ${shard_label}/${CONF_QUARTERS}. Focus your test slice with scripts/conformance.sh analyze --offset ${shard_offset} --max ${shard_max}."
   fi
 
+  prompt="${prompt}
+
+Mandatory completion gate for this iteration:
+1) Before starting new work, check for leftover diff from the previous iteration and continue from it if present.
+2) End the iteration with exactly one commit.
+3) Sync and push that commit to main using:
+   git pull --rebase origin main
+   git push origin HEAD:main
+4) If there are no file changes, create an explicit empty checkpoint commit and push it:
+   git commit --allow-empty -m \"chore(loop): iteration checkpoint\""
+
   printf '%s\n' "$prompt"
 }
 
