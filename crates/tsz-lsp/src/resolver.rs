@@ -612,6 +612,20 @@ impl<'a> ScopeWalker<'a> {
                     return Some(res);
                 }
             }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                if let Some(import) = self.arena.get_import_decl(node) {
+                    if import.import_clause.is_some()
+                        && let Some(res) = f(self, import.import_clause)
+                    {
+                        return Some(res);
+                    }
+                    if import.module_specifier.is_some()
+                        && let Some(res) = f(self, import.module_specifier)
+                    {
+                        return Some(res);
+                    }
+                }
+            }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export) = self.arena.get_export_decl(node)
                     && export.export_clause.is_some()
