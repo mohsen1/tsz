@@ -898,8 +898,8 @@ impl<'a> Printer<'a> {
             let module_var = self.next_commonjs_module_var(&module_spec);
 
             if export.export_clause.is_none() {
-                // First emit the require
-                self.write_var_or_const();
+                // TSC emits `var` for CommonJS re-export helper bindings.
+                self.write("var ");
                 self.write(&module_var);
                 self.write(" = require(\"");
                 self.write(&module_spec);
@@ -922,8 +922,26 @@ impl<'a> Printer<'a> {
                     return;
                 }
 
-                // First emit the require
-                self.write_var_or_const();
+                for &spec_idx in &named_exports.elements.nodes {
+                    if let Some(spec_node) = self.arena.get(spec_idx)
+                        && let Some(spec) = self.arena.get_specifier(spec_node)
+                    {
+                        if spec.is_type_only {
+                            continue;
+                        }
+                        let export_name = self.get_identifier_text_idx(spec.name);
+                        if export_name.is_empty() {
+                            continue;
+                        }
+                        self.write("exports.");
+                        self.write(&export_name);
+                        self.write(" = void 0;");
+                        self.write_line();
+                    }
+                }
+
+                // TSC emits `var` for CommonJS re-export helper bindings.
+                self.write("var ");
                 self.write(&module_var);
                 self.write(" = require(\"");
                 self.write(&module_spec);
