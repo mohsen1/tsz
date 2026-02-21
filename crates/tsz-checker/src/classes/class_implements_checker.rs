@@ -317,6 +317,11 @@ impl<'a> CheckerState<'a> {
         } else {
             String::from("<anonymous>")
         };
+        let class_error_idx = if class_data.name.is_some() {
+            class_data.name
+        } else {
+            class_idx
+        };
 
         let _class_namespace = self.enclosing_namespace_node(class_idx);
 
@@ -390,7 +395,7 @@ impl<'a> CheckerState<'a> {
                                     class_data,
                                 ) {
                                     self.error_at_node(
-                                            type_idx,
+                                            class_error_idx,
                                             &format!("Class '{class_name}' incorrectly implements interface '{interface_name}'."),
                                             diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE,
                                         );
@@ -407,7 +412,7 @@ impl<'a> CheckerState<'a> {
                         let message = format!(
                             "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?"
                         );
-                        self.error_at_node(type_idx, &message, diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER);
+                        self.error_at_node(class_error_idx, &message, diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER);
                         continue;
                     }
 
@@ -557,7 +562,7 @@ impl<'a> CheckerState<'a> {
 
                         if !class_has_index_signature {
                             self.error_at_node(
-                                clause_idx,
+                                class_error_idx,
                                 &format!(
                                     "Class '{class_name}' incorrectly implements interface '{interface_name}'. Index signature for type 'number' is missing in type '{class_name}'."
                                 ),
@@ -608,7 +613,7 @@ impl<'a> CheckerState<'a> {
                             )
                         };
 
-                        self.error_at_node(type_idx, &full_message, diagnostic_code);
+                        self.error_at_node(class_error_idx, &full_message, diagnostic_code);
                     }
 
                     // Report error for incompatible member types
