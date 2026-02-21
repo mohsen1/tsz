@@ -382,6 +382,103 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
+    /// Narrows a union type based on whether a property is truthy or falsy.
+    ///
+    /// This is used for conditionals like `if (x.prop)` when `x` is a union.
+    pub fn narrow_by_property_truthiness(
+        &self,
+        union_type: TypeId,
+        property_path: &[Atom],
+        sense: bool,
+    ) -> TypeId {
+        let _span = span!(
+            Level::TRACE,
+            "narrow_by_property_truthiness",
+            union_type = union_type.0,
+            property_path_len = property_path.len(),
+            sense
+        )
+        .entered();
+
+        let resolved_type = self.resolve_type(union_type);
+
+        let single_member_storage: Vec<TypeId>;
+        let members: &[TypeId] = match classify_for_union_members(self.db, resolved_type) {
+            UnionMembersKind::Union(members_list) => {
+                single_member_storage = members_list.into_iter().collect::<Vec<_>>();
+                &single_member_storage
+            }
+            UnionMembersKind::NotUnion => {
+                single_member_storage = vec![resolved_type];
+                &single_member_storage
+            }
+        };
+
+        let mut matching: Vec<TypeId> = Vec::new();
+        let property_evaluator = match self.resolver {
+            Some(resolver) => PropertyAccessEvaluator::with_resolver(self.db, resolver),
+            None => PropertyAccessEvaluator::new(self.db),
+        };
+
+        for &member in members {
+            if member.is_any_or_unknown() {
+                matching.push(member);
+                continue;
+            }
+
+            let resolved_member = self.resolve_type(member);
+
+            let intersection_members = intersection_list_id(self.db, resolved_member)
+                .map(|members_id| self.db.type_list(members_id).to_vec());
+
+            let check_member_for_property = |check_type_id: TypeId| -> bool {
+                let prop_type = match self.get_type_at_path(
+                    check_type_id,
+                    property_path,
+                    &property_evaluator,
+                ) {
+                    Some(t) => t,
+                    None => {
+                        // Property doesn't exist -> undefined (falsy)
+                        return !sense;
+                    }
+                };
+
+                let resolved_prop_type = self.resolve_type(prop_type);
+
+                // If it's the true branch, check if the property can be truthy
+                // If it's the false branch, check if the property can be falsy
+                if sense {
+                    let narrowed = self.narrow_by_truthiness(resolved_prop_type);
+                    narrowed != TypeId::NEVER
+                } else {
+                    let narrowed = self.narrow_to_falsy(resolved_prop_type);
+                    narrowed != TypeId::NEVER
+                }
+            };
+
+            let matches = if let Some(ref intersection) = intersection_members {
+                intersection.iter().any(|&m| check_member_for_property(m))
+            } else {
+                check_member_for_property(resolved_member)
+            };
+
+            if matches {
+                matching.push(member);
+            }
+        }
+
+        if matching.is_empty() {
+            return TypeId::NEVER;
+        }
+
+        if matching.len() == members.len() {
+            return union_type;
+        }
+
+        union_or_single_preserve(self.db, matching)
+    }
+
     /// - `union_type`: The union type to narrow
     /// - `property_path`: Path to the discriminant property (e.g., ["payload", "type"])
     /// - `literal_value`: The literal value to match

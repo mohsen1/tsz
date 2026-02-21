@@ -1212,27 +1212,18 @@ impl<'a> FlowAnalyzer<'a> {
                         return narrowed;
                     }
                 }
-                // Handle discriminant narrowing (discriminated unions)
+                // Handle truthiness discriminant narrowing for properties
                 // For `if (x.flag)` where x is a discriminated union like
-                // `{flag: true; data: string} | {flag: false; data: number}`,
-                // narrow x by discriminant `flag === true`.
-                // BUT: if the result is `never`, the type isn't actually a
-                // discriminated union — fall through to truthiness narrowing.
+                // `{flag: "hello"; data: string} | {flag: ""; data: number}`,
+                // narrow x based on whether `flag` is truthy or falsy.
                 if let Some(property_path) = self.discriminant_property(condition_idx, target) {
-                    let literal_true = self.interner.literal_boolean(true);
-                    let narrowed = if is_true_branch {
-                        narrowing.narrow_by_discriminant(type_id, &property_path, literal_true)
-                    } else {
-                        narrowing.narrow_by_excluding_discriminant(
-                            type_id,
-                            &property_path,
-                            literal_true,
-                        )
-                    };
-                    if narrowed != TypeId::NEVER {
-                        return narrowed;
-                    }
-                    // Fall through: not a real discriminated union, try truthiness
+                    let narrowed = narrowing.narrow_by_property_truthiness(
+                        type_id,
+                        &property_path,
+                        is_true_branch,
+                    );
+                    // Even if narrowed is NEVER, it means no branch matches, so returning NEVER is correct
+                    return narrowed;
                 }
 
                 // Handle truthiness narrowing for property/element access: if (y.a)
