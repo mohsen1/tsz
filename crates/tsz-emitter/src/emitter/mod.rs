@@ -1584,7 +1584,12 @@ impl<'a> Printer<'a> {
                     let between_after = &text[c_end as usize..next_content_pos as usize];
                     let is_detached =
                         between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
-                    if is_commonjs && !is_detached {
+                    let trimmed_comment = comment_text.trim_start();
+                    let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
+                    let is_triple_slash_reference = trimmed_comment.starts_with("///<reference");
+                    if is_commonjs
+                        && (is_triple_slash_reference || (!is_detached && !is_amd_dependency))
+                    {
                         deferred_header_comments.push((comment_text.to_string(), c_trailing));
                     } else {
                         self.write_comment(comment_text);
