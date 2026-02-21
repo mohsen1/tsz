@@ -276,10 +276,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 };
 
                 // If parameter has an initializer in an ambient function, emit TS2371
+                // TSC anchors the error at the parameter name, not the whole parameter.
                 if param.initializer.is_some() {
+                    let name_node = self.ctx.arena.get(param.name).unwrap_or(param_node);
                     self.ctx.error(
-                        param_node.pos,
-                        param_node.end - param_node.pos,
+                        name_node.pos,
+                        name_node.end - name_node.pos,
                         "A parameter initializer is only allowed in a function or constructor implementation.".to_string(),
                         2371, // TS2371
                     );
@@ -353,25 +355,33 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         }
 
+        // TSC anchors the error at the function name, not the whole declaration.
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+        let error_node = self
+            .ctx
+            .arena
+            .get(func_idx)
+            .and_then(|n| self.ctx.arena.get_function(n))
+            .map(|f| f.name)
+            .filter(|n| n.is_some())
+            .unwrap_or(func_idx);
+        let (pos, len) = self
+            .ctx
+            .arena
+            .get(error_node)
+            .map_or((0, 0), |n| (n.pos, n.end - n.pos));
         if in_class {
             self.ctx.error(
-                self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
-                self.ctx
-                    .arena
-                    .get(func_idx)
-                    .map_or(0, |n| n.end - n.pos),
+                pos,
+                len,
                 diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2
                     .to_string(),
                 diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN_2,
             );
         } else {
             self.ctx.error(
-                self.ctx.arena.get(func_idx).map_or(0, |n| n.pos),
-                self.ctx
-                    .arena
-                    .get(func_idx)
-                    .map_or(0, |n| n.end - n.pos),
+                pos,
+                len,
                 diagnostic_messages::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN
                     .to_string(),
                 diagnostic_codes::FUNCTION_DECLARATIONS_ARE_NOT_ALLOWED_INSIDE_BLOCKS_IN_STRICT_MODE_WHEN_TARGETIN,
@@ -632,6 +642,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     auto_incrementable =
                         self.is_numeric_constant_enum_expr(member_data.initializer, enum_data, 0);
                 }
+
+                // TS2565: check for property used before being assigned
+                if member_data.initializer.is_some()
+                    && let Some(member_name) = self.ctx.arena.get_identifier_text(member_data.name)
+                    {
+                        let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
+                        self.check_enum_member_self_reference(
+                            member_data.initializer,
+                            member_name,
+                            enum_name_text,
+                        );
+                    }
             }
         }
     }
@@ -1145,6 +1167,151 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     pub const fn check_function_implementations(&mut self, _nodes: &[NodeIndex]) {
         // Implementation of overload checking
         // Will be migrated from CheckerState
+    }
+    fn check_enum_member_self_reference(
+        &mut self,
+        expr_idx: NodeIndex,
+        member_name: &str,
+        enum_name: Option<&str>,
+    ) {
+        if expr_idx.is_none() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(text) = self.ctx.arena.get_identifier_text(expr_idx)
+                    && text == member_name {
+                        self.ctx.error(
+                            node.pos,
+                            node.end - node.pos,
+                            format!("Property '{text}' is used before being assigned."),
+                            diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                        );
+                    }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(prop) = self.ctx.arena.get_access_expr(node)
+                    && let Some(left_node) = self.ctx.arena.get(prop.expression) {
+                        let is_enum_ref = if left_node.kind == SyntaxKind::Identifier as u16 {
+                            if let Some(text) = self.ctx.arena.get_identifier_text(prop.expression)
+                            {
+                                Some(text) == enum_name
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if is_enum_ref {
+                            if let Some(right_text) =
+                                self.ctx.arena.get_identifier_text(prop.name_or_argument)
+                                && right_text == member_name {
+                                    self.ctx.error(
+                                        node.pos,
+                                        node.end - node.pos,
+                                        format!(
+                                            "Property '{right_text}' is used before being assigned."
+                                        ),
+                                        diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                                    );
+                                }
+                        } else {
+                            self.check_enum_member_self_reference(
+                                prop.expression,
+                                member_name,
+                                enum_name,
+                            );
+                        }
+                    }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(elem) = self.ctx.arena.get_access_expr(node)
+                    && let Some(left_node) = self.ctx.arena.get(elem.expression) {
+                        let is_enum_ref = if left_node.kind == SyntaxKind::Identifier as u16 {
+                            if let Some(text) = self.ctx.arena.get_identifier_text(elem.expression)
+                            {
+                                Some(text) == enum_name
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if is_enum_ref {
+                            if let Some(right_node) = self.ctx.arena.get(elem.name_or_argument) {
+                                if right_node.kind == SyntaxKind::StringLiteral as u16 {
+                                    if let Some(lit) = self.ctx.arena.get_literal(right_node)
+                                        && lit.text == member_name {
+                                            self.ctx.error(
+                                                node.pos,
+                                                node.end - node.pos,
+                                                format!("Property '{}' is used before being assigned.", lit.text),
+                                                diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                                            );
+                                        }
+                                } else {
+                                    self.check_enum_member_self_reference(
+                                        elem.name_or_argument,
+                                        member_name,
+                                        enum_name,
+                                    );
+                                }
+                            }
+                        } else {
+                            self.check_enum_member_self_reference(
+                                elem.expression,
+                                member_name,
+                                enum_name,
+                            );
+                            self.check_enum_member_self_reference(
+                                elem.name_or_argument,
+                                member_name,
+                                enum_name,
+                            );
+                        }
+                    }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.check_enum_member_self_reference(unary.operand, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.check_enum_member_self_reference(unary.operand, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+                    self.check_enum_member_self_reference(bin.left, member_name, enum_name);
+                    self.check_enum_member_self_reference(bin.right, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.check_enum_member_self_reference(paren.expression, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.check_enum_member_self_reference(cond.condition, member_name, enum_name);
+                    self.check_enum_member_self_reference(cond.when_true, member_name, enum_name);
+                    self.check_enum_member_self_reference(cond.when_false, member_name, enum_name);
+                }
+            }
+            _ => {}
+        }
     }
 }
 

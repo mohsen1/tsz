@@ -505,9 +505,10 @@ impl<'a> CheckerState<'a> {
             };
 
             // If parameter has an initializer in an ambient function, emit TS2371
+            // TSC anchors the error at the parameter name, not the initializer.
             if param.initializer.is_some() {
                 self.error_at_node(
-                    param.initializer,
+                    param.name,
                     "A parameter initializer is only allowed in a function or constructor implementation.",
                     2371, // TS2371
                 );
