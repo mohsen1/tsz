@@ -7,7 +7,10 @@ Rules for this iteration:
 - Implement one small, high-signal fix; avoid broad refactors in a single loop.
 - Add or update focused tests for the changed behavior.
 - Re-run `./scripts/check-checker-boundaries.sh` plus targeted tests for touched crates/files.
-- If improved without regressions, create one coherent architecture-oriented commit.
+- Before starting new work, if any diff is left from the previous iteration, continue from that diff and include it in this iteration.
+- End this iteration with exactly one coherent architecture-oriented commit and push it to main.
+- Sync with main using `git pull --rebase origin main`, then push with `git push origin HEAD:main`.
+- If there are no file changes, create an empty checkpoint commit with `git commit --allow-empty -m "chore(loop): iteration checkpoint"` and push it.
 - Do not ask user questions; complete the iteration end-to-end.
 
 Output summary must include:
