@@ -258,6 +258,7 @@ verify_iteration_completion() {
 build_prompt() {
   local prompt
   prompt="$(cat "$PROMPT_FILE")"
+  prompt="${prompt//\{\{WORKDIR\}\}/$WORKDIR}"
   if [[ -n "$SESSION_ID" ]]; then
     prompt="Session ${SESSION_ID}: ${prompt}"
   fi

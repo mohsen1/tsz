@@ -1,4 +1,4 @@
-You are working in /Users/mohsenazimi/code/tsz.
+You are working in {{WORKDIR}}.
 Goal: improve TypeScript conformance parity with small, safe, incremental commits.
 
 Hard requirements for this run:
