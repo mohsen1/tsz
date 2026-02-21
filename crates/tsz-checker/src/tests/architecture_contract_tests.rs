@@ -795,6 +795,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             .expect("failed to read ambient_signature_checks.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/implicit_any_checks.rs")
+            .expect("failed to read implicit_any_checks.rs for architecture guard"),
+    );
+    state_checking_members_src.push_str(
         &fs::read_to_string("src/state_checking_members/member_access.rs")
             .expect("failed to read member_access.rs for architecture guard"),
     );
