@@ -625,8 +625,13 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                     .get(export_decl.export_clause)
                     .is_some_and(|n| n.kind == syntax_kind_ext::NAMED_EXPORTS);
             if is_reexport_syntax && self.is_inside_namespace_declaration(export_idx) {
+                let report_idx = if export_decl.module_specifier.is_some() {
+                    export_decl.module_specifier
+                } else {
+                    export_idx
+                };
                 self.error_at_node(
-                    export_idx,
+                    report_idx,
                     crate::diagnostics::diagnostic_messages::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                     crate::diagnostics::diagnostic_codes::EXPORT_DECLARATIONS_ARE_NOT_PERMITTED_IN_A_NAMESPACE,
                 );
