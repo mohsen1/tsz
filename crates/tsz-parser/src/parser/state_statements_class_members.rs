@@ -1409,11 +1409,11 @@ impl ParserState {
         // Skip '['
         self.next_token();
 
-        // `[...` — unambiguously index signature (malformed rest param).
-        // Note: we do NOT match `[]` (CloseBracketToken) here because `[]` is used
-        // for empty tuple types in type contexts (e.g., `unknown[] | []`).
         let is_index_sig = if self.is_token(SyntaxKind::DotDotDotToken) {
             true
+        } else if self.is_parameter_modifier() {
+            self.next_token();
+            self.is_identifier_or_keyword()
         } else if !self.is_identifier_or_keyword() {
             false
         } else {

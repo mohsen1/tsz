@@ -151,7 +151,7 @@ impl ParserState {
     }
 
     /// Check if current token is a valid parameter modifier
-    const fn is_valid_parameter_modifier(&self) -> bool {
+    pub(crate) const fn is_valid_parameter_modifier(&self) -> bool {
         matches!(
             self.current_token,
             SyntaxKind::PublicKeyword
