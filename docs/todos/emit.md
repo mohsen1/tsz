@@ -1,8 +1,18 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS-only mode, baseline 9209/13623 = 67.6%)
+## Pattern Analysis (JS-only mode, baseline 9223/13623 = 67.7%)
 
 ### Fixed This Session
+- **esModuleInterop gating for CJS import helpers** (architectural fix, +0 net tests):
+  `__importStar`, `__importDefault`, and `__createBinding` helpers were emitted
+  unconditionally for all CJS imports. Now properly gated on `esModuleInterop` flag:
+  without it, namespace imports emit `const ns = require("mod")` and default imports
+  emit `const m = require("mod")` (no helper wrapper). Also fixed test runner to
+  default `esModuleInterop: true` matching TS6 semantics. Files changed:
+  `lowering_pass.rs`, `module_emission.rs`, `module_commonjs.rs`, `emitter/mod.rs`,
+  `config.rs`, `driver.rs`, `runner.ts`.
+
+### Previously Fixed
 - **Template literal closing brace off-by-one** (+73 tests): `template_span_has_closing_brace`
   scanned `text[expr_end..lit_pos]` but Rust's half-open range excluded `lit_pos` itself,
   which is where `}` sits. When whitespace padded `${ expr }`, the range contained only

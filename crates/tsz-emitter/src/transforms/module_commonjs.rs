@@ -352,7 +352,12 @@ pub fn transform_import_to_require(
 /// ```javascript
 /// var myDefault = module_1.default;
 /// ```
-pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> Vec<String> {
+pub fn get_import_bindings(
+    arena: &NodeArena,
+    node: &Node,
+    module_var: &str,
+    es_module_interop: bool,
+) -> Vec<String> {
     let mut bindings = Vec::new();
 
     let Some(import) = arena.get_import_decl(node) else {
@@ -390,8 +395,13 @@ pub fn get_import_bindings(arena: &NodeArena, node: &Node, module_var: &str) -> 
             // Namespace imports have a name but no elements
             if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 if let Some(name) = get_identifier_text(arena, named_imports.name) {
-                    // Use __importStar helper for namespace imports
-                    bindings.push(format!("var {name} = __importStar({module_var});"));
+                    if es_module_interop {
+                        // Use __importStar helper for namespace imports
+                        bindings.push(format!("var {name} = __importStar({module_var});"));
+                    } else {
+                        // Without esModuleInterop, namespace import is just an alias
+                        bindings.push(format!("var {name} = {module_var};"));
+                    }
                 }
             } else {
                 // Named imports (`import { a, b as c } from "..."`) should not emit

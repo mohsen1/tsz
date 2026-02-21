@@ -372,53 +372,68 @@ impl<'a> Printer<'a> {
         }
 
         if is_default_only_ast || is_named_default_only_ast {
-            // Default-only CommonJS import uses the interop temp directly:
-            // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
-            // and identifier references are rewritten via substitution map to `m_1.default`.
             self.write_var_or_const();
             self.write(&module_var);
-            self.write(" = __importDefault(require(\"");
-            self.write(&module_spec);
-            self.write("\"));");
+            if self.ctx.options.es_module_interop {
+                // With esModuleInterop:
+                // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
+                self.write(" = __importDefault(require(\"");
+                self.write(&module_spec);
+                self.write("\"));");
+            } else {
+                // Without esModuleInterop:
+                // `import X from "m"` -> `const m_1 = require("m");`
+                self.write(" = require(\"");
+                self.write(&module_spec);
+                self.write("\");");
+            }
             self.write_line();
             return;
         }
 
         // Check if this is a namespace-only import (import * as ns from "mod")
-        // to inline: var ns = __importStar(require("mod"));
-        let bindings = module_commonjs::get_import_bindings(self.arena, node, &module_var);
+        // Detect from AST: named_bindings has a name but no elements
+        let is_namespace_only_ast = clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|n| self.arena.get_named_imports(n))
+                .is_some_and(|ni| ni.name.is_some() && ni.elements.nodes.is_empty());
 
-        let is_namespace_only = bindings.len() == 1
-            && bindings[0].contains("__importStar(")
-            && !bindings[0].contains(".default");
-        let is_default_only = bindings.len() == 1 && bindings[0].contains("__importDefault(");
-
-        if is_namespace_only {
-            // Inline: var ns = __importStar(require("mod"));
-            let binding = &bindings[0];
-            // Extract the var name from "var ns = __importStar(module_var);"
-            if let Some(eq_pos) = binding.find(" = __importStar(") {
-                let var_name = &binding[4..eq_pos]; // Skip "var "
-                self.write_var_or_const();
-                self.write(var_name);
-                self.write(" = __importStar(require(\"");
-                self.write(&module_spec);
-                self.write("\"));");
-                self.write_line();
-            } else {
-                // Fallback
-                self.write_var_or_const();
-                self.write(&module_var);
-                self.write(" = require(\"");
-                self.write(&module_spec);
-                self.write("\");");
-                self.write_line();
-                for binding in bindings {
-                    self.write(&binding);
+        if is_namespace_only_ast {
+            // Get the namespace name from the AST
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+            {
+                let ns_name = self.get_identifier_text_idx(named_imports.name);
+                if !ns_name.is_empty() {
+                    self.write_var_or_const();
+                    self.write(&ns_name);
+                    if self.ctx.options.es_module_interop {
+                        // `import * as ns from "mod"` -> `const ns = __importStar(require("mod"));`
+                        self.write(" = __importStar(require(\"");
+                        self.write(&module_spec);
+                        self.write("\"));");
+                    } else {
+                        // `import * as ns from "mod"` -> `const ns = require("mod");`
+                        self.write(" = require(\"");
+                        self.write(&module_spec);
+                        self.write("\");");
+                    }
                     self.write_line();
                 }
             }
-        } else if is_default_only {
+            return;
+        }
+
+        let es_module_interop = self.ctx.options.es_module_interop;
+        let bindings =
+            module_commonjs::get_import_bindings(self.arena, node, &module_var, es_module_interop);
+
+        let is_default_only = bindings.len() == 1 && bindings[0].contains("__importDefault(");
+
+        if is_default_only {
             // Inline: var name = __importDefault(require("mod"));
             let binding = &bindings[0];
             if let Some(eq_pos) = binding.find(" = ") {

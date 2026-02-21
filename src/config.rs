@@ -736,6 +736,7 @@ pub fn resolve_compiler_options(
     if let Some(es_module_interop) = options.es_module_interop {
         resolved.es_module_interop = es_module_interop;
         resolved.checker.es_module_interop = es_module_interop;
+        resolved.printer.es_module_interop = es_module_interop;
         // esModuleInterop implies allowSyntheticDefaultImports
         if es_module_interop {
             resolved.allow_synthetic_default_imports = true;

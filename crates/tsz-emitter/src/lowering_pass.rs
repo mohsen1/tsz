@@ -864,57 +864,63 @@ impl<'a> LoweringPass<'a> {
             && let Some(clause) = self.arena.get_import_clause(clause_node)
             && !clause.is_type_only
         {
-            // Default import: import d from "mod" -> needs __importDefault
-            if clause.name.is_some() {
-                let helpers = self.transforms.helpers_mut();
-                helpers.import_default = true;
-            }
+            // __importDefault and __importStar helpers are only needed when
+            // esModuleInterop is enabled.  Without it, namespace imports
+            // compile to plain `require()` calls and default imports use
+            // direct property access on the module object.
+            if self.ctx.options.es_module_interop {
+                // Default import: import d from "mod" -> needs __importDefault
+                if clause.name.is_some() {
+                    let helpers = self.transforms.helpers_mut();
+                    helpers.import_default = true;
+                }
 
-            // Namespace import: import * as ns from "mod" -> needs __importStar
-            if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
-                // NAMESPACE_IMPORT = 275
-                if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
-                    let helpers = self.transforms.helpers_mut();
-                    helpers.import_star = true;
-                    helpers.create_binding = true; // __importStar depends on __createBinding
-                } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                    && named_imports.name.is_some()
-                    && named_imports.elements.nodes.is_empty()
-                {
-                    // "default" import with empty named imports (also needs importStar)
-                    let helpers = self.transforms.helpers_mut();
-                    helpers.import_star = true;
-                    helpers.create_binding = true;
-                } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                    let has_default_named_import =
-                        named_imports.elements.nodes.iter().any(|&spec_idx| {
-                            self.arena.get(spec_idx).is_some_and(|spec_node| {
-                                self.arena.get_specifier(spec_node).is_some_and(|spec| {
-                                    if spec.is_type_only {
-                                        return false;
-                                    }
-                                    let import_name = if spec.property_name.is_some() {
-                                        self.arena
-                                            .get(spec.property_name)
-                                            .and_then(|prop_node| {
-                                                self.arena.get_identifier(prop_node)
-                                            })
-                                            .map(|id| id.escaped_text.as_str())
-                                    } else {
-                                        self.arena
-                                            .get(spec.name)
-                                            .and_then(|name_node| {
-                                                self.arena.get_identifier(name_node)
-                                            })
-                                            .map(|id| id.escaped_text.as_str())
-                                    };
-                                    import_name == Some("default")
-                                })
-                            })
-                        });
-                    if has_default_named_import {
+                // Namespace import: import * as ns from "mod" -> needs __importStar
+                if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
+                    // NAMESPACE_IMPORT = 275
+                    if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
                         let helpers = self.transforms.helpers_mut();
-                        helpers.import_default = true;
+                        helpers.import_star = true;
+                        helpers.create_binding = true;
+                    } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                        && named_imports.name.is_some()
+                        && named_imports.elements.nodes.is_empty()
+                    {
+                        let helpers = self.transforms.helpers_mut();
+                        helpers.import_star = true;
+                        helpers.create_binding = true;
+                    } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                    {
+                        let has_default_named_import =
+                            named_imports.elements.nodes.iter().any(|&spec_idx| {
+                                self.arena.get(spec_idx).is_some_and(|spec_node| {
+                                    self.arena.get_specifier(spec_node).is_some_and(|spec| {
+                                        if spec.is_type_only {
+                                            return false;
+                                        }
+                                        let import_name = if spec.property_name.is_some() {
+                                            self.arena
+                                                .get(spec.property_name)
+                                                .and_then(|prop_node| {
+                                                    self.arena.get_identifier(prop_node)
+                                                })
+                                                .map(|id| id.escaped_text.as_str())
+                                        } else {
+                                            self.arena
+                                                .get(spec.name)
+                                                .and_then(|name_node| {
+                                                    self.arena.get_identifier(name_node)
+                                                })
+                                                .map(|id| id.escaped_text.as_str())
+                                        };
+                                        import_name == Some("default")
+                                    })
+                                })
+                            });
+                        if has_default_named_import {
+                            let helpers = self.transforms.helpers_mut();
+                            helpers.import_default = true;
+                        }
                     }
                 }
             }

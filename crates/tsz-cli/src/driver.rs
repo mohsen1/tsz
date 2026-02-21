@@ -1619,6 +1619,14 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_implicit_override {
         options.checker.no_implicit_override = true;
     }
+    if args.es_module_interop {
+        options.es_module_interop = true;
+        options.checker.es_module_interop = true;
+        options.printer.es_module_interop = true;
+        // esModuleInterop implies allowSyntheticDefaultImports
+        options.allow_synthetic_default_imports = true;
+        options.checker.allow_synthetic_default_imports = true;
+    }
     if args.no_emit {
         options.no_emit = true;
     }
