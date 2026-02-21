@@ -244,6 +244,24 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         openFile(fileName, content, scriptKindName) {
             super.openFile(fileName, content, scriptKindName);
             if (this._client) {
+                const isProjectJsonFile = (filePath) =>
+                    filePath.endsWith("/package.json")
+                    || filePath.endsWith("\\package.json")
+                    || filePath.endsWith("/tsconfig.json")
+                    || filePath.endsWith("\\tsconfig.json");
+                const shouldTrackForServer = (filePath) =>
+                    ts.isAnySupportedFileExtension(filePath) || isProjectJsonFile(filePath);
+
+                const currentFiles = new Set(
+                    this.getFilenames().filter(shouldTrackForServer)
+                );
+                currentFiles.add(fileName);
+                for (const opened of Array.from(this._openedFiles)) {
+                    if (currentFiles.has(opened)) continue;
+                    this._client.closeFile(opened);
+                    this._openedFiles.delete(opened);
+                }
+
                 const openKnownFile = (path, fileContent, kindName) => {
                     if (this._openedFiles.has(path)) return;
                     let contentToSend = fileContent;
@@ -255,11 +273,33 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                     this._client.openFile(path, contentToSend, kindName);
                     this._openedFiles.add(path);
                 };
+                const openAncestorConfigs = (targetPath) => {
+                    let normalized = String(targetPath || "").replace(/\\\\/g, "/");
+                    if (!normalized) return;
+                    let dir = normalized.includes("/") ? normalized.slice(0, normalized.lastIndexOf("/")) : "";
+                    while (true) {
+                        for (const configName of ["package.json", "tsconfig.json"]) {
+                            const prefix = dir === "/" ? "" : dir;
+                            const configPath = `${prefix}/${configName}`;
+                            if (this._openedFiles.has(configPath)) continue;
+                            const configContent = this.readFile(configPath);
+                            if (configContent != null) {
+                                openKnownFile(configPath, configContent, /*kindName*/ undefined);
+                            }
+                        }
+                        if (!dir || dir === "/") break;
+                        const idx = dir.lastIndexOf("/");
+                        if (idx < 0) break;
+                        dir = idx === 0 ? "/" : dir.slice(0, idx);
+                    }
+                };
 
                 openKnownFile(fileName, content, scriptKindName);
+                openAncestorConfigs(fileName);
                 for (const path of this.getFilenames()) {
-                    if (!ts.isAnySupportedFileExtension(path)) continue;
+                    if (!shouldTrackForServer(path)) continue;
                     openKnownFile(path, /*fileContent*/ undefined, /*kindName*/ undefined);
+                    openAncestorConfigs(path);
                 }
             }
         }
@@ -365,6 +405,15 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
         constructor(cancellationToken, options) {
             this._host = new TszClientHost(cancellationToken, options);
             this._client = new SessionClient(this._host);
+            const originalGetCodeFixesAtPosition = this._client.getCodeFixesAtPosition?.bind(this._client);
+            if (originalGetCodeFixesAtPosition) {
+                this._client.getCodeFixesAtPosition = (file, start, end, errorCodes, _formatOptions, preferences) => {
+                    if (preferences && this._client.configure) {
+                        this._client.configure(preferences);
+                    }
+                    return originalGetCodeFixesAtPosition(file, start, end, errorCodes);
+                };
+            }
             this._host.setClient(this._client);
         }
 
