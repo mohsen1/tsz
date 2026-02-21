@@ -1,34 +1,61 @@
 #!/usr/bin/env bash
 cat <<'PROMPT'
 You are working in /Users/mohsenazimi/code/tsz.
-Goal: architecture audit and CI health check.
+Goal: actively improve code quality, enforce architecture rules, and reduce tech debt.
+
+There is ALWAYS something to improve in a 100K+ LOC codebase. Your job is to
+find it and fix it. Do not declare "all clear" and stop — dig deeper.
 
 Steps:
 1) git pull origin main
-2) Read docs/architecture/NORTH_STAR.md and CLAUDE.md
+2) Read CLAUDE.md (architecture rules and responsibility split)
 3) Check CI via: gh run list --workflow ci.yml --limit 5
-   - If the latest run is red, investigate and fix
-4) Architecture audit:
-   - Check for TypeKey leakage outside solver crate
-   - Check for solver imports in binder
-   - Check for checker files exceeding 2000 LOC
-   - Check for forbidden cross-layer imports per CLAUDE.md rules
-5) If violations found:
-   a) Fix the highest-impact one
-   b) Run cargo nextest run to verify no regressions
-   c) Update docs/todos/arch-violations.md with the new findings
-   d) Commit the fix + updated report and push: git push origin main
-6) If NO violations found:
-   - Do NOT commit. Do NOT update docs/todos/arch-violations.md.
-   - Just print a short "Architecture audit: all clear" summary and exit.
-   - An "all clear" result is a success — it does not need a commit.
-7) If any checker files are within 50 lines of 2000 LOC limit, note them
-   in your summary output (but do NOT commit just to report near-threshold
-   files — only commit if you actually split or fix a file).
+   - If the latest run is red, fix it first — that's your top priority
+4) Find something to improve. Check these in order and fix the FIRST issue
+   you find (one fix per session — keep commits small and focused):
 
-IMPORTANT: Only commit when you make an actual code change (fix a violation,
-split a large file, fix CI). Documentation-only commits that just say
-"all clear" are wasteful — do not create them.
+   a) HARD VIOLATIONS (fix immediately):
+      - TypeKey leakage outside solver crate
+      - Solver imports in binder
+      - Checker files exceeding 2000 LOC (split them)
+      - Forbidden cross-layer imports per CLAUDE.md rules
+
+   b) DRY VIOLATIONS (duplicated logic):
+      - Search for duplicated code blocks across checker modules
+      - Look for copy-pasted match arms, repeated type-checking patterns
+      - Extract shared helpers or consolidate into existing utilities
+      - Use: grep -rn for repeated patterns, look for similar function names
+
+   c) DEAD CODE & UNNECESSARY COMPLEXITY:
+      - Find unused functions, imports, or struct fields
+      - Look for #[allow(dead_code)] annotations — remove the dead code
+      - Simplify overly complex match arms or nested conditionals
+      - Remove commented-out code blocks
+
+   d) FILE SIZE & MODULE ORGANIZATION:
+      - Split any checker file approaching 1800+ LOC (don't wait for 2000)
+      - Move misplaced logic to its correct architectural layer
+      - Break up functions longer than ~100 lines
+
+   e) CODE QUALITY:
+      - Consolidate similar error-handling patterns
+      - Replace magic numbers/strings with named constants
+      - Improve type safety (replace stringly-typed APIs with enums)
+      - Fix inconsistent naming patterns within a module
+
+5) Implement the fix
+6) Write a unit test if the change alters behavior (not needed for pure
+   refactors like extracting a helper or removing dead code)
+7) Run cargo nextest run to verify no regressions
+8) Create ONE small, focused commit and push: git push origin main
+9) If you found other issues while investigating, append them to
+   docs/todos/arch-violations.md — include file path, line range, and a
+   one-line description. Only update this file if you have NEW issues to
+   report (not previously listed ones).
+
+IMPORTANT: Every session should produce exactly one code-improving commit.
+If you genuinely cannot find anything to improve after thorough searching
+(unlikely in a 100K+ LOC codebase), only then exit without committing.
 
 Do not ask user questions. Keep going until this run is complete.
 PROMPT
