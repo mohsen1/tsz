@@ -1378,8 +1378,7 @@ impl<'a> CheckerState<'a> {
             // Filter out primitive types and literals that cannot be used in class extends
             if matches!(
                 name.as_str(),
-                "null"
-                    | "undefined"
+                "undefined"
                     | "true"
                     | "false"
                     | "void"
@@ -1404,6 +1403,9 @@ impl<'a> CheckerState<'a> {
         let ctor_types = self.constructor_types_from_type(evaluated_type);
         tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");
         if ctor_types.is_empty() {
+            if evaluated_type == TypeId::NULL {
+                return Some(TypeId::NULL);
+            }
             return None;
         }
         let ctor_type = if ctor_types.len() == 1 {

@@ -260,6 +260,9 @@ impl<'a> CheckerState<'a> {
         ctor_type: TypeId,
         visited: &mut FxHashSet<TypeId>,
     ) -> Option<TypeId> {
+        if ctor_type == TypeId::NULL {
+            return Some(TypeId::NULL);
+        }
         if ctor_type == TypeId::ERROR {
             return None;
         }
