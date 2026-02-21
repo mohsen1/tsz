@@ -615,7 +615,11 @@ impl Server {
 
         let mut offset = 0u32;
         for segment in content.split_inclusive('\n') {
-            if let Some(local) = segment.find("@type {").or_else(|| segment.find("@return {")).or_else(|| segment.find("@returns {")) {
+            if let Some(local) = segment
+                .find("@type {")
+                .or_else(|| segment.find("@return {"))
+                .or_else(|| segment.find("@returns {"))
+            {
                 return Some(tsz::checker::diagnostics::Diagnostic {
                     category: DiagnosticCategory::Suggestion,
                     code: 80004,
@@ -634,7 +638,10 @@ impl Server {
 
     fn apply_simple_jsdoc_annotation_fallback(content: &str) -> Option<String> {
         let had_trailing_newline = content.ends_with('\n');
-        let mut lines: Vec<String> = content.lines().map(std::string::ToString::to_string).collect();
+        let mut lines: Vec<String> = content
+            .lines()
+            .map(std::string::ToString::to_string)
+            .collect();
         let mut changed = false;
 
         let mut i = 0usize;
