@@ -8,6 +8,27 @@ use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn string_pref(preferences: Option<&serde_json::Value>, key: &str) -> Option<String> {
+        preferences
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_str)
+            .map(std::string::ToString::to_string)
+    }
+
+    fn string_array_pref(
+        preferences: Option<&serde_json::Value>,
+        key: &str,
+    ) -> Option<Vec<String>> {
+        preferences
+            .and_then(|p| p.get(key))
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+    }
+
     pub(crate) const fn completion_kind_to_str(
         kind: tsz::lsp::completions::CompletionItemKind,
     ) -> &'static str {
@@ -32,6 +53,7 @@ impl Server {
         &self,
         file_name: &str,
         position: tsz::lsp::position::Position,
+        preferences: Option<&serde_json::Value>,
     ) -> Vec<tsz::lsp::completions::CompletionItem> {
         let mut files = self.open_files.clone();
         if !files.contains_key(file_name)
@@ -39,16 +61,29 @@ impl Server {
         {
             files.insert(file_name.to_string(), content);
         }
+        Self::add_project_config_files(&mut files, file_name);
         if files.is_empty() {
             return Vec::new();
         }
 
         let mut project = Project::new();
+        project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
         project.set_import_module_specifier_ending(
-            self.completion_import_module_specifier_ending.clone(),
+            Self::string_pref(preferences, "importModuleSpecifierEnding")
+                .or_else(|| self.completion_import_module_specifier_ending.clone()),
         );
-        project
-            .set_auto_import_file_exclude_patterns(self.auto_import_file_exclude_patterns.clone());
+        project.set_import_module_specifier_preference(
+            Self::string_pref(preferences, "importModuleSpecifierPreference")
+                .or_else(|| self.import_module_specifier_preference.clone()),
+        );
+        project.set_auto_import_file_exclude_patterns(
+            Self::string_array_pref(preferences, "autoImportFileExcludePatterns")
+                .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone()),
+        );
+        project.set_auto_import_specifier_exclude_regexes(
+            Self::string_array_pref(preferences, "autoImportSpecifierExcludeRegexes")
+                .unwrap_or_default(),
+        );
         for (path, text) in files {
             project.set_file(path, text);
         }
@@ -124,7 +159,11 @@ impl Server {
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_items = self.project_completion_items(&file, position);
+            let project_items = self.project_completion_items(
+                &file,
+                position,
+                request.arguments.get("preferences"),
+            );
             let items = if project_items.is_empty() {
                 provider_items
             } else {
@@ -182,7 +221,8 @@ impl Server {
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
-            let project_items = self.project_completion_items(file, position);
+            let project_items =
+                self.project_completion_items(file, position, request.arguments.get("preferences"));
             let items = if project_items.is_empty() {
                 provider_items
             } else {

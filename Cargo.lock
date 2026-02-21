@@ -1546,6 +1546,7 @@ name = "tsz-lsp"
 version = "0.1.8"
 dependencies = [
  "globset",
+ "regex",
  "rustc-hash",
  "serde",
  "serde_json",

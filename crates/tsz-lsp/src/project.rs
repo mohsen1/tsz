@@ -8,6 +8,7 @@ use std::path::Path;
 use web_time::{Duration, Instant};
 
 use globset::Glob;
+use regex::{Regex, RegexBuilder};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::code_actions::{
@@ -1044,6 +1045,71 @@ fn expand_auto_import_exclude_pattern(pattern: &str) -> Vec<String> {
     expanded
 }
 
+fn parse_regex_literal_pattern(input: &str) -> Option<(&str, &str)> {
+    if !input.starts_with('/') {
+        return None;
+    }
+
+    let mut closing = None;
+    let mut escaped = false;
+    for (idx, ch) in input.char_indices().skip(1) {
+        if ch == '/' && !escaped {
+            closing = Some(idx);
+        }
+        escaped = ch == '\\' && !escaped;
+    }
+
+    let closing = closing?;
+
+    let body = &input[1..closing];
+    if body.is_empty() {
+        return None;
+    }
+
+    let mut body_escaped = false;
+    for ch in body.chars() {
+        if ch == '/' && !body_escaped {
+            return None;
+        }
+        body_escaped = ch == '\\' && !body_escaped;
+    }
+
+    Some((body, &input[closing + 1..]))
+}
+
+fn compile_auto_import_specifier_exclude_pattern(pattern: &str) -> Option<Regex> {
+    let pattern = pattern.trim();
+    if pattern.is_empty() {
+        return None;
+    }
+
+    if let Some((body, flags)) = parse_regex_literal_pattern(pattern) {
+        let mut builder = RegexBuilder::new(body);
+        for flag in flags.chars() {
+            match flag {
+                'i' => {
+                    builder.case_insensitive(true);
+                }
+                'm' => {
+                    builder.multi_line(true);
+                }
+                's' => {
+                    builder.dot_matches_new_line(true);
+                }
+                'x' => {
+                    builder.ignore_whitespace(true);
+                }
+                // JavaScript flags that don't affect `is_match` behavior here.
+                'g' | 'y' | 'u' | 'd' => {}
+                _ => return None,
+            }
+        }
+        return builder.build().ok();
+    }
+
+    Regex::new(pattern).ok()
+}
+
 /// Multi-file container for LSP operations.
 pub struct Project {
     pub(crate) files: FxHashMap<String, ProjectFile>,
@@ -1051,9 +1117,11 @@ pub struct Project {
     pub(crate) symbol_index: SymbolIndex,
     pub(crate) performance: ProjectPerformance,
     pub(crate) strict: bool,
+    pub(crate) allow_importing_ts_extensions: bool,
     pub(crate) import_module_specifier_ending: Option<String>,
     pub(crate) import_module_specifier_preference: Option<String>,
     pub(crate) auto_import_file_exclude_matchers: Vec<globset::GlobMatcher>,
+    pub(crate) auto_import_specifier_exclude_matchers: Vec<Regex>,
 }
 
 impl Project {
@@ -1065,9 +1133,11 @@ impl Project {
             symbol_index: SymbolIndex::new(),
             performance: ProjectPerformance::default(),
             strict: false,
+            allow_importing_ts_extensions: false,
             import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             auto_import_file_exclude_matchers: Vec::new(),
+            auto_import_specifier_exclude_matchers: Vec::new(),
         }
     }
 
@@ -1079,9 +1149,11 @@ impl Project {
             symbol_index: SymbolIndex::new(),
             performance: ProjectPerformance::default(),
             strict: false,
+            allow_importing_ts_extensions: false,
             import_module_specifier_ending: None,
             import_module_specifier_preference: None,
             auto_import_file_exclude_matchers: Vec::new(),
+            auto_import_specifier_exclude_matchers: Vec::new(),
         }
     }
 
@@ -1097,6 +1169,10 @@ impl Project {
         for file in self.files.values_mut() {
             file.set_strict(strict);
         }
+    }
+
+    pub const fn set_allow_importing_ts_extensions(&mut self, allow: bool) {
+        self.allow_importing_ts_extensions = allow;
     }
 
     /// Set completion module-specifier ending preference (e.g. "js").
@@ -1122,6 +1198,16 @@ impl Project {
                 };
                 self.auto_import_file_exclude_matchers
                     .push(glob.compile_matcher());
+            }
+        }
+    }
+
+    /// Set module-specifier exclusion regexes used by completions and import fixes.
+    pub fn set_auto_import_specifier_exclude_regexes(&mut self, patterns: Vec<String>) {
+        self.auto_import_specifier_exclude_matchers.clear();
+        for pattern in patterns {
+            if let Some(regex) = compile_auto_import_specifier_exclude_pattern(&pattern) {
+                self.auto_import_specifier_exclude_matchers.push(regex);
             }
         }
     }

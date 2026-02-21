@@ -22,6 +22,8 @@ const TEST_TIMEOUT_MS = 15000;
 const MEMORY_THRESHOLD_BYTES = 512 * 1024 * 1024; // 512MB
 // Check memory every N tests
 const MEMORY_CHECK_INTERVAL = 25;
+// Prevent cross-test contamination in tsz-server open file state.
+const RESTART_BRIDGE_EVERY_TEST = true;
 
 function setupGlobals(tsDir) {
     try {
@@ -661,7 +663,19 @@ function patchSessionClient(SessionClient, ts) {
     };
 
     proto.dispose = function() {
-        // No-op: not available through the server protocol
+        if (this.host && this.host._openedFiles && this.closeFile) {
+            for (const fileName of Array.from(this.host._openedFiles)) {
+                try {
+                    this.closeFile(fileName);
+                } catch {}
+            }
+            this.host._openedFiles.clear();
+        }
+        if (this._tszNativeLs && this._tszNativeLs.dispose) {
+            try {
+                this._tszNativeLs.dispose();
+            } catch {}
+        }
     };
 }
 
@@ -741,6 +755,21 @@ async function main() {
         }
 
         testsRun++;
+
+        if (RESTART_BRIDGE_EVERY_TEST) {
+            try {
+                bridge.shutdown();
+                bridge = new TszServerBridge(tszServerBinary);
+                await bridge.start();
+                TszAdapter = createTszAdapterFactory(ts, Harness, SessionClient, bridge);
+                patchTestState(FourSlash, TszAdapter);
+            } catch (restartErr) {
+                process.send({
+                    type: "error", workerId,
+                    error: `Per-test bridge restart failed: ${restartErr.message}`,
+                });
+            }
+        }
 
         // Periodic memory check
         if (testsRun % MEMORY_CHECK_INTERVAL === 0) {

@@ -1721,23 +1721,29 @@ impl Project {
                 continue;
             }
 
-            let Some(module_specifier) =
-                self.module_specifier_from_files(from_file.file_name(), &file_name)
-            else {
-                continue;
-            };
-            if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+            let module_specifiers =
+                self.auto_import_module_specifiers_from_files(from_file.file_name(), &file_name);
+            if module_specifiers.is_empty() {
                 continue;
             }
 
             let mut visited = FxHashSet::default();
             let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
+            if matches.is_empty() {
+                continue;
+            }
 
-            for export_match in matches {
+            let Some(module_specifier) = module_specifiers.into_iter().find(|module_specifier| {
+                !self.is_auto_import_candidate_excluded(&file_name, module_specifier)
+            }) else {
+                continue;
+            };
+
+            for export_match in &matches {
                 let candidate = ImportCandidate {
                     module_specifier: module_specifier.clone(),
                     local_name: missing_name.to_string(),
-                    kind: export_match.kind,
+                    kind: export_match.kind.clone(),
                     is_type_only: export_match.is_type_only,
                 };
 
@@ -1788,23 +1794,31 @@ impl Project {
                     continue;
                 }
 
-                let Some(module_specifier) =
-                    self.module_specifier_from_files(from_file.file_name(), &file_name)
-                else {
-                    continue;
-                };
-                if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                let module_specifiers = self
+                    .auto_import_module_specifiers_from_files(from_file.file_name(), &file_name);
+                if module_specifiers.is_empty() {
                     continue;
                 }
 
                 let mut visited = FxHashSet::default();
                 let matches = self.matching_exports_in_file(&file_name, &symbol_name, &mut visited);
+                if matches.is_empty() {
+                    continue;
+                }
 
-                for export_match in matches {
+                let Some(module_specifier) =
+                    module_specifiers.into_iter().find(|module_specifier| {
+                        !self.is_auto_import_candidate_excluded(&file_name, module_specifier)
+                    })
+                else {
+                    continue;
+                };
+
+                for export_match in &matches {
                     let candidate = ImportCandidate {
                         module_specifier: module_specifier.clone(),
                         local_name: symbol_name.clone(),
-                        kind: export_match.kind,
+                        kind: export_match.kind.clone(),
                         is_type_only: export_match.is_type_only,
                     };
 
@@ -1851,7 +1865,17 @@ impl Project {
             })
     }
 
+    fn auto_import_specifier_is_excluded(&self, module_specifier: &str) -> bool {
+        self.auto_import_specifier_exclude_matchers
+            .iter()
+            .any(|matcher| matcher.is_match(module_specifier))
+    }
+
     fn is_auto_import_candidate_excluded(&self, target_file: &str, module_specifier: &str) -> bool {
+        if self.auto_import_specifier_is_excluded(module_specifier) {
+            return true;
+        }
+
         if self.auto_import_path_is_excluded(target_file) {
             return true;
         }
@@ -2282,11 +2306,55 @@ impl Project {
             .find(|candidate| self.files.contains_key(candidate))
     }
 
-    fn module_specifier_from_files(&self, from_file: &str, target_file: &str) -> Option<String> {
+    fn auto_import_module_specifiers_from_files(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Vec<String> {
         if let Some(package_specifier) = self.package_specifier_from_node_modules(target_file) {
-            return Some(package_specifier);
+            return vec![package_specifier];
         }
 
+        let Some(relative) = self.relative_module_specifier_from_files(from_file, target_file)
+        else {
+            return Vec::new();
+        };
+
+        let package_imports = self.package_import_specifiers_from_files(from_file, target_file);
+        let pref = self.import_module_specifier_preference.as_deref();
+        let mut candidates = Vec::new();
+
+        if pref == Some("non-relative") {
+            candidates.extend(package_imports);
+            candidates.push(relative);
+        } else {
+            candidates.push(relative);
+            candidates.extend(package_imports);
+        }
+
+        let mut seen = FxHashSet::default();
+        candidates.retain(|spec| seen.insert(spec.clone()));
+
+        if pref.is_none() || pref == Some("shortest") {
+            candidates.sort_by(compare_module_specifier_candidates);
+        } else if pref == Some("non-relative") {
+            candidates.sort_by(|a, b| {
+                let a_relative = a.starts_with('.');
+                let b_relative = b.starts_with('.');
+                a_relative
+                    .cmp(&b_relative)
+                    .then_with(|| compare_module_specifier_candidates(a, b))
+            });
+        }
+
+        candidates
+    }
+
+    fn relative_module_specifier_from_files(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Option<String> {
         let style = self.relative_import_style(from_file);
         let from_dir = Path::new(from_file)
             .parent()
@@ -2315,6 +2383,37 @@ impl Project {
         }
 
         Some(spec)
+    }
+
+    fn package_import_specifiers_from_files(
+        &self,
+        from_file: &str,
+        target_file: &str,
+    ) -> Vec<String> {
+        let mut current = Path::new(from_file).parent();
+        while let Some(dir) = current {
+            let package_json_path = normalize_path(&dir.join("package.json"));
+            let package_json_key = path_to_string(&package_json_path).replace('\\', "/");
+            let Some(package_json_text) = self
+                .files
+                .get(&package_json_key)
+                .map(|f| f.source_text().to_string())
+                .or_else(|| std::fs::read_to_string(&package_json_key).ok())
+            else {
+                current = dir.parent();
+                continue;
+            };
+
+            let package_dir = path_to_string(dir).replace('\\', "/");
+            return package_import_specifiers_for_target(
+                &package_json_text,
+                &package_dir,
+                target_file,
+                self.allow_importing_ts_extensions,
+            );
+        }
+
+        Vec::new()
     }
 
     fn relative_import_style(&self, from_file: &str) -> RelativeImportStyle {
@@ -2623,4 +2722,172 @@ fn relative_path(from: &Path, to: &Path) -> PathBuf {
 
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
+}
+
+fn compare_module_specifier_candidates(a: &String, b: &String) -> Ordering {
+    let a_segments = a.matches('/').count();
+    let b_segments = b.matches('/').count();
+    a_segments
+        .cmp(&b_segments)
+        .then_with(|| a.len().cmp(&b.len()))
+        .then_with(|| a.cmp(b))
+}
+
+fn package_import_specifiers_for_target(
+    package_json_text: &str,
+    package_dir: &str,
+    target_file: &str,
+    allow_importing_ts_extensions: bool,
+) -> Vec<String> {
+    let Some(package_json) = serde_json::from_str::<serde_json::Value>(package_json_text).ok()
+    else {
+        return Vec::new();
+    };
+
+    let Some(imports) = package_json
+        .get("imports")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Vec::new();
+    };
+
+    let package_dir = normalize_path(Path::new(package_dir));
+    let target_path = strip_js_ts_extension(Path::new(target_file));
+    let target_normalized = path_to_string(&target_path).replace('\\', "/");
+    let target_lower = target_normalized.to_ascii_lowercase();
+
+    let mut specs = Vec::new();
+
+    for (specifier_pattern, target_mapping) in imports {
+        if !specifier_pattern.starts_with('#') {
+            continue;
+        }
+
+        let target_patterns = collect_import_targets(target_mapping);
+        for target_pattern in target_patterns {
+            let target_pattern = target_pattern.replace('\\', "/");
+            if !target_pattern.starts_with("./") {
+                continue;
+            }
+
+            let resolved = normalize_path(&package_dir.join(&target_pattern));
+            let resolved_stripped =
+                path_to_string(&strip_js_ts_extension(&resolved)).replace('\\', "/");
+
+            let Some(capture) =
+                wildcard_capture_case_insensitive(&resolved_stripped, &target_lower)
+            else {
+                continue;
+            };
+
+            let Some(mut specifier) = apply_wildcard_capture(specifier_pattern, &capture) else {
+                continue;
+            };
+
+            if specifier_pattern.contains('*')
+                && !specifier_pattern.ends_with(".js")
+                && !specifier_pattern.ends_with(".ts")
+                && !has_source_extension(&target_pattern)
+            {
+                if allow_importing_ts_extensions || specifier_pattern.contains('/') {
+                    if let Some(ext) = ts_source_extension(target_file) {
+                        specifier.push_str(ext);
+                    } else {
+                        specifier.push_str(".js");
+                    }
+                } else {
+                    specifier.push_str(".js");
+                }
+            }
+
+            specs.push(specifier);
+        }
+    }
+
+    let mut seen = FxHashSet::default();
+    specs.retain(|spec| seen.insert(spec.clone()));
+    specs.sort_by(compare_module_specifier_candidates);
+    specs
+}
+
+fn collect_import_targets(value: &serde_json::Value) -> Vec<String> {
+    match value {
+        serde_json::Value::String(text) => vec![text.to_string()],
+        serde_json::Value::Array(items) => items.iter().flat_map(collect_import_targets).collect(),
+        serde_json::Value::Object(map) => map.values().flat_map(collect_import_targets).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn apply_wildcard_capture(specifier_pattern: &str, capture: &str) -> Option<String> {
+    if let Some((prefix, suffix)) = specifier_pattern.split_once('*') {
+        let mut spec = String::with_capacity(prefix.len() + capture.len() + suffix.len());
+        spec.push_str(prefix);
+        spec.push_str(capture);
+        spec.push_str(suffix);
+        return Some(spec);
+    }
+
+    if capture.is_empty() {
+        return Some(specifier_pattern.to_string());
+    }
+
+    None
+}
+
+fn wildcard_capture_case_insensitive(pattern: &str, target_lower: &str) -> Option<String> {
+    let pattern = pattern.replace('\\', "/");
+    let pattern_lower = pattern.to_ascii_lowercase();
+    let target = target_lower.to_ascii_lowercase();
+
+    if let Some((prefix, suffix)) = pattern_lower.split_once('*') {
+        if !target.starts_with(prefix) || !target.ends_with(suffix) {
+            return None;
+        }
+        let start = prefix.len();
+        let end = target.len().saturating_sub(suffix.len());
+        return Some(target[start..end].to_string());
+    }
+
+    (pattern_lower == target).then_some(String::new())
+}
+
+fn strip_js_ts_extension(path: &Path) -> PathBuf {
+    const SOURCE_SUFFIXES: [&str; 11] = [
+        ".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs",
+    ];
+    let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
+        return path.to_path_buf();
+    };
+
+    for suffix in SOURCE_SUFFIXES {
+        if let Some(base_name) = file_name.strip_suffix(suffix) {
+            if base_name.is_empty() {
+                return path.to_path_buf();
+            }
+            let mut base = PathBuf::new();
+            if let Some(parent) = path.parent() {
+                base.push(parent);
+            }
+            base.push(base_name);
+            return base;
+        }
+    }
+
+    path.to_path_buf()
+}
+
+fn has_source_extension(path: &str) -> bool {
+    let normalized = path.replace('\\', "/");
+    normalized.ends_with(".d.ts")
+        || normalized.ends_with(".d.mts")
+        || normalized.ends_with(".d.cts")
+        || normalized.ends_with(".ts")
+        || normalized.ends_with(".tsx")
+        || normalized.ends_with(".mts")
+        || normalized.ends_with(".cts")
+        || normalized.ends_with(".js")
+        || normalized.ends_with(".jsx")
+        || normalized.ends_with(".mjs")
+        || normalized.ends_with(".cjs")
 }

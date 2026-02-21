@@ -52,6 +52,21 @@ impl Server {
             })
     }
 
+    fn extract_auto_import_specifier_exclude_regexes(
+        request: &TsServerRequest,
+    ) -> Option<Vec<String>> {
+        request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("autoImportSpecifierExcludeRegexes"))
+            .and_then(serde_json::Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
+                    .collect()
+            })
+    }
+
     pub(crate) fn handle_configure(
         &mut self,
         seq: u64,
@@ -83,6 +98,8 @@ impl Server {
             .unwrap_or(true);
         self.auto_import_file_exclude_patterns =
             Self::extract_auto_import_file_exclude_patterns(request).unwrap_or_default();
+        self.auto_import_specifier_exclude_regexes =
+            Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
 
         // Accept configuration; selected completion preferences are wired.
         TsServerResponse {
@@ -525,10 +542,20 @@ impl Server {
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
+            let auto_import_specifier_exclude_regexes =
+                Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
+            let import_module_specifier_preference = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("importModuleSpecifierPreference"))
+                .and_then(|v| v.as_str())
+                .or(self.import_module_specifier_preference.as_deref());
             let import_candidates = self.collect_import_candidates(
                 file_path,
                 &filtered_diagnostics,
                 &auto_import_file_exclude_patterns,
+                &auto_import_specifier_exclude_regexes,
+                import_module_specifier_preference,
             );
 
             let context = CodeActionContext {
@@ -796,6 +823,8 @@ impl Server {
                 file_path,
                 &content,
                 &auto_import_file_exclude_patterns,
+                &auto_import_specifier_exclude_regexes,
+                import_module_specifier_preference,
                 &line_map,
             ) {
                 response_actions.retain(|existing| {
@@ -2699,6 +2728,8 @@ impl Server {
         file_path: &str,
         content: &str,
         auto_import_file_exclude_patterns: &[String],
+        auto_import_specifier_exclude_regexes: &[String],
+        import_module_specifier_preference: Option<&str>,
         line_map: &LineMap,
     ) -> Option<serde_json::Value> {
         let (_, interface_name, class_open_brace, class_close_brace) =
@@ -2754,6 +2785,8 @@ impl Server {
                 file_path,
                 &ident,
                 auto_import_file_exclude_patterns,
+                auto_import_specifier_exclude_regexes,
+                import_module_specifier_preference,
             ) {
                 if !class_imports.contains_key(&ident) {
                     import_lines.push(format!("import {{ {ident} }} from '{module_specifier}';"));
@@ -2810,6 +2843,8 @@ impl Server {
         current_file_path: &str,
         symbol_name: &str,
         auto_import_file_exclude_patterns: &[String],
+        auto_import_specifier_exclude_regexes: &[String],
+        import_module_specifier_preference: Option<&str>,
     ) -> Option<String> {
         let mut files = self.open_files.clone();
         if !files.contains_key(current_file_path)
@@ -2820,13 +2855,19 @@ impl Server {
         Self::add_project_config_files(&mut files, current_file_path);
 
         let mut project = Project::new();
+        project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
         project.set_import_module_specifier_ending(
             self.completion_import_module_specifier_ending.clone(),
         );
         project.set_import_module_specifier_preference(
-            self.import_module_specifier_preference.clone(),
+            import_module_specifier_preference
+                .map(std::string::ToString::to_string)
+                .or_else(|| self.import_module_specifier_preference.clone()),
         );
         project.set_auto_import_file_exclude_patterns(auto_import_file_exclude_patterns.to_vec());
+        project.set_auto_import_specifier_exclude_regexes(
+            auto_import_specifier_exclude_regexes.to_vec(),
+        );
         for (path, text) in files {
             project.set_file(path, text);
         }
@@ -3202,6 +3243,8 @@ impl Server {
         current_file_path: &str,
         diagnostics: &[tsz::lsp::diagnostics::LspDiagnostic],
         auto_import_file_exclude_patterns: &[String],
+        auto_import_specifier_exclude_regexes: &[String],
+        import_module_specifier_preference: Option<&str>,
     ) -> Vec<ImportCandidate> {
         let mut files = self.open_files.clone();
         if !files.contains_key(current_file_path)
@@ -3215,13 +3258,19 @@ impl Server {
         }
 
         let mut project = Project::new();
+        project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
         project.set_import_module_specifier_ending(
             self.completion_import_module_specifier_ending.clone(),
         );
         project.set_import_module_specifier_preference(
-            self.import_module_specifier_preference.clone(),
+            import_module_specifier_preference
+                .map(std::string::ToString::to_string)
+                .or_else(|| self.import_module_specifier_preference.clone()),
         );
         project.set_auto_import_file_exclude_patterns(auto_import_file_exclude_patterns.to_vec());
+        project.set_auto_import_specifier_exclude_regexes(
+            auto_import_specifier_exclude_regexes.to_vec(),
+        );
         for (path, text) in files {
             project.set_file(path, text);
         }
@@ -3314,11 +3363,21 @@ impl Server {
             let auto_import_file_exclude_patterns =
                 Self::extract_auto_import_file_exclude_patterns(request)
                     .unwrap_or_else(|| self.auto_import_file_exclude_patterns.clone());
+            let auto_import_specifier_exclude_regexes =
+                Self::extract_auto_import_specifier_exclude_regexes(request).unwrap_or_default();
+            let import_module_specifier_preference = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("importModuleSpecifierPreference"))
+                .and_then(|v| v.as_str())
+                .or(self.import_module_specifier_preference.as_deref());
             let import_candidates = if fix_id == "fixMissingImport" {
                 self.collect_import_candidates(
                     file_path,
                     &filtered_diagnostics,
                     &auto_import_file_exclude_patterns,
+                    &auto_import_specifier_exclude_regexes,
+                    import_module_specifier_preference,
                 )
             } else {
                 Vec::new()
