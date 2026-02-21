@@ -28,6 +28,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 globset = { workspace = true }
 stacker = "0.1.23"
+web-time = { workspace = true }
 
 [lints]
 workspace = true

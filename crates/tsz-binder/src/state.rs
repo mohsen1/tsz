@@ -1527,6 +1527,7 @@ impl BinderState {
         };
 
         // Debug: log what's going into file_locals
+        #[cfg(not(target_arch = "wasm32"))]
         if std::env::var("BIND_DEBUG").is_ok() {
             debug!(
                 "[FILE_LOCALS] Root scope has {} symbols",

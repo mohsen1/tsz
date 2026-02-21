@@ -56,6 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 tracing-tree = "0.4"
 walkdir = "2.5"
 wasm-bindgen = "0.2"
+web-time = "1.1"
 
 [workspace.lints.rust]
 unsafe_code = "warn"

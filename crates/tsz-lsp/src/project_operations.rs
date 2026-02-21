@@ -3,7 +3,7 @@
 use std::cmp::Ordering;
 use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
-use std::time::Instant;
+use web_time::Instant;
 
 use rustc_hash::FxHashSet;
 

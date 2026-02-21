@@ -22,6 +22,7 @@ rustc-hash = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+web-time = { workspace = true }
 
 [lints]
 workspace = true
