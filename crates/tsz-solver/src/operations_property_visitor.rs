@@ -677,11 +677,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
             if any_from_index && self.no_unchecked_indexed_access {
                 wt = self.add_undefined_if_unchecked(wt);
             }
-            if wt != type_id {
-                Some(wt)
-            } else {
-                None
-            }
+            if wt != type_id { Some(wt) } else { None }
         } else {
             None
         };

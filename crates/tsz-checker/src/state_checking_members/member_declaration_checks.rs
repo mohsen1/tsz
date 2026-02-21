@@ -1872,26 +1872,20 @@ impl<'a> CheckerState<'a> {
         use crate::diagnostics::diagnostic_codes;
         use tsz_binder::symbol_flags;
 
-        println!("Checking TS2302 for sym_id {sym_id:?}");
-
         // Must be in a class and inside a static member
         let Some(enclosing_class) = self.ctx.enclosing_class.as_ref() else {
-            println!("Early return: No enclosing class");
             return;
         };
 
         if !enclosing_class.in_static_member {
-            println!("Early return: Not in static member");
             return;
         }
 
         // Must be a type parameter
         let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
-            println!("Early return: Symbol not found");
             return;
         };
         if symbol.flags & symbol_flags::TYPE_PARAMETER == 0 {
-            println!("Early return: Not a type parameter");
             return;
         }
 
@@ -1903,16 +1897,10 @@ impl<'a> CheckerState<'a> {
             .get(&enclosing_class.class_idx.0)
             .copied();
 
-        println!(
-            "Comparing symbol parent {:?} with class sym {:?}",
-            symbol.parent, class_sym_id
-        );
-
         // Is sym_id a type parameter of class_sym?
         if let Some(class_sym) = class_sym_id
             && symbol.parent == class_sym
         {
-            println!("FOUND TS2302! error_node: {error_node:?}");
             self.error_at_node(
                 error_node,
                 "Static members cannot reference class type parameters.",
