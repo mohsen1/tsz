@@ -608,7 +608,16 @@ impl<'a> CheckerState<'a> {
                 .get_identifier_text_from_idx(name_idx)
                 .unwrap_or_else(|| String::from("unknown"));
 
-            if self.ctx.binder.file_locals.get(&name_str).is_none() {
+            let mut is_local_or_imported = false;
+            if let Some(sym_id) = self.ctx.binder.file_locals.get(&name_str)
+                && let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+                    // Check if it was actually declared or imported in THIS file
+                    if symbol.decl_file_idx == self.ctx.current_file_idx as u32 {
+                        is_local_or_imported = true;
+                    }
+                }
+
+            if !is_local_or_imported {
                 // If it resolves to something globally but is not local, emit TS2661
                 if self.resolve_identifier_symbol(name_idx).is_some()
                     || matches!(
