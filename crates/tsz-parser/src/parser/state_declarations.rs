@@ -377,7 +377,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::Identifier)
             || self.is_token(SyntaxKind::StringLiteral)
             || self.is_token(SyntaxKind::NumericLiteral)
-            || self.is_property_name_keyword()
+            || self.is_identifier_or_keyword()
         {
             Some(TypeMemberPropertyOrMethodName::Property(
                 self.parse_property_name(),
