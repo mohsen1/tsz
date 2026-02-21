@@ -740,17 +740,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
                             && let Some(member_name_text) =
                                 self.ctx.arena.get_identifier_text(member_data.name)
-                                && member_name_text == name_text {
-                                    if member_data.initializer.is_none() {
-                                        return true;
-                                    } else {
-                                        return self.is_numeric_constant_enum_expr(
-                                            member_data.initializer,
-                                            enum_data,
-                                            depth + 1,
-                                        );
-                                    }
-                                }
+                            && member_name_text == name_text
+                        {
+                            if member_data.initializer.is_none() {
+                                return true;
+                            } else {
+                                return self.is_numeric_constant_enum_expr(
+                                    member_data.initializer,
+                                    enum_data,
+                                    depth + 1,
+                                );
+                            }
+                        }
                     }
                 }
                 false
