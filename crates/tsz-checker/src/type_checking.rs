@@ -646,13 +646,24 @@ impl<'a> CheckerState<'a> {
             return;
         };
 
+        let elements_len = pattern_data.elements.nodes.len();
+
+        // TS2531/TS2532/TS2533: Destructuring from a possibly-nullish value is an error.
+        // TypeScript only emits this directly on the pattern when the pattern is empty.
+        // For non-empty patterns, errors are emitted when accessing the individual properties/elements.
+        if elements_len == 0 && pattern_type != TypeId::ANY && pattern_type != TypeId::ERROR {
+            let (non_nullish_type, nullish_cause) = self.split_nullish_type(pattern_type);
+            if let Some(cause) = nullish_cause {
+                self.report_nullish_object(pattern_idx, cause, non_nullish_type.is_none());
+            }
+        }
+
         // Traverse binding elements
         // Note: Array destructuring iterability (TS2488) is checked by the caller
         // (state_checking.rs) via check_destructuring_iterability before invoking
         // check_binding_pattern, so we do NOT call check_array_destructuring_target_type
         // here to avoid duplicate TS2488 errors.
 
-        let elements_len = pattern_data.elements.nodes.len();
         for (i, &element_idx) in pattern_data.elements.nodes.iter().enumerate() {
             if i < elements_len - 1
                 && let Some(element_node) = self.ctx.arena.get(element_idx)
