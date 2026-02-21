@@ -303,10 +303,12 @@ build_runner() {
 main() {
     local skip_build=0
     local show_help=0
+    local runner_args=()
     for arg in "$@"; do
         case "$arg" in
             --skip-build|--no-build) skip_build=1 ;;
             --help|-h) show_help=1 ;;
+            *) runner_args+=("$arg") ;;
         esac
     done
 
@@ -337,7 +339,7 @@ main() {
     echo ""
 
     cd "$SCRIPT_DIR"
-    node dist/runner.js "$@"
+    node dist/runner.js "${runner_args[@]}"
 }
 
 main "$@"
