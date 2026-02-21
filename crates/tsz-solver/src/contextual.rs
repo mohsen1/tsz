@@ -315,6 +315,21 @@ impl<'a> TypeVisitor for ArrayElementExtractor<'a> {
         Some(elem_type)
     }
 
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        if let Some(ref idx) = shape.number_index {
+            return Some(idx.value_type);
+        }
+        if let Some(ref idx) = shape.string_index {
+            return Some(idx.value_type);
+        }
+        None
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        self.visit_object(shape_id)
+    }
+
     fn visit_tuple(&mut self, elements_id: u32) -> Self::Output {
         let elements = self.db.tuple_list(TupleListId(elements_id));
         if elements.is_empty() {
@@ -370,6 +385,21 @@ impl<'a> TypeVisitor for TupleElementExtractor<'a> {
 
     fn visit_array(&mut self, elem_type: TypeId) -> Self::Output {
         Some(elem_type)
+    }
+
+    fn visit_object(&mut self, shape_id: u32) -> Self::Output {
+        let shape = self.db.object_shape(ObjectShapeId(shape_id));
+        if let Some(ref idx) = shape.number_index {
+            return Some(idx.value_type);
+        }
+        if let Some(ref idx) = shape.string_index {
+            return Some(idx.value_type);
+        }
+        None
+    }
+
+    fn visit_object_with_index(&mut self, shape_id: u32) -> Self::Output {
+        self.visit_object(shape_id)
     }
 
     fn visit_union(&mut self, list_id: u32) -> Self::Output {
