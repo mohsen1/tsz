@@ -2138,15 +2138,7 @@ impl ScannerState {
             return self.token;
         }
 
-        // Expression container
-        if ch == CharacterCodes::OPEN_BRACE {
-            self.pos += 1;
-            self.token = SyntaxKind::OpenBraceToken;
-            return self.token;
-        }
-
-        self.token = SyntaxKind::Unknown;
-        self.token
+        self.scan()
     }
 
     /// Scan a JSX string literal (used for attribute values).
