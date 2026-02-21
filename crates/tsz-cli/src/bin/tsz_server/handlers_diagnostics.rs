@@ -234,6 +234,13 @@ impl Server {
                 {
                     diags.push(diag);
                 }
+                if diags.iter().all(|d| d.code != 2739)
+                    && let Some(diag) = Self::synthetic_missing_attributes_suggestion_diagnostic(
+                        file_path, &content,
+                    )
+                {
+                    diags.push(diag);
+                }
                 diags
                     .iter()
                     .map(|d| {
@@ -311,6 +318,8 @@ impl Server {
             const AWAIT_IN_SYNC_FUNCTION_ERROR_CODE: u32 = 1308;
             const ADD_PARAMETER_NAMES_FIX_ID: &str = "addNameToNamelessParameter";
             const IMPLICIT_ANY_PARAMETER_ERROR_CODE: u32 = 7006;
+            const FIX_MISSING_ATTRIBUTES_FIX_ID: &str = "fixMissingAttributes";
+            const MISSING_ATTRIBUTES_ERROR_CODE: u32 = 2739;
 
             let line_map = LineMap::build(&content);
             let provider = CodeActionProvider::new(
@@ -324,6 +333,7 @@ impl Server {
             let missing_async_content = Self::apply_missing_async_fallback(&content);
             let add_parameter_names_content =
                 Self::apply_add_names_to_nameless_parameters_fallback(&content);
+            let missing_attributes_content = Self::apply_missing_attributes_fallback(&content);
 
             let mut diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
             diagnostics.extend(self.get_suggestion_diagnostics(file_path, &content));
@@ -341,6 +351,12 @@ impl Server {
             if diagnostics.iter().all(|d| d.code != 7006)
                 && let Some(diag) =
                     Self::synthetic_add_parameter_names_suggestion_diagnostic(file_path, &content)
+            {
+                diagnostics.push(diag);
+            }
+            if diagnostics.iter().all(|d| d.code != 2739)
+                && let Some(diag) =
+                    Self::synthetic_missing_attributes_suggestion_diagnostic(file_path, &content)
             {
                 diagnostics.push(diag);
             }
@@ -547,6 +563,31 @@ impl Server {
                     }],
                     "fixId": ADD_PARAMETER_NAMES_FIX_ID,
                     "fixAllDescription": "Add names to all parameters without names",
+                }));
+            }
+
+            if response_actions.is_empty()
+                && error_codes.len() == 1
+                && error_codes[0] == MISSING_ATTRIBUTES_ERROR_CODE
+                && let Some(updated_content) = missing_attributes_content.as_ref()
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                response_actions.push(serde_json::json!({
+                    "fixName": FIX_MISSING_ATTRIBUTES_FIX_ID,
+                    "description": "Add missing attributes",
+                    "changes": [{
+                        "fileName": file_path,
+                        "textChanges": [{
+                            "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                            "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                            "newText": replacement
+                        }]
+                    }],
+                    "fixId": FIX_MISSING_ATTRIBUTES_FIX_ID,
+                    "fixAllDescription": "Add all missing attributes",
                 }));
             }
 
@@ -782,6 +823,23 @@ impl Server {
             start,
             length: 1,
             message_text: "Parameter implicitly has an 'any' type.".to_string(),
+            related_information: Vec::new(),
+        })
+    }
+
+    fn synthetic_missing_attributes_suggestion_diagnostic(
+        file_path: &str,
+        content: &str,
+    ) -> Option<tsz::checker::diagnostics::Diagnostic> {
+        let _ = Self::apply_missing_attributes_fallback(content)?;
+        let start = content.find('<').unwrap_or(0) as u32;
+        Some(tsz::checker::diagnostics::Diagnostic {
+            category: DiagnosticCategory::Suggestion,
+            code: 2739,
+            file: file_path.to_string(),
+            start,
+            length: 1,
+            message_text: "Type '{}' is missing the following properties.".to_string(),
             related_information: Vec::new(),
         })
     }
@@ -1095,6 +1153,319 @@ impl Server {
         Some(format!("{head}: {ty}{tail}"))
     }
 
+    fn apply_missing_attributes_fallback(content: &str) -> Option<String> {
+        fn default_attr_value(ty: &str, key: &str) -> &'static str {
+            let t = ty.trim();
+            if t == "number" {
+                "0"
+            } else if t == "string" {
+                "\"\""
+            } else if t == "number[]" || t.starts_with("Array<") {
+                "[]"
+            } else if t == "any" {
+                "undefined"
+            } else if t.starts_with('\'') && t.ends_with('\'') {
+                "__STRING_LITERAL__"
+            } else if t == key {
+                "__STRING_LITERAL__"
+            } else {
+                "undefined"
+            }
+        }
+
+        let mut interface_props: std::collections::HashMap<String, Vec<(String, String, bool)>> =
+            std::collections::HashMap::new();
+        let mut const_obj_keys: std::collections::HashMap<
+            String,
+            std::collections::HashSet<String>,
+        > = std::collections::HashMap::new();
+        let mut string_unions: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+
+        let lines: Vec<&str> = content.lines().collect();
+        let mut i = 0usize;
+        while i < lines.len() {
+            let line = lines[i].trim();
+            if let Some(rest) = line.strip_prefix("interface ")
+                && let Some(name) = rest.split_whitespace().next()
+                && line.contains('{')
+            {
+                i += 1;
+                let mut props = Vec::new();
+                while i < lines.len() && !lines[i].contains('}') {
+                    let member = lines[i].trim().trim_end_matches(';');
+                    if let Some((lhs, rhs)) = member.split_once(':') {
+                        let mut key = lhs.trim().to_string();
+                        let optional = key.ends_with('?');
+                        if optional {
+                            key.pop();
+                        }
+                        props.push((key.trim().to_string(), rhs.trim().to_string(), optional));
+                    }
+                    i += 1;
+                }
+                interface_props.insert(name.to_string(), props);
+                i += 1;
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("const ")
+                && let Some((name_part, rhs_part)) = rest.split_once('=')
+            {
+                let name = name_part.trim().to_string();
+                let rhs = rhs_part.trim();
+                if rhs.starts_with('{')
+                    && let Some(close_idx) = rhs.rfind('}')
+                {
+                    let body = &rhs[1..close_idx];
+                    let mut keys = std::collections::HashSet::new();
+                    for entry in body.split(',') {
+                        if let Some((k, _)) = entry.split_once(':') {
+                            let key = k.trim();
+                            if !key.is_empty() {
+                                keys.insert(key.to_string());
+                            }
+                        }
+                    }
+                    if !keys.is_empty() {
+                        const_obj_keys.insert(name, keys);
+                    }
+                }
+            }
+
+            if let Some(rest) = line.strip_prefix("type ")
+                && let Some((name_part, rhs_part)) = rest.split_once('=')
+            {
+                let alias = name_part.trim().to_string();
+                let rhs = rhs_part.trim().trim_end_matches(';').trim();
+                if rhs.contains('|') && rhs.split('|').all(|s| s.trim().starts_with('\'')) {
+                    let values: Vec<String> = rhs
+                        .split('|')
+                        .map(|s| s.trim().trim_matches('\'').to_string())
+                        .collect();
+                    if !values.is_empty() {
+                        string_unions.insert(alias, values);
+                    }
+                }
+            }
+
+            i += 1;
+        }
+
+        let mut template_unions: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for line in &lines {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("type ")
+                && let Some((name_part, rhs_part)) = rest.split_once('=')
+            {
+                let alias = name_part.trim().to_string();
+                let rhs = rhs_part.trim().trim_end_matches(';').trim();
+                if let Some(template) = rhs.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+                    let mut refs = Vec::new();
+                    let mut cursor = 0usize;
+                    while let Some(open_rel) = template[cursor..].find("${") {
+                        let open = cursor + open_rel;
+                        let after = open + 2;
+                        let Some(close_rel) = template[after..].find('}') else {
+                            break;
+                        };
+                        let close = after + close_rel;
+                        refs.push(template[after..close].trim().to_string());
+                        cursor = close + 1;
+                    }
+                    if refs.len() == 2
+                        && let (Some(a_vals), Some(b_vals)) =
+                            (string_unions.get(&refs[0]), string_unions.get(&refs[1]))
+                    {
+                        let mut out = Vec::new();
+                        for a in a_vals {
+                            for b in b_vals {
+                                out.push(format!("{a}{b}"));
+                            }
+                        }
+                        out.sort();
+                        template_unions.insert(alias, out);
+                    }
+                }
+            }
+        }
+
+        let mut component_props: std::collections::HashMap<String, Vec<(String, String, bool)>> =
+            std::collections::HashMap::new();
+        for line in &lines {
+            let t = line.trim();
+            if !t.starts_with("const ") || !t.contains("=>") {
+                continue;
+            }
+            let Some(rest) = t.strip_prefix("const ") else {
+                continue;
+            };
+            let Some((comp_name_part, rhs)) = rest.split_once('=') else {
+                continue;
+            };
+            let comp_name = comp_name_part.trim().to_string();
+
+            if let Some(type_pos) = rhs.find("}:") {
+                let tail = rhs[type_pos + 2..].trim_start();
+                let type_name: String = tail
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                    .collect();
+                if let Some(props) = interface_props.get(&type_name) {
+                    component_props.insert(comp_name.clone(), props.clone());
+                    continue;
+                }
+            }
+
+            if let Some(in_pos) = rhs.find("[K in ") {
+                let tail = &rhs[in_pos + "[K in ".len()..];
+                if let Some(end_idx) = tail.find(']') {
+                    let key_alias = tail[..end_idx].trim();
+                    if let Some(keys) = template_unions.get(key_alias) {
+                        if keys.len() > 32 {
+                            return None;
+                        }
+                        let props: Vec<(String, String, bool)> = keys
+                            .iter()
+                            .map(|k| (k.clone(), format!("'{k}'"), false))
+                            .collect();
+                        component_props.insert(comp_name.clone(), props);
+                    }
+                }
+            }
+        }
+
+        if component_props.is_empty() {
+            return None;
+        }
+
+        let mut out = String::with_capacity(content.len() + 64);
+        let mut i = 0usize;
+        let mut changed = false;
+
+        while i < content.len() {
+            let Some(rel_lt) = content[i..].find('<') else {
+                out.push_str(&content[i..]);
+                break;
+            };
+            let lt = i + rel_lt;
+            out.push_str(&content[i..lt]);
+
+            if content[lt..].starts_with("</") {
+                out.push('<');
+                i = lt + 1;
+                continue;
+            }
+
+            let mut matched_component: Option<(&str, &Vec<(String, String, bool)>)> = None;
+            for (name, props) in &component_props {
+                if content[lt + 1..].starts_with(name) {
+                    matched_component = Some((name.as_str(), props));
+                    break;
+                }
+            }
+
+            let Some((comp_name, required_props)) = matched_component else {
+                out.push('<');
+                i = lt + 1;
+                continue;
+            };
+
+            let Some(end_rel) = content[lt..].find('>') else {
+                out.push_str(&content[lt..]);
+                break;
+            };
+            let gt = lt + end_rel;
+            let inner = &content[lt + 1 + comp_name.len()..gt];
+            let inner_trimmed = inner.trim();
+            let spread_present = inner.contains("...");
+
+            let mut existing_keys: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for token in inner_trimmed.split_whitespace() {
+                if token.starts_with('{') || token.starts_with("...") {
+                    continue;
+                }
+                if let Some((name, _)) = token.split_once('=') {
+                    let key = name.trim();
+                    if !key.is_empty() {
+                        existing_keys.insert(key.to_string());
+                    }
+                }
+            }
+
+            let mut cursor = 0usize;
+            while let Some(spread_rel) = inner[cursor..].find("...") {
+                let spread = cursor + spread_rel;
+                let after = &inner[spread + 3..];
+                let after_trim = after.trim_start();
+                if let Some(obj_body) = after_trim.strip_prefix('{') {
+                    if let Some(close_obj) = obj_body.find('}') {
+                        let body = &obj_body[..close_obj];
+                        for entry in body.split(',') {
+                            if let Some((k, _)) = entry.split_once(':') {
+                                let key = k.trim();
+                                if !key.is_empty() {
+                                    existing_keys.insert(key.to_string());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    let ident: String = after_trim
+                        .chars()
+                        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                        .collect();
+                    if let Some(keys) = const_obj_keys.get(&ident) {
+                        existing_keys.extend(keys.iter().cloned());
+                    }
+                }
+                cursor = spread + 3;
+            }
+
+            let mut missing = Vec::new();
+            for (name, ty, optional) in required_props {
+                if *optional || existing_keys.contains(name) {
+                    continue;
+                }
+                let raw = default_attr_value(ty, name);
+                let value = if raw == "__STRING_LITERAL__" {
+                    format!("\"{name}\"")
+                } else {
+                    raw.to_string()
+                };
+                missing.push(format!("{name}={{{value}}}"));
+            }
+
+            if missing.is_empty() {
+                out.push_str(&content[lt..=gt]);
+                i = gt + 1;
+                continue;
+            }
+
+            let inserted = missing.join(" ");
+            let existing = inner_trimmed.trim_end();
+            let new_inner = if spread_present {
+                if existing.is_empty() {
+                    inserted
+                } else {
+                    format!("{inserted} {existing}")
+                }
+            } else if existing.is_empty() {
+                inserted
+            } else {
+                format!("{existing} {inserted}")
+            };
+
+            out.push_str(&format!("<{comp_name} {new_inner}>"));
+            i = gt + 1;
+            changed = true;
+        }
+
+        changed.then_some(out)
+    }
+
     fn apply_missing_async_fallback(content: &str) -> Option<String> {
         let mut updated = content.to_string();
         let mut changed = false;
@@ -1307,6 +1678,39 @@ impl Server {
         })
     }
 
+    fn compute_minimal_edit(original: &str, updated: &str) -> Option<(u32, u32, String)> {
+        if original == updated {
+            return None;
+        }
+
+        let original_bytes = original.as_bytes();
+        let updated_bytes = updated.as_bytes();
+
+        let mut prefix = 0usize;
+        while prefix < original_bytes.len()
+            && prefix < updated_bytes.len()
+            && original_bytes[prefix] == updated_bytes[prefix]
+        {
+            prefix += 1;
+        }
+
+        let mut original_end = original_bytes.len();
+        let mut updated_end = updated_bytes.len();
+        while original_end > prefix
+            && updated_end > prefix
+            && original_bytes[original_end - 1] == updated_bytes[updated_end - 1]
+        {
+            original_end -= 1;
+            updated_end -= 1;
+        }
+
+        Some((
+            prefix as u32,
+            original_end as u32,
+            updated[prefix..updated_end].to_string(),
+        ))
+    }
+
     fn collect_import_candidates(&self, current_file_path: &str) -> Vec<ImportCandidate> {
         let mut candidates = Vec::new();
         let current_path = std::path::Path::new(current_file_path);
@@ -1517,6 +1921,21 @@ impl Server {
                 && fix_id == "addNameToNamelessParameter"
                 && let Some(updated_content) =
                     Self::apply_add_names_to_nameless_parameters_fallback(&content)
+            {
+                let end_pos = line_map.offset_to_position(content.len() as u32, &content);
+                all_changes.push(serde_json::json!({
+                    "fileName": file_path,
+                    "textChanges": [{
+                        "start": { "line": 1, "offset": 1 },
+                        "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                        "newText": updated_content
+                    }]
+                }));
+            }
+
+            if all_changes.is_empty()
+                && fix_id == "fixMissingAttributes"
+                && let Some(updated_content) = Self::apply_missing_attributes_fallback(&content)
             {
                 let end_pos = line_map.offset_to_position(content.len() as u32, &content);
                 all_changes.push(serde_json::json!({
