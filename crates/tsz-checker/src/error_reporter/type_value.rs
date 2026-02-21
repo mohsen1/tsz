@@ -149,6 +149,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if self.is_direct_heritage_type_reference(idx) {
+            return;
+        }
+
         if let Some(loc) = self.get_source_location(idx) {
             // Check if this is an ES2015+ type that requires specific lib support
             let is_es2015_type = lib_loader::is_es2015_plus_type(name);
