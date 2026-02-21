@@ -1175,7 +1175,7 @@ fn test_quickfix_add_missing_import_named() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
-    assert_eq!(updated, "import { foo } from \"./foo\";\nfoo();\n");
+    assert_eq!(updated, "import { foo } from \"./foo\";\n\nfoo();\n");
 }
 
 #[test]
@@ -1521,7 +1521,7 @@ fn test_quickfix_add_missing_import_default() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
-    assert_eq!(updated, "import Foo from \"./foo\";\nFoo();\n");
+    assert_eq!(updated, "import Foo from \"./foo\";\n\nFoo();\n");
 }
 
 #[test]
@@ -1569,7 +1569,7 @@ fn test_quickfix_add_missing_import_namespace() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["test.ts"];
     let updated = apply_text_edits(source, &line_map, edits);
-    assert_eq!(updated, "import * as ns from \"./foo\";\nns.foo;\n");
+    assert_eq!(updated, "import * as ns from \"./foo\";\n\nns.foo;\n");
 }
 
 #[test]
@@ -1620,7 +1620,7 @@ fn test_quickfix_add_missing_import_type_position_uses_import_type() {
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
-        "import type { Foo } from \"./foo\";\nlet x: Foo;\n"
+        "import type { Foo } from \"./foo\";\n\nlet x: Foo;\n"
     );
 }
 
@@ -1717,7 +1717,7 @@ fn test_quickfix_add_missing_import_type_query_uses_value_import() {
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
-        "import { Foo } from \"./foo\";\ntype T = typeof Foo;\n"
+        "import { Foo } from \"./foo\";\n\ntype T = typeof Foo;\n"
     );
 }
 
@@ -1769,7 +1769,7 @@ fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
-        "import { Foo } from \"./foo\";\nclass Bar extends Foo {}\n"
+        "import { Foo } from \"./foo\";\n\nclass Bar extends Foo {}\n"
     );
 }
 
@@ -1821,7 +1821,7 @@ fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
     let updated = apply_text_edits(source, &line_map, edits);
     assert_eq!(
         updated,
-        "import type { Foo } from \"./foo\";\nclass Bar implements Foo {}\n"
+        "import type { Foo } from \"./foo\";\n\nclass Bar implements Foo {}\n"
     );
 }
 

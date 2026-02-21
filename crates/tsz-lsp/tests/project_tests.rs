@@ -2320,7 +2320,7 @@ fn test_project_code_actions_missing_import_named() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
-    assert_eq!(updated, "import { foo } from \"./a\";\nfoo();\n");
+    assert_eq!(updated, "import { foo } from \"./a\";\n\nfoo();\n");
 }
 
 #[test]
@@ -2365,7 +2365,7 @@ fn test_project_code_actions_missing_import_default_export() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
-    assert_eq!(updated, "import foo from \"./a\";\nfoo();\n");
+    assert_eq!(updated, "import foo from \"./a\";\n\nfoo();\n");
 }
 
 #[test]
@@ -2407,7 +2407,7 @@ fn test_project_code_actions_missing_import_tsx() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
-    assert_eq!(updated, "import { foo } from \"./a\";\nfoo();\n");
+    assert_eq!(updated, "import { foo } from \"./a\";\n\nfoo();\n");
 }
 
 #[test]
@@ -2456,7 +2456,7 @@ fn test_project_code_actions_missing_import_default_reexport() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
-    assert_eq!(updated, "import foo from \"./index\";\nfoo();\n");
+    assert_eq!(updated, "import foo from \"./index\";\n\nfoo();\n");
 }
 
 #[test]
@@ -2502,7 +2502,7 @@ fn test_project_code_actions_missing_import_reexport() {
     let edit = actions[0].edit.as_ref().unwrap();
     let edits = &edit.changes["b.ts"];
     let updated = apply_text_edits(source, line_map, edits);
-    assert_eq!(updated, "import { bar } from \"./index\";\nbar();\n");
+    assert_eq!(updated, "import { bar } from \"./index\";\n\nbar();\n");
 }
 
 #[test]
