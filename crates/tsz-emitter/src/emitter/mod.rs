@@ -340,6 +340,24 @@ impl<'a> Printer<'a> {
         Self::with_source_text_len_and_options(arena, source_text_len, PrinterOptions::default())
     }
 
+    /// Create a new Printer with options and root-node-informed preallocation.
+    pub fn with_root_and_options(
+        arena: &'a NodeArena,
+        root: NodeIndex,
+        options: PrinterOptions,
+    ) -> Self {
+        let source_text_len = arena
+            .get(root)
+            .and_then(|node| arena.get_source_file(node))
+            .map_or(0, |source| source.text.len());
+        Self::with_source_text_len_and_options(arena, source_text_len, options)
+    }
+
+    /// Create a new Printer with root-node-informed preallocation.
+    pub fn with_root(arena: &'a NodeArena, root: NodeIndex) -> Self {
+        Self::with_root_and_options(arena, root, PrinterOptions::default())
+    }
+
     /// Create a new Printer with pre-allocated output capacity
     /// This reduces allocations when the expected output size is known (e.g., ~1.5x source size)
     pub fn with_capacity(arena: &'a NodeArena, capacity: usize) -> Self {

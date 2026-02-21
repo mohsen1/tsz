@@ -1618,10 +1618,8 @@ impl<'a> Printer<'a> {
                         self.get_identifier_text_idx(enum_decl.name) == assigned_name
                     }) && self.arena.get_enum(stmt_node).is_some_and(|enum_decl| {
                         !self.has_declare_modifier(&enum_decl.modifiers)
-                            && !self.has_modifier(
-                                &enum_decl.modifiers,
-                                SyntaxKind::ConstKeyword as u16,
-                            )
+                            && !self
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
                     }) {
                         matched_runtime = true;
                     }
@@ -1637,7 +1635,10 @@ impl<'a> Printer<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
-                    if self.collect_variable_names_from_node(stmt_node).iter().any(|n| n == &assigned_name)
+                    if self
+                        .collect_variable_names_from_node(stmt_node)
+                        .iter()
+                        .any(|n| n == &assigned_name)
                         && !self
                             .arena
                             .get_variable(stmt_node)
@@ -1647,30 +1648,30 @@ impl<'a> Printer<'a> {
                     }
                 }
                 k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                    if self.arena.get_import_decl(stmt_node).is_some_and(|import_decl| {
-                        self.get_identifier_text_idx(import_decl.import_clause) == assigned_name
-                            && self.import_decl_has_runtime_value(import_decl)
-                    }) {
+                    if self
+                        .arena
+                        .get_import_decl(stmt_node)
+                        .is_some_and(|import_decl| {
+                            self.get_identifier_text_idx(import_decl.import_clause) == assigned_name
+                                && self.import_decl_has_runtime_value(import_decl)
+                        })
+                    {
                         matched_runtime = true;
                     }
                 }
                 k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                     if let Some(export_decl) = self.arena.get_export_decl(stmt_node)
                         && let Some(inner) = self.arena.get(export_decl.export_clause)
-                    {
-                        if inner.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                        && ((inner.kind == syntax_kind_ext::INTERFACE_DECLARATION
                             && self.arena.get_interface(inner).is_some_and(|iface| {
                                 self.get_identifier_text_idx(iface.name) == assigned_name
-                            })
-                        {
-                            matched_type = true;
-                        } else if inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-                            && self.arena.get_type_alias(inner).is_some_and(|alias| {
-                                self.get_identifier_text_idx(alias.name) == assigned_name
-                            })
-                        {
-                            matched_type = true;
-                        }
+                            }))
+                            || (inner.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                                && self.arena.get_type_alias(inner).is_some_and(|alias| {
+                                    self.get_identifier_text_idx(alias.name) == assigned_name
+                                })))
+                    {
+                        matched_type = true;
                     }
                 }
                 _ => {}

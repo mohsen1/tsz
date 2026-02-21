@@ -90,9 +90,9 @@ pub(crate) use state_domain::{
     state_variable_checking, state_variable_checking_destructuring,
 };
 
-pub use symbols_domain::{scope_finder, symbol_resolver};
 #[allow(unused_imports)]
 pub(crate) use symbols_domain::symbol_resolver_utils;
+pub use symbols_domain::{scope_finder, symbol_resolver};
 
 pub use types_domain::{
     class_type, function_type, interface_type, literal_type, object_type, type_checking,

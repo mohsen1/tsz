@@ -84,7 +84,7 @@ pub struct UsageAnalyzer<'a> {
     visited_types: FxHashSet<tsz_solver::TypeId>,
     /// Memoized transitive symbol usages per `TypeId`.
     type_symbol_cache: FxHashMap<tsz_solver::TypeId, Arc<[(SymbolId, UsageKind)]>>,
-    /// TypeIds currently being memoized (cycle guard).
+    /// `TypeIds` currently being memoized (cycle guard).
     memoizing_types: FxHashSet<tsz_solver::TypeId>,
     /// The current file's arena (for distinguishing local vs foreign symbols)
     current_arena: Arc<NodeArena>,
@@ -1066,11 +1066,9 @@ impl<'a> UsageAnalyzer<'a> {
         self.type_symbol_cache.insert(type_id, result.clone());
 
         let mut children = Vec::new();
-        if let Some(type_data) = self.type_interner.lookup(type_id) {
-            visitor::for_each_child(self.type_interner, &type_data, |child| {
-                children.push(child);
-            });
-        }
+        visitor::for_each_child_by_id(self.type_interner, type_id, |child| {
+            children.push(child);
+        });
 
         for child in children {
             for &(sym_id, usage_kind) in self.collect_symbol_usages_for_type(child).iter() {
