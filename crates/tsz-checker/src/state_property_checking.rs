@@ -127,9 +127,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-
         // Handle intersection targets
-        if let Some(members) = tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_target) {
+        if let Some(members) =
+            tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_target)
+        {
             let mut target_shapes = Vec::new();
 
             for &member in members.iter() {
@@ -152,7 +153,8 @@ impl<'a> CheckerState<'a> {
                 let mut nested_target_types = Vec::new();
 
                 for shape in &target_shapes {
-                    if let Some(prop) = shape.properties.iter().find(|p| p.name == source_prop.name) {
+                    if let Some(prop) = shape.properties.iter().find(|p| p.name == source_prop.name)
+                    {
                         found = true;
                         nested_target_types.push(prop.type_id);
                     }
