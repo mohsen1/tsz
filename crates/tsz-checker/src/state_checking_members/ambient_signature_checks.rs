@@ -304,6 +304,7 @@ impl<'a> CheckerState<'a> {
         // Error 1183: An implementation cannot be declared in ambient contexts
         // Check if we're in a declared class and the method has a body,
         // OR if the method itself has a `declare` modifier and a body.
+        // TSC anchors the error at the body node (the `{`), not the whole member.
         if method.body.is_some() {
             let in_declared_class = self
                 .ctx
@@ -313,7 +314,7 @@ impl<'a> CheckerState<'a> {
             let method_has_declare = self.has_declare_modifier(&method.modifiers);
             if in_declared_class || method_has_declare {
                 self.error_at_node(
-                    member_idx,
+                    method.body,
                     "An implementation cannot be declared in ambient contexts.",
                     diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
                 );
@@ -656,13 +657,14 @@ impl<'a> CheckerState<'a> {
         }
 
         // Error 1183: An implementation cannot be declared in ambient contexts
-        // Check if we're in a declared class and the constructor has a body
+        // Check if we're in a declared class and the constructor has a body.
+        // TSC anchors the error at the body node (the `{`).
         if ctor.body.is_some()
             && let Some(ref class_info) = self.ctx.enclosing_class
             && class_info.is_declared
         {
             self.error_at_node(
-                member_idx,
+                ctor.body,
                 "An implementation cannot be declared in ambient contexts.",
                 diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
@@ -985,13 +987,14 @@ impl<'a> CheckerState<'a> {
         self.check_modifier_combinations(&accessor.modifiers);
 
         // Error 1183: An implementation cannot be declared in ambient contexts
-        // Check if we're in a declared class and the accessor has a body
+        // Check if we're in a declared class and the accessor has a body.
+        // TSC anchors the error at the body node (the `{`).
         if accessor.body.is_some()
             && let Some(ref class_info) = self.ctx.enclosing_class
             && class_info.is_declared
         {
             self.error_at_node(
-                member_idx,
+                accessor.body,
                 "An implementation cannot be declared in ambient contexts.",
                 diagnostic_codes::AN_IMPLEMENTATION_CANNOT_BE_DECLARED_IN_AMBIENT_CONTEXTS,
             );
