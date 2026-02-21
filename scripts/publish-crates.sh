@@ -48,8 +48,10 @@ done
 publish_crate() {
     local crate="$1"
     if [ "$DRY_RUN" -eq 1 ]; then
-        echo "  [dry-run] cargo publish --dry-run -p $crate"
-        cargo publish --dry-run -p "$crate"
+        # --no-verify skips the dep-resolution/compile check that would fail
+        # because earlier crates in the chain aren't on crates.io yet.
+        echo "  [dry-run] cargo publish --dry-run --no-verify -p $crate"
+        cargo publish --dry-run --no-verify -p "$crate"
     else
         echo "  cargo publish -p $crate"
         cargo publish -p "$crate"
