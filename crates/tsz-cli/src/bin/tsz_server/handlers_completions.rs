@@ -316,13 +316,22 @@ impl Server {
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                     parts.push(serde_json::json!({"text": name, "kind": "localName"}));
                 }
-                Self::append_type_annotation_from_source(
+                let has_annotation = Self::append_type_annotation_from_source(
                     &mut parts,
                     name,
                     binder,
                     arena,
                     source_text,
                 );
+                if !has_annotation
+                    && item.kind == CompletionItemKind::Parameter
+                    && let Some(detail) = item.detail.as_deref()
+                    && !detail.is_empty()
+                {
+                    parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": detail, "kind": "keyword"}));
+                }
             }
             CompletionItemKind::Keyword => {
                 parts.push(serde_json::json!({"text": name, "kind": "keyword"}));
