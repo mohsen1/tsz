@@ -47,6 +47,8 @@ impl Server {
         project.set_import_module_specifier_ending(
             self.completion_import_module_specifier_ending.clone(),
         );
+        project
+            .set_auto_import_file_exclude_patterns(self.auto_import_file_exclude_patterns.clone());
         for (path, text) in files {
             project.set_file(path, text);
         }

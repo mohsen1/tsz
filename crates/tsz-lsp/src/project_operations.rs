@@ -1726,6 +1726,9 @@ impl Project {
             else {
                 continue;
             };
+            if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                continue;
+            }
 
             let mut visited = FxHashSet::default();
             let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
@@ -1790,6 +1793,9 @@ impl Project {
                 else {
                     continue;
                 };
+                if self.is_auto_import_candidate_excluded(&file_name, &module_specifier) {
+                    continue;
+                }
 
                 let mut visited = FxHashSet::default();
                 let matches = self.matching_exports_in_file(&file_name, &symbol_name, &mut visited);
@@ -1821,6 +1827,47 @@ impl Project {
                 }
             }
         }
+    }
+
+    fn auto_import_path_is_excluded(&self, path: &str) -> bool {
+        if self.auto_import_file_exclude_matchers.is_empty() {
+            return false;
+        }
+
+        let normalized = path.trim().replace('\\', "/");
+        if normalized.is_empty() {
+            return false;
+        }
+
+        let trimmed = normalized.trim_start_matches('/');
+        self.auto_import_file_exclude_matchers
+            .iter()
+            .any(|matcher| {
+                matcher.is_match(&normalized)
+                    || (!trimmed.is_empty() && matcher.is_match(trimmed))
+                    || normalized
+                        .strip_prefix('/')
+                        .is_some_and(|stripped| matcher.is_match(stripped))
+            })
+    }
+
+    fn is_auto_import_candidate_excluded(&self, target_file: &str, module_specifier: &str) -> bool {
+        if self.auto_import_path_is_excluded(target_file) {
+            return true;
+        }
+
+        if module_specifier.starts_with('.') {
+            return false;
+        }
+
+        if self.auto_import_path_is_excluded(module_specifier) {
+            return true;
+        }
+
+        let synthetic_node_modules_path = format!("/node_modules/{module_specifier}");
+        self.auto_import_path_is_excluded(&synthetic_node_modules_path)
+            || self
+                .auto_import_path_is_excluded(synthetic_node_modules_path.trim_start_matches('/'))
     }
 
     pub(crate) fn completion_from_import_candidate(
