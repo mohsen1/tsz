@@ -215,6 +215,27 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        if let Some(atom) =
+            tsz_solver::type_queries::get_string_literal_value(self.ctx.types, index_type)
+        {
+            let prop_name = self.ctx.types.resolve_atom_ref(atom);
+            let prop_name_str: &str = &prop_name;
+            let suppress_did_you_mean =
+                self.has_syntax_parse_errors() || self.class_extends_any_base(object_type);
+
+            let suggestion = if suppress_did_you_mean {
+                None
+            } else {
+                self.find_similar_property(prop_name_str, object_type)
+            };
+
+            if suggestion.is_some() {
+                // If there's a suggestion, TypeScript emits TS2551 instead of TS7053
+                self.error_property_not_exist_at(prop_name_str, object_type, idx);
+                return;
+            }
+        }
+
         let mut formatter = self.ctx.create_type_formatter();
         let index_str = formatter.format(index_type);
         let object_str = formatter.format(object_type);

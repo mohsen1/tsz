@@ -207,7 +207,10 @@ impl<'a> CheckerState<'a> {
             self.report_nullish_object(access.expression, cause, false);
         }
 
+        let prev_preserve = self.ctx.preserve_literal_types;
+        self.ctx.preserve_literal_types = true;
         let index_type = self.get_type_of_node(access.name_or_argument);
+        self.ctx.preserve_literal_types = prev_preserve;
 
         // Propagate error from index expression to suppress cascading errors
         if index_type == TypeId::ERROR {

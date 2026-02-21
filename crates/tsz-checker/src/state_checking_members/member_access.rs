@@ -491,7 +491,7 @@ impl<'a> CheckerState<'a> {
 
     /// Check index signature parameter type (TS1268).
     /// An index signature parameter type must be 'string', 'number', 'symbol', or a template literal type.
-    fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
+    pub(crate) fn check_index_signature_parameter_type(&mut self, member_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
         use tsz_parser::parser::syntax_kind_ext;
         use tsz_scanner::SyntaxKind;
@@ -528,6 +528,14 @@ impl<'a> CheckerState<'a> {
                 param_idx,
                 "A parameter property is only allowed in a constructor implementation.",
                 diagnostic_codes::A_PARAMETER_PROPERTY_IS_ONLY_ALLOWED_IN_A_CONSTRUCTOR_IMPLEMENTATION,
+            );
+        }
+
+        if param_data.initializer.is_some() {
+            self.error_at_node(
+                param_data.initializer,
+                "A parameter initializer is only allowed in a function or constructor implementation.",
+                2371,
             );
         }
 
