@@ -116,6 +116,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
 
             match key {
+                TypeData::Mapped(mapped_id) => {
+                    let mapped = self.interner().mapped_type(mapped_id);
+                    if let Some(name_type) = mapped.name_type {
+                        self.evaluate(name_type)
+                    } else {
+                        self.evaluate(mapped.constraint)
+                    }
+                }
                 TypeData::ReadonlyType(inner) => self.recurse_keyof(inner),
                 TypeData::TypeQuery(sym) => {
                     // Resolve typeof query before computing keyof

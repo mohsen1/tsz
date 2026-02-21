@@ -1397,53 +1397,29 @@ impl<'a> CheckerState<'a> {
         let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
-        use tsz_solver::type_queries::{LiteralValueKind, classify_for_literal_value};
 
-        // Resolve index text first to avoid borrow conflicts
-        let prop_name = match classify_for_literal_value(self.ctx.types, index_type) {
-            LiteralValueKind::String(atom) => Some(self.ctx.types.resolve_atom(atom)),
-            LiteralValueKind::Number(val) => Some(val.to_string()),
-            _ => None,
-        };
+        if object_type == TypeId::ERROR
+            || index_type == TypeId::ERROR
+            || object_type == TypeId::ANY
+            || index_type == TypeId::ANY
+        {
+            return;
+        }
 
-        if let Some(name) = prop_name {
-            let result = self.get_object_property_type(object_type, &name);
+        let keyof_object = self.ctx.types.evaluate_keyof(object_type);
+        if !self.is_assignable_to(index_type, keyof_object) {
+            let obj_type_str = self.format_type(object_type);
+            let index_type_str = self.format_type(index_type);
 
-            if result.is_none() || result == Some(TypeId::ERROR) {
-                if object_type == TypeId::ERROR || index_type == TypeId::ERROR {
-                    return;
-                }
-
-                let obj_type_str = self.format_type(object_type);
-
-                // TS2339: Property does not exist
-                let message = format_message(
-                    diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                    &[&name, &obj_type_str],
-                );
-                let error_node = data.index_type;
-                self.error_at_node(
-                    error_node,
-                    &message,
-                    diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                );
-
-                // TS2536: Type cannot be used to index type
-                // Note: TypeScript emits this when the index type is not compatible with the index signature.
-                // Since property access failed, it implies index signature also failed (or did not exist).
-                // We construct the index type string (e.g. "0.0") for the message.
-                // For literal types, this is the literal text.
-                let index_type_str = format!("\"{name}\""); // Quote literal string
-                let message_2536 = format_message(
-                    diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
-                    &[&index_type_str, &obj_type_str],
-                );
-                self.error_at_node(
-                    error_node,
-                    &message_2536,
-                    diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
-                );
-            }
+            let message_2536 = format_message(
+                diagnostic_messages::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+                &[&index_type_str, &obj_type_str],
+            );
+            self.error_at_node(
+                data.index_type,
+                &message_2536,
+                diagnostic_codes::TYPE_CANNOT_BE_USED_TO_INDEX_TYPE,
+            );
         }
     }
 }
