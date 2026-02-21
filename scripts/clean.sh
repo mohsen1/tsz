@@ -148,11 +148,11 @@ git -C "$REPO_ROOT" clean -nXd -- . 2>/dev/null \
 # The .gitignore has /*.js /*.ts etc. — ':/' anchors pathspecs to repo root
 # so we don't accidentally delete legitimate files in subdirectories.
 git -C "$REPO_ROOT" clean -fd -- \
-  ':/*.js' ':/*.ts' ':/*.md' ':/*.py' ':/*.sh' 'tmp*' 'wasm/' 2>/dev/null || true
+  ':/*.js' ':/*.ts' ':/*.md' ':/*.py' ':/*.sh' 'tmp*' 2>/dev/null || true
 
 # Phase 3: Belt-and-suspenders for heavyweight dirs that git clean may skip
 # (e.g. when they contain nested .git repos or permission issues)
-CLEAN_DIRS=(node_modules coverage logs artifacts pkg tmp)
+CLEAN_DIRS=(node_modules coverage artifacts pkg tmp)
 if [[ "$FULL" == true ]]; then
   CLEAN_DIRS+=(.target .target-bench target)
 fi

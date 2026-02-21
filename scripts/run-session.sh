@@ -143,20 +143,16 @@ run_with_capture() {
 
 # ─── Cleanup trap ────────────────────────────────────────────────────────────
 TMPFILES=()
-CHILD_PID=""
 
 cleanup() {
-  # Kill child process tree if still running
-  if [[ -n "$CHILD_PID" ]] && kill -0 "$CHILD_PID" 2>/dev/null; then
-    kill -- -"$CHILD_PID" 2>/dev/null || kill "$CHILD_PID" 2>/dev/null || true
-    wait "$CHILD_PID" 2>/dev/null || true
-  fi
-  # Remove temp files
+  # Remove temp files (but NOT the session script — it's needed across iterations)
   local f
   for f in "${TMPFILES[@]+"${TMPFILES[@]}"}"; do
     [[ -f "$f" ]] && rm -f "$f"
   done
   TMPFILES=()
+  # Remove per-instance session script on final exit
+  [[ -n "${_SESSION_TMPFILE:-}" && -f "$_SESSION_TMPFILE" ]] && rm -f "$_SESSION_TMPFILE"
 }
 trap cleanup EXIT INT TERM
 
@@ -219,12 +215,13 @@ prune_logs() {
   total_kb="$(du -sk "$LOG_BASE" 2>/dev/null | awk '{print $1}')"
   local max_kb=$(( MAX_LOG_MB * 1024 ))
   if (( total_kb > max_kb )); then
-    log "Log directory ${total_kb}KB exceeds ${MAX_LOG_MB}MB cap, pruning oldest..."
-    # Delete oldest files until under limit
-    find "$LOG_BASE" -type f -name '*.log' -print0 \
-      | xargs -0 ls -t 2>/dev/null \
-      | tail -n +100 \
-      | xargs rm -f 2>/dev/null || true
+    log "Log directory $(( total_kb / 1024 ))MB exceeds ${MAX_LOG_MB}MB cap, pruning oldest..."
+    # Delete files older than 3 days first, then 1 day if still over
+    find "$LOG_BASE" -type f -name '*.log' -mtime +3 -delete 2>/dev/null || true
+    total_kb="$(du -sk "$LOG_BASE" 2>/dev/null | awk '{print $1}')"
+    if (( total_kb > max_kb )); then
+      find "$LOG_BASE" -type f -name '*.log' -mtime +1 -delete 2>/dev/null || true
+    fi
     # Remove empty day directories
     find "$LOG_BASE" -type d -empty -delete 2>/dev/null || true
   fi
@@ -441,7 +438,7 @@ try_runner() {
   local day_dir
   day_dir="$LOG_BASE/$(date '+%Y%m%d')"
   mkdir -p "$day_dir"
-  LOG_FILE="$day_dir/run-$(date '+%H%M%S')-${type}.log"
+  LOG_FILE="$day_dir/run-$(date '+%H%M%S')-${INSTANCE_ID}-${type}.log"
 
   echo "${C_GREEN}${C_BOLD}▶ Starting runner: $label${C_RESET}" >&2
   [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] Starting runner: $label" >> "$LOG_FILE" || true
@@ -593,7 +590,7 @@ main() {
     SESSION_SCRIPT="$PROJECT_DIR/.session-${INSTANCE_ID}.sh"
     cp "$template" "$SESSION_SCRIPT"
     chmod +x "$SESSION_SCRIPT"
-    TMPFILES+=("$SESSION_SCRIPT")  # cleaned up on exit
+    _SESSION_TMPFILE="$SESSION_SCRIPT"  # cleaned up on final exit only
     log "Loaded session template: $SESSION_NAME (instance $INSTANCE_ID)"
   fi
 
