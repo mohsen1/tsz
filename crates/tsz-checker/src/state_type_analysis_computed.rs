@@ -1306,7 +1306,13 @@ impl<'a> CheckerState<'a> {
                         self.emit_no_default_export_error(module_name, value_decl);
                     } else {
                         // TS2305: Module '{0}' has no exported member '{1}'.
-                        self.emit_no_exported_member_error(module_name, export_name, value_decl);
+                        if export_name != "*" {
+                            self.emit_no_exported_member_error(
+                                module_name,
+                                export_name,
+                                value_decl,
+                            );
+                        }
                     }
                 } else {
                     // Module not found at all - emit TS2307

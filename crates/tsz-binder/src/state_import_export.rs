@@ -510,9 +510,26 @@ impl BinderState {
                     if let Some(sym) = self.symbols.get_mut(sym_id) {
                         sym.is_exported = true;
                         sym.is_type_only = export_type_only;
+                        sym.declarations.push(export.export_clause);
+
+                        if !export.module_specifier.is_none()
+                            && let Some(spec_node) = arena.get(export.module_specifier)
+                                && let Some(lit) = arena.get_literal(spec_node) {
+                                    sym.import_module = Some(lit.text.clone());
+                                    // Use '*' to indicate it's a namespace export, similar to namespace imports
+                                    sym.import_name = Some("*".to_string());
+                                }
                     }
+
                     self.current_scope.set(name.to_string(), sym_id);
                     self.node_symbols.insert(export.export_clause.0, sym_id);
+
+                    // Add to module exports
+                    let current_file = self.debugger.current_file.clone();
+                    self.module_exports
+                        .entry(current_file)
+                        .or_default()
+                        .set(name.to_string(), sym_id);
                 }
             }
 

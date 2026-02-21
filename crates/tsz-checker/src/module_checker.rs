@@ -383,7 +383,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check if this name is exported from the source module
-            if !module_exports.has(&export_name) {
+            if export_name != "*" && !module_exports.has(&export_name) {
                 if module_exports.has("default") || module_exports.has("export=") {
                     // TS2614: Symbol doesn't exist but a default export does
                     let message = format_message(
