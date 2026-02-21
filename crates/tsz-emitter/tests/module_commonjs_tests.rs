@@ -10,6 +10,8 @@ fn test_sanitize_module_name() {
     assert_eq!(sanitize_module_name("../utils"), "utils");
     assert_eq!(sanitize_module_name("@scope/pkg"), "_scope_pkg");
     assert_eq!(sanitize_module_name("./foo-bar/baz.qux"), "foo_bar_baz_qux");
+    assert_eq!(sanitize_module_name("./123pkg/mod"), "_123pkg_mod");
+    assert_eq!(sanitize_module_name("./"), "module");
 }
 
 #[test]
@@ -464,5 +466,50 @@ fn side_effect_import_emits_bare_require() {
             .iter()
             .any(|n| matches!(n, IRNode::Raw(s) if s == "require(\"./side\");")),
         "side-effect import should emit bare require call"
+    );
+}
+
+#[test]
+fn empty_named_import_emits_bare_require() {
+    let source = "import {} from \"./side\";";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root node must exist");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file must exist");
+    let mut transform = CommonJsTransformContext::new(&parser.arena);
+    let nodes = transform.transform_source_file(&source_file.statements.nodes);
+
+    assert!(
+        nodes
+            .iter()
+            .any(|n| matches!(n, IRNode::Raw(s) if s == "require(\"./side\");")),
+        "empty named import should emit bare require call"
+    );
+    assert!(
+        !nodes
+            .iter()
+            .any(|n| matches!(n, IRNode::RequireStatement { .. })),
+        "empty named import should not emit intermediate module binding"
+    );
+}
+
+#[test]
+fn type_only_named_import_is_elided_in_ir_commonjs_transform() {
+    let source = "import { type Foo } from \"./types\";";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let root_node = parser.arena.get(root).expect("root node must exist");
+    let source_file = parser
+        .arena
+        .get_source_file(root_node)
+        .expect("source file must exist");
+    let mut transform = CommonJsTransformContext::new(&parser.arena);
+    let nodes = transform.transform_source_file(&source_file.statements.nodes);
+    assert!(
+        nodes.is_empty(),
+        "type-only named imports should be erased in CommonJS IR transform"
     );
 }

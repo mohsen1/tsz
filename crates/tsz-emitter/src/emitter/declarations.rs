@@ -970,6 +970,16 @@ impl<'a> Printer<'a> {
         if assignment_prefix.is_some() {
             self.write(";");
         }
+
+        if let Some(class_name) = self.pending_commonjs_class_export_name.take() {
+            self.write_line();
+            self.write("exports.");
+            self.write(&class_name);
+            self.write(" = ");
+            self.write(&class_name);
+            self.write(";");
+        }
+
         if let Some(recovery_name) = self.class_var_function_recovery_name(node) {
             self.write_line();
             self.write("var ");
@@ -1672,7 +1682,10 @@ impl<'a> Printer<'a> {
                             }
 
                             let before_len = self.writer.len();
+                            let prev = self.in_namespace_iife;
+                            self.in_namespace_iife = true;
                             self.emit(inner_idx);
+                            self.in_namespace_iife = prev;
                             let emitted = self.writer.len() > before_len;
                             // Emit trailing comments on the same line,
                             // but don't consume comments past the body's closing brace

@@ -214,6 +214,130 @@ fn test_optional_call_spread_downlevel_es5() {
 }
 
 #[test]
+fn test_commonjs_empty_named_import_emits_bare_require() {
+    let source = "import {} from \"./side\";\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("require(\"./side\");"));
+    assert!(!output.contains("var side_1 = require(\"./side\");"));
+}
+
+#[test]
+fn test_commonjs_type_only_named_import_is_elided() {
+    let source = "import { type Foo } from \"./types\";\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(!output.contains("require(\"./types\")"));
+}
+
+#[test]
+fn test_commonjs_module_temp_vars_do_not_collide() {
+    let source = "import { x } from \"./foo\";\nexport { y } from \"../foo\";\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("foo_1 = require(\"./foo\");"));
+    assert!(output.contains("foo_2 = require(\"../foo\");"));
+}
+
+#[test]
+fn test_es_module_export_equals_erased_to_empty_export_marker() {
+    let source = "var a = 10;\nexport = a;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(output.contains("var a = 10;"));
+    assert!(output.contains("export {};"));
+    assert!(!output.contains("export default a;"));
+}
+
+#[test]
+fn test_es_module_external_import_equals_erased_to_empty_export_marker() {
+    let source = "import a = require(\"./server\");\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert_eq!(output, "export {};\n");
+}
+
+#[test]
+fn test_commonjs_export_equals_interface_is_erased() {
+    let source = "interface C {}\nexport = C;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(!output.contains("module.exports = C"));
+}
+
+#[test]
 fn test_for_await_of_target_es2018_preserved() {
     let source = "async function f() {\n    const iterable = [];\n    for await (const x of iterable) {\n        console.log(x);\n    }\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());

@@ -655,14 +655,27 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
     ) -> bool {
-        // `export {};` is only needed for import-only modules where all imports
-        // are elided in declaration output. If the file already has any exports
-        // (including type-only exports like `export interface`), those exports
-        // preserve module-ness and we must not append an extra marker.
-        self.has_public_api_exports(source_file) && !self.has_public_api_any_exports(source_file)
+        // `export {};` is needed when the source is module-like (imports/exports)
+        // but declaration output has no runtime-facing exports. This covers
+        // type-only export modules and import-only modules.
+        let has_module_syntax = source_file.statements.nodes.iter().any(|&stmt_idx| {
+            self.arena.get(stmt_idx).is_some_and(|stmt_node| {
+                matches!(
+                    stmt_node.kind,
+                    k if k == syntax_kind_ext::IMPORT_DECLARATION
+                        || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_DECLARATION
+                        || k == syntax_kind_ext::EXPORT_ASSIGNMENT
+                        || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                )
+            })
+        });
+
+        has_module_syntax && !self.has_public_api_value_exports(source_file)
     }
 
     /// Return true if exported declarations include any export (value or type-side).
+    #[allow(dead_code)]
     pub(crate) fn has_public_api_any_exports(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -721,9 +734,94 @@ impl<'a> DeclarationEmitter<'a> {
                         return true;
                     }
                 }
-                k if k == syntax_kind_ext::EXPORT_DECLARATION
-                    || k == syntax_kind_ext::EXPORT_ASSIGNMENT =>
-                {
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        // Type-only export declarations do not contribute value exports.
+                        if export.is_type_only {
+                            continue;
+                        }
+                        if let Some(clause_node) = self.arena.get(export.export_clause) {
+                            match clause_node.kind {
+                                k if k == syntax_kind_ext::INTERFACE_DECLARATION => continue,
+                                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => continue,
+                                _ => return true,
+                            }
+                        } else {
+                            return true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Return true if exported declarations include runtime/value-side exports.
+    pub(crate) fn has_public_api_value_exports(
+        &self,
+        source_file: &tsz_parser::parser::node::SourceFileData,
+    ) -> bool {
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            match stmt_node.kind {
+                k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
+                    if let Some(func) = self.arena.get_function(stmt_node)
+                        && self.has_export_modifier(&func.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::CLASS_DECLARATION => {
+                    if let Some(class) = self.arena.get_class(stmt_node)
+                        && self.has_export_modifier(&class.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                    if let Some(enum_data) = self.arena.get_enum(stmt_node)
+                        && self.has_export_modifier(&enum_data.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                    if let Some(var_stmt) = self.arena.get_variable(stmt_node)
+                        && self.has_export_modifier(&var_stmt.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                    if let Some(module) = self.arena.get_module(stmt_node)
+                        && self.has_export_modifier(&module.modifiers)
+                    {
+                        return true;
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+                    if let Some(export) = self.arena.get_export_decl(stmt_node) {
+                        if export.is_type_only {
+                            continue;
+                        }
+                        if let Some(clause_node) = self.arena.get(export.export_clause) {
+                            match clause_node.kind {
+                                k if k == syntax_kind_ext::INTERFACE_DECLARATION => continue,
+                                k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => continue,
+                                _ => return true,
+                            }
+                        } else {
+                            return true;
+                        }
+                    }
+                }
+                k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => {
                     return true;
                 }
                 _ => {}

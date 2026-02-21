@@ -250,3 +250,38 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
         "namespace IIFE should not be extra-indented inside nested Sequence. Got:\n{output}"
     );
 }
+
+#[test]
+fn test_namespace_iife_generated_object_literal_is_multiline() {
+    let ns = IRNode::NamespaceIIFE {
+        name: "Translation".to_string(),
+        name_parts: vec!["Translation".to_string()],
+        body: vec![IRNode::expr_stmt(IRNode::assign(
+            IRNode::prop(IRNode::id("Translation"), "TranslationKeyEnum"),
+            IRNode::object(vec![
+                IRProperty {
+                    key: IRPropertyKey::Identifier("Translation1".to_string()),
+                    value: IRNode::string("translation1"),
+                    kind: IRPropertyKind::Init,
+                },
+                IRProperty {
+                    key: IRPropertyKey::Identifier("Translation2".to_string()),
+                    value: IRNode::string("translation2"),
+                    kind: IRPropertyKind::Init,
+                },
+            ]),
+        ))],
+        is_exported: false,
+        attach_to_exports: false,
+        should_declare_var: false,
+        parent_name: None,
+        param_name: None,
+        skip_sequence_indent: false,
+    };
+
+    let output = IRPrinter::emit_to_string(&ns);
+    assert!(
+        output.contains("Translation.TranslationKeyEnum = {\n"),
+        "expected multiline object assignment in namespace IIFE, got:\n{output}"
+    );
+}

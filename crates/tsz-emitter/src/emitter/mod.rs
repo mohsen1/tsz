@@ -247,6 +247,9 @@ pub struct Printer<'a> {
     /// Override name for anonymous default exports (e.g., "`default_1`").
     /// When set, class/function emitters use this instead of leaving the name blank.
     pub(super) anonymous_default_export_name: Option<String>,
+    /// For CommonJS class exports, emit `exports.X = X;` immediately after class
+    /// declaration and before post-class lowered statements (static fields/blocks).
+    pub(super) pending_commonjs_class_export_name: Option<String>,
 
     /// Names of namespaces already declared with `var name;` to avoid duplicates.
     pub(super) declared_namespace_names: FxHashSet<String>,
@@ -348,6 +351,7 @@ impl<'a> Printer<'a> {
             emitting_function_body_block: false,
             current_namespace_name: None,
             anonymous_default_export_name: None,
+            pending_commonjs_class_export_name: None,
             declared_namespace_names: FxHashSet::default(),
             namespace_exported_names: FxHashSet::default(),
             suppress_ns_qualification: false,
@@ -1665,6 +1669,15 @@ impl<'a> Printer<'a> {
         let mut has_deferred_empty_export = false;
         for &stmt_idx in &source.statements.nodes {
             if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                if stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
+                    && self.export_assignment_identifier_is_type_only(stmt_node, &source.statements)
+                {
+                    self.skip_comments_for_erased_node(stmt_node);
+                    last_erased_stmt_end = None;
+                    last_erased_was_shorthand_module = false;
+                    continue;
+                }
+
                 if self.ctx.is_commonjs()
                     && stmt_node.kind == syntax_kind_ext::EXPORT_ASSIGNMENT
                     && self

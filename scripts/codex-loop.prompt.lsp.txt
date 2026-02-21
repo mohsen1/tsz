@@ -6,8 +6,7 @@ Hard requirements for this run:
 2) Implement the smallest targeted fix.
 3) Run focused tests/checks for that LSP feature.
 4) Run a broader safety check to catch regressions.
-5) Before starting new work, if any diff is left from the previous iteration, continue from that diff and include it in this iteration.
-6) End this iteration with exactly ONE commit.
-7) Sync with main and push to main using: git pull --rebase origin main, then git push origin HEAD:main.
-8) If there are no file changes, create an empty checkpoint commit with: git commit --allow-empty -m "chore(loop): iteration checkpoint".
-9) Do not ask user questions.
+5) End this iteration with exactly ONE commit.
+6) Sync with main and push to main using: git pull --rebase origin main, then git push origin HEAD:main.
+7) If there are no file changes, create an empty checkpoint commit with: git commit --allow-empty -m "chore(loop): iteration checkpoint".
+8) Do not ask user questions.

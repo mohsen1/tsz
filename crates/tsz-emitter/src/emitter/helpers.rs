@@ -1,4 +1,4 @@
-use super::Printer;
+use super::{ModuleKind, Printer};
 use crate::printer::safe_slice;
 use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
@@ -687,6 +687,11 @@ impl<'a> Printer<'a> {
     /// This includes interfaces, type aliases, declare function/class/enum/module/var,
     /// const enums, and function overload signatures (no body).
     pub(super) fn is_erased_statement(&self, node: &Node) -> bool {
+        let is_es_module_output = matches!(
+            self.ctx.options.module,
+            ModuleKind::ES2015 | ModuleKind::ES2020 | ModuleKind::ES2022 | ModuleKind::ESNext
+        );
+
         match node.kind {
             syntax_kind_ext::INTERFACE_DECLARATION | syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 true
@@ -751,6 +756,26 @@ impl<'a> Printer<'a> {
                     return clause.is_type_only;
                 }
                 false
+            }
+            syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
+                // In ES module emit, external import-equals (`import x = require("...")`)
+                // is erased and module-ness is preserved via trailing `export {};`.
+                if is_es_module_output
+                    && let Some(import_data) = self.arena.get_import_decl(node)
+                    && let Some(module_node) = self.arena.get(import_data.module_specifier)
+                {
+                    return module_node.kind == SyntaxKind::StringLiteral as u16
+                        || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+                }
+                false
+            }
+            syntax_kind_ext::EXPORT_ASSIGNMENT => {
+                // In ES module emit, legacy `export =` is erased.
+                is_es_module_output
+                    && self
+                        .arena
+                        .get_export_assignment(node)
+                        .is_some_and(|export_assign| export_assign.is_export_equals)
             }
             _ => false,
         }

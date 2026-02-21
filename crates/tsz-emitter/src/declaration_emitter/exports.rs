@@ -293,6 +293,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
+        if exports.elements.nodes.is_empty() {
+            self.write("{}");
+            return;
+        }
+
         self.write("{ ");
         let mut first = true;
         for &spec_idx in &exports.elements.nodes {

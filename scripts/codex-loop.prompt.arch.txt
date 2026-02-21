@@ -1,20 +1,17 @@
-Goal: execute one concrete architecture improvement that the repo can validate now.
+Execute one high-impact architecture roadmap slice from docs/architecture/CRITIQUE.md.
 
 Rules for this iteration:
-- Read `docs/architecture/NORTH_STAR.md` and `docs/architecture/BOUNDARIES.md` before code changes.
-- Start by running `./scripts/check-checker-boundaries.sh` and use the report to choose one actionable violation/hotspot.
-- Work solver-first and keep checker as thin orchestration (`WHAT` in solver, `WHERE` in checker).
-- Implement one small, high-signal fix; avoid broad refactors in a single loop.
+- Work solver-first and keep checker as thin orchestration.
+- Close one concrete roadmap item or a well-bounded sub-item.
+- Update docs/architecture/CRITIQUE.md in the same iteration to mark completed/in-progress work.
 - Add or update focused tests for the changed behavior.
-- Re-run `./scripts/check-checker-boundaries.sh` plus targeted tests for touched crates/files.
-- Before starting new work, if any diff is left from the previous iteration, continue from that diff and include it in this iteration.
-- End this iteration with exactly one coherent architecture-oriented commit and push it to main.
+- Run relevant tests and report exact commands and outcomes.
+- End this iteration with exactly one coherent commit and push it to main.
 - Sync with main using `git pull --rebase origin main`, then push with `git push origin HEAD:main`.
 - If there are no file changes, create an empty checkpoint commit with `git commit --allow-empty -m "chore(loop): iteration checkpoint"` and push it.
-- Do not ask user questions; complete the iteration end-to-end.
 
 Output summary must include:
-- Architecture issue addressed
-- Files changed and why
-- Checks run with exact commands and outcomes
-- Residual risk or next follow-up
+- Roadmap item(s) advanced
+- Doc status updates made
+- Tests executed and results
+- Risks or follow-up item
