@@ -1363,7 +1363,12 @@ impl<'a> Printer<'a> {
         for ident in &self.arena.identifiers {
             self.file_identifiers.insert(ident.escaped_text.clone());
         }
-        self.commonjs_named_import_substitutions.clear();
+        if !matches!(
+            self.ctx.original_module_kind,
+            Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+        ) {
+            self.commonjs_named_import_substitutions.clear();
+        }
         self.generated_temp_names.clear();
         self.first_for_of_emitted = false;
 
@@ -1464,10 +1469,7 @@ impl<'a> Printer<'a> {
         // But NOT when:
         // - The source already has "use strict" (avoid duplication)
         // - ES module output (ES2015/ESNext module kind) since ESM is implicitly strict
-        let is_commonjs_or_amd = matches!(
-            self.ctx.options.module,
-            ModuleKind::CommonJS | ModuleKind::AMD | ModuleKind::UMD
-        );
+        let is_top_level_cjs = matches!(self.ctx.options.module, ModuleKind::CommonJS);
         let is_es_module_output = matches!(
             self.ctx.options.module,
             ModuleKind::ES2015
@@ -1478,6 +1480,7 @@ impl<'a> Printer<'a> {
                 | ModuleKind::Node16
                 | ModuleKind::NodeNext
         );
+        let is_amd_or_umd = matches!(self.ctx.options.module, ModuleKind::AMD | ModuleKind::UMD);
 
         // Check if source already has "use strict" as a prologue directive.
         // Prologue directives are string literal expression statements that appear
@@ -1526,13 +1529,28 @@ impl<'a> Printer<'a> {
         };
 
         // TypeScript emits "use strict" when:
-        // 1. CommonJS/AMD/UMD AND the file is actually an ES module (has import/export).
+        // 1. CommonJS AND the file is actually an ES module (has import/export).
         //    Script files (no import/export) don't get "use strict".
         // 2. alwaysStrict is on AND the file is not already an ES module output.
         let is_file_module = self.file_is_module(&source.statements);
+        let starts_with_amd_define_wrapper = source
+            .statements
+            .nodes
+            .first()
+            .and_then(|&idx| self.arena.get(idx))
+            .and_then(|stmt| self.arena.get_expression_statement(stmt))
+            .and_then(|expr_stmt| self.arena.get(expr_stmt.expression))
+            .and_then(|expr| self.arena.get_call_expr(expr))
+            .and_then(|call| self.arena.get(call.expression))
+            .and_then(|callee| self.arena.get_identifier(callee))
+            .is_some_and(|ident| ident.escaped_text.as_str() == "define");
         let should_emit_use_strict = !source_has_use_strict
-            && ((is_commonjs_or_amd && is_file_module)
-                || (self.ctx.options.always_strict && !(is_es_module_output && is_file_module)));
+            && !starts_with_amd_define_wrapper
+            && ((is_top_level_cjs && is_file_module)
+                || (self.ctx.options.always_strict
+                    && self.ctx.original_module_kind.is_none()
+                    && !is_amd_or_umd
+                    && !(is_es_module_output && is_file_module)));
 
         if should_emit_use_strict {
             self.write("\"use strict\";");
@@ -1573,6 +1591,19 @@ impl<'a> Printer<'a> {
 
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                    let trimmed_comment = comment_text.trim_start();
+                    if trimmed_comment.starts_with("//@") || trimmed_comment.starts_with("// @") {
+                        self.comment_emit_idx += 1;
+                        continue;
+                    }
+                    if matches!(
+                        self.ctx.original_module_kind,
+                        Some(ModuleKind::AMD | ModuleKind::UMD)
+                    ) && trimmed_comment.contains("<amd-dependency")
+                    {
+                        self.comment_emit_idx += 1;
+                        continue;
+                    }
                     // In CommonJS mode, "detached" comments (followed by a blank
                     // line before the next content) are file-level and go BEFORE
                     // the __esModule marker. "Attached" comments (no blank line
@@ -1584,7 +1615,6 @@ impl<'a> Printer<'a> {
                     let between_after = &text[c_end as usize..next_content_pos as usize];
                     let is_detached =
                         between_after.contains("\n\n") || between_after.contains("\r\n\r\n");
-                    let trimmed_comment = comment_text.trim_start();
                     let is_amd_dependency = trimmed_comment.contains("<amd-dependency");
                     let is_triple_slash_reference = trimmed_comment.starts_with("///<reference");
                     if is_commonjs
@@ -1703,6 +1733,7 @@ impl<'a> Printer<'a> {
         } else {
             tracing::debug!("[emit] no top-level this capture for source {source_idx:?}");
         }
+        self.emit_wrapped_import_interop_prologue(&source.statements);
 
         // Save position for hoisted temp var declarations (assignment destructuring).
         // After emitting all statements, we'll insert `var _a, _b, ...;` here if needed.

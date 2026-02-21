@@ -117,17 +117,21 @@ impl<'a> Printer<'a> {
         source_node: &tsz_parser::parser::node::Node,
         source_idx: NodeIndex,
     ) {
-        use crate::transforms::module_commonjs;
-
         let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
         let amd_name = self.extract_amd_module_name();
         let amd_deps = self.extract_amd_dependencies();
+        let Some(source) = self.arena.get_source_file(source_node) else {
+            return;
+        };
+        let (value_deps, side_effect_deps, dep_vars) =
+            self.collect_amd_dependency_groups(dependencies, source);
 
         // Emit `/// <amd-dependency .../>` comments before `define()`.
         for (_, _, original_line) in &amd_deps {
             self.write(original_line);
             self.write_line();
         }
+        self.emit_wrapped_import_helpers(source);
 
         self.write("define(");
         if let Some(name) = &amd_name {
@@ -152,7 +156,7 @@ impl<'a> Printer<'a> {
             self.write(path);
             self.write("\"");
         }
-        for dep in dependencies {
+        for dep in &value_deps {
             self.write(", \"");
             self.write(dep);
             self.write("\"");
@@ -160,6 +164,11 @@ impl<'a> Printer<'a> {
         for (path, _, _) in &unnamed_deps {
             self.write(", \"");
             self.write(path);
+            self.write("\"");
+        }
+        for dep in &side_effect_deps {
+            self.write(", \"");
+            self.write(dep);
             self.write("\"");
         }
 
@@ -170,14 +179,16 @@ impl<'a> Printer<'a> {
                 self.write(n);
             }
         }
-        for dep in dependencies {
-            let name = module_commonjs::sanitize_module_name(dep);
-            self.write(", ");
-            self.write(&name);
+        for dep in &value_deps {
+            if let Some(name) = dep_vars.get(dep) {
+                self.write(", ");
+                self.write(name);
+            }
         }
         self.write(") {");
         self.write_line();
         self.increase_indent();
+        self.register_system_import_substitutions(source, &dep_vars);
 
         self.emit_module_wrapper_body(source_node, source_idx);
 
@@ -462,6 +473,182 @@ impl<'a> Printer<'a> {
             dep_vars.insert(dep.clone(), dep_var);
         }
         dep_vars
+    }
+
+    fn collect_amd_dependency_groups(
+        &mut self,
+        dependencies: &[String],
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> (Vec<String>, Vec<String>, HashMap<String, String>) {
+        let mut value_deps = Vec::new();
+        let mut side_effect_deps = Vec::new();
+        let mut dep_vars = HashMap::new();
+        let mut seen_value = HashSet::new();
+        let mut seen_side_effect = HashSet::new();
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+                if !self.import_decl_has_runtime_value(import_decl) {
+                    continue;
+                }
+                let Some(module_spec) =
+                    self.system_module_specifier_text(import_decl.module_specifier)
+                else {
+                    continue;
+                };
+                let local_name = self.get_identifier_text_idx(import_decl.import_clause);
+                if local_name.is_empty() {
+                    continue;
+                }
+                if seen_value.insert(module_spec.clone()) {
+                    value_deps.push(module_spec.clone());
+                }
+                dep_vars.entry(module_spec).or_insert(local_name);
+                continue;
+            }
+
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if !self.import_decl_has_runtime_value(import_decl) {
+                continue;
+            }
+            let Some(module_spec) = self.system_module_specifier_text(import_decl.module_specifier)
+            else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+                if seen_side_effect.insert(module_spec.clone()) {
+                    side_effect_deps.push(module_spec);
+                }
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                if seen_side_effect.insert(module_spec.clone()) {
+                    side_effect_deps.push(module_spec);
+                }
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+
+            let mut has_value_binding = clause.name.is_some();
+            let mut namespace_name: Option<String> = None;
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            {
+                if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
+                    if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+                        let local_name = self.get_identifier_text_idx(named_imports.name);
+                        if !local_name.is_empty() {
+                            namespace_name = Some(local_name);
+                        }
+                        has_value_binding = true;
+                    } else {
+                        let value_specs = self.collect_value_specifiers(&named_imports.elements);
+                        has_value_binding |= !value_specs.is_empty();
+                    }
+                } else {
+                    has_value_binding = true;
+                }
+            }
+
+            if !has_value_binding {
+                if seen_side_effect.insert(module_spec.clone()) {
+                    side_effect_deps.push(module_spec);
+                }
+                continue;
+            }
+
+            if seen_value.insert(module_spec.clone()) {
+                value_deps.push(module_spec.clone());
+            }
+            let dep_var = if let Some(ns_name) = namespace_name {
+                ns_name
+            } else {
+                self.next_commonjs_module_var(&module_spec)
+            };
+            dep_vars.entry(module_spec).or_insert(dep_var);
+        }
+
+        for dep in dependencies {
+            if seen_value.contains(dep) || seen_side_effect.contains(dep) {
+                continue;
+            }
+            if seen_side_effect.insert(dep.clone()) {
+                side_effect_deps.push(dep.clone());
+            }
+        }
+
+        (value_deps, side_effect_deps, dep_vars)
+    }
+
+    fn emit_wrapped_import_helpers(&mut self, source: &tsz_parser::parser::node::SourceFileData) {
+        if self.ctx.options.no_emit_helpers {
+            return;
+        }
+
+        let mut needs_import_default = false;
+        let mut needs_import_star = false;
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if !self.import_decl_has_runtime_value(import_decl) {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+            if clause.name.is_some() {
+                needs_import_default = true;
+            }
+            if clause.named_bindings.is_some()
+                && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+                && named_imports.name.is_some()
+                && named_imports.elements.nodes.is_empty()
+            {
+                needs_import_star = true;
+            }
+        }
+
+        if needs_import_star {
+            self.write(crate::transforms::helpers::CREATE_BINDING_HELPER);
+            self.write_line();
+            self.write(crate::transforms::helpers::SET_MODULE_DEFAULT_HELPER);
+            self.write_line();
+            self.write(crate::transforms::helpers::IMPORT_STAR_HELPER);
+            self.write_line();
+        }
+        if needs_import_default {
+            self.write(crate::transforms::helpers::IMPORT_DEFAULT_HELPER);
+            self.write_line();
+        }
     }
 
     fn emit_system_setters(&mut self, dependencies: &[String], dep_vars: &HashMap<String, String>) {
