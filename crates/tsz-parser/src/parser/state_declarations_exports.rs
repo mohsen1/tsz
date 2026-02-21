@@ -1034,7 +1034,10 @@ impl ParserState {
 
     fn parse_for_variable_declarations(&mut self) -> Vec<NodeIndex> {
         if self.is_for_variable_declaration_empty() {
-            self.parse_error_at_current_token(
+            let pos = self.token_pos();
+            self.parse_error_at(
+                pos,
+                0,
                 "Variable declaration list cannot be empty.",
                 diagnostic_codes::VARIABLE_DECLARATION_LIST_CANNOT_BE_EMPTY,
             );
