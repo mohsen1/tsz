@@ -152,7 +152,7 @@ git -C "$REPO_ROOT" clean -fd -- \
 
 # Phase 3: Belt-and-suspenders for heavyweight dirs that git clean may skip
 # (e.g. when they contain nested .git repos or permission issues)
-CLEAN_DIRS=(node_modules coverage logs artifacts pkg tmp)
+CLEAN_DIRS=(node_modules coverage logs artifacts pkg tmp wasm)
 if [[ "$FULL" == true ]]; then
   CLEAN_DIRS+=(.target .target-bench target)
 fi
@@ -169,7 +169,36 @@ find "$REPO_ROOT/scripts" -maxdepth 3 -type d \
 find "$REPO_ROOT" -name ".DS_Store" -delete 2>/dev/null || true
 
 # Phase 6: Remove stale package-lock.json files
-find "$REPO_ROOT" -name "package-lock.json" -delete 2>/dev/null || true
+find "$REPO_ROOT" -name "package-lock.json" -not -path "*/TypeScript/*" -delete 2>/dev/null || true
+
+# Phase 7: Remove bench/profiling leftovers
+# - typescript/ (lowercase) is a tsc build clone from bench scripts (not the TypeScript/ submodule)
+# - perf.data*, flamegraph.svg, *.actual from conformance/profiling
+if [[ -d "$REPO_ROOT/typescript" ]]; then
+  # May contain read-only files from node_modules/.git — force writable first
+  chmod -R u+w "$REPO_ROOT/typescript" 2>/dev/null || true
+  rm -rf "$REPO_ROOT/typescript"
+fi
+rm -f "$REPO_ROOT"/perf.data* "$REPO_ROOT"/*.svg "$REPO_ROOT"/flamegraph* 2>/dev/null || true
+rm -f "$REPO_ROOT"/*.actual "$REPO_ROOT"/*v8.log 2>/dev/null || true
+rm -f "$REPO_ROOT"/.conformance-value 2>/dev/null || true
+
+# Phase 8: Remove stale session logs older than 7 days
+find "$REPO_ROOT/logs" -type f -mtime +7 -delete 2>/dev/null || true
+find "$REPO_ROOT/logs" -type d -empty -delete 2>/dev/null || true
+
+# Phase 9: Remove script(1) typescript files left by run-session.sh PTY capture
+rm -f "$REPO_ROOT"/typescript.* 2>/dev/null || true
+
+# Phase 10: Clean conformance temp caches
+rm -rf "$REPO_ROOT/scripts/conformance/.tsc-cache" 2>/dev/null || true
+rm -rf "$REPO_ROOT/scripts/conformance/dist" 2>/dev/null || true
+rm -f "$REPO_ROOT"/tsc-cache*.json 2>/dev/null || true
+# Keep the committed tsc-cache-full.json
+git -C "$REPO_ROOT" checkout -- scripts/tsc-cache-full.json 2>/dev/null || true
+
+# Phase 11: Reset TypeScript submodule to clean state
+git -C "$REPO_ROOT" submodule update --force 2>/dev/null || true
 
 # ── Report ──────────────────────────────────────────────────────────────────
 
