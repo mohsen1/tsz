@@ -1,18 +1,13 @@
-use tsz_solver::{CallableShape, TypeDatabase, TypeId};
+use tsz_solver::{TypeDatabase, TypeId};
 
+pub(crate) use super::common::lazy_def_id as get_lazy_def_id;
+pub(crate) use super::common::{callable_shape_for_type, is_type_parameter};
 pub(crate) use tsz_solver::type_queries::{
     BaseInstanceMergeKind, ConstructorTypeKind, SignatureTypeKind, StaticPropertySource,
 };
 
 pub(crate) fn is_object_with_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_object_with_index_type(db, type_id)
-}
-
-pub(crate) fn callable_shape_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<std::sync::Arc<CallableShape>> {
-    tsz_solver::type_queries::get_callable_shape(db, type_id)
 }
 
 pub(crate) fn classify_for_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> SignatureTypeKind {
@@ -45,14 +40,6 @@ pub(crate) fn get_application_info(
     type_id: TypeId,
 ) -> Option<(TypeId, Vec<TypeId>)> {
     tsz_solver::type_queries_extended::get_application_info(db, type_id)
-}
-
-pub(crate) fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<tsz_solver::DefId> {
-    tsz_solver::type_queries::get_lazy_def_id(db, type_id)
-}
-
-pub(crate) fn is_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_type_parameter(db, type_id)
 }
 
 #[cfg(test)]

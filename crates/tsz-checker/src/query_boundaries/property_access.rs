@@ -1,4 +1,8 @@
-use tsz_solver::{CallableShape, FunctionShape, TypeDatabase, TypeId};
+use tsz_solver::{FunctionShape, TypeDatabase, TypeId};
+
+pub(crate) use super::common::{
+    array_element_type, callable_shape_for_type as callable_shape, is_string_type,
+};
 
 pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_function_type(db, type_id)
@@ -6,10 +10,6 @@ pub(crate) fn is_function_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 
 pub(crate) fn unwrap_readonly(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::unwrap_readonly(db, type_id)
-}
-
-pub(crate) fn array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    tsz_solver::type_queries::get_array_element_type(db, type_id)
 }
 
 pub(crate) fn tuple_element_type_union(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
@@ -31,10 +31,6 @@ pub(crate) fn is_number_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_number_type(db, type_id)
 }
 
-pub(crate) fn is_string_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_string_type(db, type_id)
-}
-
 pub(crate) fn is_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_symbol_type(db, type_id)
 }
@@ -52,13 +48,6 @@ pub(crate) fn function_shape(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<FunctionShape>> {
     tsz_solver::type_queries::get_function_shape(db, type_id)
-}
-
-pub(crate) fn callable_shape(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<std::sync::Arc<CallableShape>> {
-    tsz_solver::type_queries::get_callable_shape(db, type_id)
 }
 
 #[cfg(test)]

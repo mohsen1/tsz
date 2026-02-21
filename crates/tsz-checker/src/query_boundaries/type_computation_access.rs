@@ -1,9 +1,7 @@
 use tsz_common::Atom;
-use tsz_solver::{TupleElement, TypeDatabase, TypeId};
+use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) fn tuple_elements(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TupleElement>> {
-    tsz_solver::type_queries::get_tuple_elements(db, type_id)
-}
+pub(crate) use super::common::tuple_elements;
 
 pub(crate) fn literal_property_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
     tsz_solver::type_queries::get_literal_property_name(db, type_id)

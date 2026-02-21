@@ -1,5 +1,6 @@
-use tsz_solver::{ObjectShape, QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
+use tsz_solver::{QueryDatabase, SubtypeFailureReason, TypeDatabase, TypeId};
 
+pub(crate) use super::common::object_shape_for_type;
 pub(crate) use tsz_solver::type_queries_classifiers::{
     AssignabilityEvalKind, ExcessPropertiesKind,
 };
@@ -18,13 +19,6 @@ pub(crate) fn is_relation_cacheable(db: &dyn TypeDatabase, source: TypeId, targe
 
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
-}
-
-pub(crate) fn object_shape_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<std::sync::Arc<ObjectShape>> {
-    tsz_solver::type_queries::get_object_shape(db, type_id)
 }
 
 pub(crate) fn classify_for_excess_properties(
