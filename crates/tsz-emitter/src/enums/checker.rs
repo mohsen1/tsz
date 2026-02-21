@@ -136,7 +136,7 @@ impl<'a> EnumChecker<'a> {
             };
 
             let member_name = self.get_member_name(member_data.name);
-            let has_initializer = !member_data.initializer.is_none();
+            let has_initializer = member_data.initializer.is_some();
 
             // Get evaluated value
             let value = values.get(&member_name);

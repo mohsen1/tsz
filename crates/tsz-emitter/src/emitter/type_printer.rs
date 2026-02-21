@@ -79,7 +79,7 @@ impl<'a> TypePrinter<'a> {
         // Check if it's exported
         if symbol.is_exported || symbol.has_any_flags(symbol_flags::EXPORT_VALUE) {
             // Check parentage - if parent is a function/method, it's local and must be inlined
-            if !symbol.parent.is_none()
+            if symbol.parent.is_some()
                 && let Some(parent) = arena.get(symbol.parent)
                 && parent.has_any_flags(symbol_flags::FUNCTION | symbol_flags::METHOD)
             {

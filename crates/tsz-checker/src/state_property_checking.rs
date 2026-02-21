@@ -369,7 +369,7 @@ impl<'a> CheckerState<'a> {
             if element.dot_dot_dot_token {
                 return;
             }
-            if !element.property_name.is_none()
+            if element.property_name.is_some()
                 && let Some(prop_name_node) = self.ctx.arena.get(element.property_name)
                 && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             {
@@ -1088,7 +1088,7 @@ impl<'a> CheckerState<'a> {
             }
             if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
                 // Get the value declaration and check if it's a variable with new Class()
-                if !symbol.value_declaration.is_none() {
+                if symbol.value_declaration.is_some() {
                     return self.get_class_name_from_var_decl(symbol.value_declaration);
                 }
             }

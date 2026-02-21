@@ -82,7 +82,7 @@ impl<'a> Printer<'a> {
         }
 
         if func.is_async && self.ctx.needs_async_lowering && !func.asterisk_token {
-            let func_name = if !func.name.is_none() {
+            let func_name = if func.name.is_some() {
                 self.get_identifier_text_idx(func.name)
             } else {
                 String::new()
@@ -102,7 +102,7 @@ impl<'a> Printer<'a> {
         }
 
         // Name
-        if !func.name.is_none() {
+        if func.name.is_some() {
             self.write_space();
             self.emit_decl_name(func.name);
         } else {
@@ -128,7 +128,7 @@ impl<'a> Printer<'a> {
                     .last()
                     .and_then(|&idx| self.arena.get(idx))
                     .map_or(node.pos, |n| n.end)
-            } else if !func.name.is_none() {
+            } else if func.name.is_some() {
                 self.arena.get(func.name).map_or(node.pos, |n| n.end)
             } else {
                 node.pos
@@ -146,7 +146,7 @@ impl<'a> Printer<'a> {
                 .first()
                 .and_then(|&idx| self.arena.get(idx))
                 .map_or(node.pos, |n| n.pos);
-            let search_end = if !func.body.is_none() {
+            let search_end = if func.body.is_some() {
                 self.arena.get(func.body).map_or(node.end, |n| n.pos)
             } else {
                 node.end
@@ -177,7 +177,7 @@ impl<'a> Printer<'a> {
         // Track function name to prevent duplicate var declarations for merged namespaces.
         // Function declarations provide their own declaration, so if a namespace merges
         // with this function, the namespace shouldn't emit `var name;`.
-        if !func.name.is_none() {
+        if func.name.is_some() {
             let func_name = self.get_identifier_text_idx(func.name);
             if !func_name.is_empty() {
                 self.declared_namespace_names.insert(func_name);
@@ -672,7 +672,7 @@ impl<'a> Printer<'a> {
                 if let Some(member_node) = self.arena.get(member_idx)
                     && member_node.kind == syntax_kind_ext::CONSTRUCTOR
                     && let Some(ctor) = self.arena.get_constructor(member_node)
-                    && !ctor.body.is_none()
+                    && ctor.body.is_some()
                 {
                     let param_props = self.collect_parameter_properties(&ctor.parameters.nodes);
                     for name in &param_props {
@@ -691,7 +691,7 @@ impl<'a> Printer<'a> {
                 && let Some(member_node) = self.arena.get(member_idx)
                 && member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
                 && let Some(prop) = self.arena.get_property_decl(member_node)
-                && !prop.initializer.is_none()
+                && prop.initializer.is_some()
                 && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
             {
                 // For static properties, save leading comments before skipping so they
@@ -836,13 +836,13 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::METHOD_DECLARATION => self
                         .arena
                         .get_method_decl(member_node)
-                        .is_some_and(|m| !m.body.is_none()),
+                        .is_some_and(|m| m.body.is_some()),
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
                         self.arena
                             .get_accessor(member_node)
-                            .is_some_and(|a| !a.body.is_none())
+                            .is_some_and(|a| a.body.is_some())
                     }
                     _ => false,
                 };
@@ -1048,7 +1048,7 @@ impl<'a> Printer<'a> {
         // Track class name to prevent duplicate var declarations for merged namespaces.
         // When a class and namespace have the same name (declaration merging), the class
         // provides the declaration, so the namespace shouldn't emit `var name;`.
-        if !class.name.is_none() {
+        if class.name.is_some() {
             let class_name = self.get_identifier_text_idx(class.name);
             if !class_name.is_empty() {
                 self.declared_namespace_names.insert(class_name);
@@ -1159,7 +1159,7 @@ impl<'a> Printer<'a> {
                 if let Some(source_text) = self.source_text_for_map() {
                     printer.set_source_text(source_text);
                 }
-                let enum_name = if !enum_decl.name.is_none() {
+                let enum_name = if enum_decl.name.is_some() {
                     self.get_identifier_text_idx(enum_decl.name)
                 } else {
                     String::new()
@@ -1204,7 +1204,7 @@ impl<'a> Printer<'a> {
 
         self.emit(member.name);
 
-        if !member.initializer.is_none() {
+        if member.initializer.is_some() {
             self.write(" = ");
             self.emit(member.initializer);
         }
@@ -1908,7 +1908,7 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(func.name) != name {
                     return None;
                 }
-                let runtime = !self.has_declare_modifier(&func.modifiers) && !func.body.is_none();
+                let runtime = !self.has_declare_modifier(&func.modifiers) && func.body.is_some();
                 Some((runtime, None))
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {

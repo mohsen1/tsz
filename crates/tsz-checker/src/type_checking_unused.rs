@@ -73,7 +73,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the declaration node
-            let decl_idx = if !symbol.value_declaration.is_none() {
+            let decl_idx = if symbol.value_declaration.is_some() {
                 symbol.value_declaration
             } else if let Some(&first) = symbol.declarations.first() {
                 first
@@ -116,7 +116,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the declaration node
-            let decl_idx = if !symbol.value_declaration.is_none() {
+            let decl_idx = if symbol.value_declaration.is_some() {
                 symbol.value_declaration
             } else if let Some(&first) = symbol.declarations.first() {
                 first
@@ -233,7 +233,7 @@ impl<'a> CheckerState<'a> {
             }
 
             // Get the declaration node for position info
-            let decl_idx = if !symbol.value_declaration.is_none() {
+            let decl_idx = if symbol.value_declaration.is_some() {
                 symbol.value_declaration
             } else if let Some(&first) = symbol.declarations.first() {
                 first
@@ -688,7 +688,7 @@ impl<'a> CheckerState<'a> {
             };
             if node.kind == syntax_kind_ext::CONSTRUCTOR {
                 if let Some(ctor) = self.ctx.arena.get_constructor(node)
-                    && !ctor.body.is_none()
+                    && ctor.body.is_some()
                 {
                     return true;
                 }
@@ -731,7 +731,7 @@ impl<'a> CheckerState<'a> {
                         // Different name, no body - no implementation found
                         return (false, None, None);
                     }
-                    if !method.body.is_none() {
+                    if method.body.is_some() {
                         // Found the implementation with matching name
                         return (true, member_name, Some(start + offset));
                     }
@@ -775,7 +775,7 @@ impl<'a> CheckerState<'a> {
             && let Some(func) = self.ctx.arena.get_function(node)
         {
             // Check if this is an implementation (has body)
-            if !func.body.is_none() {
+            if func.body.is_some() {
                 // This is an implementation - check if name matches
                 let impl_name = self.get_function_name_from_node(stmt_idx);
                 return (true, impl_name, Some(stmt_idx));

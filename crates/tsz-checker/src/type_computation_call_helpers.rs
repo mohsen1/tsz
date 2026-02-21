@@ -100,7 +100,7 @@ impl<'a> CheckerState<'a> {
             // before initialization at the property name site.
             if self.is_in_static_property_initializer_ast_context(idx)
                 && let Some(ext) = self.ctx.arena.get_extended(idx)
-                && !ext.parent.is_none()
+                && ext.parent.is_some()
                 && let Some(parent) = self.ctx.arena.get(ext.parent)
                 && parent.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                 && let Some(access) = self.ctx.arena.get_access_expr(parent)
@@ -155,8 +155,7 @@ impl<'a> CheckerState<'a> {
             };
             if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 if let Some(prop) = self.ctx.arena.get_property_decl(parent_node) {
-                    return !prop.initializer.is_none()
-                        && self.has_static_modifier(&prop.modifiers);
+                    return prop.initializer.is_some() && self.has_static_modifier(&prop.modifiers);
                 }
                 return false;
             }
@@ -182,7 +181,7 @@ impl<'a> CheckerState<'a> {
         // Try to find the value declaration in the current arena first
         if let Some(node) = self.ctx.arena.get(value_decl)
             && let Some(var_decl) = self.ctx.arena.get_variable_declaration(node)
-            && !var_decl.type_annotation.is_none()
+            && var_decl.type_annotation.is_some()
             && let Some(type_node) = self.ctx.arena.get(var_decl.type_annotation)
             && let Some(type_ref) = self.ctx.arena.get_type_ref(type_node)
             && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
@@ -200,7 +199,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|v| v.first())
             && let Some(node) = decl_arena.get(value_decl)
             && let Some(var_decl) = decl_arena.get_variable_declaration(node)
-            && !var_decl.type_annotation.is_none()
+            && var_decl.type_annotation.is_some()
             && let Some(type_node) = decl_arena.get(var_decl.type_annotation)
             && let Some(type_ref) = decl_arena.get_type_ref(type_node)
             && let Some(name_node) = decl_arena.get(type_ref.type_name)
@@ -222,11 +221,11 @@ impl<'a> CheckerState<'a> {
         };
 
         if let Some(var_decl) = self.ctx.arena.get_variable_declaration(node) {
-            if !var_decl.type_annotation.is_none() {
+            if var_decl.type_annotation.is_some() {
                 let annotated = self.get_type_from_type_node(var_decl.type_annotation);
                 return self.resolve_ref_type(annotated);
             }
-            if !var_decl.initializer.is_none() {
+            if var_decl.initializer.is_some() {
                 return self.get_type_of_node(var_decl.initializer);
             }
             return TypeId::ANY;
@@ -294,7 +293,7 @@ impl<'a> CheckerState<'a> {
         // which can have wrong symbol IDs for lib types, causing incorrect type resolution.
         if let Some(node) = decl_arena.get(decl_idx)
             && let Some(var_decl) = decl_arena.get_variable_declaration(node)
-            && !var_decl.type_annotation.is_none()
+            && var_decl.type_annotation.is_some()
         {
             // Try to extract the type name from a simple type reference
             if let Some(type_annotation_node) = decl_arena.get(var_decl.type_annotation)

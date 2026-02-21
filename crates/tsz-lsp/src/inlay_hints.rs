@@ -213,7 +213,7 @@ impl<'a> InlayHintsProvider<'a> {
         };
 
         // Get the function declaration to extract parameter names
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
@@ -322,7 +322,7 @@ impl<'a> InlayHintsProvider<'a> {
         };
 
         // Skip if the variable already has an explicit type annotation
-        if !decl.type_annotation.is_none() {
+        if decl.type_annotation.is_some() {
             return;
         }
 
@@ -377,7 +377,7 @@ impl<'a> InlayHintsProvider<'a> {
         };
 
         // Skip if the function already has an explicit return type annotation
-        if !func.type_annotation.is_none() {
+        if func.type_annotation.is_some() {
             return;
         }
 

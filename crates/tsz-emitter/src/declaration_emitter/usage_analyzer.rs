@@ -202,7 +202,7 @@ impl<'a> UsageAnalyzer<'a> {
                 // Check if export_clause contains a declaration we need to analyze
                 if let Some(export_node) = self.arena.get(stmt_idx)
                     && let Some(export) = self.arena.get_export_decl(export_node)
-                    && !export.export_clause.is_none()
+                    && export.export_clause.is_some()
                     && let Some(clause_node) = self.arena.get(export.export_clause)
                 {
                     match clause_node.kind {
@@ -268,7 +268,7 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         // Mark the RHS namespace/type/value as used by this declaration.
-        if !import.module_specifier.is_none() {
+        if import.module_specifier.is_some() {
             let old = self.in_value_pos;
             self.in_value_pos = true;
             self.analyze_entity_name(import.module_specifier);
@@ -303,7 +303,7 @@ impl<'a> UsageAnalyzer<'a> {
         self.walk_inferred_type(func_idx);
 
         // Walk return type (explicit or inferred)
-        if !func.type_annotation.is_none() {
+        if func.type_annotation.is_some() {
             self.analyze_type_node(func.type_annotation);
         } else {
             // No explicit annotation - use inferred type from node_types
@@ -374,7 +374,7 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         // Walk type annotation (explicit or inferred)
-        if !prop.type_annotation.is_none() {
+        if prop.type_annotation.is_some() {
             self.analyze_type_node(prop.type_annotation);
         } else {
             self.walk_inferred_type(prop_idx);
@@ -409,7 +409,7 @@ impl<'a> UsageAnalyzer<'a> {
         // Walk parameters
 
         // Walk return type
-        if !method.type_annotation.is_none() {
+        if method.type_annotation.is_some() {
             self.analyze_type_node(method.type_annotation);
         } else {
             self.walk_inferred_type(method_idx);
@@ -440,7 +440,7 @@ impl<'a> UsageAnalyzer<'a> {
         // Walk parameters
 
         // Walk return type (for getters)
-        if !accessor.type_annotation.is_none() {
+        if accessor.type_annotation.is_some() {
             self.analyze_type_node(accessor.type_annotation);
         }
     }
@@ -460,7 +460,7 @@ impl<'a> UsageAnalyzer<'a> {
         }
 
         // Walk return type
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.analyze_type_node(sig.type_annotation);
         }
     }
@@ -501,7 +501,7 @@ impl<'a> UsageAnalyzer<'a> {
         match member_node.kind {
             k if k == syntax_kind_ext::PROPERTY_SIGNATURE => {
                 if let Some(sig) = self.arena.get_signature(member_node)
-                    && !sig.type_annotation.is_none()
+                    && sig.type_annotation.is_some()
                 {
                     self.analyze_type_node(sig.type_annotation);
                 }
@@ -521,7 +521,7 @@ impl<'a> UsageAnalyzer<'a> {
                         }
                     }
                     // Walk return type
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.analyze_type_node(sig.type_annotation);
                     }
                 }
@@ -543,7 +543,7 @@ impl<'a> UsageAnalyzer<'a> {
                         }
                     }
                     // Walk return type
-                    if !sig.type_annotation.is_none() {
+                    if sig.type_annotation.is_some() {
                         self.analyze_type_node(sig.type_annotation);
                     }
                 }
@@ -613,7 +613,7 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         // Walk type annotation
-        if !decl.type_annotation.is_none() {
+        if decl.type_annotation.is_some() {
             self.analyze_type_node(decl.type_annotation);
         } else {
             self.walk_inferred_type(decl_idx);
@@ -646,12 +646,12 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         // Walk constraint
-        if !param.constraint.is_none() {
+        if param.constraint.is_some() {
             self.analyze_type_node(param.constraint);
         }
 
         // Walk default type
-        if !param.default.is_none() {
+        if param.default.is_some() {
             self.analyze_type_node(param.default);
         }
     }
@@ -666,7 +666,7 @@ impl<'a> UsageAnalyzer<'a> {
         };
 
         // Walk type annotation
-        if !param.type_annotation.is_none() {
+        if param.type_annotation.is_some() {
             self.analyze_type_node(param.type_annotation);
         } else {
             self.walk_inferred_type(param_idx);
@@ -840,7 +840,7 @@ impl<'a> UsageAnalyzer<'a> {
                 if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
                     self.analyze_type_parameter(mapped_type.type_parameter);
                     self.analyze_type_node(mapped_type.type_node);
-                    if !mapped_type.name_type.is_none() {
+                    if mapped_type.name_type.is_some() {
                         self.analyze_type_node(mapped_type.name_type);
                     }
                 }

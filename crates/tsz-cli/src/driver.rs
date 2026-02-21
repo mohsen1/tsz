@@ -1443,7 +1443,6 @@ use driver_sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
 };
-#[allow(unused_imports)]
 pub(crate) use driver_sources::{
     config_base_dir, has_no_types_and_symbols_directive, load_config, resolve_tsconfig_path,
 };

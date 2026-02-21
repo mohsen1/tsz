@@ -891,7 +891,7 @@ impl<'a> FlowAnalyzer<'a> {
         if (symbol.flags & symbol_flags::BLOCK_SCOPED_VARIABLE) == 0 {
             return None;
         }
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?
@@ -918,13 +918,13 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         // Must not have a default initializer (const { type: alias = "default" } = ...)
-        if !be.initializer.is_none() {
+        if be.initializer.is_some() {
             return None;
         }
         // Get the property name being destructured
         // `{ type: alias }` → property_name node is "type"
         // `{ type }` shorthand → name node IS the property name
-        let prop_name_idx = if !be.property_name.is_none() {
+        let prop_name_idx = if be.property_name.is_some() {
             be.property_name
         } else {
             be.name
@@ -1771,14 +1771,14 @@ impl<'a> FlowAnalyzer<'a> {
 
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = self.arena.get_function(node)
-            && !func.name.is_none()
+            && func.name.is_some()
         {
             return self.reference_symbol_inner(func.name, visited);
         }
 
         if node.kind == syntax_kind_ext::CLASS_DECLARATION
             && let Some(class_decl) = self.arena.get_class(node)
-            && !class_decl.name.is_none()
+            && class_decl.name.is_some()
         {
             return self.reference_symbol_inner(class_decl.name, visited);
         }
@@ -1868,7 +1868,7 @@ impl<'a> FlowAnalyzer<'a> {
         }
         visited.push(sym_id);
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?

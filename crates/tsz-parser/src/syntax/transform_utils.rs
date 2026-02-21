@@ -104,11 +104,11 @@ fn target_reference_children(arena: &NodeArena, node_idx: NodeIndex) -> Vec<Node
                     let Some(param) = arena.get_parameter(param_node) else {
                         continue;
                     };
-                    if !param.initializer.is_none() {
+                    if param.initializer.is_some() {
                         children.push(param.initializer);
                     }
                 }
-                if !func.body.is_none() {
+                if func.body.is_some() {
                     children.push(func.body);
                 }
                 children

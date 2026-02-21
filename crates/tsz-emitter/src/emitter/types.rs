@@ -137,12 +137,12 @@ impl<'a> Printer<'a> {
 
         self.emit(param.name);
 
-        if !param.constraint.is_none() {
+        if param.constraint.is_some() {
             self.write(" extends ");
             self.emit(param.constraint);
         }
 
-        if !param.default.is_none() {
+        if param.default.is_some() {
             self.write(" = ");
             self.emit(param.default);
         }
@@ -160,7 +160,7 @@ impl<'a> Printer<'a> {
         // Emit modifiers (readonly)
         self.emit_class_member_modifiers(&sig.modifiers);
 
-        if !sig.name.is_none() {
+        if sig.name.is_some() {
             self.emit(sig.name);
         }
 
@@ -168,7 +168,7 @@ impl<'a> Printer<'a> {
             self.write("?");
         }
 
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit(sig.type_annotation);
         }
@@ -179,7 +179,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !sig.name.is_none() {
+        if sig.name.is_some() {
             self.emit(sig.name);
         }
 
@@ -193,7 +193,7 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit(sig.type_annotation);
         }
@@ -218,7 +218,7 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit(sig.type_annotation);
         }
@@ -245,7 +245,7 @@ impl<'a> Printer<'a> {
         }
         self.write(")");
 
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit(sig.type_annotation);
         }
@@ -263,7 +263,7 @@ impl<'a> Printer<'a> {
         self.emit_comma_separated(&sig.parameters.nodes);
         self.write("]");
 
-        if !sig.type_annotation.is_none() {
+        if sig.type_annotation.is_some() {
             self.write(": ");
             self.emit(sig.type_annotation);
         }

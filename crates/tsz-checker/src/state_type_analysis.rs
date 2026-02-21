@@ -1512,7 +1512,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Get the enum declaration to check if it's numeric
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             match symbol.declarations.first() {
@@ -1540,7 +1540,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
 
-            if !member.initializer.is_none() {
+            if member.initializer.is_some() {
                 let Some(init_node) = self.ctx.arena.get(member.initializer) else {
                     continue;
                 };

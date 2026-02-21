@@ -309,7 +309,7 @@ impl<'a> Printer<'a> {
                 let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
                     continue;
                 };
-                if !decl.initializer.is_none() {
+                if decl.initializer.is_some() {
                     return false;
                 }
             }
@@ -524,7 +524,7 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         }
 
-        if !if_stmt.else_statement.is_none() {
+        if if_stmt.else_statement.is_some() {
             self.write_line();
             // Map the `else` keyword to its source position
             if let Some(then_node) = self.arena.get(if_stmt.then_statement)
@@ -616,14 +616,14 @@ impl<'a> Printer<'a> {
         // Map first `;` in for-header
         self.pending_source_pos = semi1_src;
         self.write(";");
-        if !loop_stmt.condition.is_none() {
+        if loop_stmt.condition.is_some() {
             self.write(" ");
             self.emit(loop_stmt.condition);
         }
         // Map second `;` in for-header
         self.pending_source_pos = semi2_src;
         self.write(";");
-        if !loop_stmt.incrementor.is_none() {
+        if loop_stmt.incrementor.is_some() {
             self.write(" ");
             self.emit(loop_stmt.incrementor);
         }
@@ -700,7 +700,7 @@ impl<'a> Printer<'a> {
         };
 
         self.write("return");
-        if !ret.expression.is_none() {
+        if ret.expression.is_some() {
             self.write(" ");
             self.emit_expression(ret.expression);
         }
@@ -735,17 +735,17 @@ impl<'a> Printer<'a> {
         self.write("try ");
         self.emit(try_stmt.try_block);
 
-        if !try_stmt.catch_clause.is_none() {
+        if try_stmt.catch_clause.is_some() {
             self.write_line();
             self.emit(try_stmt.catch_clause);
         }
 
-        if !try_stmt.finally_block.is_none() {
+        if try_stmt.finally_block.is_some() {
             self.write_line();
             // Map the `finally` keyword to its source position
             // The keyword is between the catch block end and finally block start
             if let Some(finally_node) = self.arena.get(try_stmt.finally_block) {
-                let search_start = if !try_stmt.catch_clause.is_none() {
+                let search_start = if try_stmt.catch_clause.is_some() {
                     self.arena
                         .get(try_stmt.catch_clause)
                         .map_or(node.pos, |n| n.end)
@@ -768,7 +768,7 @@ impl<'a> Printer<'a> {
 
         self.write("catch");
 
-        if !catch.variable_declaration.is_none() {
+        if catch.variable_declaration.is_some() {
             self.write(" ");
             // Map the `(` to its source position
             self.map_token_after(node.pos, node.end, b'(');
@@ -894,7 +894,7 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_break_statement(&mut self, node: &Node) {
         self.write("break");
         if let Some(jump) = self.arena.get_jump_data(node)
-            && !jump.label.is_none()
+            && jump.label.is_some()
         {
             self.write(" ");
             self.emit(jump.label);
@@ -906,7 +906,7 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_continue_statement(&mut self, node: &Node) {
         self.write("continue");
         if let Some(jump) = self.arena.get_jump_data(node)
-            && !jump.label.is_none()
+            && jump.label.is_some()
         {
             self.write(" ");
             self.emit(jump.label);

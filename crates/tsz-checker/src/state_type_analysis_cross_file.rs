@@ -160,7 +160,7 @@ impl<'a> CheckerState<'a> {
             // correctly via resolve_lib_type_by_name.
             if symbol.flags & symbol_flags::INTERFACE == 0 {
                 let mut decl_candidates = symbol.declarations.clone();
-                if !symbol.value_declaration.is_none() {
+                if symbol.value_declaration.is_some() {
                     decl_candidates.push(symbol.value_declaration);
                 }
 

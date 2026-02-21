@@ -334,7 +334,7 @@ impl<'a> ES5DestructuringTransformer<'a> {
                 }
 
                 // Check if property name is computed
-                let (is_computed, computed_temp) = if !binding_elem.property_name.is_none() {
+                let (is_computed, computed_temp) = if binding_elem.property_name.is_some() {
                     if let Some(prop_name_node) = self.arena.get(binding_elem.property_name)
                         && prop_name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(computed) = self.arena.get_computed_property(prop_name_node)

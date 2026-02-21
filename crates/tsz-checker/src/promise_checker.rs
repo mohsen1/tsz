@@ -269,7 +269,7 @@ impl<'a> CheckerState<'a> {
         visited_aliases.push(sym_id);
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol
@@ -359,7 +359,7 @@ impl<'a> CheckerState<'a> {
         visited_aliases.push(sym_id);
 
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol

@@ -74,7 +74,7 @@ impl ArrowTransformContext {
         };
 
         // Check if body contains `this` references
-        if !func_data.body.is_none() && contains_this_reference(arena, func_data.body) {
+        if func_data.body.is_some() && contains_this_reference(arena, func_data.body) {
             self.needs_this_capture = true;
         }
     }

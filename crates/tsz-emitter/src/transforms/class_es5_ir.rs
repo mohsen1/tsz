@@ -457,7 +457,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     return None;
                 }
                 // Include if has initializer
-                (!prop_data.initializer.is_none()).then_some(member_idx)
+                (prop_data.initializer.is_some()).then_some(member_idx)
             })
             .collect();
 
@@ -472,7 +472,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     continue;
                 };
                 // Only use constructor with body (not overload signatures)
-                if !ctor_data.body.is_none() {
+                if ctor_data.body.is_some() {
                     constructor_data = Some(ctor_data);
                     break;
                 }
@@ -829,7 +829,7 @@ impl<'a> ES5ClassTransformer<'a> {
             }));
 
             // If has initializer: __classPrivateFieldSet(this, _ClassName_field, value, "f");
-            if field.has_initializer && !field.initializer.is_none() {
+            if field.has_initializer && field.initializer.is_some() {
                 body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
                     receiver: Box::new(key.clone()),
                     weakmap_name: field.weakmap_name.clone(),
@@ -980,7 +980,7 @@ impl<'a> ES5ClassTransformer<'a> {
             };
 
             // Convert default value if present
-            if !param.initializer.is_none() {
+            if param.initializer.is_some() {
                 ir_param.default_value = Some(Box::new(self.convert_expression(param.initializer)));
             }
 
@@ -1150,13 +1150,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.collect_arrow_functions_in_node(param_idx, arrows);
             }
             // Check body
-            if !func.body.is_none() {
+            if func.body.is_some() {
                 self.collect_arrow_functions_in_node(func.body, arrows);
             }
         }
         // For variable declarations, check initializer
         else if let Some(var_decl) = self.arena.get_variable_declaration(node) {
-            if !var_decl.initializer.is_none() {
+            if var_decl.initializer.is_some() {
                 self.collect_arrow_functions_in_node(var_decl.initializer, arrows);
             }
         }
@@ -1168,7 +1168,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         // For return statements, check expression
         else if let Some(ret_stmt) = self.arena.get_return_statement(node) {
-            if !ret_stmt.expression.is_none() {
+            if ret_stmt.expression.is_some() {
                 self.collect_arrow_functions_in_node(ret_stmt.expression, arrows);
             }
         }

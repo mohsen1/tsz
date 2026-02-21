@@ -27,7 +27,7 @@ impl<'a> CheckerState<'a> {
                     && let Some(element_data) = self.ctx.arena.get_binding_element(element_node)
                 {
                     // Compute property name
-                    let name_str = if !element_data.property_name.is_none() {
+                    let name_str = if element_data.property_name.is_some() {
                         let prop_name_idx = element_data.property_name;
                         if let Some(prop_name_node) = self.ctx.arena.get(prop_name_idx) {
                             if let Some(ident) = self.ctx.arena.get_identifier(prop_name_node) {
@@ -53,7 +53,7 @@ impl<'a> CheckerState<'a> {
                     let mut element_type =
                         self.get_binding_element_type(pattern_idx, i, parent_type, element_data);
 
-                    if !element_data.initializer.is_none() {
+                    if element_data.initializer.is_some() {
                         let init_type = self.get_type_of_node(element_data.initializer);
                         if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                             element_type = init_type;
@@ -74,7 +74,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     let is_optional =
-                        !element_data.initializer.is_none() || element_data.dot_dot_dot_token;
+                        element_data.initializer.is_some() || element_data.dot_dot_dot_token;
 
                     let mut prop_info = tsz_solver::PropertyInfo::new(atom, element_type);
                     prop_info.optional = is_optional;
@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
                             element_data,
                         );
 
-                        if !element_data.initializer.is_none() {
+                        if element_data.initializer.is_some() {
                             let init_type = self.get_type_of_node(element_data.initializer);
                             if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                                 element_type = init_type;
@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
                         }
 
                         let is_optional =
-                            !element_data.initializer.is_none() || element_data.dot_dot_dot_token;
+                            element_data.initializer.is_some() || element_data.dot_dot_dot_token;
 
                         elements.push(tsz_solver::TupleElement {
                             type_id: element_type,

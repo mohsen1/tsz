@@ -111,7 +111,7 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_with_libs(val_sym_id, &lib_binders)
             && (val_symbol.flags & symbol_flags::VALUE) != 0
             && !val_symbol.is_type_only
-            && !val_symbol.value_declaration.is_none()
+            && val_symbol.value_declaration.is_some()
         {
             return Some((val_sym_id, val_symbol.value_declaration));
         }
@@ -122,7 +122,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(val_symbol) = lib_binder.get_symbol(val_sym_id)
                 && (val_symbol.flags & symbol_flags::VALUE) != 0
                 && !val_symbol.is_type_only
-                && !val_symbol.value_declaration.is_none()
+                && val_symbol.value_declaration.is_some()
             {
                 return Some((val_sym_id, val_symbol.value_declaration));
             }
@@ -351,7 +351,7 @@ impl<'a> CheckerState<'a> {
 
         // For import equals declarations without import_module set,
         // check if the value_declaration is an import equals with a require
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             let Some(decl_node) = self.ctx.arena.get(symbol.value_declaration) else {
                 return false;
             };
