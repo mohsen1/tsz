@@ -1,1 +1,1 @@
-pub(crate) use crate::relations::subtype::*;
+pub use crate::relations::subtype::*;
