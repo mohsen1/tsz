@@ -222,6 +222,9 @@ pub struct CheckerContext<'a> {
     /// checker should consume that context and avoid ad-hoc module-existence inference.
     pub report_unresolved_imports: bool,
 
+    /// Tracking the current computed property name node for TS2467
+    pub checking_computed_property_name: Option<NodeIndex>,
+
     // --- Caches ---
     /// Cached types for symbols.
     pub symbol_types: FxHashMap<SymbolId, TypeId>,

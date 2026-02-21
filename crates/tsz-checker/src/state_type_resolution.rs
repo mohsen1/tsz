@@ -172,6 +172,9 @@ impl<'a> CheckerState<'a> {
                 let is_builtin_array =
                     name == "Array" || name == "ReadonlyArray" || name == "ConcatArray";
                 let type_param = self.lookup_type_parameter(name);
+                if type_param.is_some() {
+                    self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
+                }
                 let type_resolution =
                     self.resolve_identifier_symbol_in_type_position(type_name_idx);
                 let sym_id = match type_resolution {
@@ -477,6 +480,7 @@ impl<'a> CheckerState<'a> {
 
             // Type parameter (generic like T in function<T>)
             if let Some(type_param) = self.lookup_type_parameter(name) {
+                self.check_type_parameter_reference_for_computed_property(name, type_name_idx);
                 return type_param;
             }
 
