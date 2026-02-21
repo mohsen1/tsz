@@ -6,10 +6,10 @@
 //! type checking operations.
 
 use crate::query_boundaries::constructor_checker::{
-    AbstractConstructorKind, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
-    classify_for_abstract_constructor, classify_for_constructor_access,
-    classify_for_constructor_return_merge, classify_for_instance_type,
-    construct_signatures_for_type, has_construct_signatures,
+    AbstractConstructorAnchor, ConstructorAccessKind, ConstructorReturnMergeKind, InstanceTypeKind,
+    classify_for_constructor_access, classify_for_constructor_return_merge,
+    classify_for_instance_type, construct_signatures_for_type, has_construct_signatures,
+    resolve_abstract_constructor_anchor,
 };
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS, MemberAccessLevel};
 use rustc_hash::FxHashSet;
@@ -511,9 +511,9 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
 
-            // Then check TypeQuery types
-            match classify_for_abstract_constructor(self.ctx.types, type_id) {
-                AbstractConstructorKind::TypeQuery(sym_ref) => {
+            // Let solver unwrap application/type-query chains first.
+            match resolve_abstract_constructor_anchor(self.ctx.types, type_id) {
+                AbstractConstructorAnchor::TypeQuery(sym_ref) => {
                     if let Some(symbol) =
                         self.ctx.binder.get_symbol(tsz_binder::SymbolId(sym_ref.0))
                     {
@@ -521,6 +521,9 @@ impl<'a> CheckerState<'a> {
                     } else {
                         false
                     }
+                }
+                AbstractConstructorAnchor::CallableType(callable_type) => {
+                    self.is_abstract_ctor(callable_type)
                 }
                 _ => false,
             }

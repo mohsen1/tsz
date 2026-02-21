@@ -623,9 +623,7 @@ impl<'a> CheckerState<'a> {
                             || op == SyntaxKind::GreaterThanGreaterThanToken as u16
                             || op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16;
 
-                        if is_compound_like
-                            && self.ctx.types.is_assignable_to(right_type, widened_left)
-                        {
+                        if is_compound_like && self.is_assignable_to(right_type, widened_left) {
                             check_assignability = false;
                         }
                     }
@@ -739,8 +737,8 @@ impl<'a> CheckerState<'a> {
 
         // Allow indexed writes when the constraint is `keyof <source>` and
         // the source type is compatible with the generic object being written to.
-        self.ctx.types.is_subtype_of(constraint_source, object_type)
-            || self.ctx.types.is_subtype_of(object_type, constraint_source)
+        self.is_subtype_of(constraint_source, object_type)
+            || self.is_subtype_of(object_type, constraint_source)
     }
 
     fn check_tuple_destructuring_bounds(&mut self, left_idx: NodeIndex, right_type: TypeId) {
@@ -999,8 +997,8 @@ impl<'a> CheckerState<'a> {
             && right_type != TypeId::ANY
             && left_type != TypeId::UNKNOWN
             && right_type != TypeId::UNKNOWN
-            && self.ctx.types.is_subtype_of(left_type, TypeId::BIGINT)
-            && self.ctx.types.is_subtype_of(right_type, TypeId::BIGINT)
+            && self.is_subtype_of(left_type, TypeId::BIGINT)
+            && self.is_subtype_of(right_type, TypeId::BIGINT)
         {
             self.error_at_node_msg(
                 expr_idx,

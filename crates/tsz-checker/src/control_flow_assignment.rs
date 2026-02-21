@@ -177,9 +177,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if (literal_type == TypeId::NULL || literal_type == TypeId::UNDEFINED)
                     && let Some(annotation_type) =
                         self.annotation_type_from_var_decl_node(assignment_node)
-                    && !self
-                        .interner
-                        .is_assignable_to_with_flags(literal_type, annotation_type, 1)
+                    && !self.is_assignable_to_strict_null(literal_type, annotation_type)
                 {
                     return None;
                 }
@@ -210,9 +208,7 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(nullish_type) = self.nullish_literal_type(rhs) {
                 if let Some(annotation_type) =
                     self.annotation_type_from_var_decl_node(assignment_node)
-                    && !self
-                        .interner
-                        .is_assignable_to_with_flags(nullish_type, annotation_type, 1)
+                    && !self.is_assignable_to_strict_null(nullish_type, annotation_type)
                 {
                     return None;
                 }
@@ -240,7 +236,7 @@ impl<'a> FlowAnalyzer<'a> {
                         .or_else(|| node_types.get(&bin.left.0).copied());
 
                     if let Some(lhs_type) = declared_target_type
-                        && !self.interner.is_assignable_to(rhs_type, lhs_type)
+                        && !self.is_assignable_to(rhs_type, lhs_type)
                     {
                         return None;
                     }
@@ -1900,8 +1896,9 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     pub(crate) fn narrow_assignment(&self, initial_type: TypeId, assigned_type: TypeId) -> TypeId {
-        use crate::query_boundaries::flow_analysis::union_members_for_type;
-        use tsz_solver::is_subtype_of;
+        use crate::query_boundaries::flow_analysis::{
+            are_types_mutually_subtype, union_members_for_type,
+        };
 
         if initial_type == TypeId::ANY
             || initial_type == TypeId::ERROR
@@ -1922,9 +1919,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let mut kept = Vec::new();
         for &m in &members {
-            if is_subtype_of(self.interner, assigned_type, m)
-                || is_subtype_of(self.interner, m, assigned_type)
-            {
+            if are_types_mutually_subtype(self.interner, assigned_type, m) {
                 kept.push(m);
             }
         }

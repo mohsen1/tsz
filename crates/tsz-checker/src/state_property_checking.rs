@@ -51,7 +51,7 @@ impl<'a> CheckerState<'a> {
                     // If a union member has no object shape and is a type parameter
                     // or the `object` intrinsic, it conceptually accepts any properties,
                     // so excess property checking should not apply at all.
-                    if tsz_solver::type_queries::is_type_parameter(self.ctx.types, resolved_member)
+                    if query::is_type_parameter(self.ctx.types, resolved_member)
                         || resolved_member == TypeId::OBJECT
                     {
                         return;
@@ -68,7 +68,7 @@ impl<'a> CheckerState<'a> {
 
                 target_shapes.push(shape.clone());
 
-                if self.ctx.types.is_subtype_of(source, member) {
+                if self.is_subtype_of(source, member) {
                     matched_shapes.push(shape);
                 }
             }
@@ -128,9 +128,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Handle intersection targets
-        if let Some(members) =
-            tsz_solver::type_queries::get_intersection_members(self.ctx.types, resolved_target)
-        {
+        if let Some(members) = query::intersection_members(self.ctx.types, resolved_target) {
             let mut target_shapes = Vec::new();
 
             for &member in members.iter() {
@@ -520,7 +518,7 @@ impl<'a> CheckerState<'a> {
         if matches!(
             result,
             tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound { .. }
-        ) && tsz_solver::type_queries::is_mapped_type(self.ctx.types, object_type)
+        ) && query::is_mapped_type(self.ctx.types, object_type)
         {
             if let Some(mapped_property) =
                 self.resolve_mapped_property_with_env(object_type, prop_name)
@@ -561,8 +559,7 @@ impl<'a> CheckerState<'a> {
 
         let constraint = self.evaluate_mapped_constraint_with_resolution(mapped.constraint);
         let prop_atom = self.ctx.types.intern_string(prop_name);
-        let can_cache =
-            !tsz_solver::type_queries::contains_type_parameters_db(self.ctx.types, mapped_type);
+        let can_cache = !query::contains_type_parameters(self.ctx.types, mapped_type);
         let cache_key = (mapped_type, prop_atom);
 
         if can_cache
@@ -589,9 +586,8 @@ impl<'a> CheckerState<'a> {
 
         // If the constraint is an explicit literal key set, reject unknown keys early.
         // For non-literal/complex constraints, fall back to full expansion.
-        if !tsz_solver::type_queries::is_string_type(self.ctx.types, constraint) {
-            let keys =
-                tsz_solver::type_queries::extract_string_literal_keys(self.ctx.types, constraint);
+        if !query::is_string_type(self.ctx.types, constraint) {
+            let keys = query::extract_string_literal_keys(self.ctx.types, constraint);
             if !keys.is_empty() && !keys.contains(&prop_atom) {
                 if can_cache {
                     self.ctx

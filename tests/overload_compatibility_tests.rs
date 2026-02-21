@@ -36,3 +36,33 @@ class C1 {
         codes
     );
 }
+
+#[test]
+fn test_overload_compatibility_untyped_impl_params_and_return() {
+    let source = r#"
+function f(x: string): string;
+function f(x) { return x; }
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        "test.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    checker.check_source_file(root);
+
+    let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&2394),
+        "Unexpected TS2394 for untyped overload implementation, got: {:?}",
+        codes
+    );
+}

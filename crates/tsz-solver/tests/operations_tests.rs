@@ -227,6 +227,30 @@ fn test_call_weak_type_with_compat_checker() {
 }
 
 #[test]
+fn test_get_contextual_signature_with_compat_checker_matches_call_evaluator() {
+    let interner = TypeInterner::new();
+    let contextual = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(TypeId::STRING)],
+        this_type: None,
+        return_type: TypeId::NUMBER,
+        type_params: Vec::new(),
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let via_helper = get_contextual_signature_with_compat_checker(&interner, contextual);
+    let via_evaluator =
+        CallEvaluator::<CompatChecker>::get_contextual_signature(&interner, contextual);
+
+    assert_eq!(via_helper, via_evaluator);
+    let sig = via_helper.expect("expected contextual signature");
+    assert_eq!(sig.params.len(), 1);
+    assert_eq!(sig.params[0].type_id, TypeId::STRING);
+    assert_eq!(sig.return_type, TypeId::NUMBER);
+}
+
+#[test]
 fn test_call_rest_parameter_allows_zero_args() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

@@ -2,7 +2,7 @@ use tsz_solver::{CallSignature, TypeDatabase, TypeId};
 
 pub(crate) use tsz_solver::type_queries_classifiers::ConstructorAccessKind;
 pub(crate) use tsz_solver::type_queries_extended::{
-    AbstractConstructorKind, ConstructorReturnMergeKind, InstanceTypeKind,
+    AbstractConstructorAnchor, ConstructorReturnMergeKind, InstanceTypeKind,
 };
 
 pub(crate) fn has_construct_signatures(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -30,11 +30,11 @@ pub(crate) fn classify_for_constructor_return_merge(
     tsz_solver::type_queries::classify_for_constructor_return_merge(db, type_id)
 }
 
-pub(crate) fn classify_for_abstract_constructor(
+pub(crate) fn resolve_abstract_constructor_anchor(
     db: &dyn TypeDatabase,
     type_id: TypeId,
-) -> AbstractConstructorKind {
-    tsz_solver::type_queries_extended::classify_for_abstract_constructor(db, type_id)
+) -> AbstractConstructorAnchor {
+    tsz_solver::type_queries_extended::resolve_abstract_constructor_anchor(db, type_id)
 }
 
 pub(crate) fn classify_for_constructor_access(

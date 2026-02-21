@@ -11,6 +11,11 @@ pub(crate) fn classify_for_assignability_eval(
     tsz_solver::type_queries::classify_for_assignability_eval(db, type_id)
 }
 
+pub(crate) fn is_relation_cacheable(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
+    !tsz_solver::type_queries::contains_infer_types_db(db, source)
+        && !tsz_solver::type_queries::contains_infer_types_db(db, target)
+}
+
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
 }
@@ -27,6 +32,25 @@ pub(crate) fn classify_for_excess_properties(
     type_id: TypeId,
 ) -> ExcessPropertiesKind {
     tsz_solver::type_queries::classify_for_excess_properties(db, type_id)
+}
+
+pub(crate) fn get_function_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_return_type(db, type_id)
+}
+
+pub(crate) fn rewrite_function_error_slots_to_any(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::rewrite_function_error_slots_to_any(db, type_id)
+}
+
+pub(crate) fn replace_function_return_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    new_return: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::replace_function_return_type(db, type_id, new_return)
 }
 
 pub(crate) fn are_types_overlapping_with_env(
@@ -257,10 +281,15 @@ pub(crate) fn analyze_assignability_failure_with_context<R: tsz_solver::TypeReso
     source: TypeId,
     target: TypeId,
 ) -> AssignabilityFailureAnalysis {
-    let mut checker = tsz_solver::CompatChecker::with_resolver(db, resolver);
-    ctx.configure_compat_checker(&mut checker);
+    let analysis = tsz_solver::analyze_assignability_failure_with_resolver(
+        db,
+        resolver,
+        source,
+        target,
+        |checker| ctx.configure_compat_checker(checker),
+    );
     AssignabilityFailureAnalysis {
-        weak_union_violation: checker.is_weak_union_violation(source, target),
-        failure_reason: checker.explain_failure(source, target),
+        weak_union_violation: analysis.weak_union_violation,
+        failure_reason: analysis.failure_reason,
     }
 }

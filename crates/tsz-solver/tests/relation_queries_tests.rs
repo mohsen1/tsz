@@ -208,3 +208,23 @@ fn query_relation_with_overrides_can_short_circuit_assignability() {
 
     assert!(!result.is_related());
 }
+
+#[test]
+fn assignability_failure_analysis_helper_reports_reason() {
+    let interner = TypeInterner::new();
+    let resolver = NoopResolver;
+
+    let analysis = analyze_assignability_failure_with_resolver(
+        &interner,
+        &resolver,
+        TypeId::NUMBER,
+        TypeId::STRING,
+        |_| {},
+    );
+
+    assert!(!analysis.weak_union_violation);
+    assert!(
+        analysis.failure_reason.is_some(),
+        "expected failure reason for number -> string assignability mismatch"
+    );
+}

@@ -6,7 +6,7 @@ use crate::query_boundaries::assignability::{
     classify_for_assignability_eval, classify_for_excess_properties,
     is_assignable_bivariant_with_resolver, is_assignable_with_overrides,
     is_assignable_with_resolver, is_callable_type, is_redeclaration_identical_with_resolver,
-    is_subtype_with_resolver, object_shape_for_type,
+    is_relation_cacheable, is_subtype_with_resolver, object_shape_for_type,
 };
 use crate::state::{CheckerOverrideProvider, CheckerState};
 use rustc_hash::FxHashSet;
@@ -427,8 +427,7 @@ impl<'a> CheckerState<'a> {
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
-            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
+        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
 
         let flags = self.ctx.pack_relation_flags();
 
@@ -495,8 +494,7 @@ impl<'a> CheckerState<'a> {
         let source = self.evaluate_type_for_assignability(source);
         let target = self.evaluate_type_for_assignability(target);
 
-        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
-            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
+        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
         let flags = self.ctx.pack_relation_flags() | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
 
         if is_cacheable {
@@ -530,6 +528,56 @@ impl<'a> CheckerState<'a> {
             target = target.0,
             result,
             "is_assignable_to_strict"
+        );
+        result
+    }
+
+    /// Check assignability while forcing strict null checks in relation flags.
+    ///
+    /// This keeps the regular checker/solver assignability gateway (resolver,
+    /// overrides, caching, and precondition setup) while pinning nullability
+    /// semantics to strict mode for localized checks.
+    pub fn is_assignable_to_strict_null(&mut self, source: TypeId, target: TypeId) -> bool {
+        self.ensure_relation_input_ready(target);
+
+        let target = self.substitute_this_type_if_needed(target);
+        let source = self.evaluate_type_for_assignability(source);
+        let target = self.evaluate_type_for_assignability(target);
+
+        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
+        let flags = self.ctx.pack_relation_flags() | RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+
+        if is_cacheable {
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            if let Some(cached) = self.ctx.types.lookup_assignability_cache(cache_key) {
+                return cached;
+            }
+        }
+
+        let overrides = CheckerOverrideProvider::new(self, None);
+        let result = is_assignable_with_overrides(
+            &AssignabilityQueryInputs {
+                db: self.ctx.types,
+                resolver: &self.ctx,
+                source,
+                target,
+                flags,
+                inheritance_graph: &self.ctx.inheritance_graph,
+                sound_mode: self.ctx.sound_mode(),
+            },
+            &overrides,
+        );
+
+        if is_cacheable {
+            let cache_key = RelationCacheKey::assignability(source, target, flags, 0);
+            self.ctx.types.insert_assignability_cache(cache_key, result);
+        }
+
+        trace!(
+            source = source.0,
+            target = target.0,
+            result,
+            "is_assignable_to_strict_null"
         );
         result
     }
@@ -578,8 +626,7 @@ impl<'a> CheckerState<'a> {
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
         // Note: Use ORIGINAL types for cache key, not evaluated types
-        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
-            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
+        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
 
         // For bivariant checks, we strip the strict_function_types flag
         // so the cache key is distinct from regular assignability checks.
@@ -1034,7 +1081,7 @@ impl<'a> CheckerState<'a> {
 
                     target_shapes.push(shape.clone());
 
-                    if self.ctx.types.is_subtype_of(source, member) {
+                    if self.is_subtype_of(source, resolved_member) {
                         matched_shapes.push(shape);
                     }
                 }
@@ -1153,8 +1200,7 @@ impl<'a> CheckerState<'a> {
 
         // Check relation cache for non-inference types
         // Construct RelationCacheKey with Lawyer-layer flags to prevent cache poisoning
-        let is_cacheable = !tsz_solver::visitor::contains_infer_types(self.ctx.types, source)
-            && !tsz_solver::visitor::contains_infer_types(self.ctx.types, target);
+        let is_cacheable = is_relation_cacheable(self.ctx.types, source, target);
         let flags = self.ctx.pack_relation_flags();
 
         if is_cacheable {

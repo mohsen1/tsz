@@ -106,6 +106,32 @@ impl RelationResult {
     }
 }
 
+/// Structured failure details for assignability diagnostics.
+#[derive(Debug, Clone)]
+pub struct AssignabilityFailureAnalysis {
+    pub weak_union_violation: bool,
+    pub failure_reason: Option<crate::SubtypeFailureReason>,
+}
+
+/// Analyze assignability failure details using a configured compat checker.
+pub fn analyze_assignability_failure_with_resolver<'a, R: TypeResolver, F>(
+    interner: &'a dyn TypeDatabase,
+    resolver: &'a R,
+    source: TypeId,
+    target: TypeId,
+    configure: F,
+) -> AssignabilityFailureAnalysis
+where
+    F: FnOnce(&mut CompatChecker<'a, R>),
+{
+    let mut checker = CompatChecker::with_resolver(interner, resolver);
+    configure(&mut checker);
+    AssignabilityFailureAnalysis {
+        weak_union_violation: checker.is_weak_union_violation(source, target),
+        failure_reason: checker.explain_failure(source, target),
+    }
+}
+
 /// Query a relation using a no-op resolver and no overrides.
 pub fn query_relation(
     interner: &dyn TypeDatabase,

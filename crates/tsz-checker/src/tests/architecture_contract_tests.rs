@@ -371,7 +371,15 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
     );
     assert!(
         !assignability_checker_src.contains("contains_infer_types_cached("),
-        "assignability_checker infer-shape cacheability checks should call solver visitors directly, not checker-local wrappers"
+        "assignability_checker should not use checker-local infer-shape cacheability wrappers"
+    );
+    assert!(
+        !assignability_checker_src.contains("visitor::contains_infer_types("),
+        "assignability_checker infer-shape cacheability checks should route through query_boundaries::assignability"
+    );
+    assert!(
+        assignability_checker_src.contains("is_relation_cacheable("),
+        "assignability_checker should use query_boundaries::assignability::is_relation_cacheable for relation-cache gating"
     );
 
     let mut state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
@@ -545,6 +553,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "assignment checker relation precondition setup should route through ensure_relation_input_ready"
     );
     assert!(
+        !assignment_checker_src.contains("self.ctx.types.is_assignable_to("),
+        "assignment checker should route assignability through checker/solver gateway helpers, not direct interner checks"
+    );
+    assert!(
+        !assignment_checker_src.contains("self.ctx.types.is_subtype_of("),
+        "assignment checker subtype checks should route through checker/solver gateway helpers, not direct interner checks"
+    );
+    assert!(
         !assignment_checker_src.contains("ensure_application_symbols_resolved("),
         "assignment checker should not manually orchestrate application-symbol preconditions"
     );
@@ -569,6 +585,39 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     assert!(
         parameter_checker_src.contains("check_assignable_or_report("),
         "parameter initializer assignability should route through check_assignable_or_report"
+    );
+
+    let control_flow_assignment_src = fs::read_to_string("src/control_flow_assignment.rs")
+        .expect("failed to read src/control_flow_assignment.rs for architecture guard");
+    assert!(
+        control_flow_assignment_src.contains("is_assignable_to_strict_null("),
+        "control-flow assignment nullish compatibility checks should route through checker assignability gateway helpers"
+    );
+    assert!(
+        !control_flow_assignment_src.contains("self.interner.is_assignable_to("),
+        "control-flow assignment should not call interner assignability directly"
+    );
+    assert!(
+        !control_flow_assignment_src.contains(".is_assignable_to_with_flags("),
+        "control-flow assignment should not use interner relation flags directly"
+    );
+    assert!(
+        !control_flow_assignment_src.contains("tsz_solver::is_subtype_of("),
+        "control-flow assignment subtype checks should route through query boundaries, not direct solver helpers"
+    );
+    assert!(
+        control_flow_assignment_src.contains("are_types_mutually_subtype("),
+        "control-flow assignment subtype compatibility checks should route through flow_analysis boundary helpers"
+    );
+    let control_flow_src = fs::read_to_string("src/control_flow.rs")
+        .expect("failed to read src/control_flow.rs for architecture guard");
+    assert!(
+        control_flow_src.contains("query::is_assignable_with_env("),
+        "FlowAnalyzer assignability should route through flow_analysis boundary helpers"
+    );
+    assert!(
+        control_flow_src.contains("query::is_assignable_strict_null("),
+        "FlowAnalyzer strict-null assignability should route through flow_analysis boundary helpers"
     );
 
     let mut state_type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
@@ -614,6 +663,22 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     assert!(
         !state_checking_src.contains("ensure_application_symbols_resolved("),
         "state_checking should not manually orchestrate application-symbol preconditions"
+    );
+    let state_property_checking_src = fs::read_to_string("src/state_property_checking.rs")
+        .expect("failed to read src/state_property_checking.rs for architecture guard");
+    assert!(
+        !state_property_checking_src.contains("self.ctx.types.is_subtype_of("),
+        "state_property_checking subtype checks should route through checker gateway helpers, not direct interner calls"
+    );
+    assert!(
+        !state_property_checking_src.contains("tsz_solver::type_queries::"),
+        "state_property_checking should route solver type-query access through query_boundaries::state_checking"
+    );
+    let assignability_checker_src = fs::read_to_string("src/assignability_checker.rs")
+        .expect("failed to read src/assignability_checker.rs for architecture guard");
+    assert!(
+        !assignability_checker_src.contains("self.ctx.types.is_subtype_of("),
+        "assignability_checker subtype checks should route through checker/solver query gateways, not direct interner calls"
     );
 
     let mut state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
@@ -711,6 +776,45 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         call_checker_src.contains("ensure_relation_input_ready(")
             && call_checker_src.contains("ensure_relation_inputs_ready("),
         "call_checker should route relation precondition setup through centralized ensure_relation_input(s)_ready helpers"
+    );
+
+    let call_boundary_src = fs::read_to_string("src/query_boundaries/call_checker.rs")
+        .expect("failed to read src/query_boundaries/call_checker.rs");
+    assert!(
+        !call_boundary_src.contains("CompatChecker::with_resolver("),
+        "query_boundaries/call_checker should not construct CompatChecker directly; use solver operations helper"
+    );
+    assert!(
+        !call_boundary_src
+            .contains("CallEvaluator::<tsz_solver::CompatChecker>::get_contextual_signature("),
+        "query_boundaries/call_checker should not depend on concrete solver checker internals for contextual signature lookup"
+    );
+    assert!(
+        !call_boundary_src.contains("CallEvaluator::new("),
+        "query_boundaries/call_checker should not construct CallEvaluator directly; use solver operation helpers"
+    );
+    assert!(
+        call_boundary_src.contains("compute_contextual_types_with_compat_checker("),
+        "query_boundaries/call_checker contextual typing should route through solver operations helper"
+    );
+    assert!(
+        !call_boundary_src.contains("pub(crate) fn compute_contextual_types<"),
+        "query_boundaries/call_checker should not keep an unused direct CallEvaluator contextual-typing wrapper"
+    );
+    assert!(
+        call_boundary_src.contains("get_contextual_signature_with_compat_checker("),
+        "query_boundaries/call_checker contextual signature lookup should route through solver operations helper"
+    );
+
+    let assignability_boundary_src = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read src/query_boundaries/assignability.rs");
+    assert!(
+        !assignability_boundary_src.contains("CompatChecker::with_resolver("),
+        "query_boundaries/assignability should not construct CompatChecker directly; use solver relation-query helpers"
+    );
+    assert!(
+        assignability_boundary_src.contains("analyze_assignability_failure_with_resolver("),
+        "query_boundaries/assignability failure analysis should route through solver relation-query helpers"
     );
 
     let generic_checker_src = fs::read_to_string("src/generic_checker.rs")
@@ -897,6 +1001,21 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
 }
 
 #[test]
+fn test_constructor_checker_uses_solver_anchor_for_abstract_constructor_resolution() {
+    let constructor_checker_src = fs::read_to_string("src/constructor_checker.rs")
+        .expect("failed to read src/constructor_checker.rs");
+
+    assert!(
+        constructor_checker_src.contains("resolve_abstract_constructor_anchor("),
+        "constructor_checker should resolve abstract constructor anchors through query boundaries"
+    );
+    assert!(
+        !constructor_checker_src.contains("classify_for_abstract_constructor("),
+        "constructor_checker should not perform abstract-constructor shape classification directly"
+    );
+}
+
+#[test]
 fn test_checker_legacy_type_arena_surface_is_removed() {
     let lib_src =
         fs::read_to_string("src/lib.rs").expect("failed to read src/lib.rs for architecture guard");
@@ -1002,5 +1121,23 @@ fn test_solver_sources_forbid_parser_checker_imports() {
         violations.is_empty(),
         "solver source must not import parser/checker crates; violations: {}",
         violations.join(", ")
+    );
+}
+
+#[test]
+fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
+    let src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
+        .expect("failed to read ambient signature checker for architecture guard");
+    assert!(
+        !src.contains("tsz_solver::type_queries::rewrite_function_error_slots_to_any"),
+        "ambient_signature_checks should route function error-slot rewrite via query boundaries"
+    );
+    assert!(
+        !src.contains("tsz_solver::type_queries::replace_function_return_type"),
+        "ambient_signature_checks should route function return replacement via query boundaries"
+    );
+    assert!(
+        !src.contains("use tsz_solver::type_queries::get_return_type"),
+        "ambient_signature_checks should route function return queries via query boundaries"
     );
 }

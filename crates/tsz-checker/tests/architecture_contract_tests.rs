@@ -1,4 +1,6 @@
 use crate::context::{CheckerContext, CheckerOptions};
+use std::fs;
+use std::path::Path;
 use tsz_binder::BinderState;
 use tsz_parser::parser::node::NodeArena;
 use tsz_solver::{
@@ -179,4 +181,98 @@ fn test_no_implicit_any_scope_inference_for_js_files() {
         },
     );
     assert!(ts_file.no_implicit_any());
+}
+
+#[test]
+fn test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries() {
+    fn collect_checker_rs_files_recursive(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
+        let entries = fs::read_dir(dir).unwrap_or_else(|_| {
+            panic!("failed to read checker source directory {}", dir.display())
+        });
+        for entry in entries {
+            let entry = entry.expect("failed to read checker source directory entry");
+            let path = entry.path();
+            if path.is_dir() {
+                collect_checker_rs_files_recursive(&path, files);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                files.push(path);
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_checker_rs_files_recursive(Path::new("src"), &mut files);
+
+    let mut violations = Vec::new();
+    for path in files {
+        let rel = path.display().to_string();
+        let allowed = rel.contains("/query_boundaries/") || rel.contains("/tests/");
+        if allowed {
+            continue;
+        }
+
+        let src = fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+        for (line_index, line) in src.lines().enumerate() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+
+            if line.contains("tsz_solver::CallEvaluator") || line.contains("CallEvaluator::new(") {
+                violations.push(format!("{}:{}", rel, line_index + 1));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "direct CallEvaluator usage should stay in query_boundaries modules; violations: {}",
+        violations.join(", ")
+    );
+}
+
+#[test]
+fn test_constructor_checker_uses_solver_anchor_for_abstract_constructor_resolution() {
+    let constructor_checker_src = fs::read_to_string("src/constructor_checker.rs")
+        .expect("failed to read src/constructor_checker.rs");
+
+    assert!(
+        constructor_checker_src.contains("resolve_abstract_constructor_anchor("),
+        "constructor_checker should resolve abstract constructor anchors through query boundaries"
+    );
+    assert!(
+        !constructor_checker_src.contains("classify_for_abstract_constructor("),
+        "constructor_checker should not perform abstract-constructor shape classification directly"
+    );
+}
+
+#[test]
+fn test_control_flow_avoids_direct_union_interning() {
+    let src = fs::read_to_string("src/control_flow.rs")
+        .expect("failed to read src/control_flow.rs for architecture guard");
+    assert!(
+        !src.contains("interner.union("),
+        "control_flow should route union construction through query_boundaries/flow_analysis"
+    );
+}
+
+#[test]
+fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
+    let src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
+        .expect("failed to read ambient signature checker for architecture guard");
+    assert!(
+        !src.contains("tsz_solver::type_queries::rewrite_function_error_slots_to_any"),
+        "ambient_signature_checks should route function error-slot rewrite via query boundaries"
+    );
+    assert!(
+        !src.contains("tsz_solver::type_queries::replace_function_return_type"),
+        "ambient_signature_checks should route function return replacement via query boundaries"
+    );
+    assert!(
+        !src.contains("use tsz_solver::type_queries::get_return_type"),
+        "ambient_signature_checks should route function return queries via query boundaries"
+    );
 }

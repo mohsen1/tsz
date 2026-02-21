@@ -1,5 +1,8 @@
 //! Ambient, ambient signatures, and overload validation checks.
 
+use crate::query_boundaries::assignability::{
+    get_function_return_type, replace_function_return_type, rewrite_function_error_slots_to_any,
+};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -1539,45 +1542,7 @@ impl<'a> CheckerState<'a> {
     /// Replace ERROR parameter types with ANY in a function type.
     /// Used for overload compatibility: untyped implementation params are treated as `any`.
     fn fix_error_params_in_function(&mut self, type_id: tsz_solver::TypeId) -> tsz_solver::TypeId {
-        use tsz_solver::type_queries::get_function_shape;
-        let factory = self.ctx.types.factory();
-        let Some(shape) = get_function_shape(self.ctx.types, type_id) else {
-            return type_id;
-        };
-        let has_error = shape
-            .params
-            .iter()
-            .any(|p| p.type_id == tsz_solver::TypeId::ERROR)
-            || shape.return_type == tsz_solver::TypeId::ERROR;
-        if !has_error {
-            return type_id;
-        }
-        let new_params: Vec<tsz_solver::ParamInfo> = shape
-            .params
-            .iter()
-            .map(|p| tsz_solver::ParamInfo {
-                type_id: if p.type_id == tsz_solver::TypeId::ERROR {
-                    tsz_solver::TypeId::ANY
-                } else {
-                    p.type_id
-                },
-                ..p.clone()
-            })
-            .collect();
-        let new_return = if shape.return_type == tsz_solver::TypeId::ERROR {
-            tsz_solver::TypeId::ANY
-        } else {
-            shape.return_type
-        };
-        factory.function(tsz_solver::FunctionShape {
-            type_params: shape.type_params.clone(),
-            params: new_params,
-            this_type: shape.this_type,
-            return_type: new_return,
-            type_predicate: shape.type_predicate.clone(),
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
-        })
+        rewrite_function_error_slots_to_any(self.ctx.types, type_id)
     }
 
     /// This is used for overload compatibility checking: when the implementation omits a return type,
@@ -1647,11 +1612,9 @@ impl<'a> CheckerState<'a> {
         impl_type: tsz_solver::TypeId,
         overload_type: tsz_solver::TypeId,
     ) -> bool {
-        use tsz_solver::type_queries::get_return_type;
-
         // Get return types of both signatures
-        let impl_return = get_return_type(self.ctx.types, impl_type);
-        let overload_return = get_return_type(self.ctx.types, overload_type);
+        let impl_return = get_function_return_type(self.ctx.types, impl_type);
+        let overload_return = get_function_return_type(self.ctx.types, overload_type);
 
         match (impl_return, overload_return) {
             (Some(impl_ret), Some(overload_ret)) => {
@@ -1688,23 +1651,7 @@ impl<'a> CheckerState<'a> {
         type_id: tsz_solver::TypeId,
         new_return: tsz_solver::TypeId,
     ) -> tsz_solver::TypeId {
-        use tsz_solver::type_queries::get_function_shape;
-        let factory = self.ctx.types.factory();
-        let Some(shape) = get_function_shape(self.ctx.types, type_id) else {
-            return type_id;
-        };
-        if shape.return_type == new_return {
-            return type_id;
-        }
-        factory.function(tsz_solver::FunctionShape {
-            type_params: shape.type_params.clone(),
-            params: shape.params.clone(),
-            this_type: shape.this_type,
-            return_type: new_return,
-            type_predicate: shape.type_predicate.clone(),
-            is_constructor: shape.is_constructor,
-            is_method: shape.is_method,
-        })
+        replace_function_return_type(self.ctx.types, type_id, new_return)
     }
 
     fn check_modifier_combinations(&mut self, modifiers: &Option<tsz_parser::parser::NodeList>) {

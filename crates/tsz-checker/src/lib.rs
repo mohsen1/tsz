@@ -194,17 +194,26 @@ mod architecture_contract_tests;
 #[path = "tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests_src;
 #[cfg(test)]
+#[path = "../tests/class_index_signature_compat_tests.rs"]
+mod class_index_signature_compat_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
+#[path = "../tests/flow_boundary_contract_tests.rs"]
+mod flow_boundary_contract_tests;
+#[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
 #[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
+#[cfg(test)]
+#[path = "../tests/member_access_architecture_boundary_tests.rs"]
+mod member_access_architecture_boundary_tests;
 #[cfg(test)]
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
