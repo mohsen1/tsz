@@ -397,6 +397,28 @@ impl<'a> CheckerState<'a> {
             let mut subst = TypeSubstitution::new();
             subst.insert(mapped.type_param.name, key_literal);
 
+            // Evaluate name_type (as-clause) if present
+            let resolved_keys = if let Some(name_type) = mapped.name_type {
+                let inst_name = instantiate_type(self.ctx.types, name_type, &subst);
+                let evaluated_name = self.evaluate_type_with_env(inst_name);
+
+                if evaluated_name == TypeId::NEVER {
+                    continue; // Skip this property entirely
+                }
+
+                // Extract string literals from the evaluated name type
+                tsz_solver::type_queries::extract_string_literal_keys(
+                    self.ctx.types,
+                    evaluated_name,
+                )
+            } else {
+                vec![key_name]
+            };
+
+            if resolved_keys.is_empty() {
+                continue;
+            }
+
             // Instantiate the template without recursively expanding nested applications.
             let property_type = instantiate_type(self.ctx.types, mapped.template, &subst);
 
@@ -449,16 +471,18 @@ impl<'a> CheckerState<'a> {
                 Some(tsz_solver::MappedModifier::Add)
             );
 
-            properties.push(PropertyInfo {
-                name: key_name,
-                type_id: property_type,
-                write_type: property_type,
-                optional,
-                readonly,
-                is_method: false,
-                visibility: Visibility::Public,
-                parent_id: None,
-            });
+            for resolved_key in resolved_keys {
+                properties.push(PropertyInfo {
+                    name: resolved_key,
+                    type_id: property_type,
+                    write_type: property_type,
+                    optional,
+                    readonly,
+                    is_method: false,
+                    visibility: Visibility::Public,
+                    parent_id: None,
+                });
+            }
         }
 
         factory.object(properties)
