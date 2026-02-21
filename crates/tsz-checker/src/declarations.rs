@@ -610,6 +610,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 }
             }
         }
+
+        // TS1061: Enum member must have initializer
+        let mut auto_incrementable = true;
+        for &member_idx in &enum_data.members.nodes {
+            if let Some(member_node) = self.ctx.arena.get(member_idx)
+                && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
+            {
+                if member_data.initializer.is_none() {
+                    if !auto_incrementable {
+                        let name_node = self.ctx.arena.get(member_data.name).unwrap_or(member_node);
+                        self.ctx.error(
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                            "Enum member must have initializer.".to_string(),
+                            diagnostic_codes::ENUM_MEMBER_MUST_HAVE_INITIALIZER,
+                        );
+                    }
+                    auto_incrementable = true;
+                } else {
+                    auto_incrementable =
+                        self.is_numeric_constant_enum_expr(member_data.initializer, enum_data, 0);
+                }
+            }
+        }
     }
 
     /// Check if an expression is a constant expression for ambient enum members.
@@ -683,6 +707,77 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // Everything else (including property access) is not constant
                 false
             }
+        }
+    }
+
+    fn is_numeric_constant_enum_expr(
+        &self,
+        expr_idx: NodeIndex,
+        enum_data: &tsz_parser::parser::node::EnumData,
+        depth: u32,
+    ) -> bool {
+        if depth > 100 {
+            return false;
+        }
+        if expr_idx.is_none() {
+            return true;
+        }
+
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return false;
+        };
+
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => true,
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(name_text) = self.ctx.arena.get_identifier_text(expr_idx) {
+                    for &member_idx in &enum_data.members.nodes {
+                        if let Some(member_node) = self.ctx.arena.get(member_idx)
+                            && let Some(member_data) = self.ctx.arena.get_enum_member(member_node)
+                            && let Some(member_name_text) =
+                                self.ctx.arena.get_identifier_text(member_data.name)
+                                && member_name_text == name_text {
+                                    if member_data.initializer.is_none() {
+                                        return true;
+                                    } else {
+                                        return self.is_numeric_constant_enum_expr(
+                                            member_data.initializer,
+                                            enum_data,
+                                            depth + 1,
+                                        );
+                                    }
+                                }
+                    }
+                }
+                false
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.is_numeric_constant_enum_expr(unary.operand, enum_data, depth + 1)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(binary) = self.ctx.arena.get_binary_expr(node) {
+                    self.is_numeric_constant_enum_expr(binary.left, enum_data, depth + 1)
+                        && self.is_numeric_constant_enum_expr(binary.right, enum_data, depth + 1)
+                } else {
+                    false
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.is_numeric_constant_enum_expr(paren.expression, enum_data, depth + 1)
+                } else {
+                    false
+                }
+            }
+            _ => false,
         }
     }
 
