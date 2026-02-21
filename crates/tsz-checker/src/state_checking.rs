@@ -187,18 +187,22 @@ impl<'a> CheckerState<'a> {
                 self.ctx.is_in_ambient_declaration_file = true;
             }
 
+            let prev_unreachable = self.ctx.is_unreachable;
+            let prev_reported = self.ctx.has_reported_unreachable;
             for &stmt_idx in &sf.statements.nodes {
                 if is_dts {
                     self.check_dts_statement_in_ambient_context(stmt_idx);
                 }
                 self.check_statement(stmt_idx);
+                if !self.statement_falls_through(stmt_idx) {
+                    self.ctx.is_unreachable = true;
+                }
             }
+            self.ctx.is_unreachable = prev_unreachable;
+            self.ctx.has_reported_unreachable = prev_reported;
 
             self.check_reserved_await_identifier_in_module(root_idx);
 
-            // Check for unreachable code at the source file level (TS7027)
-            // Must run AFTER statement checking so types are resolved (avoids premature TS7006)
-            self.check_unreachable_code_in_block(&sf.statements.nodes);
             tracing::trace!(target: "wasm::perf", phase = "check_statements", ms = stmt_start.elapsed().as_secs_f64() * 1000.0);
 
             let post_start = Instant::now();

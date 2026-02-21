@@ -37,8 +37,6 @@ pub trait StatementCheckCallbacks {
     fn check_return_statement(&mut self, stmt_idx: NodeIndex);
 
     /// Check unreachable code in a block.
-    fn check_unreachable_code_in_block(&mut self, stmts: &[NodeIndex]);
-
     /// Check function implementations in a block.
     fn check_function_implementations(&mut self, stmts: &[NodeIndex]);
 
@@ -77,6 +75,15 @@ pub trait StatementCheckCallbacks {
 
     /// Check if a condition expression is always truthy/falsy (TS2872/TS2873).
     fn check_truthy_or_falsy(&mut self, node_idx: NodeIndex);
+
+    /// Check if a condition is statically true
+    fn is_true_condition(&self, condition_idx: NodeIndex) -> bool;
+
+    /// Check if a condition is statically false
+    fn is_false_condition(&self, condition_idx: NodeIndex) -> bool;
+
+    /// Report unreachable code directly for single statements
+    fn report_unreachable_statement(&mut self, stmt_idx: NodeIndex);
 
     /// TS2407: Check that the right-hand side of a for-in statement is of type 'any',
     /// an object type, or a type parameter.
@@ -170,6 +177,21 @@ pub trait StatementCheckCallbacks {
     /// TS1104: A 'continue' statement can only be used within an enclosing iteration statement.
     fn check_continue_statement(&mut self, stmt_idx: NodeIndex);
 
+    /// Get current reachability state
+    fn is_unreachable(&self) -> bool;
+
+    /// Set current reachability state
+    fn set_unreachable(&mut self, value: bool);
+
+    /// Get current reported state
+    fn has_reported_unreachable(&self) -> bool;
+
+    /// Set current reported state
+    fn set_reported_unreachable(&mut self, value: bool);
+
+    /// Check if a statement falls through
+    fn statement_falls_through(&mut self, stmt_idx: NodeIndex) -> bool;
+
     /// Enter an iteration statement (for/while/do-while/for-in/for-of).
     /// Increments `iteration_depth` for break/continue validation.
     fn enter_iteration_statement(&mut self);
@@ -241,6 +263,8 @@ impl StatementChecker {
     /// The `state` parameter provides both the arena for AST access and
     /// callbacks for type checking operations.
     pub fn check<S: StatementCheckCallbacks>(stmt_idx: NodeIndex, state: &mut S) {
+        state.report_unreachable_statement(stmt_idx);
+
         // Get node kind and extract needed data before any mutable operations
         let node_data = {
             let arena = state.arena();
@@ -288,13 +312,33 @@ impl StatementChecker {
                     state.get_type_of_node(expression);
                     // TS2872/TS2873: check if condition is always truthy/falsy
                     state.check_truthy_or_falsy(expression);
+
+                    let condition_is_true = state.is_true_condition(expression);
+                    let condition_is_false = state.is_false_condition(expression);
+
+                    let prev_unreachable = state.is_unreachable();
+                    let prev_reported = state.has_reported_unreachable();
+
                     // Check then branch
+                    if condition_is_false {
+                        state.set_unreachable(true);
+                    }
                     state.check_declaration_in_statement_position(then_stmt);
                     state.check_statement(then_stmt);
+
+                    state.set_unreachable(prev_unreachable);
+                    state.set_reported_unreachable(prev_reported);
+
                     // Check else branch if present
-                    if else_stmt.is_some() {
+                    if !else_stmt.is_none() {
+                        if condition_is_true {
+                            state.set_unreachable(true);
+                        }
                         state.check_declaration_in_statement_position(else_stmt);
                         state.check_statement(else_stmt);
+
+                        state.set_unreachable(prev_unreachable);
+                        state.set_reported_unreachable(prev_reported);
                     }
                 }
             }
@@ -309,11 +353,16 @@ impl StatementChecker {
                     arena.get_block(node).map(|b| b.statements.nodes.clone())
                 };
                 if let Some(stmts) = stmts {
-                    // Check for unreachable code before checking individual statements
-                    state.check_unreachable_code_in_block(&stmts);
+                    let prev_unreachable = state.is_unreachable();
+                    let prev_reported = state.has_reported_unreachable();
                     for inner_stmt in &stmts {
                         state.check_statement(*inner_stmt);
+                        if !state.statement_falls_through(*inner_stmt) {
+                            state.set_unreachable(true);
+                        }
                     }
+                    state.set_unreachable(prev_unreachable);
+                    state.set_reported_unreachable(prev_reported);
                     // Check for function overload implementations in blocks
                     state.check_function_implementations(&stmts);
                 }
@@ -333,10 +382,24 @@ impl StatementChecker {
                 if let Some((condition, statement)) = loop_data {
                     state.get_type_of_node(condition);
                     state.check_truthy_or_falsy(condition);
+
+                    let prev_unreachable = state.is_unreachable();
+                    let prev_reported = state.has_reported_unreachable();
+
+                    // Body is unreachable if it's a while loop with a false condition
+                    if kind == syntax_kind_ext::WHILE_STATEMENT
+                        && state.is_false_condition(condition)
+                    {
+                        state.set_unreachable(true);
+                    }
+
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
                     state.leave_iteration_statement();
+
+                    state.set_unreachable(prev_unreachable);
+                    state.set_reported_unreachable(prev_reported);
                 }
             }
             syntax_kind_ext::FOR_STATEMENT => {
@@ -363,17 +426,30 @@ impl StatementChecker {
                             state.get_type_of_node(initializer);
                         }
                     }
+                    let mut condition_is_false = false;
                     if condition.is_some() {
                         state.get_type_of_node(condition);
                         state.check_truthy_or_falsy(condition);
+                        condition_is_false = state.is_false_condition(condition);
                     }
                     if incrementor.is_some() {
                         state.get_type_of_node(incrementor);
                     }
+
+                    let prev_unreachable = state.is_unreachable();
+                    let prev_reported = state.has_reported_unreachable();
+
+                    if condition_is_false {
+                        state.set_unreachable(true);
+                    }
+
                     state.enter_iteration_statement();
                     state.check_declaration_in_statement_position(statement);
                     state.check_statement(statement);
                     state.leave_iteration_statement();
+
+                    state.set_unreachable(prev_unreachable);
+                    state.set_reported_unreachable(prev_reported);
                 }
             }
             syntax_kind_ext::FOR_IN_STATEMENT | syntax_kind_ext::FOR_OF_STATEMENT => {
@@ -547,12 +623,16 @@ impl StatementChecker {
                                         clause_expr,
                                     );
                                 }
-                                // Check statements in the case
+                                let prev_unreachable = state.is_unreachable();
+                                let prev_reported = state.has_reported_unreachable();
                                 for inner_stmt_idx in &clause_stmts {
                                     state.check_statement(*inner_stmt_idx);
+                                    if !state.statement_falls_through(*inner_stmt_idx) {
+                                        state.set_unreachable(true);
+                                    }
                                 }
-                                // Check for unreachable code in case clause
-                                state.check_unreachable_code_in_block(&clause_stmts);
+                                state.set_unreachable(prev_unreachable);
+                                state.set_reported_unreachable(prev_reported);
                             }
                         }
 
