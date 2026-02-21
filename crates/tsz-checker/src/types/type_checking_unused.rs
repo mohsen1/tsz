@@ -397,10 +397,20 @@ impl<'a> CheckerState<'a> {
                                 6133,
                             )
                         };
-                        let report_node = if is_import {
-                            // TS6133 for imports is anchored on the import declaration start.
-                            self.find_parent_import_declaration(decl_idx)
-                                .unwrap_or(decl_idx)
+                        let report_node = if let Some(spec_name_node) =
+                            self.find_named_import_specifier_name_node(decl_idx, &name)
+                        {
+                            spec_name_node
+                        } else if is_import {
+                            // ES import declarations are anchored at declaration start, but
+                            // import-equals diagnostics are anchored at the imported name.
+                            if let Some(import_decl_idx) =
+                                self.find_parent_import_declaration(decl_idx)
+                            {
+                                import_decl_idx
+                            } else {
+                                self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
+                            }
                         } else {
                             self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx)
                         };
@@ -556,6 +566,67 @@ impl<'a> CheckerState<'a> {
     fn find_parent_import_declaration(&self, idx: NodeIndex) -> Option<NodeIndex> {
         use tsz_parser::parser::syntax_kind_ext;
         self.find_ancestor(idx, |kind| kind == syntax_kind_ext::IMPORT_DECLARATION)
+    }
+
+    /// Returns the local name node for a named import in a multi-specifier clause.
+    fn find_named_import_specifier_name_node(
+        &self,
+        idx: NodeIndex,
+        symbol_name: &str,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let import_decl_idx = self.find_parent_import_declaration(idx)?;
+        let import_decl_node = self.ctx.arena.get(import_decl_idx)?;
+        let import_decl = self.ctx.arena.get_import_decl(import_decl_node)?;
+        let import_clause_node = self.ctx.arena.get(import_decl.import_clause)?;
+        let import_clause = self.ctx.arena.get_import_clause(import_clause_node)?;
+        if !import_clause.named_bindings.is_some() {
+            return None;
+        }
+        let named_bindings_node = self.ctx.arena.get(import_clause.named_bindings)?;
+        if named_bindings_node.kind != syntax_kind_ext::NAMED_IMPORTS {
+            return None;
+        }
+
+        let named = self.ctx.arena.get_named_imports(named_bindings_node)?;
+        if named.elements.nodes.len() <= 1 {
+            return None;
+        }
+
+        for &spec_idx in &named.elements.nodes {
+            let Some(spec_node) = self.ctx.arena.get(spec_idx) else {
+                continue;
+            };
+            if spec_node.kind != syntax_kind_ext::IMPORT_SPECIFIER {
+                continue;
+            }
+            let Some(spec) = self.ctx.arena.get_specifier(spec_node) else {
+                continue;
+            };
+            let local_name_idx = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+            if self.get_identifier_text_from_idx(local_name_idx).as_deref() == Some(symbol_name) {
+                return Some(local_name_idx);
+            }
+        }
+
+        // Fallback for cases where declaration directly points at a specifier node.
+        let specifier_idx =
+            self.find_ancestor(idx, |kind| kind == syntax_kind_ext::IMPORT_SPECIFIER)?;
+        let specifier_node = self.ctx.arena.get(specifier_idx)?;
+        if specifier_node.kind == syntax_kind_ext::IMPORT_SPECIFIER {
+            let spec = self.ctx.arena.get_specifier(specifier_node)?;
+            return if spec.name.is_some() {
+                Some(spec.name)
+            } else {
+                Some(spec.property_name)
+            };
+        }
+        None
     }
 
     /// Find the parent `VARIABLE_DECLARATION` node for a variable symbol's declaration.
