@@ -134,12 +134,8 @@ impl<'a> TypeFormatter<'a> {
             let replacement = match arg {
                 DiagnosticArg::Type(type_id) => self.format(*type_id),
                 DiagnosticArg::Symbol(sym_id) => {
-                    if let Some(arena) = self.symbol_arena {
-                        if let Some(sym) = arena.get(*sym_id) {
-                            sym.escaped_name.to_string()
-                        } else {
-                            format!("Symbol({})", sym_id.0)
-                        }
+                    if let Some(name) = self.format_symbol_name(*sym_id) {
+                        name
                     } else {
                         format!("Symbol({})", sym_id.0)
                     }
@@ -200,11 +196,10 @@ impl<'a> TypeFormatter<'a> {
                 // First, check if this is a class instance type with a symbol
                 // Class instance types have their symbol set for nominal typing
                 if let Some(sym_id) = shape.symbol
-                    && let Some(arena) = self.symbol_arena
-                    && let Some(sym) = arena.get(sym_id)
+                    && let Some(name) = self.format_symbol_name(sym_id)
                 {
                     // Use the class name instead of expanding all properties
-                    return sym.escaped_name.to_string();
+                    return name;
                 }
 
                 // If not a class or symbol not available, try definition store
@@ -213,7 +208,7 @@ impl<'a> TypeFormatter<'a> {
                     && let Some(def) = def_store.get(def_id)
                 {
                     // Use the definition name if available
-                    return self.atom(def.name).to_string();
+                    return self.format_def_name(&def);
                 }
                 self.format_object(shape.properties.as_slice())
             }
@@ -223,11 +218,10 @@ impl<'a> TypeFormatter<'a> {
                 // First, check if this is a class instance type with a symbol
                 // Class instance types have their symbol set for nominal typing
                 if let Some(sym_id) = shape.symbol
-                    && let Some(arena) = self.symbol_arena
-                    && let Some(sym) = arena.get(sym_id)
+                    && let Some(name) = self.format_symbol_name(sym_id)
                 {
                     // Use the class name instead of expanding all properties
-                    return sym.escaped_name.to_string();
+                    return name;
                 }
 
                 // If not a class or symbol not available, try definition store
@@ -236,7 +230,7 @@ impl<'a> TypeFormatter<'a> {
                     && let Some(def) = def_store.get(def_id)
                 {
                     // Use the definition name if available
-                    return self.atom(def.name).to_string();
+                    return self.format_def_name(&def);
                 }
                 self.format_object_with_index(shape.as_ref())
             }
@@ -267,7 +261,7 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(def_store) = self.def_store {
                     if let Some(def) = def_store.get(*def_id) {
                         // Use the definition name if available
-                        self.atom(def.name).to_string()
+                        self.format_def_name(&def)
                     } else {
                         format!("Lazy({})", def_id.0)
                     }
@@ -297,7 +291,7 @@ impl<'a> TypeFormatter<'a> {
                 let base_str = if let Some(TypeData::Lazy(def_id)) = base_key {
                     if let Some(def_store) = self.def_store {
                         if let Some(def) = def_store.get(def_id) {
-                            let name = self.atom(def.name).to_string();
+                            let name = self.format_def_name(&def);
                             trace!(
                                 def_id = %def_id.0,
                                 name = %name,
@@ -344,12 +338,8 @@ impl<'a> TypeFormatter<'a> {
                 self.format_template_literal(spans.as_ref())
             }
             TypeData::TypeQuery(sym) => {
-                let name = if let Some(arena) = self.symbol_arena {
-                    if let Some(symbol) = arena.get(SymbolId(sym.0)) {
-                        symbol.escaped_name.to_string()
-                    } else {
-                        format!("Ref({})", sym.0)
-                    }
+                let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                    name
                 } else {
                     format!("Ref({})", sym.0)
                 };
@@ -359,12 +349,8 @@ impl<'a> TypeFormatter<'a> {
             TypeData::ReadonlyType(inner) => format!("readonly {}", self.format(*inner)),
             TypeData::NoInfer(inner) => format!("NoInfer<{}>", self.format(*inner)),
             TypeData::UniqueSymbol(sym) => {
-                let name = if let Some(arena) = self.symbol_arena {
-                    if let Some(symbol) = arena.get(SymbolId(sym.0)) {
-                        symbol.escaped_name.to_string()
-                    } else {
-                        format!("symbol({})", sym.0)
-                    }
+                let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                    name
                 } else {
                     format!("symbol({})", sym.0)
                 };
@@ -386,7 +372,7 @@ impl<'a> TypeFormatter<'a> {
                 if let Some(def_store) = self.def_store {
                     if let Some(def) = def_store.get(*def_id) {
                         // Use the definition name if available
-                        self.atom(def.name).to_string()
+                        self.format_def_name(&def)
                     } else {
                         format!("Enum({})", def_id.0)
                     }
@@ -395,12 +381,8 @@ impl<'a> TypeFormatter<'a> {
                 }
             }
             TypeData::ModuleNamespace(sym) => {
-                let name = if let Some(arena) = self.symbol_arena {
-                    if let Some(symbol) = arena.get(SymbolId(sym.0)) {
-                        symbol.escaped_name.to_string()
-                    } else {
-                        format!("module({})", sym.0)
-                    }
+                let name = if let Some(name) = self.format_symbol_name(SymbolId(sym.0)) {
+                    name
                 } else {
                     format!("module({})", sym.0)
                 };
@@ -613,10 +595,9 @@ impl<'a> TypeFormatter<'a> {
     fn format_callable(&mut self, shape: &CallableShape) -> String {
         if !shape.construct_signatures.is_empty()
             && let Some(sym_id) = shape.symbol
-            && let Some(arena) = self.symbol_arena
-            && let Some(sym) = arena.get(sym_id)
+            && let Some(name) = self.format_symbol_name(sym_id)
         {
-            return format!("typeof {}", sym.escaped_name);
+            return format!("typeof {name}");
         }
 
         let has_index = shape.string_index.is_some() || shape.number_index.is_some();
@@ -726,5 +707,38 @@ impl<'a> TypeFormatter<'a> {
         }
         result.push('`');
         result
+    }
+
+    fn format_symbol_name(&mut self, sym_id: SymbolId) -> Option<String> {
+        let arena = self.symbol_arena?;
+        let sym = arena.get(sym_id)?;
+        let mut qualified_name = sym.escaped_name.to_string();
+        let mut current_parent = sym.parent;
+
+        while current_parent != SymbolId::NONE {
+            if let Some(parent_sym) = arena.get(current_parent) {
+                // Don't prepend for source files and blocks
+                if !parent_sym.escaped_name.starts_with('"')
+                    && !parent_sym.escaped_name.starts_with("__")
+                {
+                    qualified_name = format!("{}.{}", parent_sym.escaped_name, qualified_name);
+                }
+                current_parent = parent_sym.parent;
+            } else {
+                break;
+            }
+        }
+
+        Some(qualified_name)
+    }
+
+    fn format_def_name(&mut self, def: &crate::def::DefinitionInfo) -> String {
+        if let Some(sym_id) = def.symbol_id
+            && let Some(qualified_name) = self.format_symbol_name(SymbolId(sym_id))
+        {
+            return qualified_name;
+        }
+
+        self.atom(def.name).to_string()
     }
 }
