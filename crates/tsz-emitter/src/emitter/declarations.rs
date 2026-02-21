@@ -962,6 +962,24 @@ impl<'a> Printer<'a> {
             }
         }
 
+        // Skip orphaned comments inside the class body.
+        // When class members are erased (type-only properties, abstract members, etc.),
+        // comments on lines between erased members or between the last erased member
+        // and the closing `}` are left unconsumed. Without this, they leak into the
+        // output as spurious comments after the class.
+        // Find the closing `}` position and skip any remaining comments before it.
+        {
+            let class_body_end = self.find_token_end_before_trivia(node.pos, node.end);
+            while self.comment_emit_idx < self.all_comments.len() {
+                let c = &self.all_comments[self.comment_emit_idx];
+                if c.end <= class_body_end {
+                    self.comment_emit_idx += 1;
+                } else {
+                    break;
+                }
+            }
+        }
+
         // Restore field inits
         self.pending_class_field_inits = prev_field_inits;
 
