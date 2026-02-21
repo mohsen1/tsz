@@ -2,6 +2,7 @@ use super::*;
 
 fn make_server() -> Server {
     Server {
+        completion_import_module_specifier_ending: None,
         lib_dir: PathBuf::from("/nonexistent"),
         tests_lib_dir: PathBuf::from("/nonexistent"),
         lib_cache: FxHashMap::default(),

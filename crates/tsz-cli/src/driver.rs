@@ -861,6 +861,7 @@ fn compile_inner(
     let SourceReadResult {
         sources: all_sources,
         dependencies,
+        type_reference_errors,
     } = {
         read_source_files(
             &file_paths,
@@ -878,6 +879,18 @@ fn compile_inner(
     }
 
     // Separate binary files from regular sources - binary files get TS1490
+    let mut type_file_diagnostics: Vec<Diagnostic> = Vec::new();
+    for (path, type_name) in type_reference_errors {
+        let file_name = path.to_string_lossy().into_owned();
+        type_file_diagnostics.push(Diagnostic::error(
+            file_name,
+            0,
+            0,
+            format!("Cannot find type definition file for '{}'.", type_name),
+            diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR,
+        ));
+    }
+
     let mut binary_file_diagnostics: Vec<Diagnostic> = Vec::new();
     let mut binary_file_names: FxHashSet<String> = FxHashSet::default();
     let mut sources: Vec<SourceEntry> = Vec::with_capacity(all_sources.len());
@@ -988,6 +1001,7 @@ fn compile_inner(
         diagnostics.retain(|d| !binary_file_names.contains(&d.file));
     }
     diagnostics.extend(binary_file_diagnostics);
+    diagnostics.extend(type_file_diagnostics);
     diagnostics.sort_by(|left, right| {
         left.file
             .cmp(&right.file)
