@@ -13,7 +13,12 @@ Steps:
 7) Re-run benchmarks to verify improvement
 8) Run cargo nextest run to catch regressions
 9) If improved without regression, create ONE small commit
-10) Push: git push origin main
+10) Append any issues you investigated but punted on (too complex, needs
+    architecture work, blocked by another issue, etc.) to
+    docs/todos/perf.md — include function/module and a one-line reason
+    why you skipped it.
+11) git add docs/todos/perf.md (if changed) and amend or create a
+    second commit, then push: git push origin main
 
 Do not ask user questions. Keep going until this run is complete.
 PROMPT
