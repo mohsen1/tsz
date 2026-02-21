@@ -1534,13 +1534,22 @@ impl<'a> Printer<'a> {
 
         if clause_node.kind != syntax_kind_ext::IMPORT_CLAUSE {
             // For `import X = require("module")`, check if it has an external module.
-            // For `import X = Y` (qualified name), always treat as runtime value
-            // since it produces `var X = Y;` at runtime.
+            // For `import X = Y` (identifier/qualified name), only emit when the
+            // target resolves to a runtime value (TypeScript elides type-only aliases).
             if let Some(spec_node) = self.arena.get(import_decl.module_specifier) {
-                return spec_node.kind == SyntaxKind::StringLiteral as u16
-                    || spec_node.kind == SyntaxKind::Identifier as u16
-                    || spec_node.kind == syntax_kind_ext::QUALIFIED_NAME
-                    || spec_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
+                return match spec_node.kind {
+                    k if k == SyntaxKind::StringLiteral as u16 => true,
+                    k if k == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE => true,
+                    k if k == SyntaxKind::Identifier as u16
+                        || k == syntax_kind_ext::QUALIFIED_NAME =>
+                    {
+                        self.namespace_alias_target_has_runtime_value(
+                            import_decl.module_specifier,
+                            None,
+                        )
+                    }
+                    _ => false,
+                };
             }
             return false;
         }

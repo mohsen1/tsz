@@ -1566,7 +1566,11 @@ impl<'a> Printer<'a> {
                             );
                         } else if inner_kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
                             // export import X = Y; → ns.X = Y;
-                            self.emit_namespace_exported_import_alias(inner_idx, &ns_name);
+                            self.emit_namespace_exported_import_alias(
+                                inner_idx,
+                                &ns_name,
+                                Some(module.body),
+                            );
                         } else {
                             // class/function/enum: emit without export, then add assignment
                             let export_names = self.get_export_names_from_clause(inner_idx);
@@ -1653,9 +1657,22 @@ impl<'a> Printer<'a> {
     /// This mirrors TypeScript behavior for `export import X = Y;` inside namespaces:
     /// when `Y` is type-only (e.g. non-instantiated namespace), no runtime assignment
     /// should be emitted.
-    fn namespace_alias_target_has_runtime_value(&self, target: NodeIndex) -> bool {
-        self.resolve_entity_runtime_value(target, None)
-            .is_none_or(|(has_runtime, _)| has_runtime)
+    pub(super) fn namespace_alias_target_has_runtime_value(
+        &self,
+        target: NodeIndex,
+        scope_body: Option<NodeIndex>,
+    ) -> bool {
+        if let Some((has_runtime, _)) = self.resolve_entity_runtime_value(target, scope_body) {
+            return has_runtime;
+        }
+
+        if scope_body.is_some() {
+            return self
+                .resolve_entity_runtime_value(target, None)
+                .is_none_or(|(has_runtime, _)| has_runtime);
+        }
+
+        true
     }
 
     /// Resolve whether an entity name has runtime value semantics in a scope.
@@ -1707,7 +1724,7 @@ impl<'a> Printer<'a> {
                 continue;
             };
             let Some((stmt_runtime, stmt_scope)) =
-                self.statement_runtime_for_name(stmt_node, &name)
+                self.statement_runtime_for_name(stmt_node, &name, scope_body)
             else {
                 continue;
             };
@@ -1766,12 +1783,13 @@ impl<'a> Printer<'a> {
         &self,
         stmt_node: &Node,
         name: &str,
+        scope_body: Option<NodeIndex>,
     ) -> Option<(bool, Option<NodeIndex>)> {
         match stmt_node.kind {
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 let export = self.arena.get_export_decl(stmt_node)?;
                 let inner = self.arena.get(export.export_clause)?;
-                self.statement_runtime_for_name(inner, name)
+                self.statement_runtime_for_name(inner, name, scope_body)
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 let module = self.arena.get_module(stmt_node)?;
@@ -1826,7 +1844,22 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(import.import_clause) != name {
                     return None;
                 }
-                Some((self.import_decl_has_runtime_value(import), None))
+                let runtime = if let Some(spec_node) = self.arena.get(import.module_specifier) {
+                    match spec_node.kind {
+                        kind if kind == SyntaxKind::Identifier as u16
+                            || kind == syntax_kind_ext::QUALIFIED_NAME =>
+                        {
+                            self.namespace_alias_target_has_runtime_value(
+                                import.module_specifier,
+                                scope_body,
+                            )
+                        }
+                        _ => self.import_decl_has_runtime_value(import),
+                    }
+                } else {
+                    self.import_decl_has_runtime_value(import)
+                };
+                Some((runtime, None))
             }
             _ => None,
         }
@@ -1834,7 +1867,12 @@ impl<'a> Printer<'a> {
 
     /// Emit exported import alias as namespace property assignment.
     /// `export import X = Y;` → `ns.X = Y;`
-    fn emit_namespace_exported_import_alias(&mut self, import_idx: NodeIndex, ns_name: &str) {
+    fn emit_namespace_exported_import_alias(
+        &mut self,
+        import_idx: NodeIndex,
+        ns_name: &str,
+        scope_body: Option<NodeIndex>,
+    ) {
         let Some(import_node) = self.arena.get(import_idx) else {
             return;
         };
@@ -1852,7 +1890,7 @@ impl<'a> Printer<'a> {
         if !self.import_decl_has_runtime_value(import) {
             return;
         }
-        if !self.namespace_alias_target_has_runtime_value(import.module_specifier) {
+        if !self.namespace_alias_target_has_runtime_value(import.module_specifier, scope_body) {
             return;
         }
 
