@@ -8,7 +8,7 @@
 # Usage: ./run.sh [options]
 #
 # Options:
-#   --max=N               Maximum tests (default: 500)
+#   --max=N               Maximum tests (default: all)
 #   --filter=PATTERN      Filter tests by name
 #   --concurrency=N, -jN  Parallel workers (default: CPU count)
 #   --timeout=MS          Per-test timeout in ms (default: 5000)
