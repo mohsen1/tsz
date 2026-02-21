@@ -93,6 +93,31 @@ homepage.workspace = true
 keywords.workspace = true
 categories.workspace = true
 readme.workspace = true
+exclude = [
+    "TypeScript/**",
+    "tests/**",
+    "benches/**",
+    "scripts/**",
+    "docs/**",
+    "artifacts/**",
+    "logs/**",
+    "pkg/**",
+    "wasm/**",
+    "tmp/**",
+    "target/**",
+    ".claude/**",
+    ".gemini/**",
+    ".github/**",
+    ".config/**",
+    "debug*.ts",
+    "debug*.js",
+    "test*.ts",
+    "test*.js",
+    "*.py",
+    "out*.txt",
+    "output.txt",
+    "yek.yaml",
+]
 
 [lib]
 crate-type = ["rlib"]
