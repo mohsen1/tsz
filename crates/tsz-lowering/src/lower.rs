@@ -6,7 +6,6 @@
 //! Lowering is lazy - types are only computed when queried.
 
 use indexmap::IndexMap;
-use rustc_hash::FxHashSet;
 use std::cell::RefCell;
 use std::rc::Rc;
 use tsz_common::interner::Atom;
@@ -19,7 +18,7 @@ use tsz_solver::def::DefId;
 use tsz_solver::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, MappedModifier,
     MappedType, ObjectFlags, ObjectShape, ParamInfo, PropertyInfo, SymbolRef, TemplateSpan,
-    TupleElement, TypeData, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
+    TupleElement, TypeId, TypeParamInfo, TypePredicate, TypePredicateTarget, Visibility,
 };
 use tsz_solver::{QueryDatabase, TypeDatabase};
 
