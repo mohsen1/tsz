@@ -161,20 +161,12 @@ impl<'a> CheckerState<'a> {
 
         // If found via symbol resolution, use it
         if let Some(member_sym_id) = member_sym_id_from_symbol {
-            if let Some(member_symbol) = self
-                .ctx
-                .binder
-                .get_symbol_with_libs(member_sym_id, &lib_binders)
+            if (self.alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
+                || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
+                && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
             {
-                let is_namespace = member_symbol.flags & symbol_flags::MODULE != 0;
-                if !is_namespace
-                    && (self.alias_resolves_to_value_only(member_sym_id, Some(right_name.as_str()))
-                        || self.symbol_is_value_only(member_sym_id, Some(right_name.as_str())))
-                    && !self.symbol_is_type_only(member_sym_id, Some(right_name.as_str()))
-                {
-                    self.error_value_only_type_at(&right_name, qn.right);
-                    return TypeId::ERROR;
-                }
+                self.error_value_only_type_at(&right_name, qn.right);
+                return TypeId::ERROR;
             }
             let mut member_type = self.type_reference_symbol_type(member_sym_id);
             if let Some(module_specifier) = left_module_specifier.as_deref() {
