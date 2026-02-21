@@ -724,32 +724,29 @@ impl<'a> CheckerState<'a> {
 
                     if !found
                         && std::ptr::eq(current_binder as *const _, self.ctx.binder as *const _)
-                            && curr_sym.value_declaration.is_some()
+                        && curr_sym.value_declaration.is_some()
+                    {
+                        let decl_idx = curr_sym.value_declaration;
+                        if let Some(decl_node) = self.ctx.arena.get(decl_idx)
+                            && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                            && let Some(import_decl) = self.ctx.arena.get_import_decl(decl_node)
                         {
-                            let decl_idx = curr_sym.value_declaration;
-                            if let Some(decl_node) = self.ctx.arena.get(decl_idx)
-                                && decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
-                                    && let Some(import_decl) =
-                                        self.ctx.arena.get_import_decl(decl_node)
-                                    {
-                                        let mut base_node = import_decl.module_specifier;
-                                        while let Some(node) = self.ctx.arena.get(base_node)
-                                            && let Some(qname) =
-                                                self.ctx.arena.get_qualified_name(node)
-                                        {
-                                            base_node = qname.left;
-                                        }
-                                        if let Some(node) = self.ctx.arena.get(base_node)
-                                            && let Some(ident) = self.ctx.arena.get_identifier(node)
-                                            && let Some(target_sym_id) = self.resolve_name_at_node(
-                                                &ident.escaped_text,
-                                                base_node,
-                                            ) {
-                                                current_sym_id = target_sym_id;
-                                                found = true;
-                                            }
-                                    }
+                            let mut base_node = import_decl.module_specifier;
+                            while let Some(node) = self.ctx.arena.get(base_node)
+                                && let Some(qname) = self.ctx.arena.get_qualified_name(node)
+                            {
+                                base_node = qname.left;
+                            }
+                            if let Some(node) = self.ctx.arena.get(base_node)
+                                && let Some(ident) = self.ctx.arena.get_identifier(node)
+                                && let Some(target_sym_id) =
+                                    self.resolve_name_at_node(&ident.escaped_text, base_node)
+                            {
+                                current_sym_id = target_sym_id;
+                                found = true;
+                            }
                         }
+                    }
 
                     if !found {
                         break;
