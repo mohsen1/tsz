@@ -14,6 +14,28 @@ use tsz::parser::node::NodeAccess;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn is_offset_inside_comment(source_text: &str, offset: u32) -> bool {
+        let idx = offset as usize;
+        if idx > source_text.len() {
+            return false;
+        }
+
+        // Line comments.
+        let line_start = source_text[..idx].rfind('\n').map_or(0, |i| i + 1);
+        if let Some(line_comment) = source_text[line_start..idx].find("//") {
+            let comment_start = line_start + line_comment;
+            if comment_start <= idx {
+                return true;
+            }
+        }
+
+        // Block comments (including JSDoc).
+        let last_open = source_text[..idx].rfind("/*");
+        let last_close = source_text[..idx].rfind("*/");
+        matches!((last_open, last_close), (Some(open), Some(close)) if open > close)
+            || matches!((last_open, last_close), (Some(_), None))
+    }
+
     fn extract_alias_module_name(display_string: &str) -> Option<String> {
         let prefix = "(alias) module \"";
         let rest = display_string.strip_prefix(prefix)?;
@@ -385,6 +407,10 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+            let offset = line_map.position_to_offset(position, &source_text)?;
+            if Self::is_offset_inside_comment(&source_text, offset) {
+                return None;
+            }
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let mut infos = provider
@@ -424,6 +450,10 @@ impl Server {
             let (arena, binder, root, source_text) = self.parse_and_bind_file(&file)?;
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
+            let offset = line_map.position_to_offset(position, &source_text)?;
+            if Self::is_offset_inside_comment(&source_text, offset) {
+                return None;
+            }
             let provider =
                 GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
             let mut infos = provider
