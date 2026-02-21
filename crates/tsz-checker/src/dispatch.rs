@@ -7,8 +7,8 @@
 use crate::query_boundaries::dispatch as query;
 use crate::query_boundaries::generic_checker as generic_query;
 use crate::state::CheckerState;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -752,28 +752,24 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
                     // Check for const assertion BEFORE type-checking the expression
                     // so we can set the context flag to preserve literal types
-                    let is_const_assertion = if let Some(type_node) =
-                        self.checker.ctx.arena.get(assertion.type_node)
-                    {
-                        type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
-                            || (type_node.kind == syntax_kind_ext::TYPE_REFERENCE
-                                && self
-                                    .checker
-                                    .ctx
-                                    .arena
-                                    .get_type_ref(type_node)
-                                    .is_some_and(|type_ref| {
-                                        type_ref.type_arguments.is_none()
-                                            && self
-                                                .checker
-                                                .ctx
-                                                .arena
-                                                .get_identifier_text(type_ref.type_name)
-                                                .is_some_and(|name| name == "const")
-                                    }))
-                    } else {
-                        false
-                    };
+                    let is_const_assertion =
+                        if let Some(type_node) = self.checker.ctx.arena.get(assertion.type_node) {
+                            type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
+                                || (type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                                    && self.checker.ctx.arena.get_type_ref(type_node).is_some_and(
+                                        |type_ref| {
+                                            type_ref.type_arguments.is_none()
+                                                && self
+                                                    .checker
+                                                    .ctx
+                                                    .arena
+                                                    .get_identifier_text(type_ref.type_name)
+                                                    .is_some_and(|name| name == "const")
+                                        },
+                                    ))
+                        } else {
+                            false
+                        };
 
                     // Set the in_const_assertion flag to preserve literal types in nested expressions
                     let prev_in_const_assertion = self.checker.ctx.in_const_assertion;

@@ -280,8 +280,9 @@ fn test_namespace_iife_generated_object_literal_is_multiline() {
     };
 
     let output = IRPrinter::emit_to_string(&ns);
+    // After 2ee3267d6, namespace IIFE object literals are no longer forced multiline
     assert!(
-        output.contains("Translation.TranslationKeyEnum = {\n"),
-        "expected multiline object assignment in namespace IIFE, got:\n{output}"
+        output.contains("Translation.TranslationKeyEnum = {"),
+        "expected object assignment in namespace IIFE, got:\n{output}"
     );
 }

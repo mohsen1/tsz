@@ -2,8 +2,8 @@ use std::fs;
 
 #[test]
 fn control_flow_contains_type_parameter_checks_use_flow_query_boundary() {
-    let src = fs::read_to_string("src/control_flow.rs")
-        .expect("failed to read src/control_flow.rs for architecture guard");
+    let src = fs::read_to_string("src/flow/control_flow.rs")
+        .expect("failed to read src/flow/control_flow.rs for architecture guard");
 
     assert!(
         src.contains("query::contains_type_parameters("),
@@ -17,8 +17,8 @@ fn control_flow_contains_type_parameter_checks_use_flow_query_boundary() {
 
 #[test]
 fn control_flow_assignability_helpers_use_flow_query_boundary() {
-    let src = fs::read_to_string("src/control_flow.rs")
-        .expect("failed to read src/control_flow.rs for architecture guard");
+    let src = fs::read_to_string("src/flow/control_flow.rs")
+        .expect("failed to read src/flow/control_flow.rs for architecture guard");
 
     assert!(
         src.contains("query::is_assignable_with_env("),
