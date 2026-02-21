@@ -152,7 +152,7 @@ git -C "$REPO_ROOT" clean -fd -- \
 
 # Phase 3: Belt-and-suspenders for heavyweight dirs that git clean may skip
 # (e.g. when they contain nested .git repos or permission issues)
-CLEAN_DIRS=(node_modules coverage logs artifacts pkg tmp wasm)
+CLEAN_DIRS=(node_modules coverage logs artifacts pkg tmp)
 if [[ "$FULL" == true ]]; then
   CLEAN_DIRS+=(.target .target-bench target)
 fi
