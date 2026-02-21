@@ -64,6 +64,13 @@ RUNNER_WATCH_PATHS=(
     "$SCRIPT_DIR/../package.json"
     "$SCRIPT_DIR/../package-lock.json"
 )
+ROOT_GIT_AVAILABLE=0
+ROOT_GIT_HEAD=""
+
+if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+    ROOT_GIT_AVAILABLE=1
+    ROOT_GIT_HEAD="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+fi
 
 # Check for required tools
 command -v node &>/dev/null || die "Node.js is required"
@@ -159,11 +166,11 @@ ensure_tsz_binary() {
     local current_head
     local state_file="$(dirname "$tsz_bin")/.tsz_binary_head"
 
-    if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+    if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
         if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
             stale=1
         else
-            current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+            current_head="$ROOT_GIT_HEAD"
             if [[ -z "$current_head" ]]; then
                 stale=1
             elif [[ ! -f "$state_file" ]]; then
@@ -180,7 +187,7 @@ ensure_tsz_binary() {
     fi
 
     if [[ "$stale" -eq 0 ]]; then
-        current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        current_head="$ROOT_GIT_HEAD"
         if [[ -n "$current_head" ]]; then
             mkdir -p "$(dirname "$state_file")"
             printf '%s\n' "$current_head" > "$state_file"
@@ -195,7 +202,7 @@ ensure_tsz_binary() {
             log_error "Failed to resolve tsz binary after rebuild"
             exit 1
         }
-        current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+        current_head="$ROOT_GIT_HEAD"
         if [[ -n "$current_head" ]]; then
             mkdir -p "$(dirname "$state_file")"
             printf '%s\n' "$current_head" > "$state_file"
@@ -213,11 +220,11 @@ build_runner() {
     if [[ ! -f "$dist_runner" ]]; then
         stale=1
     else
-    if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
+        if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
             if [[ -n "$(git -C "$ROOT_DIR" status --porcelain -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null)" ]]; then
                 stale=1
             else
-                current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+                current_head="$ROOT_GIT_HEAD"
                 if [[ -z "$current_head" || ! -f "$state_file" || "$current_head" != "$(cat "$state_file")" ]]; then
                     stale=1
                 fi
@@ -230,7 +237,7 @@ build_runner() {
         fi
 
         if [[ "$stale" -eq 0 ]]; then
-            current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+            current_head="$ROOT_GIT_HEAD"
             if [[ -n "$current_head" ]]; then
                 mkdir -p "$(dirname "$state_file")"
                 printf '%s\n' "$current_head" > "$state_file"
@@ -291,7 +298,7 @@ build_runner() {
         # Use tsc from scripts or emit fallback node_modules.
         "$TSC_BIN" -p tsconfig.json
     )
-    current_head="$(git -C "$ROOT_DIR" rev-parse HEAD 2>/dev/null || true)"
+    current_head="$ROOT_GIT_HEAD"
     if [[ -n "$current_head" ]]; then
         mkdir -p "$(dirname "$state_file")"
         printf '%s\n' "$current_head" > "$state_file"
