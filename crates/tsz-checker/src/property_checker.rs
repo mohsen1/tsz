@@ -59,6 +59,13 @@ impl<'a> CheckerState<'a> {
             && let Some(false) =
                 self.is_method_member_in_class_hierarchy(class_idx, property_name, is_static)
         {
+            // Inside a class static block, `super.prop` accessing inherited static fields
+            // is valid — TypeScript does NOT emit TS2340/TS2855 in this context.
+            if self.find_enclosing_static_block(object_expr).is_some()
+                || self.find_enclosing_static_block(error_node).is_some()
+            {
+                return true;
+            }
             // TS2340 when useDefineForClassFields is effectively false (target < ES2022):
             //   "Only public and protected methods of the base class are accessible via the 'super' keyword."
             // TS2855 when useDefineForClassFields is effectively true (target >= ES2022):
