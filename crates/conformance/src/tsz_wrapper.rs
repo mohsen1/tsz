@@ -551,7 +551,10 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             continue;
         }
 
-        let canonical_key = canonical_option_name(&key_lower);
+        // Use canonical_option_name to match the casing the TSC cache generator used.
+        // Options NOT in the map stay lowercase, causing tsz to emit TS5025 (matching
+        // TSC's behavior when it receives lowercase option names).
+        let tsconfig_key = canonical_option_name(&key_lower);
         let json_value = if value == "true" {
             serde_json::Value::Bool(true)
         } else if value == "false" {
@@ -582,7 +585,7 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
             }
         };
 
-        opts.insert(canonical_key.to_string(), json_value);
+        opts.insert(tsconfig_key.to_string(), json_value);
     }
 
     // TypeScript's `strict` flag sets defaults for the strict option family when they are
@@ -592,22 +595,30 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
     // TypeScript 6.0 changed the default: `strict` is now ON by default unless explicitly
     // set to `false`. This means all strict-family flags (strictNullChecks, noImplicitAny,
     // etc.) default to `true` when not specified.
+    //
+    // These use canonical camelCase because they are synthesized defaults (not from test
+    // directives), and should NOT trigger TS5025 "Did you mean?" diagnostics.
     let strict_value = match opts.get("strict") {
         Some(serde_json::Value::Bool(strict)) => *strict,
         _ => true, // tsc 6.0+ defaults to strict: true when not specified
     };
-    for key in [
-        "noImplicitAny",
-        "noImplicitThis",
-        "strictNullChecks",
-        "strictFunctionTypes",
-        "strictBindCallApply",
-        "strictPropertyInitialization",
-        "useUnknownInCatchVariables",
-        "alwaysStrict",
+    for (lowercase, canonical) in [
+        ("noimplicitany", "noImplicitAny"),
+        ("noimplicitthis", "noImplicitThis"),
+        ("strictnullchecks", "strictNullChecks"),
+        ("strictfunctiontypes", "strictFunctionTypes"),
+        ("strictbindcallapply", "strictBindCallApply"),
+        (
+            "strictpropertyinitialization",
+            "strictPropertyInitialization",
+        ),
+        ("useunknownincatchvariables", "useUnknownInCatchVariables"),
+        ("alwaysstrict", "alwaysStrict"),
     ] {
-        opts.entry(key.to_string())
-            .or_insert(serde_json::Value::Bool(strict_value));
+        // Only insert if neither the lowercase (from directive) nor canonical form exists
+        if !opts.contains_key(lowercase) && !opts.contains_key(canonical) {
+            opts.insert(canonical.to_string(), serde_json::Value::Bool(strict_value));
+        }
     }
 
     // Match tsc 6.0 default compiler behavior for tests that omit @target.
@@ -624,13 +635,17 @@ fn convert_options_to_tsconfig(options: &HashMap<String, String>) -> serde_json:
     serde_json::Value::Object(opts)
 }
 
+/// Map lowercase option names to canonical camelCase, matching the TSC cache generator.
+///
+/// Options NOT in this map stay lowercase, which causes TS5025 "Did you mean?" diagnostics.
+/// This must match the cache generator's map exactly so that tsz emits the same TS5025
+/// diagnostics that TSC emitted when the cache was built.
 fn canonical_option_name(key_lower: &str) -> &str {
     match key_lower {
         "allowarbitraryextensions" => "allowArbitraryExtensions",
         "allowimportingtsextensions" => "allowImportingTsExtensions",
         "allowjs" => "allowJs",
         "allowsyntheticdefaultimports" => "allowSyntheticDefaultImports",
-        "allowumdglobalaccess" => "allowUmdGlobalAccess",
         "allowunreachablecode" => "allowUnreachableCode",
         "allowunusedlabels" => "allowUnusedLabels",
         "alwaysstrict" => "alwaysStrict",
@@ -640,55 +655,31 @@ fn canonical_option_name(key_lower: &str) -> &str {
         "declaration" => "declaration",
         "declarationdir" => "declarationDir",
         "declarationmap" => "declarationMap",
-        "downleveliteration" => "downlevelIteration",
         "emitdeclarationonly" => "emitDeclarationOnly",
         "emitdecoratormetadata" => "emitDecoratorMetadata",
-        "erasablesyntaxonly" => "erasableSyntaxOnly",
         "esmoduleinterop" => "esModuleInterop",
         "exactoptionalpropertytypes" => "exactOptionalPropertyTypes",
         "experimentaldecorators" => "experimentalDecorators",
-        "ignoredeprecations" => "ignoreDeprecations",
         "importhelpers" => "importHelpers",
-        "importsnotusedasvalues" => "importsNotUsedAsValues",
         "incremental" => "incremental",
-        "inlinesourcemap" => "inlineSourceMap",
-        "inlinesources" => "inlineSources",
         "isolateddeclarations" => "isolatedDeclarations",
         "isolatedmodules" => "isolatedModules",
         "jsx" => "jsx",
-        "jsxfactory" => "jsxFactory",
-        "reactnamespace" => "reactNamespace",
-
-        "jsxfragmentfactory" => "jsxFragmentFactory",
-        "jsximportsource" => "jsxImportSource",
-        "keyofstringsonly" => "keyofStringsOnly",
         "lib" => "lib",
-        "libreplacement" => "libReplacement",
-        "maproot" => "mapRoot",
         "maxnodemodulejsdepth" => "maxNodeModuleJsDepth",
         "module" => "module",
-        "moduledetection" => "moduleDetection",
         "moduleresolution" => "moduleResolution",
         "modulesuffixes" => "moduleSuffixes",
-        "newline" => "newLine",
-        "nocheck" => "noCheck",
+        "noemitonerror" => "noEmitOnError",
         "noemit" => "noEmit",
         "noemithelpers" => "noEmitHelpers",
-        "noemitonerror" => "noEmitOnError",
-        "noerrortruncation" => "noErrorTruncation",
-        "nofallthrough" => "noFallthroughCasesInSwitch",
-        "nofallthroughcasesinswitch" => "noFallthroughCasesInSwitch",
+        "nofallthrough" | "nofallthroughcasesinswitch" => "noFallthroughCasesInSwitch",
         "noimplicitany" => "noImplicitAny",
-        "noimplicitoverride" => "noImplicitOverride",
         "noimplicitreturns" => "noImplicitReturns",
         "noimplicitthis" => "noImplicitThis",
-        "noimplicitusestrict" => "noImplicitUseStrict",
         "nolib" => "noLib",
         "nopropertyaccessfromindexsignature" => "noPropertyAccessFromIndexSignature",
         "noresolve" => "noResolve",
-        "nostrictgenericchecks" => "noStrictGenericChecks",
-        "notypesandsymbols" => "noTypesAndSymbols",
-        "nouncheckedindexedaccess" => "noUncheckedIndexedAccess",
         "nouncheckedsideeffectimports" => "noUncheckedSideEffectImports",
         "nounusedlocals" => "noUnusedLocals",
         "nounusedparameters" => "noUnusedParameters",
@@ -698,32 +689,25 @@ fn canonical_option_name(key_lower: &str) -> &str {
         "preserveconstenums" => "preserveConstEnums",
         "preservesymlinks" => "preserveSymlinks",
         "removecomments" => "removeComments",
-        "resolvejsonmodule" => "resolveJsonModule",
         "resolvepackagejsonexports" => "resolvePackageJsonExports",
         "resolvepackagejsonimports" => "resolvePackageJsonImports",
+        "resolvejsonmodule" => "resolveJsonModule",
         "rewriterelativeimportextensions" => "rewriteRelativeImportExtensions",
         "rootdir" => "rootDir",
         "rootdirs" => "rootDirs",
         "skiplibcheck" => "skipLibCheck",
         "sourcemap" => "sourceMap",
-        "sourceroot" => "sourceRoot",
         "strict" => "strict",
         "strictbindcallapply" => "strictBindCallApply",
-        "strictbuiltiniteratorreturn" => "strictBuiltinIteratorReturn",
         "strictfunctiontypes" => "strictFunctionTypes",
         "strictnullchecks" => "strictNullChecks",
         "strictpropertyinitialization" => "strictPropertyInitialization",
-        "stripinternal" => "stripInternal",
-        "suppressexcesspropertyerrors" => "suppressExcessPropertyErrors",
-        "suppressimplicitanyindexerrors" => "suppressImplicitAnyIndexErrors",
         "target" => "target",
-        "traceresolution" => "traceResolution",
-        "tsbuildinfofile" => "tsBuildInfoFile",
+        "tsbuildinfoffile" => "tsBuildInfoFile",
         "typeroots" => "typeRoots",
         "types" => "types",
         "usedefineforclassfields" => "useDefineForClassFields",
         "useunknownincatchvariables" => "useUnknownInCatchVariables",
-        "verbatimmodulesyntax" => "verbatimModuleSyntax",
         _ => key_lower,
     }
 }

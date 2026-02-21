@@ -7,7 +7,10 @@ use std::env;
 use std::path::{Path, PathBuf};
 
 use crate::checker::context::ScriptTarget as CheckerScriptTarget;
+use crate::checker::diagnostics::Diagnostic;
 use crate::emitter::{ModuleKind, PrinterOptions, ScriptTarget};
+use tsz_common::diagnostics::data::{diagnostic_codes, diagnostic_messages};
+use tsz_common::diagnostics::format_message;
 
 /// Custom deserializer for boolean options that accepts both bool and string values.
 /// This handles cases where tsconfig.json contains `"strict": "true"` instead of `"strict": true`.
@@ -784,9 +787,236 @@ pub fn parse_tsconfig(source: &str) -> Result<TsConfig> {
     Ok(config)
 }
 
+/// Result of parsing a tsconfig.json with diagnostic collection.
+pub struct ParsedTsConfig {
+    pub config: TsConfig,
+    pub diagnostics: Vec<Diagnostic>,
+}
+
+/// Parse tsconfig.json source and collect diagnostics for unknown compiler options.
+///
+/// Unlike `parse_tsconfig`, this function:
+/// 1. Detects unknown/miscased compiler option keys in the JSON
+/// 2. Normalizes them to canonical casing so serde can deserialize them
+/// 3. Returns TS5025 diagnostics for any miscased or unknown options
+pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<ParsedTsConfig> {
+    let stripped = strip_jsonc(source);
+    let normalized = remove_trailing_commas(&stripped);
+    let mut raw: serde_json::Value =
+        serde_json::from_str(&normalized).context("failed to parse tsconfig JSON")?;
+
+    let mut diagnostics = Vec::new();
+
+    // Check compiler options for unknown/miscased keys
+    if let Some(obj) = raw.as_object_mut()
+        && let Some(serde_json::Value::Object(compiler_opts)) = obj.get_mut("compilerOptions")
+    {
+        let keys: Vec<String> = compiler_opts.keys().cloned().collect();
+        let mut renames: Vec<(String, String)> = Vec::new();
+
+        for key in &keys {
+            let key_lower = key.to_lowercase();
+            if let Some(canonical) = known_compiler_option(&key_lower) {
+                if key.as_str() != canonical {
+                    // Miscased option — emit TS5025 and schedule rename
+                    let start = find_key_offset_in_source(&stripped, key);
+                    let msg = format_message(
+                        diagnostic_messages::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
+                        &[key, canonical],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key.len() as u32 + 2, // include quotes
+                        msg,
+                        diagnostic_codes::UNKNOWN_COMPILER_OPTION_DID_YOU_MEAN,
+                    ));
+                    renames.push((key.clone(), canonical.to_string()));
+                }
+                // else: exact match, no diagnostic needed
+            } else {
+                // Truly unknown option — emit TS5023
+                let start = find_key_offset_in_source(&stripped, key);
+                let msg = format_message(diagnostic_messages::UNKNOWN_COMPILER_OPTION, &[key]);
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key.len() as u32 + 2,
+                    msg,
+                    diagnostic_codes::UNKNOWN_COMPILER_OPTION,
+                ));
+            }
+        }
+
+        // Rename miscased keys to canonical casing so serde can deserialize them
+        for (old_key, new_key) in renames {
+            if let Some(value) = compiler_opts.remove(&old_key) {
+                compiler_opts.insert(new_key, value);
+            }
+        }
+    }
+
+    let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
+
+    Ok(ParsedTsConfig {
+        config,
+        diagnostics,
+    })
+}
+
+/// Find the byte offset of a JSON key within the source text.
+/// Searches for `"key"` after `compilerOptions`.
+fn find_key_offset_in_source(source: &str, key: &str) -> u32 {
+    let search = format!("\"{key}\"");
+    // Look for the key after "compilerOptions" to avoid matching in other sections
+    let compiler_opts_pos = source.find("compilerOptions").unwrap_or(0);
+    if let Some(pos) = source[compiler_opts_pos..].find(&search) {
+        // +1 to point inside the quote (at the key name), matching tsc behavior
+        (compiler_opts_pos + pos + 1) as u32
+    } else {
+        0
+    }
+}
+
+/// Comprehensive map of all known TypeScript compiler options.
+/// Maps lowercase name → canonical camelCase name.
+fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
+    match key_lower {
+        "allowarbitraryextensions" => Some("allowArbitraryExtensions"),
+        "allowimportingtsextensions" => Some("allowImportingTsExtensions"),
+        "allowjs" => Some("allowJs"),
+        "allowsyntheticdefaultimports" => Some("allowSyntheticDefaultImports"),
+        "allowumdglobalaccess" => Some("allowUmdGlobalAccess"),
+        "allowunreachablecode" => Some("allowUnreachableCode"),
+        "allowunusedlabels" => Some("allowUnusedLabels"),
+        "alwaysstrict" => Some("alwaysStrict"),
+        "baseurl" => Some("baseUrl"),
+        "charset" => Some("charset"),
+        "checkjs" => Some("checkJs"),
+        "composite" => Some("composite"),
+        "customconditions" => Some("customConditions"),
+        "declaration" => Some("declaration"),
+        "declarationdir" => Some("declarationDir"),
+        "declarationmap" => Some("declarationMap"),
+        "diagnostics" => Some("diagnostics"),
+        "disablereferencedprojectload" => Some("disableReferencedProjectLoad"),
+        "disablesizelimt" => Some("disableSizeLimit"),
+        "disablesolutiontypecheck" => Some("disableSolutionTypeCheck"),
+        "disablesolutioncaching" => Some("disableSolutionCaching"),
+        "disablesolutiontypechecking" => Some("disableSolutionTypeChecking"),
+        "disablesourceofreferencedprojectload" => Some("disableSourceOfReferencedProjectLoad"),
+        "downleveliteration" => Some("downlevelIteration"),
+        "emitbom" => Some("emitBOM"),
+        "emitdeclarationonly" => Some("emitDeclarationOnly"),
+        "emitdecoratormetadata" => Some("emitDecoratorMetadata"),
+        "erasablesyntaxonly" => Some("erasableSyntaxOnly"),
+        "esmoduleinterop" => Some("esModuleInterop"),
+        "exactoptionalpropertytypes" => Some("exactOptionalPropertyTypes"),
+        "experimentaldecorators" => Some("experimentalDecorators"),
+        "extendeddiagnostics" => Some("extendedDiagnostics"),
+        "forceconsecinferfaces" | "forceconsistentcasinginfilenames" => {
+            Some("forceConsistentCasingInFileNames")
+        }
+        "generatecputrace" | "generatecpuprofile" => Some("generateCpuProfile"),
+        "generatetrace" => Some("generateTrace"),
+        "ignoredeprecations" => Some("ignoreDeprecations"),
+        "importhelpers" => Some("importHelpers"),
+        "importsnotusedasvalues" => Some("importsNotUsedAsValues"),
+        "incremental" => Some("incremental"),
+        "inlineconstants" => Some("inlineConstants"),
+        "inlinesourcemap" => Some("inlineSourceMap"),
+        "inlinesources" => Some("inlineSources"),
+        "isolateddeclarations" => Some("isolatedDeclarations"),
+        "isolatedmodules" => Some("isolatedModules"),
+        "jsx" => Some("jsx"),
+        "jsxfactory" => Some("jsxFactory"),
+        "jsxfragmentfactory" => Some("jsxFragmentFactory"),
+        "jsximportsource" => Some("jsxImportSource"),
+        "keyofstringsonly" => Some("keyofStringsOnly"),
+        "lib" => Some("lib"),
+        "libreplacement" => Some("libReplacement"),
+        "listemittedfiles" => Some("listEmittedFiles"),
+        "listfiles" => Some("listFiles"),
+        "listfilesonly" => Some("listFilesOnly"),
+        "locale" => Some("locale"),
+        "maproot" => Some("mapRoot"),
+        "maxnodemodulejsdepth" => Some("maxNodeModuleJsDepth"),
+        "module" => Some("module"),
+        "moduledetection" => Some("moduleDetection"),
+        "moduleresolution" => Some("moduleResolution"),
+        "modulesuffixes" => Some("moduleSuffixes"),
+        "newline" => Some("newLine"),
+        "nocheck" => Some("noCheck"),
+        "noemit" => Some("noEmit"),
+        "noemithelpers" => Some("noEmitHelpers"),
+        "noemitonerror" => Some("noEmitOnError"),
+        "noerrortruncation" => Some("noErrorTruncation"),
+        "nofallthroughcasesinswitch" => Some("noFallthroughCasesInSwitch"),
+        "noimplicitany" => Some("noImplicitAny"),
+        "noimplicitoverride" => Some("noImplicitOverride"),
+        "noimplicitreturns" => Some("noImplicitReturns"),
+        "noimplicitthis" => Some("noImplicitThis"),
+        "noimplicitusestrict" => Some("noImplicitUseStrict"),
+        "nolib" => Some("noLib"),
+        "nopropertyaccessfromindexsignature" => Some("noPropertyAccessFromIndexSignature"),
+        "noresolve" => Some("noResolve"),
+        "nostrictgenericchecks" => Some("noStrictGenericChecks"),
+        "notypesandsymbols" => Some("noTypesAndSymbols"),
+        "nouncheckedindexedaccess" => Some("noUncheckedIndexedAccess"),
+        "nouncheckedsideeffectimports" => Some("noUncheckedSideEffectImports"),
+        "nounusedlocals" => Some("noUnusedLocals"),
+        "nounusedparameters" => Some("noUnusedParameters"),
+        "outdir" => Some("outDir"),
+        "outfile" => Some("outFile"),
+        "paths" => Some("paths"),
+        "plugins" => Some("plugins"),
+        "preserveconstenums" => Some("preserveConstEnums"),
+        "preservesymlinks" => Some("preserveSymlinks"),
+        "preservevalueimports" => Some("preserveValueImports"),
+        "preservewatchoutput" => Some("preserveWatchOutput"),
+        "pretty" => Some("pretty"),
+        "reactnamespace" => Some("reactNamespace"),
+        "removecomments" => Some("removeComments"),
+        "resolvejsonmodule" => Some("resolveJsonModule"),
+        "resolvepackagejsonexports" => Some("resolvePackageJsonExports"),
+        "resolvepackagejsonimports" => Some("resolvePackageJsonImports"),
+        "rewriterelativeimportextensions" => Some("rewriteRelativeImportExtensions"),
+        "rootdir" => Some("rootDir"),
+        "rootdirs" => Some("rootDirs"),
+        "skipdefaultlibcheck" => Some("skipDefaultLibCheck"),
+        "skiplibcheck" => Some("skipLibCheck"),
+        "sourcemap" => Some("sourceMap"),
+        "sourceroot" => Some("sourceRoot"),
+        "strict" => Some("strict"),
+        "strictbindcallapply" => Some("strictBindCallApply"),
+        "strictbuiltiniteratorreturn" => Some("strictBuiltinIteratorReturn"),
+        "strictfunctiontypes" => Some("strictFunctionTypes"),
+        "strictnullchecks" => Some("strictNullChecks"),
+        "strictpropertyinitialization" => Some("strictPropertyInitialization"),
+        "stripinternal" => Some("stripInternal"),
+        "suppressexcesspropertyerrors" => Some("suppressExcessPropertyErrors"),
+        "suppressimplicitanyindexerrors" => Some("suppressImplicitAnyIndexErrors"),
+        "target" => Some("target"),
+        "traceresolution" => Some("traceResolution"),
+        "tsbuildinfofile" => Some("tsBuildInfoFile"),
+        "typeroots" => Some("typeRoots"),
+        "types" => Some("types"),
+        "usedefineforclassfields" => Some("useDefineForClassFields"),
+        "useunknownincatchvariables" => Some("useUnknownInCatchVariables"),
+        "verbatimmodulesyntax" => Some("verbatimModuleSyntax"),
+        _ => None,
+    }
+}
+
 pub fn load_tsconfig(path: &Path) -> Result<TsConfig> {
     let mut visited = FxHashSet::default();
     load_tsconfig_inner(path, &mut visited)
+}
+
+/// Load tsconfig.json and collect config-level diagnostics.
+pub fn load_tsconfig_with_diagnostics(path: &Path) -> Result<ParsedTsConfig> {
+    let mut visited = FxHashSet::default();
+    load_tsconfig_inner_with_diagnostics(path, &mut visited)
 }
 
 fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<TsConfig> {
@@ -809,6 +1039,32 @@ fn load_tsconfig_inner(path: &Path, visited: &mut FxHashSet<PathBuf>) -> Result<
 
     visited.remove(&canonical);
     Ok(config)
+}
+
+fn load_tsconfig_inner_with_diagnostics(
+    path: &Path,
+    visited: &mut FxHashSet<PathBuf>,
+) -> Result<ParsedTsConfig> {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        bail!("tsconfig extends cycle detected at {}", canonical.display());
+    }
+
+    let source = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read tsconfig: {}", path.display()))?;
+    let file_display = path.display().to_string();
+    let mut parsed = parse_tsconfig_with_diagnostics(&source, &file_display)
+        .with_context(|| format!("failed to parse tsconfig: {}", path.display()))?;
+
+    let extends = parsed.config.extends.take();
+    if let Some(extends_path) = extends {
+        let base_path = resolve_extends_path(path, &extends_path)?;
+        let base_config = load_tsconfig_inner(&base_path, visited)?;
+        parsed.config = merge_configs(base_config, parsed.config);
+    }
+
+    visited.remove(&canonical);
+    Ok(parsed)
 }
 
 fn resolve_extends_path(current_path: &Path, extends: &str) -> Result<PathBuf> {
