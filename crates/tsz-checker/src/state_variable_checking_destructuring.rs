@@ -108,8 +108,19 @@ impl<'a> CheckerState<'a> {
 
             // If there's an initializer, the type incorporates it.
             // TypeScript widens the inferred type with the initializer type.
+            // Set contextual type for function-like defaults so parameter types
+            // are inferred from the expected element type (e.g., `{ f: id = arg => arg }: T`).
             if element_data.initializer.is_some() {
+                let prev_context = self.ctx.contextual_type;
+                if element_type != TypeId::ANY
+                    && let Some(init_node) = self.ctx.arena.get(element_data.initializer)
+                    && (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+                {
+                    self.ctx.contextual_type = Some(element_type);
+                }
                 let init_type = self.get_type_of_node(element_data.initializer);
+                self.ctx.contextual_type = prev_context;
                 if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                     element_type = init_type;
                 } else if !self.is_assignable_to(init_type, element_type) {
