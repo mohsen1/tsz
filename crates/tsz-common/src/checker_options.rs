@@ -88,6 +88,27 @@ pub struct CheckerOptions {
     pub jsx_factory: String,
     /// JSX fragment factory function (e.g. `React.Fragment`)
     pub jsx_fragment_factory: String,
+    /// JSX emit mode (preserve, react, react-jsx, react-jsxdev, react-native).
+    /// Only "react" (classic transform) requires the factory to be in scope.
+    pub jsx_mode: JsxMode,
+}
+
+/// JSX emit mode controlling how JSX is transformed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum JsxMode {
+    /// No JSX mode specified (default — treated same as None/no JSX).
+    #[default]
+    None,
+    /// Keep JSX as-is in the output (no factory required in scope).
+    Preserve,
+    /// Classic React transform — requires factory (e.g. `React.createElement`) in scope.
+    React,
+    /// Automatic React transform via `_jsx` — factory NOT required in scope.
+    ReactJsx,
+    /// Development automatic React transform — factory NOT required in scope.
+    ReactJsxDev,
+    /// React Native — preserve JSX (no factory required in scope).
+    ReactNative,
 }
 
 impl Default for CheckerOptions {
@@ -127,6 +148,7 @@ impl Default for CheckerOptions {
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
+            jsx_mode: JsxMode::None,
         }
     }
 }
