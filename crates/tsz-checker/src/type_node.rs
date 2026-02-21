@@ -1748,13 +1748,14 @@ pub(crate) fn check_parameter_initializers_in_type(
         if let Some(param_node) = ctx.arena.get(param_idx)
             && let Some(param) = ctx.arena.get_parameter(param_node)
             && param.initializer.is_some()
-                && let Some(init_node) = ctx.arena.get(param.initializer) {
-                    ctx.error(
+            && let Some(init_node) = ctx.arena.get(param.initializer)
+        {
+            ctx.error(
                         init_node.pos,
                         init_node.end - init_node.pos,
                         "A parameter initializer is only allowed in a function or constructor implementation.".to_string(),
                         2371,
                     );
-                }
+        }
     }
 }
