@@ -899,7 +899,6 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Resolves a string identifier relative to the scope of a given node.
-    #[allow(dead_code)]
     pub(crate) fn resolve_name_at_node(&self, name: &str, node_idx: NodeIndex) -> Option<SymbolId> {
         let ignore_libs = !self.ctx.has_lib_loaded();
         let lib_binders = if ignore_libs {
