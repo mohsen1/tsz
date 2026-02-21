@@ -544,7 +544,7 @@ impl<'a> CheckerState<'a> {
                         });
                 if is_identifier_operand && self.is_strict_mode_for_node(idx) {
                     self.error_at_node(
-                        idx,
+                        unary.operand,
                         crate::diagnostics::diagnostic_messages::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
                         crate::diagnostics::diagnostic_codes::DELETE_CANNOT_BE_CALLED_ON_AN_IDENTIFIER_IN_STRICT_MODE,
                     );
@@ -566,7 +566,7 @@ impl<'a> CheckerState<'a> {
 
                 if !is_property_reference {
                     self.error_at_node(
-                        idx,
+                        unary.operand,
                         crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                         crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_A_PROPERTY_REFERENCE,
                     );
@@ -604,7 +604,7 @@ impl<'a> CheckerState<'a> {
                                     );
                             if !is_optional && !optional_via_undefined {
                                 self.error_at_node(
-                                    idx,
+                                    unary.operand,
                                     crate::diagnostics::diagnostic_messages::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                     crate::diagnostics::diagnostic_codes::THE_OPERAND_OF_A_DELETE_OPERATOR_MUST_BE_OPTIONAL,
                                 );
