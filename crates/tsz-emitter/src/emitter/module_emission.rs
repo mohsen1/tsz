@@ -1723,6 +1723,7 @@ impl<'a> Printer<'a> {
                                 && self.arena.get_type_alias(inner).is_some_and(|alias| {
                                     self.get_identifier_text_idx(alias.name) == assigned_name
                                 })))
+                                })))
                     {
                         matched_type = true;
                     }
