@@ -11,10 +11,36 @@ const x = 1;
     assert_eq!(refs.len(), 2);
     assert_eq!(refs[0].0, "./types.d.ts");
     assert_eq!(refs[1].0, "./other.ts");
-    // Verify path offset points to the opening quote
-    // `/// <reference path="./types.d.ts" />` — `path="` starts at col 20, quote at col 20
-    assert_eq!(refs[0].2, 20); // offset of opening quote in line
-    assert_eq!(refs[1].2, 20); // same structure, single quotes
+    // Verify path offset points to the value start (after the opening quote)
+    // `/// <reference path="./types.d.ts" />` — value starts at byte offset 21
+    assert_eq!(refs[0].2, 21); // offset of value start in line
+    assert_eq!(refs[1].2, 21); // same structure, single quotes
+}
+
+#[test]
+fn test_extract_reference_paths_offset() {
+    // Column positions should point at the value after the opening quote
+    let source =
+        "/// <reference path='filedoesnotexist.ts'/>\n/// <reference path=\"other.d.ts\"/>\n";
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 2);
+
+    // "/// <reference path='" = 21 chars, so value starts at offset 21
+    assert_eq!(refs[0].0, "filedoesnotexist.ts");
+    assert_eq!(refs[0].2, 21); // quote_offset: byte offset of value start
+
+    assert_eq!(refs[1].0, "other.d.ts");
+    assert_eq!(refs[1].2, 21);
+}
+
+#[test]
+fn test_extract_reference_paths_with_leading_whitespace() {
+    let source = "    /// <reference path='test.ts'/>\n";
+    let refs = extract_reference_paths(source);
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].0, "test.ts");
+    // 4 spaces + "/// <reference path='" = 4 + 21 = 25
+    assert_eq!(refs[0].2, 25);
 }
 
 #[test]
@@ -25,7 +51,7 @@ fn test_extract_no_references() {
 }
 
 #[test]
-fn test_extract_quoted_path() {
+fn test_extract_quoted_attr_basic() {
     assert_eq!(
         extract_quoted_attr(r#"path="./file.ts""#, "path"),
         Some("./file.ts".to_string())

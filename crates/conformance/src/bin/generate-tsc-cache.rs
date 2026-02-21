@@ -653,9 +653,10 @@ fn parse_diagnostic_fingerprints(text: &str, project_root: &Path) -> Vec<Diagnos
                     .unwrap_or(0);
                 let raw_file = caps.name("file").map(|m| m.as_str()).unwrap_or_default();
                 let file = normalize_diagnostic_path(raw_file, project_root);
-                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let message = normalize_message_paths(raw_message, project_root);
                 diagnostics.push(DiagnosticFingerprint::new(
-                    code, file, line_no, col_no, message,
+                    code, file, line_no, col_no, &message,
                 ));
             }
             continue;
@@ -666,13 +667,14 @@ fn parse_diagnostic_fingerprints(text: &str, project_root: &Path) -> Vec<Diagnos
                 .name("code")
                 .and_then(|m| m.as_str().parse::<u32>().ok())
             {
-                let message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let raw_message = caps.name("message").map(|m| m.as_str()).unwrap_or_default();
+                let message = normalize_message_paths(raw_message, project_root);
                 diagnostics.push(DiagnosticFingerprint::new(
                     code,
                     String::new(),
                     0,
                     0,
-                    message,
+                    &message,
                 ));
             }
         }
@@ -705,6 +707,22 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
         normalized = normalized[root.len()..].trim_start_matches('/').to_string();
     }
     normalized
+}
+
+/// Strip the project root from any file paths embedded in diagnostic messages.
+///
+/// tsc resolves `/// <reference path="lib.ts" />` to an absolute path like
+/// `/tmp/xyz/lib.ts` in the error message. We strip the temp dir prefix so
+/// the cache stores portable relative paths (e.g., `File 'lib.ts' not found.`).
+fn normalize_message_paths(message: &str, project_root: &Path) -> String {
+    let root = project_root.to_string_lossy().replace('\\', "/");
+    let root_slash = if root.ends_with('/') {
+        root.to_string()
+    } else {
+        format!("{}/", root)
+    };
+    // Replace occurrences of the project root path inside the message
+    message.replace(&*root_slash, "").replace(&*root, "")
 }
 
 /// Strip @ directive comments from test file content

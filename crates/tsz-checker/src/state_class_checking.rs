@@ -1878,23 +1878,33 @@ impl<'a> CheckerState<'a> {
             false
         };
 
-        for (reference_path, line_num, path_offset_in_line) in references {
+        for (reference_path, line_num, quote_offset) in references {
             if !has_virtual_reference(&reference_path) {
-                // Calculate the byte position of the path string in the source
+                // Calculate byte offset to the start of this line
                 let mut line_start = 0u32;
                 for (idx, line) in source_text.lines().enumerate() {
                     if idx == line_num {
                         break;
                     }
-                    line_start += line.len() as u32 + 1; // +1 for newline
+                    // +1 for the newline character
+                    line_start += line.len() as u32 + 1;
                 }
 
-                // TSC points the error span at the path value (after the opening quote)
-                let pos = line_start + path_offset_in_line as u32 + 1; // +1 to skip opening quote
-                let length = reference_path.len() as u32 + 2;
+                // Point at the path value (after the opening quote)
+                let pos = line_start + quote_offset as u32;
+                // Span covers just the path value (not the quotes)
+                let length = reference_path.len() as u32;
+
+                // Resolve the reference path relative to the source file's directory,
+                // matching tsc behavior which reports absolute/resolved paths.
+                let resolved = source_path
+                    .parent()
+                    .unwrap_or_else(|| Path::new(""))
+                    .join(&reference_path);
+                let display_path = resolved.to_string_lossy();
 
                 use crate::diagnostics::{diagnostic_codes, format_message};
-                let message = format_message("File '{0}' not found.", &[&reference_path]);
+                let message = format_message("File '{0}' not found.", &[&display_path]);
                 self.emit_error_at(pos, length, &message, diagnostic_codes::FILE_NOT_FOUND);
             }
         }
