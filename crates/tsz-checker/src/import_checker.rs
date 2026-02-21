@@ -495,6 +495,17 @@ impl<'a> CheckerState<'a> {
                                     diagnostic_codes::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
                                 );
                             }
+                        } else if exports_table.has("default") || exports_table.has("export=") {
+                            // TS2614: Symbol doesn't exist but a default export does
+                            let message = format_message(
+                                diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                                &[module_name, import_name],
+                            );
+                            self.error_at_node(
+                                specifier.name,
+                                &message,
+                                diagnostic_codes::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
+                            );
                         } else {
                             // TS2305: Symbol doesn't exist in the module at all
                             let message = format_message(
