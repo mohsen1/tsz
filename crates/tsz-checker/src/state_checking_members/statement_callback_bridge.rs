@@ -217,7 +217,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             syntax_kind_ext::FUNCTION_EXPRESSION | syntax_kind_ext::ARROW_FUNCTION
         );
         if !is_closure {
-            for &param_idx in &func.parameters.nodes {
+            for (pi, &param_idx) in func.parameters.nodes.iter().enumerate() {
                 let Some(param_node) = self.ctx.arena.get(param_idx) else {
                     continue;
                 };
@@ -243,7 +243,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
                 } else {
                     false
                 };
-                self.maybe_report_implicit_any_parameter(param, has_jsdoc_param);
+                self.maybe_report_implicit_any_parameter(param, has_jsdoc_param, pi);
             }
         }
 
