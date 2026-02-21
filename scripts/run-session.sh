@@ -552,6 +552,13 @@ main() {
     echo "${C_CYAN}${C_BOLD}  Iteration #$iteration  $(date '+%Y-%m-%d %H:%M:%S')${C_RESET}" >&2
     echo "${C_CYAN}${C_BOLD}════════════════════════════════════════════════════════════════${C_RESET}" >&2
 
+    # Periodic cleanup: every 10 iterations, run clean.sh to remove
+    # accumulated session/bench/profiling leftovers
+    if (( iteration % 10 == 0 )); then
+      log "Periodic cleanup (iteration $iteration)..."
+      "$SCRIPT_DIR/clean.sh" --quiet || true
+    fi
+
     # Reload prompt each iteration (picks up changes to session.sh)
     local prompt
     prompt="$(load_prompt)"
