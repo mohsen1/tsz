@@ -1,6 +1,7 @@
 # Emit Runner Iteration Log
 
-Count: 806
+Count: 807
+- 807: non-ascii class recovery scan panic fix
 - 806: import-equals recovery null/literal emit parity fix
 - 805: accessor setter rest param ES5 downlevel parity fix
 - 804: accessor defineProperty comment comma parity

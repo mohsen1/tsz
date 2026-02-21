@@ -1068,7 +1068,7 @@ impl<'a> Printer<'a> {
                 i += 1;
                 continue;
             }
-            if i + 3 > bytes.len() || &slice[i..i + 3] != "var" {
+            if i + 3 > bytes.len() || &bytes[i..i + 3] != b"var" {
                 i += 1;
                 continue;
             }
@@ -1085,7 +1085,7 @@ impl<'a> Printer<'a> {
             if ident_start == i {
                 continue;
             }
-            let ident = &slice[ident_start..i];
+            let ident = String::from_utf8_lossy(&bytes[ident_start..i]).to_string();
             while i < bytes.len() && bytes[i].is_ascii_whitespace() {
                 i += 1;
             }
@@ -1114,7 +1114,7 @@ impl<'a> Printer<'a> {
                 continue;
             }
 
-            return Some(ident.to_string());
+            return Some(ident);
         }
 
         None
