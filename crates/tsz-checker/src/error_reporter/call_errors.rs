@@ -554,7 +554,25 @@ impl<'a> CheckerState<'a> {
     /// Report TS6234: "This expression is not callable because it is a 'get' accessor.
     /// Did you mean to access it without '()'?"
     pub fn error_get_accessor_not_callable_at(&mut self, idx: NodeIndex) {
-        if let Some(loc) = self.get_source_location(idx) {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let report_idx = self
+            .ctx
+            .arena
+            .get(idx)
+            .and_then(|node| {
+                if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                    self.ctx
+                        .arena
+                        .get_access_expr(node)
+                        .map(|access| access.name_or_argument)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(idx);
+
+        if let Some(loc) = self.get_source_location(report_idx) {
             use crate::diagnostics::diagnostic_codes;
             self.ctx.diagnostics.push(
                 crate::diagnostics::Diagnostic::error(
