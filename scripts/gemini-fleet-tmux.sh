@@ -556,7 +556,7 @@ for ((i=0; i<TOTAL_REPOS; i++)); do
   session_id=$((i + 1))
   name="$(basename "$repo")"
   pane_log="$FLEET_LOG_DIR/$(printf '%02d' "$session_id")-$name.tmux.log"
-  worker_log="$repo/logs/gemini-loop.session-${session_id}.${MODE}.log"
+  worker_log="$repo/logs/loops/gemini/session-${session_id}.${MODE}.log"
   cmd="$(build_worker_cmd "$repo" "$session_id" "$TOTAL_REPOS")"
 
   WINDOW_NAMES+=("$name")
