@@ -386,6 +386,22 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
             let is_generator = func.asterisk_token;
             let body_return_type = if is_generator && has_type_annotation {
+                // Ensure the annotated return type is actually compatible with the Generator protocol.
+                let generator_base = if func.is_async {
+                    self.resolve_lib_type_by_name("AsyncGenerator")
+                        .unwrap_or(TypeId::ERROR)
+                } else {
+                    self.resolve_lib_type_by_name("Generator")
+                        .unwrap_or(TypeId::ERROR)
+                };
+                if generator_base != TypeId::ERROR {
+                    let any_gen = self.ctx.types.factory().application(
+                        generator_base,
+                        vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                    );
+                    self.check_assignable_or_report(any_gen, return_type, func.type_annotation);
+                }
+
                 self.get_generator_return_type_argument(return_type)
                     .unwrap_or(return_type)
             } else if func.is_async && has_type_annotation {
