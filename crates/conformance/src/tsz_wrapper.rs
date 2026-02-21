@@ -492,6 +492,8 @@ fn normalize_message_paths(message: &str, project_root: &Path) -> String {
             format!("{}/", root)
         };
         result = result.replace(&root_slash, "");
+        // Also strip root without trailing slash (e.g., paths at end of message)
+        result = result.replace(root.as_str(), "");
     }
     result
 }
