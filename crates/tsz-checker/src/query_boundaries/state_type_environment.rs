@@ -1,12 +1,11 @@
 use tsz_solver::{MappedTypeId, TypeDatabase, TypeId};
 
+pub(crate) use super::common::{
+    is_generic_type, lazy_def_id, object_shape_for_type as object_shape,
+};
 pub(crate) use tsz_solver::type_queries_extended::{
     MappedConstraintKind, PropertyAccessResolutionKind, TypeResolutionKind,
 };
-
-pub(crate) fn is_generic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::is_generic_type(db, type_id)
-}
 
 pub(crate) fn application_info(
     db: &dyn TypeDatabase,
@@ -24,20 +23,6 @@ pub(crate) fn index_access_types(
     type_id: TypeId,
 ) -> Option<(TypeId, TypeId)> {
     tsz_solver::type_queries::get_index_access_types(db, type_id)
-}
-
-pub(crate) fn object_shape(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<std::sync::Arc<tsz_solver::ObjectShape>> {
-    tsz_solver::type_queries::get_object_shape(db, type_id)
-}
-
-pub(crate) fn lazy_def_id(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_solver::def::DefId> {
-    tsz_solver::type_queries::get_lazy_def_id(db, type_id)
 }
 
 pub(crate) fn classify_mapped_constraint(

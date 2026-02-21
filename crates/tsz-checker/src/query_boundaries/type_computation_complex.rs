@@ -1,5 +1,6 @@
-use tsz_solver::{CallableShape, TypeDatabase, TypeId};
+use tsz_solver::{TypeDatabase, TypeId};
 
+pub(crate) use super::common::{callable_shape_for_type, intersection_members, lazy_def_id};
 pub(crate) use tsz_solver::type_queries_extended::{
     AbstractClassCheckKind, CallSignaturesKind, ClassDeclTypeKind, LazyTypeKind,
 };
@@ -9,20 +10,6 @@ pub(crate) fn classify_for_abstract_check(
     type_id: TypeId,
 ) -> AbstractClassCheckKind {
     tsz_solver::type_queries_extended::classify_for_abstract_check(db, type_id)
-}
-
-pub(crate) fn callable_shape_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<std::sync::Arc<CallableShape>> {
-    tsz_solver::type_queries::get_callable_shape(db, type_id)
-}
-
-pub(crate) fn lazy_def_id(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<tsz_solver::def::DefId> {
-    tsz_solver::type_queries::get_lazy_def_id(db, type_id)
 }
 
 pub(crate) fn classify_for_lazy_resolution(db: &dyn TypeDatabase, type_id: TypeId) -> LazyTypeKind {
@@ -49,8 +36,4 @@ pub(crate) fn classify_for_call_signatures(
 
 pub(crate) fn is_readonly_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_readonly_type(db, type_id)
-}
-
-pub(crate) fn intersection_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
-    tsz_solver::type_queries::get_intersection_members(db, type_id)
 }

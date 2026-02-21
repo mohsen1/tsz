@@ -1,22 +1,9 @@
-use tsz_solver::{TupleElement, TypeDatabase, TypeId};
+use tsz_solver::{TypeDatabase, TypeId};
 
-pub(crate) fn union_members_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<Vec<TypeId>> {
-    tsz_solver::type_queries::get_union_members(db, type_id)
-}
-
-pub(crate) fn tuple_elements_for_type(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> Option<Vec<TupleElement>> {
-    tsz_solver::type_queries::get_tuple_elements(db, type_id)
-}
-
-pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries::contains_type_parameters_db(db, type_id)
-}
+pub(crate) use super::common::{
+    array_element_type as get_array_element_type, contains_type_parameters,
+    tuple_elements as tuple_elements_for_type, union_members as union_members_for_type,
+};
 
 pub(crate) fn union_types(db: &dyn TypeDatabase, members: Vec<TypeId>) -> TypeId {
     tsz_solver::utils::union_or_single(db, members)
@@ -78,10 +65,6 @@ pub(crate) fn fallback_compound_assignment_result(
 
 pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
-}
-
-pub(crate) fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    tsz_solver::type_queries::get_array_element_type(db, type_id)
 }
 
 pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

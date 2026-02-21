@@ -3,6 +3,7 @@ pub(crate) mod call_checker;
 pub(crate) mod callable_type;
 pub(crate) mod class;
 pub(crate) mod class_type;
+pub(crate) mod common;
 pub(crate) mod constructor_checker;
 pub(crate) mod definite_assignment;
 pub(crate) mod diagnostics;
