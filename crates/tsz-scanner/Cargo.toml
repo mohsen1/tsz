@@ -6,6 +6,9 @@ edition.workspace = true
 repository.workspace = true
 license.workspace = true
 authors.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 tsz-common = { workspace = true }
