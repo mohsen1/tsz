@@ -1,7 +1,7 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (8th audit)
-**Branch**: main (commit ae73e6c93)
+**Date**: 2026-02-21 (9th audit)
+**Branch**: main (commit 822202039)
 **Status**: ALL CLEAR — no violations found
 
 ---
@@ -40,8 +40,8 @@ All checker files are under the 2000-line limit. Eleven files are approaching th
 | File | Lines | Headroom |
 |------|-------|----------|
 | `state/state_class_checking.rs` | 1,995 | 5 lines |
-| `state_checking_members/member_declaration_checks.rs` | 1,994 | 6 lines |
 | `types/type_computation_call.rs` | 1,994 | 6 lines |
+| `state_checking_members/member_declaration_checks.rs` | 1,994 | 6 lines |
 | `types/type_computation_access.rs` | 1,972 | 28 lines |
 | `state/state_type_resolution_module.rs` | 1,908 | 92 lines |
 | `types/type_checking_queries_lib.rs` | 1,901 | 99 lines |
@@ -51,9 +51,9 @@ All checker files are under the 2000-line limit. Eleven files are approaching th
 | `context.rs` | 1,830 | 170 lines |
 | `types/class_type.rs` | 1,803 | 197 lines |
 
-Total checker codebase: ~127 files, ~106,405 LOC.
+Total checker codebase: ~148 files, ~106,405 LOC.
 
-No change from 7th audit — no new code has been added since then.
+No change from 8th audit — no new code has been added since then.
 
 ### 4. Cross-Layer Imports — CLEAN
 
@@ -87,15 +87,15 @@ The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solv
 
 ## CI Health
 
-Latest CI run (ae73e6c93) completed successfully. All recent runs green.
+Latest CI run (822202039) completed successfully. All 5 recent runs green.
 
 | Run | Status | Description |
 |-----|--------|-------------|
+| 22264836885 | completed/success | docs(arch): 8th architecture audit |
 | 22264779796 | completed/success | docs(arch): 7th architecture audit |
 | 22264708570 | completed/success | docs(arch): 6th architecture audit |
 | 22264633879 | completed/success | docs(arch): 5th architecture audit |
 | 22264560766 | completed/success | docs: automated README metrics update |
-| 22264546925 | in_progress | docs(arch): update audit report and fix stale TypeKeys comment |
 
 ---
 
@@ -106,4 +106,3 @@ Latest CI run (ae73e6c93) completed successfully. All recent runs green.
    - `member_declaration_checks.rs` (1,994 lines) — consider extracting method signature validation
    - `type_computation_call.rs` (1,994 lines) — consider extracting overload resolution logic
 2. **Monitor 8 additional near-threshold files** in the 1,803-1,972 range for growth.
-3. **Investigate stuck CI run**: Run 22264546925 remains in-progress. Consider canceling if it remains stuck.
