@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+#
+# pre-push hook: schedule artifact cleanup to run after push completes.
+#
+# Git has no native post-push hook, so we use pre-push to schedule a
+# background cleanup that starts after a short delay (allowing push to
+# finish). The hook itself exits immediately so push is not blocked.
+#
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CLEAN_SCRIPT="$SCRIPT_DIR/../clean.sh"
+
+if [[ -x "$CLEAN_SCRIPT" ]]; then
+  # Run cleanup after a 2-second delay so push finishes first.
+  # disown detaches it from the shell so git doesn't wait for it.
+  (sleep 2 && "$CLEAN_SCRIPT" --quiet) &
+  disown 2>/dev/null || true
+fi
+
+# Always allow push to proceed
+exit 0
