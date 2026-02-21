@@ -528,13 +528,41 @@ impl<'a> CheckerState<'a> {
 
             // For async functions, unwrap Promise<T> to T for return type checking
             // The function body should return T, which gets auto-wrapped in Promise
-            let effective_return_type = if is_async && !is_generator {
+            let effective_return_type = if is_generator && has_type_annotation {
+                // Ensure the annotated return type is actually compatible with the Generator protocol.
+                let generator_base = if is_async {
+                    self.resolve_lib_type_by_name("AsyncGenerator")
+                        .unwrap_or(TypeId::ERROR)
+                } else {
+                    self.resolve_lib_type_by_name("Generator")
+                        .unwrap_or(TypeId::ERROR)
+                };
+                if generator_base != TypeId::ERROR {
+                    let any_gen = self.ctx.types.factory().application(
+                        generator_base,
+                        vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                    );
+                    self.check_assignable_or_report(any_gen, return_type, method.type_annotation);
+                }
+
+                self.get_generator_return_type_argument(return_type)
+                    .unwrap_or(return_type)
+            } else if is_async && !is_generator {
                 self.unwrap_promise_type(return_type).unwrap_or(return_type)
             } else {
                 return_type
             };
 
             self.push_return_type(effective_return_type);
+
+            // For generator functions, push the contextual yield type so that
+            // yield expressions can contextually type their operand.
+            let contextual_yield_type = if is_generator && has_type_annotation {
+                self.get_generator_yield_type_argument(return_type)
+            } else {
+                None
+            };
+            self.ctx.push_yield_type(contextual_yield_type);
 
             // Enter async context for await expression checking
             if is_async {
@@ -598,6 +626,7 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            self.ctx.pop_yield_type();
             self.pop_return_type();
         } else {
             // Abstract method or method overload signature

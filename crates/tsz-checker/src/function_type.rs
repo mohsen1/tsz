@@ -1001,7 +1001,23 @@ impl<'a> CheckerState<'a> {
         let mut final_return_type = if !has_type_annotation && function_is_generator {
             // Unannotated generators should remain permissive until full
             // Generator<Y, R, N>/AsyncGenerator<Y, R, N> inference is implemented.
-            TypeId::ANY
+            // However, we must return a Generator-like type to avoid suppressing TS2322
+            // when the generator is returned or yielded to a context expecting something else.
+            let generator_base = if function_is_async {
+                self.resolve_lib_type_by_name("AsyncGenerator")
+                    .unwrap_or(TypeId::ERROR)
+            } else {
+                self.resolve_lib_type_by_name("Generator")
+                    .unwrap_or(TypeId::ERROR)
+            };
+            if generator_base != TypeId::ERROR {
+                self.ctx.types.factory().application(
+                    generator_base,
+                    vec![TypeId::ANY, TypeId::ANY, TypeId::UNKNOWN],
+                )
+            } else {
+                TypeId::ANY
+            }
         } else {
             annotated_return_type.unwrap_or(return_type)
         };
