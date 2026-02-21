@@ -748,9 +748,10 @@ impl<'a> CheckerState<'a> {
                             }
                         } else if decl_node.kind == syntax_kind_ext::IMPORT_CLAUSE
                             && let Some(import_clause) = self.ctx.arena.get_import_clause(decl_node)
-                                && !import_clause.name.is_none() {
-                                    error_node_idx = import_clause.name;
-                                }
+                            && !import_clause.name.is_none()
+                        {
+                            error_node_idx = import_clause.name;
+                        }
                     }
 
                     let message = format_message(
