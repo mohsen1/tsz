@@ -768,6 +768,7 @@ impl<'a> CheckerState<'a> {
                         TypeId::ANY
                     }
                 };
+                let base_instance_type = self.resolve_lazy_type(base_instance_type);
                 let substitution =
                     TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
                 let base_instance_type =
@@ -849,6 +850,11 @@ impl<'a> CheckerState<'a> {
                         type_args.truncate(interface_type_params.len());
                     }
 
+                    // Resolve Lazy(DefId) to structural type BEFORE instantiation.
+                    // If we instantiate a Lazy(DefId), the substitution is lost because
+                    // Lazy types don't recursively hold their structure.
+                    interface_type = self.resolve_lazy_type(interface_type);
+
                     if !interface_type_params.is_empty() {
                         let substitution = TypeSubstitution::from_args(
                             self.ctx.types,
@@ -858,11 +864,6 @@ impl<'a> CheckerState<'a> {
                         interface_type =
                             instantiate_type(self.ctx.types, interface_type, &substitution);
                     }
-
-                    // Resolve Lazy(DefId) to structural type before extracting shape
-                    // type_reference_symbol_type returns Lazy types for error messages,
-                    // but get_object_shape needs the actual Object type
-                    interface_type = self.resolve_lazy_type(interface_type);
 
                     if let Some(shape) = object_shape_for_type(self.ctx.types, interface_type) {
                         for prop in &shape.properties {

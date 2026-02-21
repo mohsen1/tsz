@@ -555,27 +555,46 @@ impl<'a> CheckerState<'a> {
                     // Report error for missing members
                     let diagnostic_code = if is_class {
                         diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER
-                    } else if interface_has_index_signature {
-                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
                     } else {
-                        diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_INTERFACE
                     };
 
                     let is_ambient = self.has_declare_modifier(&class_data.modifiers);
                     if !is_ambient && !missing_members.is_empty() {
-                        let missing_list = missing_members
-                            .iter()
-                            .map(|s| format!("'{s}'"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
+                        let missing_message = if missing_members.len() == 1 {
+                            format!(
+                                "Property '{}' is missing in type '{}' but required in type '{}'.",
+                                missing_members[0], class_name, interface_name
+                            )
+                        } else {
+                            let missing_list = missing_members.clone();
+                            let formatted_list = if missing_list.len() > 4 {
+                                let first_four = missing_list
+                                    .iter()
+                                    .take(4)
+                                    .cloned()
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                format!("{}, and {} more", first_four, missing_list.len() - 4)
+                            } else {
+                                missing_list.join(", ")
+                            };
+                            format!(
+                                "Type '{class_name}' is missing the following properties from type '{interface_name}': {formatted_list}"
+                            )
+                        };
 
-                        self.error_at_node(
-                            clause_idx,
-                            &format!(
-                                "Class '{class_name}' incorrectly implements '{interface_name}'. Missing members: {missing_list}."
-                            ),
-                            diagnostic_code,
-                        );
+                        let full_message = if is_class {
+                            format!(
+                                "Class '{class_name}' incorrectly implements class '{interface_name}'. Did you mean to extend '{interface_name}' and inherit its members as a subclass?\n  {missing_message}"
+                            )
+                        } else {
+                            format!(
+                                "Class '{class_name}' incorrectly implements interface '{interface_name}'.\n  {missing_message}"
+                            )
+                        };
+
+                        self.error_at_node(type_idx, &full_message, diagnostic_code);
                     }
 
                     // Report error for incompatible member types
