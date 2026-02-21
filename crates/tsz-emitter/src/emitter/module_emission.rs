@@ -330,8 +330,30 @@ impl<'a> Printer<'a> {
         let module_var = self.next_commonjs_module_var(&module_spec);
         self.register_commonjs_named_import_substitutions(node, &module_var);
         let is_default_only_ast = clause.name.is_some() && clause.named_bindings.is_none();
+        let mut is_named_default_only_ast = false;
+        if clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            let value_specs = self.collect_value_specifiers(&named_imports.elements);
+            is_named_default_only_ast = !value_specs.is_empty()
+                && value_specs.iter().all(|&spec_idx| {
+                    self.arena.get(spec_idx).is_some_and(|spec_node| {
+                        self.arena.get_specifier(spec_node).is_some_and(|spec| {
+                            let import_name = if spec.property_name.is_some() {
+                                self.get_identifier_text_idx(spec.property_name)
+                            } else {
+                                self.get_identifier_text_idx(spec.name)
+                            };
+                            import_name == "default"
+                        })
+                    })
+                });
+        }
 
-        if is_default_only_ast {
+        if is_default_only_ast || is_named_default_only_ast {
             // Default-only CommonJS import uses the interop temp directly:
             // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
             // and identifier references are rewritten via substitution map to `m_1.default`.
