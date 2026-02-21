@@ -619,16 +619,17 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
             // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
             if let Some(invalid_member) = self.get_invalid_index_type_member(index_type)
-                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type) {
-                    let mut formatter = self.ctx.create_type_formatter();
-                    let index_type_str = formatter.format(invalid_member);
-                    let message = crate::diagnostics::format_message(
-                        crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
-                        &[&index_type_str],
-                    );
-                    self.ctx
-                        .error(inode.pos, inode.end - inode.pos, message, 2538);
-                }
+                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
+            {
+                let mut formatter = self.ctx.create_type_formatter();
+                let index_type_str = formatter.format(invalid_member);
+                let message = crate::diagnostics::format_message(
+                    crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                    &[&index_type_str],
+                );
+                self.ctx
+                    .error(inode.pos, inode.end - inode.pos, message, 2538);
+            }
 
             factory.index_access(object_type, index_type)
         } else {
