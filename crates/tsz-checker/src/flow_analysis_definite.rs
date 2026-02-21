@@ -1,6 +1,7 @@
 //! Definite assignment analysis (TS2454), TDZ analysis, and flow-based type narrowing.
 
 use crate::FlowAnalyzer;
+use crate::query_boundaries::definite_assignment::find_property_in_object_by_str;
 use crate::query_boundaries::flow_analysis::{
     are_types_mutually_subtype_with_env, tuple_elements_for_type, union_members_for_type,
 };
@@ -192,11 +193,7 @@ impl<'a> CheckerState<'a> {
                 if !binding.property_name.is_empty() {
                     let mut current = member;
                     for segment in binding.property_name.split('.') {
-                        let prop = tsz_solver::type_queries::find_property_in_object_by_str(
-                            self.ctx.types,
-                            current,
-                            segment,
-                        )?;
+                        let prop = find_property_in_object_by_str(self, current, segment)?;
                         current = prop.type_id;
                     }
                     Some(current)
@@ -450,12 +447,8 @@ impl<'a> CheckerState<'a> {
                 let mut current = *member;
                 let mut resolved = Some(current);
                 for segment in info.property_name.split('.') {
-                    resolved = tsz_solver::type_queries::find_property_in_object_by_str(
-                        self.ctx.types,
-                        current,
-                        segment,
-                    )
-                    .map(|p| p.type_id);
+                    resolved =
+                        find_property_in_object_by_str(self, current, segment).map(|p| p.type_id);
                     if let Some(next) = resolved {
                         current = next;
                     } else {

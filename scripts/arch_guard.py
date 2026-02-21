@@ -160,12 +160,6 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
-        "Solver TypeKey construction must stay in interner",
-        ROOT / "crates" / "tsz-solver",
-        re.compile(r"\.intern\(TypeKey::"),
-        {"exclude_files": {"crates/tsz-solver/src/intern.rs"}, "exclude_dirs": {"tests"}},
-    ),
-    (
         "Checker test boundary: no direct solver internal type inspection in integration tests",
         ROOT / "crates" / "tsz-checker" / "tests",
         re.compile(r"\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b"),
@@ -210,6 +204,14 @@ LINE_LIMIT_CHECKS = [
 ]
 
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
+SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
+    "crates/tsz-solver/src/intern.rs",
+    "crates/tsz-solver/src/intern_intersection.rs",
+    "crates/tsz-solver/src/intern_normalize.rs",
+    "crates/tsz-solver/src/intern_template.rs",
+}
+
+
 def iter_rs_files(base: pathlib.Path):
     for path in base.rglob("*.rs"):
         rel = path.relative_to(ROOT).as_posix()
@@ -266,6 +268,175 @@ def scan_line_limits(base: pathlib.Path, limit: int):
     return hits
 
 
+def strip_rust_comments(text: str) -> str:
+    chars = list(text)
+    i = 0
+    n = len(chars)
+    out = []
+    state = "code"
+    block_depth = 0
+    raw_hash_count = 0
+
+    while i < n:
+        ch = chars[i]
+        nxt = chars[i + 1] if i + 1 < n else ""
+
+        if state == "line_comment":
+            if ch == "\n":
+                out.append("\n")
+                state = "code"
+            else:
+                out.append(" ")
+            i += 1
+            continue
+
+        if state == "block_comment":
+            if ch == "/" and nxt == "*":
+                block_depth += 1
+                out.extend([" ", " "])
+                i += 2
+                continue
+            if ch == "*" and nxt == "/":
+                block_depth -= 1
+                out.extend([" ", " "])
+                i += 2
+                if block_depth == 0:
+                    state = "code"
+                continue
+            out.append("\n" if ch == "\n" else " ")
+            i += 1
+            continue
+
+        if state == "string":
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(chars[i + 1])
+                i += 2
+                continue
+            if ch == '"':
+                state = "code"
+            i += 1
+            continue
+
+        if state == "char":
+            out.append(ch)
+            if ch == "\\" and i + 1 < n:
+                out.append(chars[i + 1])
+                i += 2
+                continue
+            if ch == "'":
+                state = "code"
+            i += 1
+            continue
+
+        if state == "raw_string":
+            out.append(ch)
+            if ch == '"' and raw_hash_count == 0:
+                state = "code"
+                i += 1
+                continue
+            if ch == '"' and raw_hash_count > 0:
+                hashes = 0
+                j = i + 1
+                while j < n and chars[j] == "#" and hashes < raw_hash_count:
+                    hashes += 1
+                    j += 1
+                if hashes == raw_hash_count:
+                    out.extend(["#"] * hashes)
+                    i = j
+                    state = "code"
+                    continue
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            out.extend([" ", " "])
+            i += 2
+            state = "line_comment"
+            continue
+        if ch == "/" and nxt == "*":
+            out.extend([" ", " "])
+            i += 2
+            state = "block_comment"
+            block_depth = 1
+            continue
+        if ch == '"':
+            out.append(ch)
+            i += 1
+            state = "string"
+            continue
+        if ch == "'":
+            out.append(ch)
+            i += 1
+            state = "char"
+            continue
+        if ch == "r":
+            j = i + 1
+            hashes = 0
+            while j < n and chars[j] == "#":
+                hashes += 1
+                j += 1
+            if j < n and chars[j] == '"':
+                out.append("r")
+                out.extend(["#"] * hashes)
+                out.append('"')
+                i = j + 1
+                state = "raw_string"
+                raw_hash_count = hashes
+                continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
+
+def scan_solver_typedata_quarantine(base: pathlib.Path):
+    hits = set()
+    alias_re = re.compile(r"\bTypeData\s+as\s+([A-Za-z_]\w*)\b")
+    type_alias_re = re.compile(r"\btype\s+([A-Za-z_]\w*)\s*=\s*[^;]*\bTypeData\b[^;]*;")
+    direct_intern_re = re.compile(
+        r"\.intern\s*\(\s*(?:crate::types::TypeData|tsz_solver::TypeData|TypeData)\s*::",
+        re.MULTILINE,
+    )
+
+    for path, rel in iter_rs_files(base):
+        if "/tests/" in rel or any(rel.endswith(allow) for allow in SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST):
+            continue
+
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        text_without_comments = strip_rust_comments(text)
+
+        aliases = {"TypeData"}
+        for alias_match in alias_re.finditer(text_without_comments):
+            aliases.add(alias_match.group(1))
+        for statement in text_without_comments.split(";"):
+            normalized = " ".join(statement.split())
+            type_alias_match = type_alias_re.search(f"{normalized};")
+            if type_alias_match:
+                aliases.add(type_alias_match.group(1))
+
+        for match in direct_intern_re.finditer(text_without_comments):
+            line_idx = text_without_comments.count("\n", 0, match.start())
+            hits.add(f"{rel}:{line_idx + 1}")
+
+        for alias in aliases:
+            if alias == "TypeData":
+                continue
+            alias_re_intern = re.compile(
+                rf"\.intern\s*\(\s*{re.escape(alias)}\s*::",
+                re.MULTILINE,
+            )
+            for match in alias_re_intern.finditer(text_without_comments):
+                line_idx = text_without_comments.count("\n", 0, match.start())
+                hits.add(f"{rel}:{line_idx + 1}")
+
+    return sorted(hits)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run TSZ architecture guardrails"
@@ -313,6 +484,16 @@ def main() -> int:
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))
+
+    solver_typedata_hits = scan_solver_typedata_quarantine(ROOT / "crates" / "tsz-solver")
+    total_hits += len(solver_typedata_hits)
+    if solver_typedata_hits:
+        failures.append(
+            (
+                "Solver TypeData construction must stay in interner files",
+                solver_typedata_hits,
+            )
+        )
 
     payload = {
         "status": "failed" if failures else "passed",

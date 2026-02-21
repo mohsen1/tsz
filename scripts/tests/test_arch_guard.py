@@ -163,5 +163,91 @@ class ArchGuardCheckerFileSizeBoundaryTests(unittest.TestCase):
             self.assertEqual(hits, [])
 
 
+class ArchGuardSolverTypeDataQuarantineTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_scan_solver_typedata_quarantine_flags_grouped_alias_multiline_intern(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            solver_root = pathlib.Path(temp_dir) / "crates" / "tsz-solver"
+            src_dir = solver_root / "src"
+            src_dir.mkdir(parents=True)
+            target = src_dir / "bad.rs"
+            target.write_text(
+                "\n".join(
+                    [
+                        "use crate::types::{TypeData as TD};",
+                        "",
+                        "fn bad(interner: &mut crate::intern::TypeInterner) {",
+                        "    interner",
+                        "        .intern(",
+                        "            TD::ThisType,",
+                        "        );",
+                        "}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_solver_typedata_quarantine(solver_root)
+            self.assertEqual(len(hits), 1)
+            self.assertTrue(hits[0].endswith("/bad.rs:5"))
+
+    def test_scan_solver_typedata_quarantine_ignores_allowlisted_interner_files(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            solver_root = pathlib.Path(temp_dir) / "crates" / "tsz-solver"
+            src_dir = solver_root / "src"
+            src_dir.mkdir(parents=True)
+            target = src_dir / "intern.rs"
+            target.write_text("fn ok() { interner.intern(TypeData::ThisType); }", encoding="utf-8")
+
+            hits = self.arch_guard.scan_solver_typedata_quarantine(solver_root)
+            self.assertEqual(hits, [])
+
+    def test_scan_solver_typedata_quarantine_ignores_commented_raw_intern_patterns(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            solver_root = pathlib.Path(temp_dir) / "crates" / "tsz-solver"
+            src_dir = solver_root / "src"
+            src_dir.mkdir(parents=True)
+            target = src_dir / "commented.rs"
+            target.write_text(
+                "\n".join(
+                    [
+                        "use crate::types::TypeData;",
+                        "/* interner.intern(TypeData::ThisType); */",
+                        "// interner.intern(TypeData::Unknown);",
+                        "fn ok(_interner: &mut crate::intern::TypeInterner) {}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_solver_typedata_quarantine(solver_root)
+            self.assertEqual(hits, [])
+
+    def test_scan_solver_typedata_quarantine_preserves_real_calls_near_comments(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            solver_root = pathlib.Path(temp_dir) / "crates" / "tsz-solver"
+            src_dir = solver_root / "src"
+            src_dir.mkdir(parents=True)
+            target = src_dir / "mixed.rs"
+            target.write_text(
+                "\n".join(
+                    [
+                        "use crate::types::TypeData;",
+                        "/* interner.intern(TypeData::Never); */",
+                        "fn bad(interner: &mut crate::intern::TypeInterner) {",
+                        "    interner.intern(TypeData::ThisType); // real violation",
+                        "}",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            hits = self.arch_guard.scan_solver_typedata_quarantine(solver_root)
+            self.assertEqual(len(hits), 1)
+            self.assertTrue(hits[0].endswith("/mixed.rs:4"))
+
+
 if __name__ == "__main__":
     unittest.main()

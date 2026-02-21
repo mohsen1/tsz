@@ -609,6 +609,18 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         control_flow_assignment_src.contains("are_types_mutually_subtype("),
         "control-flow assignment subtype compatibility checks should route through flow_analysis boundary helpers"
     );
+    assert!(
+        control_flow_assignment_src.contains("widen_literal_to_primitive("),
+        "control-flow assignment literal widening should route through flow_analysis boundary helpers"
+    );
+    assert!(
+        control_flow_assignment_src.contains("get_array_element_type("),
+        "control-flow assignment for-of element extraction should route through flow_analysis boundary helpers"
+    );
+    assert!(
+        !control_flow_assignment_src.contains("tsz_solver::type_queries::"),
+        "control-flow assignment should not call solver type_queries directly; use flow_analysis boundary helpers"
+    );
     let control_flow_src = fs::read_to_string("src/control_flow.rs")
         .expect("failed to read src/control_flow.rs for architecture guard");
     assert!(
@@ -618,6 +630,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     assert!(
         control_flow_src.contains("query::is_assignable_strict_null("),
         "FlowAnalyzer strict-null assignability should route through flow_analysis boundary helpers"
+    );
+    let flow_analysis_definite_src = fs::read_to_string("src/flow_analysis_definite.rs")
+        .expect("failed to read src/flow_analysis_definite.rs for architecture guard");
+    assert!(
+        flow_analysis_definite_src.contains("find_property_in_object_by_str("),
+        "flow_analysis_definite property lookup should route through definite_assignment query boundaries"
+    );
+    assert!(
+        !flow_analysis_definite_src.contains("tsz_solver::type_queries::"),
+        "flow_analysis_definite should not call solver type_queries directly; use definite_assignment/flow_analysis query boundaries"
     );
 
     let mut state_type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
@@ -642,6 +664,11 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     state_checking_src.push_str(
         &fs::read_to_string("src/state_property_checking.rs")
             .expect("failed to read src/state_property_checking.rs for architecture guard"),
+    );
+    state_checking_src.push_str(
+        &fs::read_to_string("src/state_variable_checking_destructuring.rs").expect(
+            "failed to read src/state_variable_checking_destructuring.rs for architecture guard",
+        ),
     );
     state_checking_src.push_str(
         &fs::read_to_string("src/state_class_checking.rs")
@@ -673,6 +700,87 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     assert!(
         !state_property_checking_src.contains("tsz_solver::type_queries::"),
         "state_property_checking should route solver type-query access through query_boundaries::state_checking"
+    );
+    let state_variable_checking_destructuring_src = fs::read_to_string(
+        "src/state_variable_checking_destructuring.rs",
+    )
+    .expect("failed to read src/state_variable_checking_destructuring.rs for architecture guard");
+    let state_variable_checking_src = fs::read_to_string("src/state_variable_checking.rs")
+        .expect("failed to read src/state_variable_checking.rs for architecture guard");
+    let state_class_checking_src = fs::read_to_string("src/state_class_checking.rs")
+        .expect("failed to read src/state_class_checking.rs for architecture guard");
+    let property_access_type_src = fs::read_to_string("src/property_access_type.rs")
+        .expect("failed to read src/property_access_type.rs for architecture guard");
+    let property_checker_src = fs::read_to_string("src/property_checker.rs")
+        .expect("failed to read src/property_checker.rs for architecture guard");
+    assert!(
+        state_variable_checking_src.contains("query::array_element_type("),
+        "state_variable_checking array element checks should route through query_boundaries::state_checking"
+    );
+    assert!(
+        state_variable_checking_src.contains("query::is_only_null_or_undefined("),
+        "state_variable_checking null/undefined checks should route through query_boundaries::state_checking"
+    );
+    assert!(
+        state_variable_checking_src.contains("query::has_type_query_for_symbol("),
+        "state_variable_checking symbol type-query checks should route through query_boundaries::state_checking"
+    );
+    assert!(
+        !state_variable_checking_src.contains("tsz_solver::type_queries::"),
+        "state_variable_checking should not call solver type_queries directly; use state_checking query boundaries"
+    );
+    assert!(
+        state_variable_checking_destructuring_src
+            .contains("query::find_property_in_object_by_str("),
+        "state_variable_checking_destructuring property lookup should route through query_boundaries::state_checking"
+    );
+    assert!(
+        state_variable_checking_destructuring_src.contains("query::is_only_null_or_undefined("),
+        "state_variable_checking_destructuring null/undefined checks should route through query_boundaries::state_checking"
+    );
+    assert!(
+        !state_variable_checking_destructuring_src.contains("tsz_solver::type_queries::"),
+        "state_variable_checking_destructuring should not call solver type_queries directly; use state_checking query boundaries"
+    );
+    assert!(
+        state_class_checking_src.contains("class_query::construct_signatures_for_type("),
+        "state_class_checking constructor signature checks should route through query_boundaries::class_type"
+    );
+    assert!(
+        state_class_checking_src.contains("class_query::is_mapped_type("),
+        "state_class_checking mapped-type checks should route through query_boundaries::class_type"
+    );
+    assert!(
+        state_class_checking_src.contains("class_query::is_generic_type("),
+        "state_class_checking generic-type checks should route through query_boundaries::class_type"
+    );
+    assert!(
+        state_class_checking_src.contains("class_query::type_includes_undefined("),
+        "state_class_checking undefined-inclusion checks should route through query_boundaries::class_type"
+    );
+    assert!(
+        !state_class_checking_src.contains("tsz_solver::type_queries::"),
+        "state_class_checking should not call solver type_queries directly; use class_type query boundaries"
+    );
+    assert!(
+        property_access_type_src.contains("query_boundaries::property_access::"),
+        "property_access_type solver queries should route through query_boundaries::property_access"
+    );
+    assert!(
+        !property_access_type_src.contains("tsz_solver::type_queries::"),
+        "property_access_type should not call solver type_queries directly; use property_access query boundaries"
+    );
+    assert!(
+        !property_access_type_src.contains("tsz_solver::type_queries_classifiers::"),
+        "property_access_type should not call solver type_queries_classifiers directly; use property_access query boundaries"
+    );
+    assert!(
+        property_checker_src.contains("query::is_type_usable_as_property_name("),
+        "property_checker computed-name checks should route through query_boundaries::property_checker"
+    );
+    assert!(
+        !property_checker_src.contains("tsz_solver::type_queries::"),
+        "property_checker should not call solver type_queries directly; use property_checker query boundaries"
     );
     let assignability_checker_src = fs::read_to_string("src/assignability_checker.rs")
         .expect("failed to read src/assignability_checker.rs for architecture guard");
@@ -733,6 +841,25 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
     assert!(
         !type_computation_complex_src.contains("ensure_application_symbols_resolved("),
         "type_computation_complex should not manually orchestrate application-symbol preconditions; use centralized relation precondition helpers"
+    );
+    let type_computation_access_src = fs::read_to_string("src/type_computation_access.rs")
+        .expect("failed to read src/type_computation_access.rs for architecture guard");
+    assert!(
+        type_computation_access_src.contains("query_boundaries::type_computation_access::"),
+        "type_computation_access solver queries should route through query_boundaries::type_computation_access"
+    );
+    assert!(
+        !type_computation_access_src
+            .contains("tsz_solver::type_queries::get_literal_property_name("),
+        "type_computation_access should not call get_literal_property_name directly; use type_computation_access query boundaries"
+    );
+    assert!(
+        !type_computation_access_src.contains("tsz_solver::type_queries::get_tuple_elements("),
+        "type_computation_access should not call get_tuple_elements directly; use type_computation_access query boundaries"
+    );
+    assert!(
+        !type_computation_access_src.contains("tsz_solver::type_queries::is_valid_spread_type("),
+        "type_computation_access should not call is_valid_spread_type directly; use type_computation_access query boundaries"
     );
 
     let dispatch_src =

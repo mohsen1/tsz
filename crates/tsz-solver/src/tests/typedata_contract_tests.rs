@@ -1,6 +1,84 @@
 use std::fs;
 use std::path::Path;
 
+fn collect_typedata_aliases(source: &str) -> Vec<String> {
+    let mut aliases = vec!["TypeData".to_string()];
+
+    for statement in source.split(';') {
+        let compact = statement.split_whitespace().collect::<Vec<_>>().join(" ");
+        if let Some((_, alias_part)) = compact.split_once("TypeData as ") {
+            let alias = alias_part
+                .chars()
+                .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                .collect::<String>();
+            if !alias.is_empty() {
+                aliases.push(alias);
+            }
+        }
+
+        let trimmed = compact.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("type ")
+            && let Some((alias, rhs)) = rest.split_once('=')
+            && rhs.contains("TypeData")
+        {
+            let alias = alias.trim();
+            if !alias.is_empty() {
+                aliases.push(alias.to_string());
+            }
+        }
+    }
+
+    aliases.sort();
+    aliases.dedup();
+    aliases
+}
+
+fn compact_without_whitespace(source: &str) -> String {
+    source.chars().filter(|ch| !ch.is_whitespace()).collect()
+}
+
+fn has_raw_typedata_intern(source: &str, aliases: &[String]) -> bool {
+    let compact = compact_without_whitespace(source);
+    if compact.contains(".intern(TypeData::")
+        || compact.contains(".intern(crate::types::TypeData::")
+        || compact.contains(".intern(tsz_solver::TypeData::")
+    {
+        return true;
+    }
+
+    aliases
+        .iter()
+        .filter(|alias| alias.as_str() != "TypeData")
+        .any(|alias| compact.contains(&format!(".intern({alias}::")))
+}
+
+#[test]
+fn test_typedata_alias_scanner_detects_grouped_import_alias() {
+    let source = r#"
+use crate::types::{OtherType, TypeData as TD, Value};
+type LocalAlias = crate::types::TypeData;
+"#;
+    let aliases = collect_typedata_aliases(source);
+    assert!(aliases.iter().any(|alias| alias == "TD"));
+    assert!(aliases.iter().any(|alias| alias == "LocalAlias"));
+}
+
+#[test]
+fn test_multiline_intern_detection_catches_alias_based_raw_construction() {
+    let source = r#"
+use crate::types::{TypeData as TD};
+
+fn bad(interner: &mut crate::intern::TypeInterner) {
+    interner
+        .intern(
+            TD::ThisType,
+        );
+}
+"#;
+    let aliases = collect_typedata_aliases(source);
+    assert!(has_raw_typedata_intern(source, &aliases));
+}
+
 #[test]
 fn test_direct_typedata_construction_is_quarantined_to_intern() {
     fn is_rs_source_file(path: &Path) -> bool {
@@ -46,14 +124,9 @@ fn test_direct_typedata_construction_is_quarantined_to_intern() {
 
         let source = fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("failed to read {}", path.display()));
-        for (line_index, line) in source.lines().enumerate() {
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("//") {
-                continue;
-            }
-            if line.contains(".intern(TypeData::") {
-                violations.push(format!("{}:{}", path.display(), line_index + 1));
-            }
+        let aliases = collect_typedata_aliases(&source);
+        if has_raw_typedata_intern(&source, &aliases) {
+            violations.push(path.display().to_string());
         }
     }
 

@@ -33,3 +33,11 @@ pub(crate) fn should_report_variable_use_before_assignment(
         && !state.skip_definite_assignment_for_type(declared_type)
         && !state.is_definitely_assigned_at(idx)
 }
+
+pub(crate) fn find_property_in_object_by_str(
+    state: &CheckerState<'_>,
+    type_id: TypeId,
+    property: &str,
+) -> Option<tsz_solver::PropertyInfo> {
+    tsz_solver::type_queries::find_property_in_object_by_str(state.ctx.types, type_id, property)
+}

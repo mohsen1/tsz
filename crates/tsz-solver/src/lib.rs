@@ -17,6 +17,7 @@ pub mod binary_ops;
 pub mod canonicalize;
 mod class_hierarchy;
 pub mod compat;
+pub mod compound_assignment;
 mod contextual;
 mod db;
 pub mod def;
@@ -112,6 +113,7 @@ pub use binary_ops::*;
 pub use canonicalize::*;
 pub use class_hierarchy::*;
 pub use compat::*;
+pub use compound_assignment::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type};
 pub use db::{QueryCache, QueryDatabase, RelationCacheProbe, RelationCacheStats, TypeDatabase};
 pub use def::*;
@@ -230,6 +232,9 @@ mod async_promise_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/class_comprehensive_tests.rs"]
 mod class_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/compound_assignment_tests.rs"]
+mod compound_assignment_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;

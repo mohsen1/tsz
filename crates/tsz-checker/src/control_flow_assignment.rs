@@ -2,6 +2,10 @@
 //! for `FlowAnalyzer`.
 
 use crate::control_flow::{FlowAnalyzer, PropertyKey};
+use crate::query_boundaries::flow_analysis::{
+    fallback_compound_assignment_result, get_array_element_type, is_compound_assignment_operator,
+    is_unit_type, map_compound_assignment_to_binary, widen_literal_to_primitive,
+};
 use tsz_binder::{FlowNodeId, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::BinaryExprData;
@@ -27,54 +31,17 @@ impl<'a> FlowAnalyzer<'a> {
             if self.is_matching_reference(bin.left, target) {
                 // Check if this is a compound assignment operator (not simple =)
                 if bin.operator_token != SyntaxKind::EqualsToken as u16
-                    && self.is_compound_assignment_operator(bin.operator_token)
+                    && is_compound_assignment_operator(bin.operator_token)
                 {
                     use tsz_solver::{BinaryOpEvaluator, BinaryOpResult};
 
                     // When node_types is not available, use heuristics for flow narrowing
                     if self.node_types.is_none() {
-                        // For operators that ONLY produce number, kill narrowing
-                        return match bin.operator_token {
-                            k if k == SyntaxKind::MinusEqualsToken as u16
-                                || k == SyntaxKind::AsteriskEqualsToken as u16
-                                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                                || k == SyntaxKind::SlashEqualsToken as u16
-                                || k == SyntaxKind::PercentEqualsToken as u16
-                                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken
-                                    as u16
-                                || k == SyntaxKind::AmpersandEqualsToken as u16
-                                || k == SyntaxKind::BarEqualsToken as u16
-                                || k == SyntaxKind::CaretEqualsToken as u16 =>
-                            {
-                                Some(TypeId::NUMBER)
-                            }
-                            // For +=: check if RHS is a number literal (common case: x += 1)
-                            k if k == SyntaxKind::PlusEqualsToken as u16 => {
-                                // If RHS is a numeric literal, we can safely infer NUMBER
-                                if let Some(literal_type) = self.literal_type_from_node(bin.right)
-                                    && (literal_type == TypeId::NUMBER
-                                        || tsz_solver::type_queries::is_number_literal(
-                                            self.interner,
-                                            literal_type,
-                                        ))
-                                {
-                                    return Some(TypeId::NUMBER);
-                                }
-                                // Otherwise, preserve narrowing (could be string concatenation)
-                                None
-                            }
-                            // ??= could be any type - preserve narrowing without type info
-                            k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => None,
-                            // For logical assignments, preserve narrowing (don't kill it)
-                            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                                || k == SyntaxKind::BarBarEqualsToken as u16 =>
-                            {
-                                None
-                            }
-                            _ => None,
-                        };
+                        return fallback_compound_assignment_result(
+                            self.interner,
+                            bin.operator_token,
+                            self.literal_type_from_node(bin.right),
+                        );
                     }
 
                     if bin.operator_token == SyntaxKind::AmpersandAmpersandEqualsToken as u16
@@ -110,7 +77,7 @@ impl<'a> FlowAnalyzer<'a> {
                     };
 
                     // Map compound assignment operator to binary operator
-                    let op_str = self.map_compound_operator_to_binary(bin.operator_token)?;
+                    let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
 
                     // Evaluate the binary operation to get result type
                     let evaluator = BinaryOpEvaluator::new(self.interner);
@@ -151,19 +118,13 @@ impl<'a> FlowAnalyzer<'a> {
                 // Example: [x] = [1] widens to number, ({ x } = { x: 1 }) widens to number
                 // Also handles default values: [x = 2] = [] widens to number
                 if widen_literals_for_destructuring {
-                    return Some(tsz_solver::type_queries::widen_literal_to_primitive(
-                        self.interner,
-                        literal_type,
-                    ));
+                    return Some(widen_literal_to_primitive(self.interner, literal_type));
                 }
                 // For mutable variable declarations (let/var) without type annotations,
                 // widen literal types to their base types to match TypeScript behavior.
                 // Example: let x = "hi" -> string (not "hi"), let x = 42 -> number (not 42)
                 if self.is_mutable_var_decl_without_annotation(assignment_node) {
-                    return Some(tsz_solver::type_queries::widen_literal_to_primitive(
-                        self.interner,
-                        literal_type,
-                    ));
+                    return Some(widen_literal_to_primitive(self.interner, literal_type));
                 }
                 // For const variable declarations with type annotations, if the literal
                 // type (null or undefined) is not assignable to the declared annotation
@@ -276,62 +237,12 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(TypeId::STRING);
             }
             // for-of: extract element type from the array/iterable expression type
-            if let Some(elem) =
-                tsz_solver::type_queries::get_array_element_type(self.interner, expr_type)
-            {
+            if let Some(elem) = get_array_element_type(self.interner, expr_type) {
                 return Some(elem);
             }
         }
 
         None
-    }
-
-    /// Check if an operator token is a compound assignment operator.
-    /// Returns true for +=, -=, *=, /=, etc., but not for simple =.
-    const fn is_compound_assignment_operator(&self, operator_token: u16) -> bool {
-        matches!(
-            operator_token,
-            k if k == SyntaxKind::PlusEqualsToken as u16
-                || k == SyntaxKind::MinusEqualsToken as u16
-                || k == SyntaxKind::AsteriskEqualsToken as u16
-                || k == SyntaxKind::AsteriskAsteriskEqualsToken as u16
-                || k == SyntaxKind::SlashEqualsToken as u16
-                || k == SyntaxKind::PercentEqualsToken as u16
-                || k == SyntaxKind::LessThanLessThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16
-                || k == SyntaxKind::AmpersandEqualsToken as u16
-                || k == SyntaxKind::BarEqualsToken as u16
-                || k == SyntaxKind::CaretEqualsToken as u16
-                || k == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-                || k == SyntaxKind::BarBarEqualsToken as u16
-                || k == SyntaxKind::QuestionQuestionEqualsToken as u16
-        )
-    }
-
-    /// Map a compound assignment operator to its corresponding binary operator.
-    /// Returns None if the operator is not a recognized compound assignment.
-    const fn map_compound_operator_to_binary(&self, operator_token: u16) -> Option<&'static str> {
-        match operator_token {
-            k if k == SyntaxKind::PlusEqualsToken as u16 => Some("+"),
-            k if k == SyntaxKind::MinusEqualsToken as u16 => Some("-"),
-            k if k == SyntaxKind::AsteriskEqualsToken as u16 => Some("*"),
-            k if k == SyntaxKind::AsteriskAsteriskEqualsToken as u16 => Some("**"),
-            k if k == SyntaxKind::SlashEqualsToken as u16 => Some("/"),
-            k if k == SyntaxKind::PercentEqualsToken as u16 => Some("%"),
-            k if k == SyntaxKind::LessThanLessThanEqualsToken as u16 => Some("<<"),
-            k if k == SyntaxKind::GreaterThanGreaterThanEqualsToken as u16 => Some(">>"),
-            k if k == SyntaxKind::GreaterThanGreaterThanGreaterThanEqualsToken as u16 => {
-                Some(">>>")
-            }
-            k if k == SyntaxKind::AmpersandEqualsToken as u16 => Some("&"),
-            k if k == SyntaxKind::BarEqualsToken as u16 => Some("|"),
-            k if k == SyntaxKind::CaretEqualsToken as u16 => Some("^"),
-            k if k == SyntaxKind::AmpersandAmpersandEqualsToken as u16 => Some("&&"),
-            k if k == SyntaxKind::BarBarEqualsToken as u16 => Some("||"),
-            k if k == SyntaxKind::QuestionQuestionEqualsToken as u16 => Some("??"),
-            _ => None,
-        }
     }
 
     pub(crate) fn assignment_rhs_for_reference(
@@ -1639,7 +1550,7 @@ impl<'a> FlowAnalyzer<'a> {
                             &TypeGuard::LiteralEquality(right_type),
                             true,
                         );
-                    } else if tsz_solver::type_queries::is_unit_type(self.interner, right_type) {
+                    } else if is_unit_type(self.interner, right_type) {
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(right_type),
@@ -1659,7 +1570,7 @@ impl<'a> FlowAnalyzer<'a> {
                             &TypeGuard::LiteralEquality(left_type),
                             true,
                         );
-                    } else if tsz_solver::type_queries::is_unit_type(self.interner, left_type) {
+                    } else if is_unit_type(self.interner, left_type) {
                         return narrowing.narrow_type(
                             type_id,
                             &TypeGuard::LiteralEquality(left_type),

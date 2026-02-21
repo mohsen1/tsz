@@ -510,7 +510,7 @@ impl<'a> CheckerState<'a> {
                     }
                     // For callable/function types, check the Function interface
                     // for augmented members (e.g., declare global { interface Function { ... } })
-                    if tsz_solver::type_queries::is_function_type(
+                    if crate::query_boundaries::property_access::is_function_type(
                         self.ctx.types,
                         object_type_for_access,
                     ) && let Some(func_iface) = self.resolve_lib_type_by_name("Function")
@@ -898,22 +898,27 @@ impl<'a> CheckerState<'a> {
         use tsz_parser::parser::node::NodeAccess;
         use tsz_solver::is_compiler_managed_type;
         use tsz_solver::operations_property::PropertyAccessResult;
-        use tsz_solver::type_queries::{
-            get_array_element_type, get_tuple_element_type_union, get_type_application,
-            unwrap_readonly,
-        };
+        let base_type =
+            crate::query_boundaries::property_access::unwrap_readonly(self.ctx.types, object_type);
 
-        let base_type = unwrap_readonly(self.ctx.types, object_type);
-
-        let element_type = if let Some(elem) = get_array_element_type(self.ctx.types, base_type) {
+        let element_type = if let Some(elem) =
+            crate::query_boundaries::property_access::array_element_type(self.ctx.types, base_type)
+        {
             Some(elem)
-        } else if let Some(union_ty) = get_tuple_element_type_union(self.ctx.types, base_type) {
+        } else if let Some(union_ty) =
+            crate::query_boundaries::property_access::tuple_element_type_union(
+                self.ctx.types,
+                base_type,
+            )
+        {
             Some(union_ty)
-        } else if let Some(app) = get_type_application(self.ctx.types, base_type) {
-            app.args.first().copied()
         } else {
-            None
-        }?;
+            crate::query_boundaries::property_access::application_first_arg(
+                self.ctx.types,
+                base_type,
+            )
+        };
+        let element_type = element_type?;
 
         let augmentation_decls = self.ctx.binder.global_augmentations.get("Array")?;
         if augmentation_decls.is_empty() {
@@ -1094,19 +1099,31 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        use tsz_solver::type_queries;
-
         // Map the object type to potential global interface names
-        let interface_names: &[&str] = if type_queries::is_boolean_type(self.ctx.types, object_type)
-        {
+        let interface_names: &[&str] = if crate::query_boundaries::property_access::is_boolean_type(
+            self.ctx.types,
+            object_type,
+        ) {
             &["Boolean"]
-        } else if type_queries::is_number_type(self.ctx.types, object_type) {
+        } else if crate::query_boundaries::property_access::is_number_type(
+            self.ctx.types,
+            object_type,
+        ) {
             &["Number"]
-        } else if type_queries::is_string_type(self.ctx.types, object_type) {
+        } else if crate::query_boundaries::property_access::is_string_type(
+            self.ctx.types,
+            object_type,
+        ) {
             &["String"]
-        } else if type_queries::is_symbol_type(self.ctx.types, object_type) {
+        } else if crate::query_boundaries::property_access::is_symbol_type(
+            self.ctx.types,
+            object_type,
+        ) {
             &["Symbol"]
-        } else if type_queries::is_bigint_type(self.ctx.types, object_type) {
+        } else if crate::query_boundaries::property_access::is_bigint_type(
+            self.ctx.types,
+            object_type,
+        ) {
             &["BigInt"]
         } else {
             // For object types, try to find the interface name from the symbol
@@ -1133,7 +1150,7 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         // For object types that come from lib declarations (ErrorConstructor, RegExp, etc.),
         // check if the type's symbol name matches any global augmentation.
-        let def_id = tsz_solver::type_queries_classifiers::get_def_id(self.ctx.types, object_type)?;
+        let def_id = crate::query_boundaries::property_access::def_id(self.ctx.types, object_type)?;
 
         // Look up the symbol for this DefId
         let sym_id = self.ctx.def_to_symbol.borrow().get(&def_id).copied()?;
@@ -1434,17 +1451,18 @@ impl<'a> CheckerState<'a> {
         }
 
         let factory = self.ctx.types.factory();
-        use tsz_solver::type_queries::{get_callable_shape, get_function_shape};
-
-        let (params, return_type) =
-            if let Some(shape) = get_function_shape(self.ctx.types, object_type) {
-                (shape.params.clone(), shape.return_type)
-            } else if let Some(shape) = get_callable_shape(self.ctx.types, object_type) {
-                let sig = shape.call_signatures.first()?;
-                (sig.params.clone(), sig.return_type)
-            } else {
-                return None;
-            };
+        let (params, return_type) = if let Some(shape) =
+            crate::query_boundaries::property_access::function_shape(self.ctx.types, object_type)
+        {
+            (shape.params.clone(), shape.return_type)
+        } else if let Some(shape) =
+            crate::query_boundaries::property_access::callable_shape(self.ctx.types, object_type)
+        {
+            let sig = shape.call_signatures.first()?;
+            (sig.params.clone(), sig.return_type)
+        } else {
+            return None;
+        };
 
         let tuple_elements: Vec<tsz_solver::TupleElement> = params
             .iter()
