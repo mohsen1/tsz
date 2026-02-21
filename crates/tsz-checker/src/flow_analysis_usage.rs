@@ -278,6 +278,14 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
+        // Flow analysis operates within a single file's AST.
+        // We cannot prove assignment across files, so we assume it was assigned.
+        if symbol.decl_file_idx != u32::MAX
+            && symbol.decl_file_idx != self.ctx.current_file_idx as u32
+        {
+            return false;
+        }
+
         // Check both block-scoped (let/const) and function-scoped (var) variables.
         // Parameters are excluded downstream (PARAMETER nodes ≠ VARIABLE_DECLARATION).
         if (symbol.flags & symbol_flags::VARIABLE) == 0 {
