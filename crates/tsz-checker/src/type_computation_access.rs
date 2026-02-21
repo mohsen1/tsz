@@ -844,6 +844,15 @@ impl<'a> CheckerState<'a> {
 
             // Property assignment: { x: value }
             if let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) {
+                if let Some(prop_name_node) = self.ctx.arena.get(prop.name)
+                    && prop_name_node.kind
+                        == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                {
+                    // Always run TS2464 validation for computed property names, even when
+                    // the name can be resolved to a literal atom.
+                    self.check_computed_property_name(prop.name);
+                }
+
                 let name_opt = self.get_property_name(prop.name).or_else(|| {
                     let prop_name_node = self.ctx.arena.get(prop.name)?;
                     if prop_name_node.kind
