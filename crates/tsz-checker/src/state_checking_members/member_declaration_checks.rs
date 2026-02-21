@@ -1054,6 +1054,16 @@ impl<'a> CheckerState<'a> {
 
         // Rest parameters use TS7019, regular parameters use TS7006
         let report_node = self.param_node_for_implicit_any_diagnostic(param);
+        let rest_report_node = if param.dot_dot_dot_token {
+            // TS7019 points at the `...` token span, not the parameter name.
+            self.ctx
+                .arena
+                .get_extended(param.name)
+                .map(|ext| ext.parent)
+                .unwrap_or(report_node)
+        } else {
+            report_node
+        };
 
         // TS7051 only applies to parameters WITHOUT modifiers (public/private/protected/readonly).
         // When a parameter has a modifier, the name is clearly a parameter name, not a type.
@@ -1068,13 +1078,13 @@ impl<'a> CheckerState<'a> {
             if !has_parameter_modifiers && Self::is_type_keyword_name(&param_name) {
                 let suggested_name = format!("arg{param_index}");
                 self.error_at_node_msg(
-                    report_node,
+                    rest_report_node,
                     diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
                     &[&suggested_name, &param_name],
                 );
             } else {
                 self.error_at_node_msg(
-                    report_node,
+                    rest_report_node,
                     diagnostic_codes::REST_PARAMETER_IMPLICITLY_HAS_AN_ANY_TYPE,
                     &[&param_name],
                 );

@@ -7,6 +7,7 @@
 use crate::query_boundaries::dispatch as query;
 use crate::query_boundaries::generic_checker as generic_query;
 use crate::state::CheckerState;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -751,12 +752,28 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 if let Some(assertion) = self.checker.ctx.arena.get_type_assertion(node) {
                     // Check for const assertion BEFORE type-checking the expression
                     // so we can set the context flag to preserve literal types
-                    let is_const_assertion =
-                        if let Some(type_node) = self.checker.ctx.arena.get(assertion.type_node) {
-                            type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
-                        } else {
-                            false
-                        };
+                    let is_const_assertion = if let Some(type_node) =
+                        self.checker.ctx.arena.get(assertion.type_node)
+                    {
+                        type_node.kind == tsz_scanner::SyntaxKind::ConstKeyword as u16
+                            || (type_node.kind == syntax_kind_ext::TYPE_REFERENCE
+                                && self
+                                    .checker
+                                    .ctx
+                                    .arena
+                                    .get_type_ref(type_node)
+                                    .is_some_and(|type_ref| {
+                                        type_ref.type_arguments.is_none()
+                                            && self
+                                                .checker
+                                                .ctx
+                                                .arena
+                                                .get_identifier_text(type_ref.type_name)
+                                                .is_some_and(|name| name == "const")
+                                    }))
+                    } else {
+                        false
+                    };
 
                     // Set the in_const_assertion flag to preserve literal types in nested expressions
                     let prev_in_const_assertion = self.checker.ctx.in_const_assertion;
@@ -769,6 +786,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         let expr_type = self.checker.get_type_of_node(assertion.expression);
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
                         expr_type
+                    } else if is_const_assertion {
+                        let expr_type = self.checker.get_type_of_node(assertion.expression);
+                        self.checker.ctx.in_const_assertion = prev_in_const_assertion;
+                        use tsz_solver::widening::apply_const_assertion;
+                        apply_const_assertion(self.checker.ctx.types, expr_type)
                     } else {
                         // Check for duplicate properties in type literal nodes (TS2300)
                         self.checker
@@ -792,11 +814,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         self.checker.ctx.contextual_type = prev_contextual_type;
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
 
-                        if is_const_assertion {
-                            // as const: apply const assertion to the expression type
-                            use tsz_solver::widening::apply_const_assertion;
-                            apply_const_assertion(self.checker.ctx.types, expr_type)
-                        } else if k == syntax_kind_ext::SATISFIES_EXPRESSION {
+                        if k == syntax_kind_ext::SATISFIES_EXPRESSION {
                             // `satisfies` keeps the expression type at runtime, but checks assignability.
                             // This is different from `as` which coerces the type.
                             self.checker.ensure_relation_input_ready(expr_type);

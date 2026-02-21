@@ -511,7 +511,8 @@ impl ParserState {
             | SyntaxKind::ObjectKeyword
             | SyntaxKind::AwaitKeyword
             | SyntaxKind::YieldKeyword
-            | SyntaxKind::AssertsKeyword => self.parse_keyword_as_identifier(),
+            | SyntaxKind::AssertsKeyword
+            | SyntaxKind::ConstKeyword => self.parse_keyword_as_identifier(),
             SyntaxKind::PrivateIdentifier => self.parse_private_identifier(),
             _ => self.parse_identifier(),
         }

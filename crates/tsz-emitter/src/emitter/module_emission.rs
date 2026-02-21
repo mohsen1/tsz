@@ -329,6 +329,42 @@ impl<'a> Printer<'a> {
         // Generate module var name: "./foo" -> "foo_1"
         let module_var = self.next_commonjs_module_var(&module_spec);
         self.register_commonjs_named_import_substitutions(node, &module_var);
+        let is_default_only_ast = clause.name.is_some() && clause.named_bindings.is_none();
+        let mut is_named_default_only_ast = false;
+        if clause.name.is_none()
+            && clause.named_bindings.is_some()
+            && let Some(bindings_node) = self.arena.get(clause.named_bindings)
+            && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
+            && named_imports.name.is_none()
+        {
+            let value_specs = self.collect_value_specifiers(&named_imports.elements);
+            is_named_default_only_ast = !value_specs.is_empty()
+                && value_specs.iter().all(|&spec_idx| {
+                    self.arena.get(spec_idx).is_some_and(|spec_node| {
+                        self.arena.get_specifier(spec_node).is_some_and(|spec| {
+                            let import_name = if spec.property_name.is_some() {
+                                self.get_identifier_text_idx(spec.property_name)
+                            } else {
+                                self.get_identifier_text_idx(spec.name)
+                            };
+                            import_name == "default"
+                        })
+                    })
+                });
+        }
+
+        if is_default_only_ast || is_named_default_only_ast {
+            // Default-only CommonJS import uses the interop temp directly:
+            // `import X from "m"` -> `const m_1 = __importDefault(require("m"));`
+            // and identifier references are rewritten via substitution map to `m_1.default`.
+            self.write_var_or_const();
+            self.write(&module_var);
+            self.write(" = __importDefault(require(\"");
+            self.write(&module_spec);
+            self.write("\"));");
+            self.write_line();
+            return;
+        }
 
         // Check if this is a namespace-only import (import * as ns from "mod")
         // to inline: var ns = __importStar(require("mod"));
@@ -429,6 +465,15 @@ impl<'a> Printer<'a> {
         let Some(clause) = self.arena.get_import_clause(clause_node) else {
             return;
         };
+        if clause.name.is_some()
+            && let Some(default_name_node) = self.arena.get(clause.name)
+            && let Some(default_ident) = self.arena.get_identifier(default_name_node)
+        {
+            self.commonjs_named_import_substitutions.insert(
+                default_ident.escaped_text.to_string(),
+                format!("{module_var}.default"),
+            );
+        }
         if !clause.named_bindings.is_some() {
             return;
         }
@@ -929,6 +974,14 @@ impl<'a> Printer<'a> {
         // Check if export_clause contains a declaration (export const x, export function f, etc.)
         if let Some(clause_node) = self.arena.get(export.export_clause) {
             if self.export_clause_is_type_only(clause_node) {
+                return;
+            }
+            if export.is_default_export
+                && (clause_node.kind == SyntaxKind::Identifier as u16
+                    || clause_node.kind == syntax_kind_ext::QUALIFIED_NAME)
+                && !self.namespace_alias_target_has_runtime_value(export.export_clause, None)
+            {
+                // `export default T` where `T` is type-only has no JS runtime emit.
                 return;
             }
 

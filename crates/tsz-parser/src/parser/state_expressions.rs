@@ -376,7 +376,7 @@ impl ParserState {
         // Arrow functions cannot be generators (there's no `*=>` syntax)
         // Clear generator context to allow 'yield' as an identifier
         // Example: function * foo(a = yield => yield) {} - both 'yield' are identifiers
-        self.context_flags &= !CONTEXT_FLAG_GENERATOR;
+        self.context_flags &= !(CONTEXT_FLAG_GENERATOR | CONTEXT_FLAG_ASYNC);
 
         if is_async {
             self.context_flags |= CONTEXT_FLAG_ASYNC;

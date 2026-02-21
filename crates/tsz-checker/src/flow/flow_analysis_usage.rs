@@ -972,7 +972,9 @@ impl<'a> CheckerState<'a> {
                 || (is_enum && decl_node.kind == syntax_kind_ext::ENUM_DECLARATION)
                 || (is_var
                     && (decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                        || decl_node.kind == syntax_kind_ext::PARAMETER));
+                        || decl_node.kind == syntax_kind_ext::PARAMETER
+                        || decl_node.kind == syntax_kind_ext::BINDING_ELEMENT
+                        || decl_node.kind == tsz_scanner::SyntaxKind::Identifier as u16));
             if !kind_ok {
                 return false;
             }
