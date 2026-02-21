@@ -1128,30 +1128,30 @@ impl<'a> CheckerState<'a> {
                 if has_ts2395 {
                     continue;
                 }
-                (
-                    format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]),
-                    diagnostic_codes::DUPLICATE_IDENTIFIER,
-                )
-            };
 
-            for (decl_idx, decl_flags, is_local, _) in declarations {
-                if is_local && conflicts.contains(&decl_idx) {
-                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
-                    // Per-declaration: block-scoped variables get TS2451 instead of TS2300
-                    let is_block_scoped = (decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0;
-                    if is_block_scoped && code == diagnostic_codes::DUPLICATE_IDENTIFIER {
-                        let per_decl_msg = format_message(
+                // Match TypeScript's binder behavior: if the first declaration is block-scoped,
+                // emit TS2451 for all duplicates. Otherwise emit TS2300 for all.
+                let first_decl_flags = declarations.first().map(|d| d.1).unwrap_or(0);
+                if (first_decl_flags & symbol_flags::BLOCK_SCOPED_VARIABLE) != 0 {
+                    (
+                        format_message(
                             diagnostic_messages::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
                             &[&name],
-                        );
-                        self.error_at_node(
-                            error_node,
-                            &per_decl_msg,
-                            diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
-                        );
-                    } else {
-                        self.error_at_node(error_node, &message, code);
-                    }
+                        ),
+                        diagnostic_codes::CANNOT_REDECLARE_BLOCK_SCOPED_VARIABLE,
+                    )
+                } else {
+                    (
+                        format_message(diagnostic_messages::DUPLICATE_IDENTIFIER, &[&name]),
+                        diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    )
+                }
+            };
+
+            for (decl_idx, _decl_flags, is_local, _) in declarations {
+                if is_local && conflicts.contains(&decl_idx) {
+                    let error_node = self.get_declaration_name_node(decl_idx).unwrap_or(decl_idx);
+                    self.error_at_node(error_node, &message, code);
                 }
             }
         }
