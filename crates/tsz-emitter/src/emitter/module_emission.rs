@@ -1499,9 +1499,7 @@ impl<'a> Printer<'a> {
 
         match node.kind {
             k if k == SyntaxKind::Identifier as u16 => {
-                if let Some(id) = self.arena.get_identifier(node) {
-                    self.write(&id.escaped_text);
-                }
+                self.emit_identifier(node);
             }
             k if k == SyntaxKind::ThisKeyword as u16 => self.write("this"),
             k if k == SyntaxKind::SuperKeyword as u16 => self.write("super"),
