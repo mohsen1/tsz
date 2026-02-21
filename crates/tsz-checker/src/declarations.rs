@@ -642,6 +642,18 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                     auto_incrementable =
                         self.is_numeric_constant_enum_expr(member_data.initializer, enum_data, 0);
                 }
+
+                // TS2565: check for property used before being assigned
+                if member_data.initializer.is_some()
+                    && let Some(member_name) = self.ctx.arena.get_identifier_text(member_data.name)
+                    {
+                        let enum_name_text = self.ctx.arena.get_identifier_text(enum_data.name);
+                        self.check_enum_member_self_reference(
+                            member_data.initializer,
+                            member_name,
+                            enum_name_text,
+                        );
+                    }
             }
         }
     }
@@ -1155,6 +1167,151 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
     pub const fn check_function_implementations(&mut self, _nodes: &[NodeIndex]) {
         // Implementation of overload checking
         // Will be migrated from CheckerState
+    }
+    fn check_enum_member_self_reference(
+        &mut self,
+        expr_idx: NodeIndex,
+        member_name: &str,
+        enum_name: Option<&str>,
+    ) {
+        if expr_idx.is_none() {
+            return;
+        }
+        let Some(node) = self.ctx.arena.get(expr_idx) else {
+            return;
+        };
+
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_parser::parser::node::NodeAccess;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_scanner::SyntaxKind;
+
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                if let Some(text) = self.ctx.arena.get_identifier_text(expr_idx)
+                    && text == member_name {
+                        self.ctx.error(
+                            node.pos,
+                            node.end - node.pos,
+                            format!("Property '{text}' is used before being assigned."),
+                            diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                        );
+                    }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                if let Some(prop) = self.ctx.arena.get_access_expr(node)
+                    && let Some(left_node) = self.ctx.arena.get(prop.expression) {
+                        let is_enum_ref = if left_node.kind == SyntaxKind::Identifier as u16 {
+                            if let Some(text) = self.ctx.arena.get_identifier_text(prop.expression)
+                            {
+                                Some(text) == enum_name
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if is_enum_ref {
+                            if let Some(right_text) =
+                                self.ctx.arena.get_identifier_text(prop.name_or_argument)
+                                && right_text == member_name {
+                                    self.ctx.error(
+                                        node.pos,
+                                        node.end - node.pos,
+                                        format!(
+                                            "Property '{right_text}' is used before being assigned."
+                                        ),
+                                        diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                                    );
+                                }
+                        } else {
+                            self.check_enum_member_self_reference(
+                                prop.expression,
+                                member_name,
+                                enum_name,
+                            );
+                        }
+                    }
+            }
+            k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => {
+                if let Some(elem) = self.ctx.arena.get_access_expr(node)
+                    && let Some(left_node) = self.ctx.arena.get(elem.expression) {
+                        let is_enum_ref = if left_node.kind == SyntaxKind::Identifier as u16 {
+                            if let Some(text) = self.ctx.arena.get_identifier_text(elem.expression)
+                            {
+                                Some(text) == enum_name
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+
+                        if is_enum_ref {
+                            if let Some(right_node) = self.ctx.arena.get(elem.name_or_argument) {
+                                if right_node.kind == SyntaxKind::StringLiteral as u16 {
+                                    if let Some(lit) = self.ctx.arena.get_literal(right_node)
+                                        && lit.text == member_name {
+                                            self.ctx.error(
+                                                node.pos,
+                                                node.end - node.pos,
+                                                format!("Property '{}' is used before being assigned.", lit.text),
+                                                diagnostic_codes::PROPERTY_IS_USED_BEFORE_BEING_ASSIGNED,
+                                            );
+                                        }
+                                } else {
+                                    self.check_enum_member_self_reference(
+                                        elem.name_or_argument,
+                                        member_name,
+                                        enum_name,
+                                    );
+                                }
+                            }
+                        } else {
+                            self.check_enum_member_self_reference(
+                                elem.expression,
+                                member_name,
+                                enum_name,
+                            );
+                            self.check_enum_member_self_reference(
+                                elem.name_or_argument,
+                                member_name,
+                                enum_name,
+                            );
+                        }
+                    }
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.check_enum_member_self_reference(unary.operand, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION => {
+                if let Some(unary) = self.ctx.arena.get_unary_expr(node) {
+                    self.check_enum_member_self_reference(unary.operand, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(bin) = self.ctx.arena.get_binary_expr(node) {
+                    self.check_enum_member_self_reference(bin.left, member_name, enum_name);
+                    self.check_enum_member_self_reference(bin.right, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.ctx.arena.get_parenthesized(node) {
+                    self.check_enum_member_self_reference(paren.expression, member_name, enum_name);
+                }
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
+                if let Some(cond) = self.ctx.arena.get_conditional_expr(node) {
+                    self.check_enum_member_self_reference(cond.condition, member_name, enum_name);
+                    self.check_enum_member_self_reference(cond.when_true, member_name, enum_name);
+                    self.check_enum_member_self_reference(cond.when_false, member_name, enum_name);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
