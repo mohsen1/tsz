@@ -1409,11 +1409,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let accessor_node = self.arena.get(accessor_idx)?;
         let accessor_data = self.arena.get_accessor(accessor_node)?;
 
-        let params = self.extract_parameters(&accessor_data.parameters);
+        let mut params = self.extract_parameters(&accessor_data.parameters);
 
         let body_source_range = self.arena.get(accessor_data.body).map(|n| (n.pos, n.end));
 
-        let body = if accessor_data.body.is_none() {
+        let mut body = if accessor_data.body.is_none() {
             vec![]
         } else {
             let mut body = self.convert_block_body(accessor_data.body);
@@ -1428,6 +1428,8 @@ impl<'a> ES5ClassTransformer<'a> {
             body
         };
 
+        self.lower_rest_parameter_for_es5(&mut params, &mut body);
+
         Some(IRNode::FunctionExpr {
             name: None,
             parameters: params,
@@ -1435,6 +1437,54 @@ impl<'a> ES5ClassTransformer<'a> {
             is_expression_body: false,
             body_source_range,
         })
+    }
+
+    /// Lower a rest parameter into ES5 `arguments` collection statements.
+    /// Example: `(...v)` -> `() { var v = []; for (var _i = 0; _i < arguments.length; _i++) { ... } }`
+    fn lower_rest_parameter_for_es5(&self, params: &mut Vec<IRParam>, body: &mut Vec<IRNode>) {
+        let Some(rest_index) = params.iter().position(|param| param.rest) else {
+            return;
+        };
+
+        let rest_name = params[rest_index].name.clone();
+        params.truncate(rest_index);
+
+        let loop_var = "_i";
+        let start_index = rest_index.to_string();
+
+        let target_index = if rest_index == 0 {
+            IRNode::id(loop_var)
+        } else {
+            IRNode::binary(
+                IRNode::id(loop_var),
+                "-",
+                IRNode::number(start_index.clone()),
+            )
+        };
+
+        let assignment = IRNode::expr_stmt(IRNode::assign(
+            IRNode::elem(IRNode::id(rest_name.clone()), target_index),
+            IRNode::elem(IRNode::id("arguments"), IRNode::id(loop_var)),
+        ));
+
+        let collect_rest = IRNode::ForStatement {
+            initializer: Some(Box::new(IRNode::Raw(format!(
+                "var {loop_var} = {start_index}"
+            )))),
+            condition: Some(Box::new(IRNode::binary(
+                IRNode::id(loop_var),
+                "<",
+                IRNode::prop(IRNode::id("arguments"), "length"),
+            ))),
+            incrementor: Some(Box::new(IRNode::PostfixUnaryExpr {
+                operand: Box::new(IRNode::id(loop_var)),
+                operator: "++".to_string(),
+            })),
+            body: Box::new(IRNode::block(vec![assignment])),
+        };
+
+        body.insert(0, collect_rest);
+        body.insert(0, IRNode::var_decl(rest_name, Some(IRNode::empty_array())));
     }
 
     /// Emit static members as IR.
