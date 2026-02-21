@@ -568,6 +568,17 @@ impl<'a> Printer<'a> {
         let is_external = module_node.kind == SyntaxKind::StringLiteral as u16
             || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE;
 
+        // Wrapped module formats (AMD/UMD/System) bind external imports via wrapper
+        // parameters/setters, so we must not emit a duplicate runtime require here.
+        if is_external
+            && matches!(
+                self.ctx.original_module_kind,
+                Some(ModuleKind::AMD | ModuleKind::UMD | ModuleKind::System)
+            )
+        {
+            return;
+        }
+
         // `import X = require("module")` uses const/var based on target.
         // `import X = Y` (entity name) always uses `var` per TSC behavior.
         if is_external {
