@@ -65,6 +65,21 @@ function dedupeUseStrictPreamble(text: string): string {
   return out.join('\n');
 }
 
+function hasUseStrictPreamble(text: string): boolean {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed === '') continue;
+    return trimmed === '"use strict";' || trimmed === "'use strict';";
+  }
+  return false;
+}
+
+function normalizeLeadingTripleSlashSpacing(text: string): string {
+  // Keep leading triple-slash directives adjacent to the following statement.
+  // Some JS-input baselines expect no blank line after the directive block.
+  return text.replace(/^((?:(?:["']use strict["'];\n)?(?:\/\/\/[^\n]*\n)+))\n+/m, '$1');
+}
+
 // Convert target number to CLI arg
 function targetToCliArg(target: number): string {
   const targets: Record<number, string> = {
@@ -404,6 +419,14 @@ export class CliTranspiler {
         js = chunks.join('');
       }
       js = dedupeUseStrictPreamble(js);
+      const hasJsInput = files.some(f => /\.(js|jsx|mjs|cjs)$/i.test(f.name));
+      const commonJsLikeModule = module === 1 || module === 2 || module === 3 || module === 200;
+      if (hasJsInput && commonJsLikeModule && !hasUseStrictPreamble(js)) {
+        js = `"use strict";\n${js}`;
+      }
+      if (hasJsInput) {
+        js = normalizeLeadingTripleSlashSpacing(js);
+      }
 
       if (declaration) {
         const namedDts = readNamedOutput(expectedDtsFileName, true);

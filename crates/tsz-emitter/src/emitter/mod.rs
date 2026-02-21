@@ -1526,12 +1526,11 @@ impl<'a> Printer<'a> {
         };
 
         // TypeScript emits "use strict" when:
-        // 1. CommonJS/AMD/UMD AND the file is actually an ES module (has import/export).
-        //    Script files (no import/export) don't get "use strict".
+        // 1. CommonJS/AMD/UMD output.
         // 2. alwaysStrict is on AND the file is not already an ES module output.
         let is_file_module = self.file_is_module(&source.statements);
         let should_emit_use_strict = !source_has_use_strict
-            && ((is_commonjs_or_amd && is_file_module)
+            && (is_commonjs_or_amd
                 || (self.ctx.options.always_strict && !(is_es_module_output && is_file_module)));
 
         if should_emit_use_strict {
