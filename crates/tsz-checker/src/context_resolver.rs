@@ -323,7 +323,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
         };
 
         // Get the enum declaration from the arena
-        let decl_idx = if !enum_symbol.value_declaration.is_none() {
+        let decl_idx = if enum_symbol.value_declaration.is_some() {
             enum_symbol.value_declaration
         } else {
             *enum_symbol
@@ -347,7 +347,7 @@ impl<'a> tsz_solver::TypeResolver for CheckerContext<'a> {
                 continue;
             };
 
-            if !member.initializer.is_none() {
+            if member.initializer.is_some() {
                 let Some(init_node) = self.arena.get(member.initializer) else {
                     continue;
                 };

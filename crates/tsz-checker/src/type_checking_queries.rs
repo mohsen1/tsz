@@ -654,7 +654,7 @@ impl<'a> CheckerState<'a> {
             return "<anonymous>".to_string();
         };
 
-        if !class.name.is_none()
+        if class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)
             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
         {
@@ -678,7 +678,7 @@ impl<'a> CheckerState<'a> {
         let node = self.ctx.arena.get(stmt_idx)?;
 
         if let Some(func) = self.ctx.arena.get_function(node)
-            && !func.name.is_none()
+            && func.name.is_some()
         {
             let name_node = self.ctx.arena.get(func.name)?;
             if let Some(id) = self.ctx.arena.get_identifier(name_node) {
@@ -861,7 +861,7 @@ impl<'a> CheckerState<'a> {
         sym_id: tsz_binder::SymbolId,
     ) -> Option<NodeIndex> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
-        if !symbol.value_declaration.is_none() {
+        if symbol.value_declaration.is_some() {
             let decl_idx = symbol.value_declaration;
             if let Some(node) = self.ctx.arena.get(decl_idx)
                 && self.ctx.arena.get_class(node).is_some()

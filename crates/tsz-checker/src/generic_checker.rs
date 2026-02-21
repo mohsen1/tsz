@@ -442,7 +442,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Check the value declaration and all declarations for type parameters
-        let decl_indices: Vec<_> = if !symbol.value_declaration.is_none() {
+        let decl_indices: Vec<_> = if symbol.value_declaration.is_some() {
             std::iter::once(symbol.value_declaration)
                 .chain(symbol.declarations.iter().copied())
                 .collect()

@@ -263,7 +263,7 @@ impl<'a> ScopeWalker<'a> {
                             }
                         }
                     }
-                    if !func.name.is_none()
+                    if func.name.is_some()
                         && let Some(res) = f(self, func.name)
                     {
                         return Some(res);
@@ -280,12 +280,12 @@ impl<'a> ScopeWalker<'a> {
                             return Some(res);
                         }
                     }
-                    if !func.type_annotation.is_none()
+                    if func.type_annotation.is_some()
                         && let Some(res) = f(self, func.type_annotation)
                     {
                         return Some(res);
                     }
-                    if !func.body.is_none()
+                    if func.body.is_some()
                         && let Some(res) = f(self, func.body)
                     {
                         return Some(res);
@@ -301,7 +301,7 @@ impl<'a> ScopeWalker<'a> {
                             }
                         }
                     }
-                    if !method.name.is_none()
+                    if method.name.is_some()
                         && let Some(res) = f(self, method.name)
                     {
                         return Some(res);
@@ -318,12 +318,12 @@ impl<'a> ScopeWalker<'a> {
                             return Some(res);
                         }
                     }
-                    if !method.type_annotation.is_none()
+                    if method.type_annotation.is_some()
                         && let Some(res) = f(self, method.type_annotation)
                     {
                         return Some(res);
                     }
-                    if !method.body.is_none()
+                    if method.body.is_some()
                         && let Some(res) = f(self, method.body)
                     {
                         return Some(res);
@@ -351,7 +351,7 @@ impl<'a> ScopeWalker<'a> {
                             return Some(res);
                         }
                     }
-                    if !ctor.body.is_none()
+                    if ctor.body.is_some()
                         && let Some(res) = f(self, ctor.body)
                     {
                         return Some(res);
@@ -370,7 +370,7 @@ impl<'a> ScopeWalker<'a> {
                             }
                         }
                     }
-                    if !class.name.is_none()
+                    if class.name.is_some()
                         && let Some(res) = f(self, class.name)
                     {
                         return Some(res);
@@ -420,12 +420,12 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, decl.name) {
                         return Some(res);
                     }
-                    if !decl.type_annotation.is_none()
+                    if decl.type_annotation.is_some()
                         && let Some(res) = f(self, decl.type_annotation)
                     {
                         return Some(res);
                     }
-                    if !decl.initializer.is_none()
+                    if decl.initializer.is_some()
                         && let Some(res) = f(self, decl.initializer)
                     {
                         return Some(res);
@@ -444,12 +444,12 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, param.name) {
                         return Some(res);
                     }
-                    if !param.type_annotation.is_none()
+                    if param.type_annotation.is_some()
                         && let Some(res) = f(self, param.type_annotation)
                     {
                         return Some(res);
                     }
-                    if !param.initializer.is_none()
+                    if param.initializer.is_some()
                         && let Some(res) = f(self, param.initializer)
                     {
                         return Some(res);
@@ -468,12 +468,12 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, prop.name) {
                         return Some(res);
                     }
-                    if !prop.type_annotation.is_none()
+                    if prop.type_annotation.is_some()
                         && let Some(res) = f(self, prop.type_annotation)
                     {
                         return Some(res);
                     }
-                    if !prop.initializer.is_none()
+                    if prop.initializer.is_some()
                         && let Some(res) = f(self, prop.initializer)
                     {
                         return Some(res);
@@ -511,12 +511,12 @@ impl<'a> ScopeWalker<'a> {
                             return Some(res);
                         }
                     }
-                    if !accessor.type_annotation.is_none()
+                    if accessor.type_annotation.is_some()
                         && let Some(res) = f(self, accessor.type_annotation)
                     {
                         return Some(res);
                     }
-                    if !accessor.body.is_none()
+                    if accessor.body.is_some()
                         && let Some(res) = f(self, accessor.body)
                     {
                         return Some(res);
@@ -526,7 +526,7 @@ impl<'a> ScopeWalker<'a> {
 
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {
                 if let Some(iface) = self.arena.get_interface(node) {
-                    if !iface.name.is_none()
+                    if iface.name.is_some()
                         && let Some(res) = f(self, iface.name)
                     {
                         return Some(res);
@@ -554,7 +554,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 if let Some(alias) = self.arena.get_type_alias(node) {
-                    if !alias.name.is_none()
+                    if alias.name.is_some()
                         && let Some(res) = f(self, alias.name)
                     {
                         return Some(res);
@@ -566,7 +566,7 @@ impl<'a> ScopeWalker<'a> {
                             }
                         }
                     }
-                    if !alias.type_node.is_none()
+                    if alias.type_node.is_some()
                         && let Some(res) = f(self, alias.type_node)
                     {
                         return Some(res);
@@ -575,7 +575,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
-                    if !enum_decl.name.is_none()
+                    if enum_decl.name.is_some()
                         && let Some(res) = f(self, enum_decl.name)
                     {
                         return Some(res);
@@ -589,12 +589,12 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    if !module.name.is_none()
+                    if module.name.is_some()
                         && let Some(res) = f(self, module.name)
                     {
                         return Some(res);
                     }
-                    if !module.body.is_none()
+                    if module.body.is_some()
                         && let Some(res) = f(self, module.body)
                     {
                         return Some(res);
@@ -604,7 +604,7 @@ impl<'a> ScopeWalker<'a> {
 
             k if k == syntax_kind_ext::IMPORT_DECLARATION => {
                 if let Some(import) = self.arena.get_import_decl(node)
-                    && !import.import_clause.is_none()
+                    && import.import_clause.is_some()
                     && let Some(res) = f(self, import.import_clause)
                 {
                     return Some(res);
@@ -612,7 +612,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::EXPORT_DECLARATION => {
                 if let Some(export) = self.arena.get_export_decl(node)
-                    && !export.export_clause.is_none()
+                    && export.export_clause.is_some()
                     && let Some(res) = f(self, export.export_clause)
                 {
                     return Some(res);
@@ -628,7 +628,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, stmt.then_statement) {
                         return Some(res);
                     }
-                    if !stmt.else_statement.is_none()
+                    if stmt.else_statement.is_some()
                         && let Some(res) = f(self, stmt.else_statement)
                     {
                         return Some(res);
@@ -637,7 +637,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret) = self.arena.get_return_statement(node)
-                    && !ret.expression.is_none()
+                    && ret.expression.is_some()
                     && let Some(res) = f(self, ret.expression)
                 {
                     return Some(res);
@@ -652,17 +652,17 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::FOR_STATEMENT => {
                 if let Some(loop_data) = self.arena.get_loop(node) {
-                    if !loop_data.initializer.is_none()
+                    if loop_data.initializer.is_some()
                         && let Some(res) = f(self, loop_data.initializer)
                     {
                         return Some(res);
                     }
-                    if !loop_data.condition.is_none()
+                    if loop_data.condition.is_some()
                         && let Some(res) = f(self, loop_data.condition)
                     {
                         return Some(res);
                     }
-                    if !loop_data.incrementor.is_none()
+                    if loop_data.incrementor.is_some()
                         && let Some(res) = f(self, loop_data.incrementor)
                     {
                         return Some(res);
@@ -689,7 +689,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::DO_STATEMENT => {
                 if let Some(loop_data) = self.arena.get_loop(node) {
-                    if !loop_data.condition.is_none()
+                    if loop_data.condition.is_some()
                         && let Some(res) = f(self, loop_data.condition)
                     {
                         return Some(res);
@@ -774,7 +774,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, assertion.expression) {
                         return Some(res);
                     }
-                    if !assertion.type_node.is_none()
+                    if assertion.type_node.is_some()
                         && let Some(res) = f(self, assertion.type_node)
                     {
                         return Some(res);
@@ -818,7 +818,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::BINDING_ELEMENT => {
                 if let Some(binding) = self.arena.get_binding_element(node) {
-                    if !binding.property_name.is_none()
+                    if binding.property_name.is_some()
                         && let Some(prop_node) = self.arena.get(binding.property_name)
                         && prop_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
                         && let Some(res) = f(self, binding.property_name)
@@ -828,7 +828,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, binding.name) {
                         return Some(res);
                     }
-                    if !binding.initializer.is_none()
+                    if binding.initializer.is_some()
                         && let Some(res) = f(self, binding.initializer)
                     {
                         return Some(res);
@@ -947,7 +947,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, attr.name) {
                         return Some(res);
                     }
-                    if !attr.initializer.is_none()
+                    if attr.initializer.is_some()
                         && let Some(res) = f(self, attr.initializer)
                     {
                         return Some(res);
@@ -963,7 +963,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::JSX_EXPRESSION => {
                 if let Some(expr) = self.arena.get_jsx_expression(node)
-                    && !expr.expression.is_none()
+                    && expr.expression.is_some()
                     && let Some(res) = f(self, expr.expression)
                 {
                     return Some(res);
@@ -1004,7 +1004,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, prop.name) {
                         return Some(res);
                     }
-                    if !prop.object_assignment_initializer.is_none()
+                    if prop.object_assignment_initializer.is_some()
                         && let Some(res) = f(self, prop.object_assignment_initializer)
                     {
                         return Some(res);
@@ -1095,7 +1095,7 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, pred.parameter_name) {
                         return Some(res);
                     }
-                    if !pred.type_node.is_none()
+                    if pred.type_node.is_some()
                         && let Some(res) = f(self, pred.type_node)
                     {
                         return Some(res);
@@ -1107,12 +1107,12 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, param.name) {
                         return Some(res);
                     }
-                    if !param.constraint.is_none()
+                    if param.constraint.is_some()
                         && let Some(res) = f(self, param.constraint)
                     {
                         return Some(res);
                     }
-                    if !param.default.is_none()
+                    if param.default.is_some()
                         && let Some(res) = f(self, param.default)
                     {
                         return Some(res);
@@ -1133,7 +1133,7 @@ impl<'a> ScopeWalker<'a> {
                             return Some(res);
                         }
                     }
-                    if !func_type.type_annotation.is_none()
+                    if func_type.type_annotation.is_some()
                         && let Some(res) = f(self, func_type.type_annotation)
                     {
                         return Some(res);
@@ -1155,7 +1155,7 @@ impl<'a> ScopeWalker<'a> {
                 || k == syntax_kind_ext::CONSTRUCT_SIGNATURE =>
             {
                 if let Some(sig) = self.arena.get_signature(node) {
-                    if !sig.name.is_none()
+                    if sig.name.is_some()
                         && let Some(res) = f(self, sig.name)
                     {
                         return Some(res);
@@ -1174,7 +1174,7 @@ impl<'a> ScopeWalker<'a> {
                             }
                         }
                     }
-                    if !sig.type_annotation.is_none()
+                    if sig.type_annotation.is_some()
                         && let Some(res) = f(self, sig.type_annotation)
                     {
                         return Some(res);
@@ -1188,7 +1188,7 @@ impl<'a> ScopeWalker<'a> {
                             return Some(res);
                         }
                     }
-                    if !sig.type_annotation.is_none()
+                    if sig.type_annotation.is_some()
                         && let Some(res) = f(self, sig.type_annotation)
                     {
                         return Some(res);
@@ -1278,12 +1278,12 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, mapped.type_parameter) {
                         return Some(res);
                     }
-                    if !mapped.name_type.is_none()
+                    if mapped.name_type.is_some()
                         && let Some(res) = f(self, mapped.name_type)
                     {
                         return Some(res);
                     }
-                    if !mapped.type_node.is_none()
+                    if mapped.type_node.is_some()
                         && let Some(res) = f(self, mapped.type_node)
                     {
                         return Some(res);
@@ -1333,12 +1333,12 @@ impl<'a> ScopeWalker<'a> {
                     if let Some(res) = f(self, try_stmt.try_block) {
                         return Some(res);
                     }
-                    if !try_stmt.catch_clause.is_none()
+                    if try_stmt.catch_clause.is_some()
                         && let Some(res) = f(self, try_stmt.catch_clause)
                     {
                         return Some(res);
                     }
-                    if !try_stmt.finally_block.is_none()
+                    if try_stmt.finally_block.is_some()
                         && let Some(res) = f(self, try_stmt.finally_block)
                     {
                         return Some(res);
@@ -1347,7 +1347,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::CATCH_CLAUSE => {
                 if let Some(catch) = self.arena.get_catch_clause(node) {
-                    if !catch.variable_declaration.is_none()
+                    if catch.variable_declaration.is_some()
                         && let Some(res) = f(self, catch.variable_declaration)
                     {
                         return Some(res);
@@ -1396,7 +1396,7 @@ impl<'a> ScopeWalker<'a> {
             }
             k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
                 if let Some(case) = self.arena.get_case_clause(node) {
-                    if !case.expression.is_none()
+                    if case.expression.is_some()
                         && let Some(res) = f(self, case.expression)
                     {
                         return Some(res);
@@ -1715,7 +1715,7 @@ impl<'a> ScopeWalker<'a> {
                 // For ExportDeclaration, unwrap to find the inner declaration
                 else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
                     if let Some(export) = walker.arena.get_export_decl(node)
-                        && !export.export_clause.is_none()
+                        && export.export_clause.is_some()
                     {
                         // Check if export_clause is a declaration (e.g., export const x = 1)
                         if let Some(_export_clause_node) = walker.arena.get(export.export_clause) {

@@ -15,7 +15,7 @@ impl<'a> CheckerState<'a> {
         // Get the class name for the error message
         let class_name = if let Some(class_node) = self.ctx.arena.get(class_idx)
             && let Some(class) = self.ctx.arena.get_class(class_node)
-            && !class.name.is_none()
+            && class.name.is_some()
             && let Some(name_node) = self.ctx.arena.get(class.name)
         {
             self.ctx

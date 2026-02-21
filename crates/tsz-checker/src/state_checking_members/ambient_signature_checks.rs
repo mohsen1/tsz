@@ -159,7 +159,7 @@ impl<'a> CheckerState<'a> {
 
         // TS1039: Initializers are not allowed in ambient contexts.
         // A class property with `declare` modifier or in a `declare class` is ambient.
-        if !prop.initializer.is_none() && !self.ctx.compiler_options.no_types_and_symbols {
+        if prop.initializer.is_some() && !self.ctx.compiler_options.no_types_and_symbols {
             let has_declare = self.has_declare_modifier(&prop.modifiers);
             let in_declared_class = self
                 .ctx
@@ -1065,7 +1065,7 @@ impl<'a> CheckerState<'a> {
             let has_paired_getter = self.setter_has_paired_getter(member_idx, accessor);
             // Get accessor-level JSDoc to suppress TS7006 for @param annotations
             let accessor_jsdoc = self.get_jsdoc_for_function(member_idx);
-            let accessor_name = if !accessor.name.is_none() {
+            let accessor_name = if accessor.name.is_some() {
                 Some(accessor.name)
             } else {
                 None

@@ -1,6 +1,6 @@
 use tsz_solver::TypeId;
 
-#[allow(dead_code)]
+#[allow(dead_code)] // Used by architecture contract tests
 pub(crate) fn collect_property_name_atoms_for_diagnostics(
     db: &dyn tsz_solver::TypeDatabase,
     type_id: TypeId,

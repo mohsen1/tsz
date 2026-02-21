@@ -104,7 +104,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(sym_id) = self.ctx.binder.file_locals.get(&base_class_name)
                         && let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
                     {
-                        if !symbol.value_declaration.is_none() {
+                        if symbol.value_declaration.is_some() {
                             base_class_idx = Some(symbol.value_declaration);
                         } else if let Some(&decl_idx) = symbol.declarations.first() {
                             base_class_idx = Some(decl_idx);
@@ -152,7 +152,7 @@ impl<'a> CheckerState<'a> {
         // Report error if there are missing implementations
         let is_ambient = self.has_declare_modifier(&class_data.modifiers);
         if !is_ambient && !missing_members.is_empty() {
-            let derived_class_name = if !class_data.name.is_none() {
+            let derived_class_name = if class_data.name.is_some() {
                 if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                     if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                         ident.escaped_text.clone()
@@ -290,7 +290,7 @@ impl<'a> CheckerState<'a> {
             rustc_hash::FxHashMap::default();
 
         // Get the class name for error messages
-        let class_name = if !class_data.name.is_none() {
+        let class_name = if class_data.name.is_some() {
             if let Some(name_node) = self.ctx.arena.get(class_data.name) {
                 if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
                     ident.escaped_text.clone()
@@ -816,7 +816,7 @@ impl<'a> CheckerState<'a> {
                     }
 
                     // Also check value_declaration
-                    if !symbol.value_declaration.is_none() {
+                    if symbol.value_declaration.is_some() {
                         let decl_idx = symbol.value_declaration;
                         let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                             continue;

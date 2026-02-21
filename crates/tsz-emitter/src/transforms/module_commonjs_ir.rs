@@ -142,7 +142,7 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Default import
-        if !clause.name.is_none()
+        if clause.name.is_some()
             && let Some(name) = get_identifier_text(self.arena, clause.name)
         {
             statements.push(IRNode::DefaultImport {
@@ -153,12 +153,12 @@ impl<'a> CommonJsTransformContext<'a> {
 
         // Named bindings
         let mut named_bindings_all_type_only = false;
-        if !clause.named_bindings.is_none()
+        if clause.named_bindings.is_some()
             && let Some(named_node) = self.arena.get(clause.named_bindings)
             && let Some(named_imports) = self.arena.get_named_imports(named_node)
         {
             // Namespace import: import * as ns from "..."
-            if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
+            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 if let Some(name) = get_identifier_text(self.arena, named_imports.name) {
                     statements.push(IRNode::NamespaceImport {
                         var_name: name,
@@ -178,7 +178,7 @@ impl<'a> CommonJsTransformContext<'a> {
                         saw_value_specifier = true;
                         let local_name =
                             get_identifier_text(self.arena, spec.name).unwrap_or_default();
-                        let import_name = if !spec.property_name.is_none() {
+                        let import_name = if spec.property_name.is_some() {
                             get_identifier_text(self.arena, spec.property_name)
                                 .unwrap_or_else(|| local_name.clone())
                         } else {
@@ -227,7 +227,7 @@ impl<'a> CommonJsTransformContext<'a> {
         }
 
         // Check for re-exports (export { x } from "./module")
-        if !export_data.module_specifier.is_none() {
+        if export_data.module_specifier.is_some() {
             return self.transform_re_export(export_data);
         }
 
@@ -270,7 +270,7 @@ impl<'a> CommonJsTransformContext<'a> {
                     }
                     let export_name =
                         get_identifier_text(self.arena, spec.name).unwrap_or_default();
-                    let import_name = if !spec.property_name.is_none() {
+                    let import_name = if spec.property_name.is_some() {
                         get_identifier_text(self.arena, spec.property_name)
                             .unwrap_or_else(|| export_name.clone())
                     } else {

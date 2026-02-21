@@ -198,9 +198,9 @@ impl<'a> CheckerState<'a> {
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
                     let is_readonly = self.has_readonly_modifier(&prop.modifiers);
-                    let type_id = if !prop.type_annotation.is_none() {
+                    let type_id = if prop.type_annotation.is_some() {
                         self.get_type_from_type_node(prop.type_annotation)
-                    } else if !prop.initializer.is_none() {
+                    } else if prop.initializer.is_some() {
                         let prev = self.ctx.preserve_literal_types;
                         self.ctx.preserve_literal_types = true;
                         let init_type = self.get_type_of_node(prop.initializer);
@@ -289,7 +289,7 @@ impl<'a> CheckerState<'a> {
                     });
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
-                        let getter_type = if !accessor.type_annotation.is_none() {
+                        let getter_type = if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
                             self.infer_getter_return_type(accessor.body)
@@ -303,7 +303,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| {
-                                (!param.type_annotation.is_none())
+                                (param.type_annotation.is_some())
                                     .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
@@ -341,9 +341,9 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let is_readonly = self.has_readonly_modifier(&param.modifiers);
-                        let type_id = if !param.type_annotation.is_none() {
+                        let type_id = if param.type_annotation.is_some() {
                             self.get_type_from_type_node(param.type_annotation)
-                        } else if !param.initializer.is_none() {
+                        } else if param.initializer.is_some() {
                             let init_type = self.get_type_of_node(param.initializer);
                             // Widen for mutable constructor parameter properties
                             if is_readonly {
@@ -620,7 +620,7 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 }
-                if base_class_idx.is_none() && !base_symbol.value_declaration.is_none() {
+                if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
                     let decl_idx = base_symbol.value_declaration;
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && self.ctx.arena.get_class(node).is_some()
@@ -1133,9 +1133,9 @@ impl<'a> CheckerState<'a> {
                         continue;
                     };
                     let name_atom = self.ctx.types.intern_string(&name);
-                    let type_id = if !prop.type_annotation.is_none() {
+                    let type_id = if prop.type_annotation.is_some() {
                         self.get_type_from_type_node(prop.type_annotation)
-                    } else if !prop.initializer.is_none() {
+                    } else if prop.initializer.is_some() {
                         // Set in_static_property_initializer for proper super checking
                         if let Some(ref mut class_info) = self.ctx.enclosing_class {
                             class_info.in_static_property_initializer = true;
@@ -1241,7 +1241,7 @@ impl<'a> CheckerState<'a> {
                     });
 
                     if k == syntax_kind_ext::GET_ACCESSOR {
-                        let getter_type = if !accessor.type_annotation.is_none() {
+                        let getter_type = if accessor.type_annotation.is_some() {
                             self.get_type_from_type_node(accessor.type_annotation)
                         } else {
                             self.infer_getter_return_type(accessor.body)
@@ -1255,7 +1255,7 @@ impl<'a> CheckerState<'a> {
                             .and_then(|&param_idx| self.ctx.arena.get(param_idx))
                             .and_then(|param_node| self.ctx.arena.get_parameter(param_node))
                             .and_then(|param| {
-                                (!param.type_annotation.is_none())
+                                (param.type_annotation.is_some())
                                     .then(|| self.get_type_from_type_node(param.type_annotation))
                             })
                             .unwrap_or(TypeId::UNKNOWN);
@@ -1286,7 +1286,7 @@ impl<'a> CheckerState<'a> {
 
                     let key_type = param_data
                         .and_then(|param| {
-                            (!param.type_annotation.is_none())
+                            (param.type_annotation.is_some())
                                 .then(|| self.get_type_from_type_node(param.type_annotation))
                         })
                         .unwrap_or(TypeId::STRING);
@@ -1309,7 +1309,7 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
-                    let value_type = if !index_sig.type_annotation.is_none() {
+                    let value_type = if index_sig.type_annotation.is_some() {
                         self.get_type_from_type_node(index_sig.type_annotation)
                     } else {
                         TypeId::ANY
@@ -1495,7 +1495,7 @@ impl<'a> CheckerState<'a> {
                         break;
                     }
                 }
-                if base_class_idx.is_none() && !base_symbol.value_declaration.is_none() {
+                if base_class_idx.is_none() && base_symbol.value_declaration.is_some() {
                     let decl_idx = base_symbol.value_declaration;
                     if let Some(node) = self.ctx.arena.get(decl_idx)
                         && self.ctx.arena.get_class(node).is_some()

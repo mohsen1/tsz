@@ -193,15 +193,15 @@ impl<'a> Printer<'a> {
         let mut raw_named_bindings = None;
         let mut trailing_comma = false;
 
-        if !clause.name.is_none() {
+        if clause.name.is_some() {
             has_default = true;
         }
 
-        if !clause.named_bindings.is_none()
+        if clause.named_bindings.is_some()
             && let Some(bindings_node) = self.arena.get(clause.named_bindings)
         {
             if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
+                if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                     namespace_name = Some(named_imports.name);
                 } else {
                     value_specs = self.collect_value_specifiers(&named_imports.elements);
@@ -292,13 +292,13 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        let mut has_value_binding = !clause.name.is_none();
+        let mut has_value_binding = clause.name.is_some();
         let mut named_bindings_all_type_only = false;
-        if !clause.named_bindings.is_none()
+        if clause.named_bindings.is_some()
             && let Some(bindings_node) = self.arena.get(clause.named_bindings)
         {
             if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                if !named_imports.name.is_none() && named_imports.elements.nodes.is_empty() {
+                if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                     has_value_binding = true;
                 } else {
                     let value_specs = self.collect_value_specifiers(&named_imports.elements);
@@ -546,13 +546,13 @@ impl<'a> Printer<'a> {
         let mut has_default = false;
 
         // Default import
-        if !clause.name.is_none() {
+        if clause.name.is_some() {
             self.emit(clause.name);
             has_default = true;
         }
 
         // Named bindings
-        if !clause.named_bindings.is_none() {
+        if clause.named_bindings.is_some() {
             if has_default {
                 self.write(", ");
             }
@@ -588,7 +588,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if !imports.name.is_none() && value_imports.is_empty() {
+        if imports.name.is_some() && value_imports.is_empty() {
             self.write("* as ");
             self.emit(imports.name);
             return;
@@ -611,7 +611,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !spec.property_name.is_none() {
+        if spec.property_name.is_some() {
             self.emit(spec.property_name);
             self.write(" as ");
         }
@@ -654,7 +654,7 @@ impl<'a> Printer<'a> {
 
         if export.export_clause.is_none() {
             self.write("export *");
-            if !export.module_specifier.is_none() {
+            if export.module_specifier.is_some() {
                 self.write(" from ");
                 self.emit(export.module_specifier);
             }
@@ -692,7 +692,7 @@ impl<'a> Printer<'a> {
                 }
                 self.write(" }");
             }
-            if !export.module_specifier.is_none() {
+            if export.module_specifier.is_some() {
                 self.write(" from ");
                 self.emit(export.module_specifier);
             }
@@ -701,7 +701,7 @@ impl<'a> Printer<'a> {
         }
 
         // export * as <name> from "..." — clause is an Identifier or StringLiteral
-        if !export.module_specifier.is_none()
+        if export.module_specifier.is_some()
             && (clause_node.kind == SyntaxKind::Identifier as u16
                 || clause_node.kind == SyntaxKind::StringLiteral as u16)
         {
@@ -745,7 +745,7 @@ impl<'a> Printer<'a> {
         self.write("export ");
         self.emit(export.export_clause);
 
-        if !export.module_specifier.is_none() {
+        if export.module_specifier.is_some() {
             self.write(" from ");
             self.emit(export.module_specifier);
         }
@@ -766,7 +766,7 @@ impl<'a> Printer<'a> {
         }
 
         // Re-export from another module: export { x } from "module";
-        if !export.module_specifier.is_none() {
+        if export.module_specifier.is_some() {
             let module_spec = if let Some(spec_node) = self.arena.get(export.module_specifier) {
                 if let Some(lit) = self.arena.get_literal(spec_node) {
                     lit.text.clone()
@@ -821,7 +821,7 @@ impl<'a> Printer<'a> {
                         }
                         // Get export name and import name
                         let export_name = self.get_identifier_text_idx(spec.name);
-                        let import_name = if !spec.property_name.is_none() {
+                        let import_name = if spec.property_name.is_some() {
                             self.get_identifier_text_idx(spec.property_name)
                         } else {
                             export_name.clone()
@@ -1146,7 +1146,7 @@ impl<'a> Printer<'a> {
                                 && let Some(spec) = self.arena.get_specifier(spec_node)
                             {
                                 let export_name = self.get_identifier_text_idx(spec.name);
-                                let local_name = if !spec.property_name.is_none() {
+                                let local_name = if spec.property_name.is_some() {
                                     self.get_identifier_text_idx(spec.property_name)
                                 } else {
                                     export_name.clone()
@@ -1418,7 +1418,7 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        if !spec.property_name.is_none() {
+        if spec.property_name.is_some() {
             self.emit(spec.property_name);
             self.write(" as ");
         }
@@ -1721,7 +1721,7 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        if !clause.name.is_none() {
+        if clause.name.is_some() {
             return true;
         }
 
@@ -1737,7 +1737,7 @@ impl<'a> Printer<'a> {
             return true;
         };
 
-        if !named.name.is_none() {
+        if named.name.is_some() {
             return true;
         }
 
@@ -1780,7 +1780,7 @@ impl<'a> Printer<'a> {
         };
 
         if let Some(named) = self.arena.get_named_imports(clause_node) {
-            if !named.name.is_none() {
+            if named.name.is_some() {
                 return true;
             }
 

@@ -63,7 +63,7 @@ impl<'a> CheckerState<'a> {
             let type_id = if let Some(types) = param_types {
                 // param_types already have optional undefined applied
                 types.get(i).and_then(|t| *t)
-            } else if !param.type_annotation.is_none() {
+            } else if param.type_annotation.is_some() {
                 let mut t = self.get_type_from_type_node(param.type_annotation);
                 // Under strictNullChecks, optional parameters (with `?`) include
                 // `undefined` in their type.  Parameters with only a default value
@@ -123,7 +123,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Skip if there's an explicit type annotation
-            if !param.type_annotation.is_none() {
+            if param.type_annotation.is_some() {
                 continue;
             }
 
@@ -1054,7 +1054,7 @@ impl<'a> CheckerState<'a> {
                             if scan_stmts(arena, &[if_data.then_statement]) {
                                 return true;
                             }
-                            if !if_data.else_statement.is_none()
+                            if if_data.else_statement.is_some()
                                 && scan_stmts(arena, &[if_data.else_statement])
                             {
                                 return true;
@@ -1174,7 +1174,7 @@ impl<'a> CheckerState<'a> {
         match node.kind {
             syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(return_data) = self.ctx.arena.get_return_statement(node)
-                    && !return_data.expression.is_none()
+                    && return_data.expression.is_some()
                 {
                     *saw_value_return = true;
                     if !self.is_explicit_any_assertion_expression(return_data.expression) {
@@ -1200,7 +1200,7 @@ impl<'a> CheckerState<'a> {
                         saw_value_return,
                         all_value_returns_explicit_any,
                     );
-                    if !if_data.else_statement.is_none() {
+                    if if_data.else_statement.is_some() {
                         self.collect_explicit_any_assertion_returns(
                             if_data.else_statement,
                             saw_value_return,
@@ -1236,14 +1236,14 @@ impl<'a> CheckerState<'a> {
                         saw_value_return,
                         all_value_returns_explicit_any,
                     );
-                    if !try_data.catch_clause.is_none() {
+                    if try_data.catch_clause.is_some() {
                         self.collect_explicit_any_assertion_returns(
                             try_data.catch_clause,
                             saw_value_return,
                             all_value_returns_explicit_any,
                         );
                     }
-                    if !try_data.finally_block.is_none() {
+                    if try_data.finally_block.is_some() {
                         self.collect_explicit_any_assertion_returns(
                             try_data.finally_block,
                             saw_value_return,
@@ -1407,7 +1407,7 @@ impl<'a> CheckerState<'a> {
             let has_return_type_annotation = if let Some(func_node) = self.ctx.arena.get(body_idx)
                 && let Some(func) = self.ctx.arena.get_function(func_node)
             {
-                !func.type_annotation.is_none()
+                func.type_annotation.is_some()
             } else {
                 false
             };
@@ -1526,7 +1526,7 @@ impl<'a> CheckerState<'a> {
                         saw_empty,
                         return_context,
                     );
-                    if !if_data.else_statement.is_none() {
+                    if if_data.else_statement.is_some() {
                         self.collect_return_types_in_statement(
                             if_data.else_statement,
                             return_types,
@@ -1565,7 +1565,7 @@ impl<'a> CheckerState<'a> {
                         saw_empty,
                         return_context,
                     );
-                    if !try_data.catch_clause.is_none() {
+                    if try_data.catch_clause.is_some() {
                         self.collect_return_types_in_statement(
                             try_data.catch_clause,
                             return_types,
@@ -1573,7 +1573,7 @@ impl<'a> CheckerState<'a> {
                             return_context,
                         );
                     }
-                    if !try_data.finally_block.is_none() {
+                    if try_data.finally_block.is_some() {
                         self.collect_return_types_in_statement(
                             try_data.finally_block,
                             return_types,
@@ -1688,7 +1688,7 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(return_data) = self.ctx.arena.get_return_statement(node) {
                     // Return with expression
-                    return !return_data.expression.is_none();
+                    return return_data.expression.is_some();
                 }
                 false
             }
@@ -1702,7 +1702,7 @@ impl<'a> CheckerState<'a> {
                 if let Some(if_data) = self.ctx.arena.get_if_statement(node) {
                     // Check both then and else branches
                     let then_has = self.statement_has_return_with_value(if_data.then_statement);
-                    let else_has = if !if_data.else_statement.is_none() {
+                    let else_has = if if_data.else_statement.is_some() {
                         self.statement_has_return_with_value(if_data.else_statement)
                     } else {
                         false
@@ -1732,12 +1732,12 @@ impl<'a> CheckerState<'a> {
             syntax_kind_ext::TRY_STATEMENT => {
                 if let Some(try_data) = self.ctx.arena.get_try(node) {
                     let try_has = self.statement_has_return_with_value(try_data.try_block);
-                    let catch_has = if !try_data.catch_clause.is_none() {
+                    let catch_has = if try_data.catch_clause.is_some() {
                         self.statement_has_return_with_value(try_data.catch_clause)
                     } else {
                         false
                     };
-                    let finally_has = if !try_data.finally_block.is_none() {
+                    let finally_has = if try_data.finally_block.is_some() {
                         self.statement_has_return_with_value(try_data.finally_block)
                     } else {
                         false

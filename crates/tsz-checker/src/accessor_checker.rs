@@ -115,7 +115,7 @@ impl<'a> CheckerState<'a> {
             };
 
             // Check for initializer (error 1052)
-            if !param.initializer.is_none() {
+            if param.initializer.is_some() {
                 self.error_at_node(
                     param.name,
                     "A 'set' accessor parameter cannot have an initializer.",
@@ -229,7 +229,7 @@ impl<'a> CheckerState<'a> {
                 };
 
                 // Check for explicit annotations
-                let getter_has_annotation = !getter_accessor.type_annotation.is_none();
+                let getter_has_annotation = getter_accessor.type_annotation.is_some();
 
                 let setter_param_has_annotation =
                     if let Some(&p_idx) = setter_accessor.parameters.nodes.first() {
@@ -239,7 +239,7 @@ impl<'a> CheckerState<'a> {
                         let Some(p) = self.ctx.arena.get_parameter(p_node) else {
                             continue;
                         };
-                        !p.type_annotation.is_none()
+                        p.type_annotation.is_some()
                     } else {
                         false
                     };
@@ -272,7 +272,7 @@ impl<'a> CheckerState<'a> {
                 }
 
                 // If not assignable, report error on the getter name
-                let error_node = if !getter_accessor.name.is_none() {
+                let error_node = if getter_accessor.name.is_some() {
                     getter_accessor.name
                 } else {
                     getter_idx

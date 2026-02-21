@@ -118,71 +118,6 @@ pub(crate) fn is_contextually_sensitive(state: &CheckerState, idx: NodeIndex) ->
 }
 
 impl<'a> CheckerState<'a> {
-    /// Get the type of a `new` expression.
-    ///
-    /// Computes the type of `new Constructor(...)` expressions.
-    /// Handles:
-    /// - Abstract class instantiation errors
-    /// - Type argument validation (TS2344)
-    /// - Constructor signature resolution
-    /// - Overload resolution
-    /// - Intersection types (mixin pattern)
-    /// - Argument type checking
-    #[allow(dead_code)]
-    fn constructor_identifier_name(&self, expr_idx: NodeIndex) -> Option<String> {
-        let node = self.ctx.arena.get(expr_idx)?;
-        let ident = self.ctx.arena.get_identifier(node)?;
-        Some(ident.escaped_text.clone())
-    }
-
-    #[allow(dead_code)]
-    fn weak_collection_method_name_and_receiver(
-        &self,
-        expr_idx: NodeIndex,
-    ) -> Option<(String, NodeIndex)> {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        let node = self.ctx.arena.get(expr_idx)?;
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-
-        let access = self.ctx.arena.get_access_expr(node)?;
-        let method = self
-            .ctx
-            .arena
-            .get_identifier_at(access.name_or_argument)?
-            .escaped_text
-            .clone();
-        Some((method, access.expression))
-    }
-
-    #[allow(dead_code)]
-    fn expr_contains_symbol_value(&mut self, expr_idx: NodeIndex) -> bool {
-        use tsz_parser::parser::syntax_kind_ext;
-
-        if self.get_type_of_node(expr_idx) == TypeId::SYMBOL {
-            return true;
-        }
-
-        let Some(node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-
-        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-            && let Some(array_lit) = self.ctx.arena.get_literal_expr(node)
-        {
-            return array_lit
-                .elements
-                .nodes
-                .iter()
-                .copied()
-                .any(|element| self.expr_contains_symbol_value(element));
-        }
-
-        false
-    }
-
     pub(crate) const fn should_suppress_weak_key_arg_mismatch(
         &mut self,
         _callee_expr: NodeIndex,
@@ -212,7 +147,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             *symbol.declarations.first()?
@@ -267,7 +202,7 @@ impl<'a> CheckerState<'a> {
                     .filter(|&sym_id| {
                         self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
                             let is_single_class_decl = symbol.declarations.len() == 1
-                                && !symbol.value_declaration.is_none()
+                                && symbol.value_declaration.is_some()
                                 && self.ctx.arena.get(symbol.value_declaration).is_some_and(
                                     |decl| decl.kind == syntax_kind_ext::CLASS_DECLARATION,
                                 );
@@ -794,7 +729,7 @@ impl<'a> CheckerState<'a> {
         if let Some(&instance_type) = self.ctx.symbol_instance_types.get(&sym_id) {
             return Some(instance_type);
         }
-        let decl_idx = if !symbol.value_declaration.is_none() {
+        let decl_idx = if symbol.value_declaration.is_some() {
             symbol.value_declaration
         } else {
             symbol

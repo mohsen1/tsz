@@ -214,13 +214,13 @@ impl<'a> CheckerState<'a> {
         };
 
         let try_falls = self.statement_falls_through(try_data.try_block);
-        let catch_falls = if !try_data.catch_clause.is_none() {
+        let catch_falls = if try_data.catch_clause.is_some() {
             self.statement_falls_through(try_data.catch_clause)
         } else {
             false
         };
 
-        if !try_data.finally_block.is_none() {
+        if try_data.finally_block.is_some() {
             let finally_falls = self.statement_falls_through(try_data.finally_block);
             if !finally_falls {
                 return false;
@@ -288,16 +288,16 @@ impl<'a> CheckerState<'a> {
                     .get_if_statement(node)
                     .is_some_and(|if_data| {
                         self.contains_break_statement(if_data.then_statement)
-                            || (!if_data.else_statement.is_none()
+                            || (if_data.else_statement.is_some()
                                 && self.contains_break_statement(if_data.else_statement))
                     })
             }
             syntax_kind_ext::TRY_STATEMENT => {
                 self.ctx.arena.get_try(node).is_some_and(|try_data| {
                     self.contains_break_statement(try_data.try_block)
-                        || (!try_data.catch_clause.is_none()
+                        || (try_data.catch_clause.is_some()
                             && self.contains_break_statement(try_data.catch_clause))
-                        || (!try_data.finally_block.is_none()
+                        || (try_data.finally_block.is_some()
                             && self.contains_break_statement(try_data.finally_block))
                 })
             }
@@ -344,7 +344,7 @@ impl<'a> CheckerState<'a> {
                 }
                 // Check that declaration has no initializer
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(decl_node)
-                    && !var_decl.initializer.is_none()
+                    && var_decl.initializer.is_some()
                 {
                     return false;
                 }

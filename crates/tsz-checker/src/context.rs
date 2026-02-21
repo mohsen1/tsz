@@ -858,7 +858,7 @@ impl<'a> CheckerContext<'a> {
             let export_assignment_target_name =
                 |sym_binder: &BinderState, sym: &tsz_binder::Symbol| -> Option<String> {
                     let mut decls = sym.declarations.clone();
-                    if !sym.value_declaration.is_none() {
+                    if sym.value_declaration.is_some() {
                         decls.push(sym.value_declaration);
                     }
 
@@ -1014,7 +1014,7 @@ impl<'a> CheckerContext<'a> {
                     }
                     return true;
                 }
-                if !module_decl.body.is_none() {
+                if module_decl.body.is_some() {
                     return contains_namespace_decl_named(
                         arena,
                         module_decl.body,
@@ -1064,7 +1064,7 @@ impl<'a> CheckerContext<'a> {
 
             if node.kind == syntax_kind_ext::MODULE_DECLARATION {
                 if let Some(module_decl) = arena.get_module(node)
-                    && !module_decl.body.is_none()
+                    && module_decl.body.is_some()
                 {
                     collect_export_equals_targets(arena, module_decl.body, out, depth + 1);
                 }

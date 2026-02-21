@@ -79,7 +79,7 @@ impl<'a> Printer<'a> {
         };
 
         self.emit(attr.name);
-        if !attr.initializer.is_none() {
+        if attr.initializer.is_some() {
             self.write("=");
             self.emit(attr.initializer);
         }

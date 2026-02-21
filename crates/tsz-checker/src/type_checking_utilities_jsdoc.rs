@@ -1083,41 +1083,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_jsdoc_param_type(&mut self, jsdoc: &str, param_name: &str) -> Option<TypeId> {
-        let mut in_param = false;
-        let mut param_text = String::new();
-
-        for line in jsdoc.lines() {
-            let trimmed = line.trim().trim_start_matches('*').trim();
-            let effective = Self::skip_backtick_quoted(trimmed);
-
-            if effective.starts_with('@') {
-                if in_param {
-                    if let Some(expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name)
-                    {
-                        return self.jsdoc_type_from_expression(expr);
-                    }
-                    param_text.clear();
-                }
-                if let Some(rest) = effective.strip_prefix("@param") {
-                    in_param = true;
-                    param_text = rest.to_string();
-                } else {
-                    in_param = false;
-                }
-            } else if in_param {
-                param_text.push(' ');
-                param_text.push_str(trimmed);
-            }
-        }
-        if in_param && let Some(expr) = Self::extract_jsdoc_param_type_expr(&param_text, param_name)
-        {
-            return self.jsdoc_type_from_expression(expr);
-        }
-        None
-    }
-
     /// Skip leading backtick-quoted sections in a `JSDoc` line.
     ///
     /// Lines like `` `@param` @param {string} z `` contain backtick-quoted text

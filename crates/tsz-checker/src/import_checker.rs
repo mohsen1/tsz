@@ -832,7 +832,7 @@ impl<'a> CheckerState<'a> {
         let mut is_ambient_external_module = false;
         if let Some(ext) = self.ctx.arena.get_extended(body_idx) {
             let parent_idx = ext.parent;
-            if !parent_idx.is_none()
+            if parent_idx.is_some()
                 && let Some(parent_node) = self.ctx.arena.get(parent_idx)
                 && let Some(module) = self.ctx.arena.get_module(parent_node)
                 && let Some(name_node) = self.ctx.arena.get(module.name)
