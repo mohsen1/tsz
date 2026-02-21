@@ -1445,8 +1445,6 @@ impl<'a> CheckerState<'a> {
                 let right = self.expression_text(access.name_or_argument)?;
                 Some(format!("{left}.{right}"))
             }
-            k if k == SyntaxKind::ThisKeyword as u16 => Some("this".to_string()),
-            k if k == SyntaxKind::SuperKeyword as u16 => Some("super".to_string()),
             _ => None,
         }
     }
