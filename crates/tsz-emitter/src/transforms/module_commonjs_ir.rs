@@ -449,8 +449,26 @@ fn has_export_modifier_from_list(
 
 /// Sanitize module specifier for use as variable name
 pub fn sanitize_module_name(module_spec: &str) -> String {
-    module_spec
+    let raw = module_spec
         .trim_start_matches("./")
-        .trim_start_matches("../")
-        .replace(['/', '-', '.', '@'], "_")
+        .trim_start_matches("../");
+    let mut sanitized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
+    if sanitized.is_empty() {
+        sanitized.push_str("module");
+    }
+    let starts_with_invalid_ident = sanitized
+        .chars()
+        .next()
+        .is_some_and(|c| !(c == '_' || c == '$' || c.is_ascii_alphabetic()));
+    if starts_with_invalid_ident {
+        sanitized.insert(0, '_');
+    }
+    sanitized
 }

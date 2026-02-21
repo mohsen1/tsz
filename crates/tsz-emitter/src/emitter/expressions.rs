@@ -754,6 +754,22 @@ impl<'a> Printer<'a> {
             }
         }
 
+        if self.ctx.is_commonjs()
+            && !self.suppress_commonjs_named_import_substitution
+            && let Some(expr_node) = self.arena.get(call.expression)
+            && let Some(ident) = self.arena.get_identifier(expr_node)
+            && let Some(subst) = self
+                .commonjs_named_import_substitutions
+                .get(&ident.escaped_text)
+        {
+            let subst = subst.clone();
+            self.write("(0, ");
+            self.write(&subst);
+            self.write(")");
+            self.emit_call_arguments(node, call.arguments.as_ref());
+            return;
+        }
+
         self.emit(call.expression);
         // Map the opening `(` to its source position
         if let Some(expr_node) = self.arena.get(call.expression) {
