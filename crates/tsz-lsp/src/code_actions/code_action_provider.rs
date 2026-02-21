@@ -509,9 +509,9 @@ impl<'a> CodeActionProvider<'a> {
             }
 
             let mut resolved = candidate.clone();
-            if usage == ImportUsage::Type {
-                resolved.is_type_only = true;
-            }
+            // By default TS adds standard named imports for missing symbols,
+            // even when usage is type-only, unless explicit preferences request otherwise.
+            resolved.is_type_only = false;
 
             let Some(edits) = self.build_import_edit(root, &resolved) else {
                 continue;
@@ -1318,9 +1318,12 @@ impl<'a> CodeActionProvider<'a> {
                     else {
                         return MergeNamedImport::NoMatch;
                     };
-                    if let Some(edits) =
-                        self.build_named_import_insertion_edits(bindings_idx, named, &spec_text)
-                    {
+                    if let Some(edits) = self.build_named_import_insertion_edits(
+                        bindings_idx,
+                        named,
+                        &candidate.local_name,
+                        &spec_text,
+                    ) {
                         return MergeNamedImport::Edits(edits);
                     }
                     return MergeNamedImport::NoMatch;
@@ -1392,6 +1395,7 @@ impl<'a> CodeActionProvider<'a> {
         &self,
         named_idx: NodeIndex,
         named: &tsz_parser::parser::node::NamedImportsData,
+        local_name: &str,
         spec_text: &str,
     ) -> Option<Vec<TextEdit>> {
         let named_node = self.arena.get(named_idx)?;
@@ -1404,6 +1408,16 @@ impl<'a> CodeActionProvider<'a> {
         let elements = &named.elements.nodes;
 
         if is_single_line {
+            if let Some(insert_offset) =
+                self.single_line_named_import_sorted_insert_offset(elements, local_name)
+            {
+                let insert_pos = self.line_map.offset_to_position(insert_offset, self.source);
+                return Some(vec![TextEdit {
+                    range: Range::new(insert_pos, insert_pos),
+                    new_text: format!("{spec_text}, "),
+                }]);
+            }
+
             let mut insert_offset = close_offset;
             while insert_offset > named_node.pos {
                 let idx = (insert_offset - 1) as usize;
@@ -1490,6 +1504,31 @@ impl<'a> CodeActionProvider<'a> {
             range: Range::new(insert_pos, insert_pos),
             new_text: line,
         }])
+    }
+
+    fn single_line_named_import_sorted_insert_offset(
+        &self,
+        elements: &[NodeIndex],
+        local_name: &str,
+    ) -> Option<u32> {
+        for &spec_idx in elements {
+            let spec_node = self.arena.get(spec_idx)?;
+            let spec = self.arena.get_specifier(spec_node)?;
+            let local_ident = if spec.name.is_some() {
+                spec.name
+            } else {
+                spec.property_name
+            };
+
+            let Some(existing_local_name) = self.arena.get_identifier_text(local_ident) else {
+                continue;
+            };
+            if local_name < existing_local_name {
+                return Some(spec_node.pos);
+            }
+        }
+
+        None
     }
 
     fn build_default_import_named_edit(
