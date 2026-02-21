@@ -1203,6 +1203,10 @@ impl<'a> CheckerState<'a> {
             stmt_idx,
         );
 
+        for &member_idx in &class.members.nodes {
+            self.check_index_signature_parameter_type(member_idx);
+        }
+
         self.check_class_declaration(stmt_idx);
 
         self.check_inherited_properties_against_index_signatures(
