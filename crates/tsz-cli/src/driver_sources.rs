@@ -202,6 +202,7 @@ pub(super) fn parse_reference_no_default_lib_value(line: &str) -> Option<bool> {
 pub(super) struct SourceReadResult {
     pub(super) sources: Vec<SourceEntry>,
     pub(super) dependencies: FxHashMap<PathBuf, FxHashSet<PathBuf>>,
+    pub(super) type_reference_errors: Vec<(PathBuf, String)>,
 }
 
 pub(crate) fn find_tsconfig(cwd: &Path) -> Option<PathBuf> {
@@ -331,6 +332,7 @@ pub(super) fn read_source_files(
     let mut seen = FxHashSet::default();
     let mut pending = VecDeque::new();
     let mut resolution_cache = ModuleResolutionCache::default();
+    let mut type_reference_errors = Vec::new();
     let use_cache = cache.is_some() && changed_paths.is_some();
 
     for path in paths {
@@ -444,6 +446,8 @@ pub(super) fn read_source_files(
                     if seen.insert(canonical.clone()) {
                         pending.push_back(canonical);
                     }
+                } else {
+                    type_reference_errors.push((path.clone(), type_name));
                 }
             }
         }
@@ -495,5 +499,6 @@ pub(super) fn read_source_files(
     Ok(SourceReadResult {
         sources: list,
         dependencies,
+        type_reference_errors,
     })
 }
