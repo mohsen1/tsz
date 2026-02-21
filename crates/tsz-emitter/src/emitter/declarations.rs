@@ -801,8 +801,8 @@ impl<'a> Printer<'a> {
                         .is_some_and(|f| f.body.is_none()),
                     // Index signatures are TypeScript-only
                     k if k == syntax_kind_ext::INDEX_SIGNATURE => true,
-                    // Semicolon class elements produce no output
-                    k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => true,
+                    // Semicolon class elements are preserved in JS output (valid JS syntax)
+                    k if k == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT => false,
                     _ => false,
                 };
                 if is_erased {

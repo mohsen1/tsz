@@ -7,6 +7,13 @@
   leaked past the closing `}`. Fixed by advancing `comment_emit_idx` past remaining
   comments inside the class body boundary after the member loop.
 
+- **Semicolons in class bodies** (+4 tests): `SEMICOLON_CLASS_ELEMENT` nodes were
+  incorrectly marked as erased in the emitter (declarations.rs). Additionally, the
+  parser's `parse_class_members()` consumed trailing semicolons unconditionally via
+  `parse_optional(SemicolonToken)` after each member, which ate the second `;` when
+  consecutive semicolons appeared. Fixed in both emitter (stop erasing) and parser
+  (skip trailing-semicolon consumption when member is itself a `SEMICOLON_CLASS_ELEMENT`).
+
 ### High-Impact Patterns (Not Yet Fixed)
 
 1. **class_iife** (~205 tests, ~123 unique): Classes with downlevel transforms expected
@@ -45,3 +52,24 @@
 
 10. **computed_property** (~20 tests): Computed property names in class/object
     downlevel transform.
+
+11. **"use strict" for AMD/outFile modules** (~1 test): AMD modules should emit
+    `"use strict"` inside the `define()` callback, but the test runner's outFile
+    handling interacts with the compiler's output in complex ways. Needs careful
+    investigation of `module_wrapper.rs` and `cli-transpiler.ts` interaction.
+
+12. **"use strict" for module=preserve** (~3 tests): The test runner adds `"use strict"`
+    for JS inputs when module kind includes Preserve (code 200). This is a test
+    runner behavior (`cli-transpiler.ts` lines 422-426), not an emitter bug per se.
+
+13. **Comment preservation on erased constructs** (~13 tests): Comments like
+    `// error` and `// no error` attached to type-only declarations are emitted
+    even when the declaration is erased. The emitter's `skip_comments_for_erased_node`
+    doesn't fully suppress comments that are interleaved between erased and
+    non-erased members.
+
+14. **accessor keyword transform** (~34 tests): The `accessor` keyword on class
+    fields requires a downlevel transform to getter/setter pairs. Not yet implemented.
+
+15. **`using` statement disposal helpers** (~26 tests): The `using` declaration
+    requires `__addDisposableResource` and related helpers. Not yet implemented.
