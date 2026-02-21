@@ -500,10 +500,9 @@ impl Server {
 
                 let mut replaced = false;
                 for action in &mut response_actions {
-                    let is_annotate_fix_name = action
-                        .get("fixName")
-                        .and_then(serde_json::Value::as_str)
-                        == Some("annotateWithTypeFromJSDoc");
+                    let is_annotate_fix_name =
+                        action.get("fixName").and_then(serde_json::Value::as_str)
+                            == Some("annotateWithTypeFromJSDoc");
                     let is_annotate_description = action
                         .get("description")
                         .and_then(serde_json::Value::as_str)
@@ -1044,9 +1043,7 @@ impl Server {
             let target_line = lines[target_line_idx];
             let target_offset = line_offsets[target_line_idx];
 
-            if has_type_tag
-                && let Some(var_pos) = target_line.find("var ")
-            {
+            if has_type_tag && let Some(var_pos) = target_line.find("var ") {
                 let rest = &target_line[var_pos + 4..];
                 let name_len = rest
                     .chars()
@@ -1080,9 +1077,7 @@ impl Server {
                     let Some(name_rel) = params_text.find(&param_name) else {
                         continue;
                     };
-                    let seg_start = params_text[..name_rel]
-                        .rfind(',')
-                        .map_or(0, |idx| idx + 1);
+                    let seg_start = params_text[..name_rel].rfind(',').map_or(0, |idx| idx + 1);
                     let seg_end = params_text[name_rel..]
                         .find(',')
                         .map_or(params_text.len(), |idx| name_rel + idx);
@@ -1216,7 +1211,8 @@ impl Server {
                 let mut updated_line = lines[target_line].clone();
 
                 if let Some(ty) = type_tag
-                    && let Some(updated) = Self::annotate_variable_or_property_line(&updated_line, &ty)
+                    && let Some(updated) =
+                        Self::annotate_variable_or_property_line(&updated_line, &ty)
                 {
                     updated_line = updated;
                     changed = true;
@@ -1617,7 +1613,10 @@ impl Server {
         (start..lines.len()).find(|&idx| !lines[idx].trim().is_empty())
     }
 
-    fn estimate_jsdoc_infer_action_count(content: &str, start_line_one_based: Option<usize>) -> usize {
+    fn estimate_jsdoc_infer_action_count(
+        content: &str,
+        start_line_one_based: Option<usize>,
+    ) -> usize {
         let lines: Vec<&str> = content.lines().collect();
         if lines.is_empty() {
             return 0;
@@ -1980,12 +1979,7 @@ impl Server {
             if line[name_start..open].contains('<') {
                 return None;
             }
-            return Some(format!(
-                "{}<{}>{}",
-                &line[..open],
-                template,
-                &line[open..]
-            ));
+            return Some(format!("{}<{}>{}", &line[..open], template, &line[open..]));
         }
 
         if line.contains("=>")
