@@ -805,6 +805,18 @@ impl Server {
                             });
                         }
                     }
+                    if first_def.kind == "alias"
+                        && let Some((ctx_start_off, ctx_end_off)) =
+                            Self::import_statement_context_span(
+                                &source_text,
+                                def_start.unwrap_or(0),
+                            )
+                    {
+                        def_json["contextSpan"] = serde_json::json!({
+                            "start": ctx_start_off,
+                            "length": ctx_end_off.saturating_sub(ctx_start_off),
+                        });
+                    }
                     def_json
                 } else {
                     Self::build_fallback_definition(&file, &kind_str, &symbol_name)
@@ -870,6 +882,15 @@ impl Server {
                                 break;
                             }
                         }
+                        if symbol.flags & tsz::binder::symbol_flags::ALIAS != 0
+                            && let Some((ctx_start_off, ctx_end_off)) =
+                                Self::import_statement_context_span(&source_text, start_off)
+                        {
+                            ref_json["contextSpan"] = serde_json::json!({
+                                "start": ctx_start_off,
+                                "length": ctx_end_off.saturating_sub(ctx_start_off),
+                            });
+                        }
                     }
                     ref_json
                 })
@@ -926,6 +947,22 @@ impl Server {
         }
     }
 
+    fn import_statement_context_span(source_text: &str, anchor_offset: u32) -> Option<(u32, u32)> {
+        if source_text.is_empty() {
+            return None;
+        }
+        let idx = (anchor_offset as usize).min(source_text.len().saturating_sub(1));
+        let line_start = source_text[..idx].rfind('\n').map_or(0, |i| i + 1);
+        let line_end = source_text[idx..]
+            .find('\n')
+            .map_or(source_text.len(), |i| idx + i);
+        let line_text = source_text[line_start..line_end].trim_start();
+        if !line_text.starts_with("import ") {
+            return None;
+        }
+        Some((line_start as u32, line_end as u32))
+    }
+
     /// Parse a display string (e.g. "const x: number") into structured displayParts.
     /// This handles common patterns from the `HoverProvider`.
     pub(crate) fn parse_display_string_to_parts(
@@ -937,6 +974,45 @@ impl Server {
 
         // Handle prefixed forms like "(local var) x: type" or "(parameter) x: type"
         let s = display_string;
+
+        // Special-case alias module displays:
+        // "(alias) module \"jquery\"\nimport x"
+        if let Some(rest) = s.strip_prefix("(alias) module ") {
+            let mut parts = vec![
+                serde_json::json!({ "text": "(", "kind": "punctuation" }),
+                serde_json::json!({ "text": "alias", "kind": "text" }),
+                serde_json::json!({ "text": ")", "kind": "punctuation" }),
+                serde_json::json!({ "text": " ", "kind": "space" }),
+                serde_json::json!({ "text": "module", "kind": "keyword" }),
+                serde_json::json!({ "text": " ", "kind": "space" }),
+            ];
+
+            if let Some(after_quote) = rest.strip_prefix('"')
+                && let Some(end_quote_idx) = after_quote.find('"')
+            {
+                let quoted = &after_quote[..end_quote_idx];
+                parts.push(
+                    serde_json::json!({ "text": format!("\"{quoted}\""), "kind": "stringLiteral" }),
+                );
+                let after_module = &after_quote[end_quote_idx + 1..];
+                if let Some(import_rest) = after_module.strip_prefix("\nimport ") {
+                    parts.push(serde_json::json!({ "text": "\n", "kind": "lineBreak" }));
+                    parts.push(serde_json::json!({ "text": "import", "kind": "keyword" }));
+                    parts.push(serde_json::json!({ "text": " ", "kind": "space" }));
+                    if let Some(eq_idx) = import_rest.find(" = ") {
+                        let alias_name = import_rest[..eq_idx].trim();
+                        parts.push(serde_json::json!({ "text": alias_name, "kind": "aliasName" }));
+                        parts.push(serde_json::json!({ "text": import_rest[eq_idx..].to_string(), "kind": "text" }));
+                    } else {
+                        parts.push(
+                            serde_json::json!({ "text": import_rest.trim(), "kind": "aliasName" }),
+                        );
+                    }
+                    return parts;
+                }
+                return parts;
+            }
+        }
 
         // Check for parenthesized prefix like "(local var)" or "(parameter)"
         if let Some(rest) = s.strip_prefix('(')
