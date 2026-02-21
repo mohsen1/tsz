@@ -882,27 +882,32 @@ impl<'a> LoweringPass<'a> {
                     helpers.import_star = true;
                     helpers.create_binding = true;
                 } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node) {
-                    let has_default_named_import = named_imports.elements.nodes.iter().any(|&spec_idx| {
-                        self.arena.get(spec_idx).is_some_and(|spec_node| {
-                            self.arena.get_specifier(spec_node).is_some_and(|spec| {
-                                if spec.is_type_only {
-                                    return false;
-                                }
-                                let import_name = if spec.property_name.is_some() {
-                                    self.arena
-                                        .get(spec.property_name)
-                                        .and_then(|prop_node| self.arena.get_identifier(prop_node))
-                                        .map(|id| id.escaped_text.as_str())
-                                } else {
-                                    self.arena
-                                        .get(spec.name)
-                                        .and_then(|name_node| self.arena.get_identifier(name_node))
-                                        .map(|id| id.escaped_text.as_str())
-                                };
-                                import_name == Some("default")
+                    let has_default_named_import =
+                        named_imports.elements.nodes.iter().any(|&spec_idx| {
+                            self.arena.get(spec_idx).is_some_and(|spec_node| {
+                                self.arena.get_specifier(spec_node).is_some_and(|spec| {
+                                    if spec.is_type_only {
+                                        return false;
+                                    }
+                                    let import_name = if spec.property_name.is_some() {
+                                        self.arena
+                                            .get(spec.property_name)
+                                            .and_then(|prop_node| {
+                                                self.arena.get_identifier(prop_node)
+                                            })
+                                            .map(|id| id.escaped_text.as_str())
+                                    } else {
+                                        self.arena
+                                            .get(spec.name)
+                                            .and_then(|name_node| {
+                                                self.arena.get_identifier(name_node)
+                                            })
+                                            .map(|id| id.escaped_text.as_str())
+                                    };
+                                    import_name == Some("default")
+                                })
                             })
-                        })
-                    });
+                        });
                     if has_default_named_import {
                         let helpers = self.transforms.helpers_mut();
                         helpers.import_default = true;

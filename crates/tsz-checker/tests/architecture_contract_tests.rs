@@ -236,8 +236,8 @@ fn test_direct_call_evaluator_usage_is_quarantined_to_query_boundaries() {
 
 #[test]
 fn test_constructor_checker_uses_solver_anchor_for_abstract_constructor_resolution() {
-    let constructor_checker_src = fs::read_to_string("src/constructor_checker.rs")
-        .expect("failed to read src/constructor_checker.rs");
+    let constructor_checker_src = fs::read_to_string("src/classes/constructor_checker.rs")
+        .expect("failed to read src/classes/constructor_checker.rs");
 
     assert!(
         constructor_checker_src.contains("resolve_abstract_constructor_anchor("),
@@ -251,8 +251,8 @@ fn test_constructor_checker_uses_solver_anchor_for_abstract_constructor_resoluti
 
 #[test]
 fn test_control_flow_avoids_direct_union_interning() {
-    let src = fs::read_to_string("src/control_flow.rs")
-        .expect("failed to read src/control_flow.rs for architecture guard");
+    let src = fs::read_to_string("src/flow/control_flow.rs")
+        .expect("failed to read src/flow/control_flow.rs for architecture guard");
     assert!(
         !src.contains("interner.union("),
         "control_flow should route union construction through query_boundaries/flow_analysis"

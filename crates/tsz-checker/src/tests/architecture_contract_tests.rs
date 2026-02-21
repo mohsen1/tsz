@@ -225,19 +225,19 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         array_type_violations.join(", ")
     );
 
-    let type_literal_src = fs::read_to_string("src/type_literal_checker.rs")
-        .expect("failed to read src/type_literal_checker.rs for architecture guard");
+    let type_literal_src = fs::read_to_string("src/types/type_literal_checker.rs")
+        .expect("failed to read src/types/type_literal_checker.rs for architecture guard");
     assert!(
         !type_literal_src.contains("TypeData::ReadonlyType"),
         "type_literal_checker should use solver readonly constructor APIs, not TypeData::ReadonlyType"
     );
 
-    let mut type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
-        .expect("failed to read src/state_type_resolution.rs for architecture guard");
+    let mut type_resolution_src = fs::read_to_string("src/state/state_type_resolution.rs")
+        .expect("failed to read src/state/state_type_resolution.rs for architecture guard");
     // Include split-off module that is part of the state_type_resolution logical module
     type_resolution_src.push_str(
-        &fs::read_to_string("src/state_type_resolution_module.rs")
-            .expect("failed to read src/state_type_resolution_module.rs"),
+        &fs::read_to_string("src/state/state_type_resolution_module.rs")
+            .expect("failed to read src/state/state_type_resolution_module.rs"),
     );
     assert!(
         !type_resolution_src.contains("TypeData::ReadonlyType"),
@@ -248,8 +248,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_resolution should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
-    let type_node_src =
-        fs::read_to_string("src/type_node.rs").expect("failed to read src/type_node.rs");
+    let type_node_src = fs::read_to_string("src/types/type_node.rs")
+        .expect("failed to read src/types/type_node.rs");
     assert!(
         !type_node_src.contains("TypeData::ReadonlyType"),
         "type_node should use solver readonly constructor API, not TypeData::ReadonlyType"
@@ -286,8 +286,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "context should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
-    let queries_src = fs::read_to_string("src/type_checking_queries.rs")
-        .expect("failed to read src/type_checking_queries.rs for architecture guard");
+    let queries_src = fs::read_to_string("src/types/type_checking_queries.rs")
+        .expect("failed to read src/types/type_checking_queries.rs for architecture guard");
     assert!(
         !queries_src.contains("self.ctx.types.intern(TypeData::Lazy("),
         "type_checking_queries should use solver lazy constructor API, not direct TypeData::Lazy interning"
@@ -297,30 +297,31 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "type_checking_queries should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
     );
 
-    let state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
-        .expect("failed to read src/state_checking_members.rs for architecture guard");
+    let state_checking_members_src = fs::read_to_string("src/state/state_checking_members.rs")
+        .expect("failed to read src/state/state_checking_members.rs for architecture guard");
     assert!(
         !state_checking_members_src.contains("TypeData::TypeParameter"),
         "state_checking_members should use solver type_param constructor API, not TypeData::TypeParameter"
     );
 
-    let control_flow_narrowing_src = fs::read_to_string("src/control_flow_narrowing.rs")
-        .expect("failed to read src/control_flow_narrowing.rs for architecture guard");
+    let control_flow_narrowing_src = fs::read_to_string("src/flow/control_flow_narrowing.rs")
+        .expect("failed to read src/flow/control_flow_narrowing.rs for architecture guard");
     assert!(
         !control_flow_narrowing_src.contains("intern(TypeData::Lazy("),
         "control_flow_narrowing should use solver lazy constructor API, not direct TypeData::Lazy interning"
     );
 
-    let mut state_type_analysis_src = fs::read_to_string("src/state_type_analysis.rs")
-        .expect("failed to read src/state_type_analysis.rs for architecture guard");
+    let mut state_type_analysis_src = fs::read_to_string("src/state/state_type_analysis.rs")
+        .expect("failed to read src/state/state_type_analysis.rs for architecture guard");
     // Include split-off modules that are part of the state_type_analysis logical module
     state_type_analysis_src.push_str(
-        &fs::read_to_string("src/state_type_analysis_computed.rs")
-            .expect("failed to read src/state_type_analysis_computed.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_type_analysis_computed.rs").expect(
+            "failed to read src/state/state_type_analysis_computed.rs for architecture guard",
+        ),
     );
     state_type_analysis_src.push_str(
-        &fs::read_to_string("src/state_type_analysis_computed_helpers.rs").expect(
-            "failed to read src/state_type_analysis_computed_helpers.rs for architecture guard",
+        &fs::read_to_string("src/state/state_type_analysis_computed_helpers.rs").expect(
+            "failed to read src/state/state_type_analysis_computed_helpers.rs for architecture guard",
         ),
     );
     assert!(
@@ -344,8 +345,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_analysis contextual-literal precondition setup should route through ensure_relation_input_ready"
     );
 
-    let function_type_src = fs::read_to_string("src/function_type.rs")
-        .expect("failed to read src/function_type.rs for architecture guard");
+    let function_type_src = fs::read_to_string("src/types/function_type.rs")
+        .expect("failed to read src/types/function_type.rs for architecture guard");
     assert!(
         !function_type_src.contains("intern(TypeData::TypeParameter("),
         "function_type should use solver type_param constructor API, not TypeData::TypeParameter"
@@ -382,12 +383,13 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "assignability_checker should use query_boundaries::assignability::is_relation_cacheable for relation-cache gating"
     );
 
-    let mut state_type_environment_src = fs::read_to_string("src/state_type_environment.rs")
-        .expect("failed to read src/state_type_environment.rs for architecture guard");
+    let mut state_type_environment_src = fs::read_to_string("src/state/state_type_environment.rs")
+        .expect("failed to read src/state/state_type_environment.rs for architecture guard");
     // Include split-off module that is part of the state_type_environment logical module
     state_type_environment_src.push_str(
-        &fs::read_to_string("src/state_type_environment_lazy.rs")
-            .expect("failed to read src/state_type_environment_lazy.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_type_environment_lazy.rs").expect(
+            "failed to read src/state/state_type_environment_lazy.rs for architecture guard",
+        ),
     );
     assert!(
         !state_type_environment_src.contains("intern(TypeData::Enum("),
@@ -434,8 +436,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "state_type_environment should centralize enum DefId precondition resolution in a dedicated helper"
     );
 
-    let type_computation_complex_src = fs::read_to_string("src/type_computation_complex.rs")
-        .expect("failed to read src/type_computation_complex.rs for architecture guard");
+    let type_computation_complex_src = fs::read_to_string("src/types/type_computation_complex.rs")
+        .expect("failed to read src/types/type_computation_complex.rs for architecture guard");
     assert!(
         !type_computation_complex_src.contains("intern(tsz_solver::TypeData::TypeParameter("),
         "type_computation_complex should use solver type_param constructor API, not direct TypeData::TypeParameter interning"
@@ -565,8 +567,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "assignment checker should not manually orchestrate application-symbol preconditions"
     );
 
-    let type_checking_src = fs::read_to_string("src/type_checking.rs")
-        .expect("failed to read src/type_checking.rs for architecture guard");
+    let type_checking_src = fs::read_to_string("src/types/type_checking.rs")
+        .expect("failed to read src/types/type_checking.rs for architecture guard");
     assert!(
         type_checking_src.contains("check_assignable_or_report("),
         "binding/default-value assignability should route through check_assignable_or_report"
@@ -587,8 +589,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "parameter initializer assignability should route through check_assignable_or_report"
     );
 
-    let control_flow_assignment_src = fs::read_to_string("src/control_flow_assignment.rs")
-        .expect("failed to read src/control_flow_assignment.rs for architecture guard");
+    let control_flow_assignment_src = fs::read_to_string("src/flow/control_flow_assignment.rs")
+        .expect("failed to read src/flow/control_flow_assignment.rs for architecture guard");
     assert!(
         control_flow_assignment_src.contains("is_assignable_to_strict_null("),
         "control-flow assignment nullish compatibility checks should route through checker assignability gateway helpers"
@@ -621,8 +623,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !control_flow_assignment_src.contains("tsz_solver::type_queries::"),
         "control-flow assignment should not call solver type_queries directly; use flow_analysis boundary helpers"
     );
-    let control_flow_src = fs::read_to_string("src/control_flow.rs")
-        .expect("failed to read src/control_flow.rs for architecture guard");
+    let control_flow_src = fs::read_to_string("src/flow/control_flow.rs")
+        .expect("failed to read src/flow/control_flow.rs for architecture guard");
     assert!(
         control_flow_src.contains("query::is_assignable_with_env("),
         "FlowAnalyzer assignability should route through flow_analysis boundary helpers"
@@ -631,8 +633,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         control_flow_src.contains("query::is_assignable_strict_null("),
         "FlowAnalyzer strict-null assignability should route through flow_analysis boundary helpers"
     );
-    let flow_analysis_definite_src = fs::read_to_string("src/flow_analysis_definite.rs")
-        .expect("failed to read src/flow_analysis_definite.rs for architecture guard");
+    let flow_analysis_definite_src = fs::read_to_string("src/flow/flow_analysis_definite.rs")
+        .expect("failed to read src/flow/flow_analysis_definite.rs for architecture guard");
     assert!(
         flow_analysis_definite_src.contains("find_property_in_object_by_str("),
         "flow_analysis_definite property lookup should route through definite_assignment query boundaries"
@@ -642,37 +644,37 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "flow_analysis_definite should not call solver type_queries directly; use definite_assignment/flow_analysis query boundaries"
     );
 
-    let mut state_type_resolution_src = fs::read_to_string("src/state_type_resolution.rs")
-        .expect("failed to read src/state_type_resolution.rs for architecture guard");
+    let mut state_type_resolution_src = fs::read_to_string("src/state/state_type_resolution.rs")
+        .expect("failed to read src/state/state_type_resolution.rs for architecture guard");
     // Include split-off module that is part of the state_type_resolution logical module
     state_type_resolution_src.push_str(
-        &fs::read_to_string("src/state_type_resolution_module.rs")
-            .expect("failed to read src/state_type_resolution_module.rs"),
+        &fs::read_to_string("src/state/state_type_resolution_module.rs")
+            .expect("failed to read src/state/state_type_resolution_module.rs"),
     );
     assert!(
         state_type_resolution_src.contains("ensure_relation_input_ready("),
         "state_type_resolution relation precondition setup should route through ensure_relation_input_ready"
     );
 
-    let mut state_checking_src = fs::read_to_string("src/state_checking.rs")
-        .expect("failed to read src/state_checking.rs for architecture guard");
+    let mut state_checking_src = fs::read_to_string("src/state/state_checking.rs")
+        .expect("failed to read src/state/state_checking.rs for architecture guard");
     // Include split-off modules that are part of the state_checking logical module
     state_checking_src.push_str(
-        &fs::read_to_string("src/state_variable_checking.rs")
-            .expect("failed to read src/state_variable_checking.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_variable_checking.rs")
+            .expect("failed to read src/state/state_variable_checking.rs for architecture guard"),
     );
     state_checking_src.push_str(
-        &fs::read_to_string("src/state_property_checking.rs")
-            .expect("failed to read src/state_property_checking.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_property_checking.rs")
+            .expect("failed to read src/state/state_property_checking.rs for architecture guard"),
     );
     state_checking_src.push_str(
-        &fs::read_to_string("src/state_variable_checking_destructuring.rs").expect(
-            "failed to read src/state_variable_checking_destructuring.rs for architecture guard",
+        &fs::read_to_string("src/state/state_variable_checking_destructuring.rs").expect(
+            "failed to read src/state/state_variable_checking_destructuring.rs for architecture guard",
         ),
     );
     state_checking_src.push_str(
-        &fs::read_to_string("src/state_class_checking.rs")
-            .expect("failed to read src/state_class_checking.rs for architecture guard"),
+        &fs::read_to_string("src/state/state_class_checking.rs")
+            .expect("failed to read src/state/state_class_checking.rs for architecture guard"),
     );
     assert!(
         state_checking_src.contains("check_assignable_or_report(")
@@ -691,8 +693,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !state_checking_src.contains("ensure_application_symbols_resolved("),
         "state_checking should not manually orchestrate application-symbol preconditions"
     );
-    let state_property_checking_src = fs::read_to_string("src/state_property_checking.rs")
-        .expect("failed to read src/state_property_checking.rs for architecture guard");
+    let state_property_checking_src = fs::read_to_string("src/state/state_property_checking.rs")
+        .expect("failed to read src/state/state_property_checking.rs for architecture guard");
     assert!(
         !state_property_checking_src.contains("self.ctx.types.is_subtype_of("),
         "state_property_checking subtype checks should route through checker gateway helpers, not direct interner calls"
@@ -702,15 +704,17 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_property_checking should route solver type-query access through query_boundaries::state_checking"
     );
     let state_variable_checking_destructuring_src = fs::read_to_string(
-        "src/state_variable_checking_destructuring.rs",
+        "src/state/state_variable_checking_destructuring.rs",
     )
-    .expect("failed to read src/state_variable_checking_destructuring.rs for architecture guard");
-    let state_variable_checking_src = fs::read_to_string("src/state_variable_checking.rs")
-        .expect("failed to read src/state_variable_checking.rs for architecture guard");
-    let state_class_checking_src = fs::read_to_string("src/state_class_checking.rs")
-        .expect("failed to read src/state_class_checking.rs for architecture guard");
-    let property_access_type_src = fs::read_to_string("src/property_access_type.rs")
-        .expect("failed to read src/property_access_type.rs for architecture guard");
+    .expect(
+        "failed to read src/state/state_variable_checking_destructuring.rs for architecture guard",
+    );
+    let state_variable_checking_src = fs::read_to_string("src/state/state_variable_checking.rs")
+        .expect("failed to read src/state/state_variable_checking.rs for architecture guard");
+    let state_class_checking_src = fs::read_to_string("src/state/state_class_checking.rs")
+        .expect("failed to read src/state/state_class_checking.rs for architecture guard");
+    let property_access_type_src = fs::read_to_string("src/types/property_access_type.rs")
+        .expect("failed to read src/types/property_access_type.rs for architecture guard");
     let property_checker_src = fs::read_to_string("src/property_checker.rs")
         .expect("failed to read src/property_checker.rs for architecture guard");
     assert!(
@@ -784,8 +788,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "assignability_checker subtype checks should route through checker/solver query gateways, not direct interner calls"
     );
 
-    let mut state_checking_members_src = fs::read_to_string("src/state_checking_members.rs")
-        .expect("failed to read src/state_checking_members.rs for architecture guard");
+    let mut state_checking_members_src = fs::read_to_string("src/state/state_checking_members.rs")
+        .expect("failed to read src/state/state_checking_members.rs for architecture guard");
     state_checking_members_src.push_str(
         &fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
             .expect("failed to read ambient_signature_checks.rs for architecture guard"),
@@ -811,15 +815,15 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_checking_members assignment-style checks should route through check_assignable_or_report"
     );
 
-    let type_computation_src = fs::read_to_string("src/type_computation.rs")
-        .expect("failed to read src/type_computation.rs for architecture guard");
+    let type_computation_src = fs::read_to_string("src/types/type_computation.rs")
+        .expect("failed to read src/types/type_computation.rs for architecture guard");
     assert!(
         type_computation_src.contains("check_assignable_or_report("),
         "type_computation mismatch checks should route through check_assignable_or_report"
     );
 
-    let type_computation_complex_src = fs::read_to_string("src/type_computation_complex.rs")
-        .expect("failed to read src/type_computation_complex.rs for architecture guard");
+    let type_computation_complex_src = fs::read_to_string("src/types/type_computation_complex.rs")
+        .expect("failed to read src/types/type_computation_complex.rs for architecture guard");
     assert!(
         type_computation_complex_src.contains("check_argument_assignable_or_report("),
         "type_computation_complex argument mismatch checks should route through check_argument_assignable_or_report"
@@ -837,8 +841,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !type_computation_complex_src.contains("ensure_application_symbols_resolved("),
         "type_computation_complex should not manually orchestrate application-symbol preconditions; use centralized relation precondition helpers"
     );
-    let type_computation_access_src = fs::read_to_string("src/type_computation_access.rs")
-        .expect("failed to read src/type_computation_access.rs for architecture guard");
+    let type_computation_access_src = fs::read_to_string("src/types/type_computation_access.rs")
+        .expect("failed to read src/types/type_computation_access.rs for architecture guard");
     assert!(
         type_computation_access_src.contains("query_boundaries::type_computation_access::"),
         "type_computation_access solver queries should route through query_boundaries::type_computation_access"
@@ -872,8 +876,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "dispatch should not manually orchestrate application-symbol preconditions"
     );
 
-    let class_checker_src = fs::read_to_string("src/class_checker.rs")
-        .expect("failed to read src/class_checker.rs for architecture guard");
+    let class_checker_src = fs::read_to_string("src/classes/class_checker.rs")
+        .expect("failed to read src/classes/class_checker.rs for architecture guard");
     assert!(
         class_checker_src.contains("should_report_member_type_mismatch(")
             && class_checker_src.contains("should_report_member_type_mismatch_bivariant("),
@@ -1124,8 +1128,8 @@ fn test_checker_sources_forbid_solver_internal_imports_typekey_usage_and_raw_int
 
 #[test]
 fn test_constructor_checker_uses_solver_anchor_for_abstract_constructor_resolution() {
-    let constructor_checker_src = fs::read_to_string("src/constructor_checker.rs")
-        .expect("failed to read src/constructor_checker.rs");
+    let constructor_checker_src = fs::read_to_string("src/classes/constructor_checker.rs")
+        .expect("failed to read src/classes/constructor_checker.rs");
 
     assert!(
         constructor_checker_src.contains("resolve_abstract_constructor_anchor("),
