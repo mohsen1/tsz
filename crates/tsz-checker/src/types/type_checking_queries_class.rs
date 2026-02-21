@@ -77,8 +77,8 @@ impl<'a> CheckerState<'a> {
         };
 
         // Collect type parameter names and their declaration name NodeIndices
-        let mut params: Vec<(String, NodeIndex)> = Vec::new();
-        for &param_idx in &list.nodes {
+        let mut params: Vec<(String, NodeIndex, bool)> = Vec::new();
+        for (param_pos, &param_idx) in list.nodes.iter().enumerate() {
             let Some(node) = self.ctx.arena.get(param_idx) else {
                 continue;
             };
@@ -93,7 +93,7 @@ impl<'a> CheckerState<'a> {
                 .map(|id_data| id_data.escaped_text.clone())
                 .unwrap_or_default();
             if !name.is_empty() && !name.starts_with('_') {
-                params.push((name, data.name));
+                params.push((name, data.name, list.nodes.len() == 1 && param_pos == 0));
             }
         }
 
@@ -124,7 +124,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx)| *idx).collect();
+        let decl_indices: Vec<NodeIndex> = params.iter().map(|(_, idx, _)| *idx).collect();
         let mut used = vec![false; params.len()];
 
         // Scan all nodes in the arena for identifiers within the declaration range
@@ -145,7 +145,7 @@ impl<'a> CheckerState<'a> {
                 && let Some(ident) = self.ctx.arena.get_identifier(node)
             {
                 let name_str = ident.escaped_text.as_str();
-                for (j, (param_name, _)) in params.iter().enumerate() {
+                for (j, (param_name, _, _)) in params.iter().enumerate() {
                     if !used[j] && param_name == name_str {
                         used[j] = true;
                     }
@@ -155,13 +155,17 @@ impl<'a> CheckerState<'a> {
 
         // Emit TS6133 for unused type parameters
         let file_name = self.ctx.file_name.clone();
-        for (j, (name, decl_idx)) in params.iter().enumerate() {
+        for (j, (name, decl_idx, use_list_anchor)) in params.iter().enumerate() {
             if used[j] {
                 continue;
             }
             if let Some(name_node) = self.ctx.arena.get(*decl_idx) {
-                // Match tsc: TS6133 on unused type parameters anchors at the '<' token.
-                let start = name_node.pos.saturating_sub(1);
+                let start = if *use_list_anchor {
+                    // Match tsc: single type-parameter lists anchor at '<'.
+                    name_node.pos.saturating_sub(1)
+                } else {
+                    name_node.pos
+                };
                 let length = name_node.end.saturating_sub(name_node.pos);
                 self.ctx.push_diagnostic(crate::diagnostics::Diagnostic {
                     file: file_name.clone(),
