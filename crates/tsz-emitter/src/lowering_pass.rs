@@ -74,6 +74,9 @@ pub struct LoweringPass<'a> {
     visit_depth: u32,
     /// Track declared names for namespace/class/enum/function merging detection
     declared_names: rustc_hash::FxHashSet<String>,
+    /// Nesting depth of namespace/module declaration bodies.
+    /// CommonJS export directives should only be forced at top-level (depth == 0).
+    namespace_depth: u32,
     /// Depth of arrow functions that capture 'this'
     /// When > 0, 'this' references should be substituted with '_this'
     this_capture_level: u32,
@@ -116,6 +119,7 @@ impl<'a> LoweringPass<'a> {
             has_export_assignment: false,
             visit_depth: 0,
             declared_names: rustc_hash::FxHashSet::default(),
+            namespace_depth: 0,
             this_capture_level: 0,
             arguments_capture_level: 0,
             current_class_is_derived: false,
@@ -1016,12 +1020,13 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
+        let force_module_export = self.namespace_depth == 0;
         if let Some(export_node) = self.arena.get(export_decl.export_clause) {
             if export_node.kind == syntax_kind_ext::CLASS_DECLARATION {
                 self.lower_class_declaration(
                     export_node,
                     export_decl.export_clause,
-                    true,
+                    force_module_export,
                     export_decl.is_default_export,
                 );
                 return;
@@ -1031,24 +1036,36 @@ impl<'a> LoweringPass<'a> {
                 self.lower_function_declaration(
                     export_node,
                     export_decl.export_clause,
-                    true,
+                    force_module_export,
                     export_decl.is_default_export,
                 );
                 return;
             }
 
             if export_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
-                self.lower_variable_statement(export_node, export_decl.export_clause, true);
+                self.lower_variable_statement(
+                    export_node,
+                    export_decl.export_clause,
+                    force_module_export,
+                );
                 return;
             }
 
             if export_node.kind == syntax_kind_ext::ENUM_DECLARATION {
-                self.lower_enum_declaration(export_node, export_decl.export_clause, true);
+                self.lower_enum_declaration(
+                    export_node,
+                    export_decl.export_clause,
+                    force_module_export,
+                );
                 return;
             }
 
             if export_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                self.lower_module_declaration(export_node, export_decl.export_clause, true);
+                self.lower_module_declaration(
+                    export_node,
+                    export_decl.export_clause,
+                    force_module_export,
+                );
                 return;
             }
         }
@@ -1507,7 +1524,9 @@ impl<'a> LoweringPass<'a> {
 
         // Recurse into namespace body to detect helpers needed by nested declarations
         // (e.g., classes with extends need __extends, async functions need __awaiter)
+        self.namespace_depth += 1;
         self.visit_module_body(module_decl.body);
+        self.namespace_depth -= 1;
     }
 
     /// Recursively visit module/namespace body statements to detect helper requirements

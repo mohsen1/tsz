@@ -11,12 +11,15 @@ impl<'a> Printer<'a> {
     fn next_commonjs_module_var(&mut self, module_spec: &str) -> String {
         use crate::transforms::module_commonjs;
 
-        self.ctx.module_state.module_temp_counter += 1;
-        format!(
-            "{}_{}",
-            module_commonjs::sanitize_module_name(module_spec),
-            self.ctx.module_state.module_temp_counter
-        )
+        let base = module_commonjs::sanitize_module_name(module_spec);
+        let next = self
+            .ctx
+            .module_state
+            .module_temp_counters
+            .entry(base.clone())
+            .and_modify(|n| *n += 1)
+            .or_insert(1);
+        format!("{base}_{next}")
     }
 
     pub(super) fn emit_commonjs_export<F>(

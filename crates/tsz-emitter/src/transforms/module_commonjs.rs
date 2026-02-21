@@ -575,10 +575,17 @@ fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> 
 /// Sanitize module specifier for use as variable name
 /// "./foo/bar" -> "`foo_bar`"
 pub fn sanitize_module_name(module_spec: &str) -> String {
-    let mut sanitized = module_spec
+    let raw = module_spec
         .trim_start_matches("./")
-        .trim_start_matches("../")
-        .replace(['/', '-', '.', '@'], "_");
+        .trim_start_matches("../");
+    let mut sanitized = String::with_capacity(raw.len());
+    for ch in raw.chars() {
+        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+        } else {
+            sanitized.push('_');
+        }
+    }
 
     if sanitized.is_empty() {
         sanitized.push_str("module");

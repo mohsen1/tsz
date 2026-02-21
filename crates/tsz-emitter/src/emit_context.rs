@@ -11,6 +11,7 @@
 use crate::emitter::PrinterOptions;
 use crate::transforms::block_scoping_es5::BlockScopeState;
 use crate::transforms::private_fields_es5::PrivateFieldState;
+use rustc_hash::FxHashMap;
 use tsz_common::common::{ModuleKind, NewLineKind, ScriptTarget};
 
 /// Flags that control emission behavior for the current scope/branch
@@ -149,6 +150,10 @@ pub struct ModuleTransformState {
 
     /// Counter for generated CommonJS module temporary bindings (`foo_1`, `foo_2`, ...).
     pub module_temp_counter: u32,
+
+    /// Per-base counters for generated CommonJS module bindings.
+    /// Keeps numbering stable by module base name (e.g., `foo_1`, `bar_1`, `foo_2`).
+    pub module_temp_counters: FxHashMap<String, u32>,
 }
 
 impl ModuleTransformState {
@@ -162,6 +167,7 @@ impl ModuleTransformState {
         self.commonjs_mode = false;
         self.pending_exports.clear();
         self.module_temp_counter = 0;
+        self.module_temp_counters.clear();
     }
 
     /// Add an export name
