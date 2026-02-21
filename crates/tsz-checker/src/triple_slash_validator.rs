@@ -6,9 +6,8 @@ use std::path::Path;
 
 /// Extract triple-slash reference paths from source text
 ///
-/// Returns a vector of (path, `line_number`, `path_offset_in_line`) tuples for each
-/// reference directive found. `path_offset_in_line` is the byte offset within the
-/// **untrimmed** line where the quoted path value starts (the opening quote character).
+/// Returns a vector of (path, `line_number`, `quote_offset`) tuples for each reference directive found.
+/// `quote_offset` is the byte offset of the value start (after the opening quote) within the original (untrimmed) line.
 pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
     let mut references = Vec::new();
 
@@ -25,7 +24,7 @@ pub fn extract_reference_paths(source: &str) -> Vec<(String, usize, usize)> {
             continue;
         }
 
-        // Extract the path value between quotes, along with offset in the untrimmed line
+        // Extract the path value between quotes, with offset in the original line
         if let Some((path, offset)) = extract_quoted_path_with_offset(line) {
             references.push((path, line_num, offset));
         }
@@ -110,23 +109,32 @@ fn extract_quoted_attr(line: &str, attr: &str) -> Option<String> {
     Some(after_open_quote[..end_pos].to_string())
 }
 
-/// Extract path and its byte offset from a reference directive line.
-/// Returns (`path_value`, `offset_of_opening_quote`) relative to the line start.
+/// Extract path with byte offset of the value start within the line
 fn extract_quoted_path_with_offset(line: &str) -> Option<(String, usize)> {
-    let attr = "path";
-    let idx = line.find(attr)?;
-    let after_attr = &line[idx + attr.len()..];
+    extract_quoted_attr_with_offset(line, "path")
+}
+
+/// Extract the value and byte offset of the value start (after the opening quote).
+fn extract_quoted_attr_with_offset(line: &str, attr: &str) -> Option<(String, usize)> {
+    let attr_idx = line.find(attr)?;
+    let after_attr = &line[attr_idx + attr.len()..];
+
     let eq_idx = after_attr.find('=')?;
     let after_equals = &after_attr[eq_idx + 1..];
-    let trimmed_start = after_equals.len() - after_equals.trim_start().len();
-    let first_char = after_equals.trim_start().chars().next()?;
+    let trimmed = after_equals.trim_start();
+
+    let first_char = trimmed.chars().next()?;
     if first_char != '"' && first_char != '\'' {
         return None;
     }
-    let quote_offset = idx + attr.len() + eq_idx + 1 + trimmed_start;
-    let after_open_quote = &after_equals[trimmed_start + 1..];
+
+    // Byte offset of the character after the opening quote (the value start)
+    let value_offset =
+        attr_idx + attr.len() + eq_idx + 1 + (after_equals.len() - trimmed.len()) + 1;
+
+    let after_open_quote = &trimmed[1..];
     let end_pos = after_open_quote.find(first_char)?;
-    Some((after_open_quote[..end_pos].to_string(), quote_offset))
+    Some((after_open_quote[..end_pos].to_string(), value_offset))
 }
 
 /// Check if a referenced file exists relative to the source file
