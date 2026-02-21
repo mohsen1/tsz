@@ -1,7 +1,7 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (7th audit)
-**Branch**: main (commit 9c7e23019)
+**Date**: 2026-02-21 (8th audit)
+**Branch**: main (commit ae73e6c93)
 **Status**: ALL CLEAR — no violations found
 
 ---
@@ -53,7 +53,7 @@ All checker files are under the 2000-line limit. Eleven files are approaching th
 
 Total checker codebase: ~127 files, ~106,405 LOC.
 
-No change from 6th audit — no new code has been added since then.
+No change from 7th audit — no new code has been added since then.
 
 ### 4. Cross-Layer Imports — CLEAN
 
@@ -87,16 +87,15 @@ The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solv
 
 ## CI Health
 
-Latest CI run (9c7e23019) completed successfully. Three older runs remain in-progress (likely stuck/slow runners).
+Latest CI run (ae73e6c93) completed successfully. All recent runs green.
 
 | Run | Status | Description |
 |-----|--------|-------------|
+| 22264779796 | completed/success | docs(arch): 7th architecture audit |
 | 22264708570 | completed/success | docs(arch): 6th architecture audit |
 | 22264633879 | completed/success | docs(arch): 5th architecture audit |
 | 22264560766 | completed/success | docs: automated README metrics update |
 | 22264546925 | in_progress | docs(arch): update audit report and fix stale TypeKeys comment |
-| 22264518667 | in_progress | perf(checker): cache lib type-name resolution results |
-| 22264427753 | in_progress | refactor(arch): move collect_infer_bindings from tsz-lowering to solver |
 
 ---
 
@@ -107,4 +106,4 @@ Latest CI run (9c7e23019) completed successfully. Three older runs remain in-pro
    - `member_declaration_checks.rs` (1,994 lines) — consider extracting method signature validation
    - `type_computation_call.rs` (1,994 lines) — consider extracting overload resolution logic
 2. **Monitor 8 additional near-threshold files** in the 1,803-1,972 range for growth.
-3. **Investigate stuck CI runs**: Three runs (22264546925, 22264518667, 22264427753) have been in-progress for 14-22+ minutes. Consider canceling if they remain stuck.
+3. **Investigate stuck CI run**: Run 22264546925 remains in-progress. Consider canceling if it remains stuck.
