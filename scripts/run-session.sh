@@ -30,14 +30,30 @@ declare -a RUNNERS=()
 declare -a DRAIN_KEYS=()    # runner specs that are drained
 declare -a DRAIN_EPOCHS=()  # epoch when cooldown expires (parallel with DRAIN_KEYS)
 
+# ─── Colors ────────────────────────────────────────────────────────────────
+if [[ -t 2 ]]; then
+  C_RESET=$'\033[0m'  C_DIM=$'\033[2m'  C_BOLD=$'\033[1m'
+  C_RED=$'\033[31m'   C_GREEN=$'\033[32m' C_YELLOW=$'\033[33m'
+  C_CYAN=$'\033[36m'  C_MAGENTA=$'\033[35m'
+else
+  C_RESET=""  C_DIM=""  C_BOLD=""
+  C_RED=""    C_GREEN="" C_YELLOW=""
+  C_CYAN=""   C_MAGENTA=""
+fi
+
 # ─── Logging ─────────────────────────────────────────────────────────────────
 LOG_FILE=""   # set per-run
 
 _ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
-log()  { local line="[$(_ts)] $*"; echo "$line" >&2; [[ -n "$LOG_FILE" ]] && echo "$line" >> "$LOG_FILE" || true; }
-warn() { log "WARN: $*"; }
-err()  { log "ERROR: $*"; }
+# Terminal gets color, log file gets plain text
+log() {
+  local line="[$(_ts)] $*"
+  echo "${C_DIM}${line}${C_RESET}" >&2
+  [[ -n "$LOG_FILE" ]] && echo "$line" >> "$LOG_FILE" || true
+}
+warn() { echo "${C_YELLOW}[$(_ts)] WARN: $*${C_RESET}" >&2; [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] WARN: $*" >> "$LOG_FILE" || true; }
+err()  { echo "${C_RED}[$(_ts)] ERROR: $*${C_RESET}" >&2; [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] ERROR: $*" >> "$LOG_FILE" || true; }
 die()  { err "$*"; exit 1; }
 
 # ─── Usage ───────────────────────────────────────────────────────────────────
@@ -89,15 +105,36 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# ─── Timeout helper (cross-platform) ────────────────────────────────────────
-run_with_timeout() {
-  local seconds="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$seconds" "$@"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    gtimeout "$seconds" "$@"
+# ─── Resolve timeout binary (once, at startup) ──────────────────────────────
+TIMEOUT_BIN=""
+if command -v timeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="timeout"
+elif command -v gtimeout >/dev/null 2>&1; then
+  TIMEOUT_BIN="gtimeout"
+fi
+
+# ─── Run with PTY + capture (cross-platform) ─────────────────────────────────
+# Runs a command under `script` so the child gets a real PTY (output streams
+# live, Ctrl+C propagates).  Captured output is written to $1.
+# Usage: run_with_capture <outfile> <timeout_secs> <cmd...>
+run_with_capture() {
+  local outfile="$1" secs="$2"; shift 2
+
+  # Build the command with timeout prefix
+  local full_cmd=()
+  if [[ -n "$TIMEOUT_BIN" ]]; then
+    full_cmd+=("$TIMEOUT_BIN" "$secs")
+  fi
+  full_cmd+=("$@")
+
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    # macOS: script -q <file> <command> [args...]
+    script -q "$outfile" "${full_cmd[@]}"
   else
-    perl -e 'alarm shift @ARGV; exec @ARGV; die "exec failed: $!";' "$seconds" "$@"
+    # Linux: script -qe -c "<command>" <file>
+    local cmd_str
+    cmd_str="$(printf '%q ' "${full_cmd[@]}")"
+    script -qe -c "$cmd_str" "$outfile"
   fi
 }
 
@@ -255,7 +292,8 @@ mark_drained() {
 
   local until_str
   until_str="$(date -r "$expire" '+%H:%M:%S' 2>/dev/null || echo "~$((seconds/60))m")"
-  log "Marked $(runner_label "$key") as drained for ${seconds}s (until $until_str)"
+  echo "${C_MAGENTA}⏸ Marked $(runner_label "$key") as drained for ${seconds}s (until $until_str)${C_RESET}" >&2
+  [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] Marked $(runner_label "$key") as drained for ${seconds}s (until $until_str)" >> "$LOG_FILE" || true
 }
 
 # Returns seconds until the nearest cooldown expires, or 0 if none drained.
@@ -330,7 +368,8 @@ try_runner() {
   mkdir -p "$day_dir"
   LOG_FILE="$day_dir/run-$(date '+%H%M%S')-${type}.log"
 
-  log "Starting runner: $label"
+  echo "${C_GREEN}${C_BOLD}▶ Starting runner: $label${C_RESET}" >&2
+  [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] Starting runner: $label" >> "$LOG_FILE" || true
   log "Prompt (first 200 chars): ${prompt:0:200}..."
 
   local output_tmp
@@ -348,9 +387,9 @@ try_runner() {
     fi
 
     set +e
-    CLAUDE_CONFIG_DIR="$path" run_with_timeout "$TIMEOUT_SECONDS" \
-      "${cmd[@]}" 2>&1 | tee "$output_tmp"
-    exit_code=${PIPESTATUS[0]}
+    CLAUDE_CONFIG_DIR="$path" run_with_capture "$output_tmp" \
+      "$TIMEOUT_SECONDS" "${cmd[@]}"
+    exit_code=$?
     set -e
 
   elif [[ "$type" == "codex-spark" || "$type" == "codex" ]]; then
@@ -369,9 +408,9 @@ try_runner() {
     fi
 
     set +e
-    run_with_timeout "$TIMEOUT_SECONDS" \
-      "${cmd[@]}" 2>&1 | tee "$output_tmp"
-    exit_code=${PIPESTATUS[0]}
+    run_with_capture "$output_tmp" \
+      "$TIMEOUT_SECONDS" "${cmd[@]}"
+    exit_code=$?
     set -e
 
   else
@@ -420,7 +459,8 @@ try_runner() {
     return 2
   fi
 
-  log "$label completed successfully"
+  echo "${C_GREEN}✔ $label completed successfully${C_RESET}" >&2
+  [[ -n "$LOG_FILE" ]] && echo "[$(_ts)] $label completed successfully" >> "$LOG_FILE" || true
   return 0
 }
 
@@ -507,10 +547,10 @@ main() {
   local iteration=0
   while true; do
     iteration=$((iteration + 1))
-    log ""
-    log "════════════════════════════════════════════════════════════════"
-    log "  Iteration #$iteration"
-    log "════════════════════════════════════════════════════════════════"
+    echo "" >&2
+    echo "${C_CYAN}${C_BOLD}════════════════════════════════════════════════════════════════${C_RESET}" >&2
+    echo "${C_CYAN}${C_BOLD}  Iteration #$iteration  $(date '+%Y-%m-%d %H:%M:%S')${C_RESET}" >&2
+    echo "${C_CYAN}${C_BOLD}════════════════════════════════════════════════════════════════${C_RESET}" >&2
 
     # Reload prompt each iteration (picks up changes to session.sh)
     local prompt
