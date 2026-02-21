@@ -216,11 +216,12 @@ impl<'a> CheckerState<'a> {
                     let mut next_module = None;
                     if let Some(exports) = self.resolve_effective_module_exports(&current_module)
                         && let Some(export_equals_sym) = exports.get("export=")
-                            && let Some(sym) = self.get_symbol_globally(export_equals_sym)
-                                && (sym.flags & tsz_binder::symbol_flags::ALIAS) != 0
-                                    && let Some(ref import_mod) = sym.import_module {
-                                        next_module = Some(import_mod.clone());
-                                    }
+                        && let Some(sym) = self.get_symbol_globally(export_equals_sym)
+                        && (sym.flags & tsz_binder::symbol_flags::ALIAS) != 0
+                        && let Some(ref import_mod) = sym.import_module
+                    {
+                        next_module = Some(import_mod.clone());
+                    }
 
                     if let Some(next) = next_module {
                         current_module = next;
