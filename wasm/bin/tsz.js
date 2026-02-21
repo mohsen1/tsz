@@ -142,13 +142,34 @@ if (fs.existsSync(manifestPath)) {
   }
 }
 
+// Map from absolute path → source text, used for offset→line/col conversion.
+const sourceTexts = new Map();
+
 for (const file of inputFiles) {
   try {
     const text = fs.readFileSync(file, 'utf8');
     program.addSourceFile(file, text);
+    sourceTexts.set(file, text);
   } catch (err) {
     console.error(`tsz: cannot read ${file}: ${err.message}`);
   }
+}
+
+/**
+ * Convert a 0-based UTF-16 character offset to { line, character } (0-based).
+ * This matches the position model used by tsc.
+ */
+function offsetToLineChar(text, offset) {
+  const clamped = Math.max(0, Math.min(offset, text.length));
+  let line = 0;
+  let lineStart = 0;
+  for (let i = 0; i < clamped; i++) {
+    if (text[i] === '\n') {
+      line++;
+      lineStart = i + 1;
+    }
+  }
+  return { line, character: clamped - lineStart };
 }
 
 let diagnostics;
@@ -164,17 +185,29 @@ try {
 let errorCount = 0;
 let warningCount = 0;
 
+// tsc diagnostic category codes: 0=warning, 1=error, 2=suggestion, 3=message
+const CATEGORY_NAMES = { 0: 'warning', 1: 'error', 2: 'suggestion', 3: 'message' };
+
 for (const d of diagnostics) {
-  const category = String(d.category || 'error').toLowerCase();
+  const category = CATEGORY_NAMES[d.category] || 'error';
   if (category === 'error') errorCount++;
   else if (category === 'warning') warningCount++;
 
   const file = d.file || '<unknown>';
   const relFile = path.relative(process.cwd(), file);
-  const line = (d.line != null ? d.line + 1 : '?');
-  const col  = (d.character != null ? d.character + 1 : '?');
-  const code = d.code ? `TS${d.code}` : '';
 
+  // Compute 1-based line/character from byte offset if available
+  let line = '?', col = '?';
+  if (typeof d.start === 'number') {
+    const src = sourceTexts.get(file);
+    if (src != null) {
+      const pos = offsetToLineChar(src, d.start);
+      line = pos.line + 1;
+      col  = pos.character + 1;
+    }
+  }
+
+  const code = d.code ? `TS${d.code}` : '';
   console.error(`${relFile}(${line},${col}): ${category} ${code}: ${d.messageText || d.message || ''}`);
 }
 
