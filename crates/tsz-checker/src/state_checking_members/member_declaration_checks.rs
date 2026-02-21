@@ -1066,7 +1066,7 @@ impl<'a> CheckerState<'a> {
             // TS7051: Check if rest parameter name looks like a type keyword
             // e.g., `m(...string)` where `string` is likely meant as `...args: string[]`
             if !has_parameter_modifiers && Self::is_type_keyword_name(&param_name) {
-                let suggested_name = format!("arg{}", param_index);
+                let suggested_name = format!("arg{param_index}");
                 self.error_at_node_msg(
                     report_node,
                     diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
@@ -1092,7 +1092,7 @@ impl<'a> CheckerState<'a> {
                         .next()
                         .is_some_and(|c| c.is_ascii_uppercase()))
             {
-                let suggested_name = format!("arg{}", param_index);
+                let suggested_name = format!("arg{param_index}");
                 self.error_at_node_msg(
                     report_node,
                     diagnostic_codes::PARAMETER_HAS_A_NAME_BUT_NO_TYPE_DID_YOU_MEAN,
