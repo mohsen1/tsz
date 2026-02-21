@@ -316,6 +316,7 @@ impl Server {
                         .then_some(true),
                 })
                 .collect();
+            let no_filtered_diagnostics = filtered_diagnostics.is_empty();
 
             let import_candidates = self.collect_import_candidates(file_path);
 
@@ -332,7 +333,7 @@ impl Server {
 
             let actions = provider.provide_code_actions(root, range, context);
 
-            let response_actions: Vec<serde_json::Value> = actions
+            let mut response_actions: Vec<serde_json::Value> = actions
                 .into_iter()
                 .map(|action| {
                     let mut changes = Vec::new();
@@ -387,6 +388,26 @@ impl Server {
                     json_obj
                 })
                 .collect();
+
+            if response_actions.is_empty() && no_filtered_diagnostics && !error_codes.is_empty() {
+                let mut seen_fixes = std::collections::HashSet::new();
+                for code in &error_codes {
+                    for (fix_name, fix_id, description, fix_all_description) in
+                        CodeFixRegistry::fixes_for_error_code(*code)
+                    {
+                        if !seen_fixes.insert((fix_name, fix_id)) {
+                            continue;
+                        }
+                        response_actions.push(serde_json::json!({
+                            "fixName": fix_name,
+                            "description": description,
+                            "changes": [],
+                            "fixId": fix_id,
+                            "fixAllDescription": fix_all_description,
+                        }));
+                    }
+                }
+            }
 
             return TsServerResponse {
                 seq,
