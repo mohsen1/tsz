@@ -688,9 +688,12 @@ impl<'a> CheckerState<'a> {
                             )
                         };
                         if from_idx_sig {
-                            self.error_readonly_index_signature_at(object_type, target_idx);
+                            self.error_readonly_index_signature_at(
+                                object_type,
+                                access.name_or_argument,
+                            );
                         } else {
-                            self.error_readonly_property_at(&name, target_idx);
+                            self.error_readonly_property_at(&name, access.name_or_argument);
                         }
                         return true;
                     }
@@ -700,12 +703,12 @@ impl<'a> CheckerState<'a> {
                             self.get_declared_type_name_from_expression(access.expression)
                             && self.is_interface_property_readonly(&type_name, &name)
                         {
-                            self.error_readonly_property_at(&name, target_idx);
+                            self.error_readonly_property_at(&name, access.name_or_argument);
                             return true;
                         }
                         // Also check namespace const exports via element access (M["x"])
                         if self.is_namespace_const_property(access.expression, &name) {
-                            self.error_readonly_property_at(&name, target_idx);
+                            self.error_readonly_property_at(&name, access.name_or_argument);
                             return true;
                         }
                     }
@@ -751,7 +754,7 @@ impl<'a> CheckerState<'a> {
                 });
 
                 if is_method {
-                    self.error_private_method_not_writable(&prop_name, target_idx);
+                    self.error_private_method_not_writable(&prop_name, access.name_or_argument);
                     return true;
                 }
             }
@@ -767,7 +770,7 @@ impl<'a> CheckerState<'a> {
         // Enum members may not be found by resolve_property_access_with_env because
         // they are resolved through the binder's enum symbol, not the type system.
         if self.is_enum_member_property(access.expression, &prop_name) {
-            self.error_readonly_property_at(&prop_name, target_idx);
+            self.error_readonly_property_at(&prop_name, access.name_or_argument);
             return true;
         }
 
@@ -780,7 +783,7 @@ impl<'a> CheckerState<'a> {
         // For `M.x = 1` where `export const x = 0` in namespace M.
         // Check before property existence, similar to enum members.
         if self.is_namespace_const_property(access.expression, &prop_name) {
-            self.error_readonly_property_at(&prop_name, target_idx);
+            self.error_readonly_property_at(&prop_name, access.name_or_argument);
             return true;
         }
 
@@ -808,7 +811,7 @@ impl<'a> CheckerState<'a> {
         // Namespace imports (`import * as ns`) are immutable views of module exports.
         // Any assignment to an existing property should report TS2540.
         if self.is_namespace_import_binding(access.expression) {
-            self.error_readonly_property_at(&prop_name, target_idx);
+            self.error_readonly_property_at(&prop_name, access.name_or_argument);
             return true;
         }
 
@@ -822,9 +825,12 @@ impl<'a> CheckerState<'a> {
 
             // TS2542: use specific diagnostic for readonly index signatures
             if prop_from_index_sig {
-                self.error_readonly_index_signature_at(readonly_check_type, target_idx);
+                self.error_readonly_index_signature_at(
+                    readonly_check_type,
+                    access.name_or_argument,
+                );
             } else {
-                self.error_readonly_property_at(&prop_name, target_idx);
+                self.error_readonly_property_at(&prop_name, access.name_or_argument);
             }
             return true;
         }
@@ -840,7 +846,7 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            self.error_readonly_property_at(&prop_name, target_idx);
+            self.error_readonly_property_at(&prop_name, access.name_or_argument);
             return true;
         }
 
@@ -849,7 +855,7 @@ impl<'a> CheckerState<'a> {
         if let Some(type_name) = self.get_declared_type_name_from_expression(access.expression)
             && self.is_interface_property_readonly(&type_name, &prop_name)
         {
-            self.error_readonly_property_at(&prop_name, target_idx);
+            self.error_readonly_property_at(&prop_name, access.name_or_argument);
             return true;
         }
 

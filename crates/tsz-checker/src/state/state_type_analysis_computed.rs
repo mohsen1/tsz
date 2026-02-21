@@ -459,6 +459,7 @@ impl<'a> CheckerState<'a> {
         // handle them as enums (returning TypeData::Enum) rather than as namespaces.
         if flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE) != 0
             && flags & symbol_flags::FUNCTION == 0
+            && flags & symbol_flags::VARIABLE == 0
         {
             return self.compute_namespace_symbol_type(sym_id, flags);
         }

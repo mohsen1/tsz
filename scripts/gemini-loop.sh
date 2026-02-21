@@ -28,7 +28,6 @@ SESSION_ID=""
 MODEL_OVERRIDE=""
 PROMPT_FILE=""
 WORKDIR="$(pwd)"
-TIMEOUT_SECONDS="${GEMINI_LOOP_TIMEOUT:-300}"
 SLEEP_SECONDS="${GEMINI_LOOP_SLEEP:-5}"
 CONF_CHUNKS="${GEMINI_LOOP_CONFORMANCE_CHUNKS:-}"
 CONF_TOTAL_TESTS="${GEMINI_LOOP_CONFORMANCE_TOTAL_TESTS:-12584}"
@@ -266,11 +265,7 @@ while true; do
   
   while (( retry_count < MAX_RETRIES )); do
     set +e
-    if command -v timeout >/dev/null 2>&1; then
-      timeout "$TIMEOUT_SECONDS" "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
-    else
-      "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
-    fi
+    "${CMD[@]}" 2>&1 | tee -a "$LOG_FILE"
     status=${PIPESTATUS[0]:-0}
     set -e
     
@@ -301,6 +296,19 @@ while true; do
   # Clean up dirty worktree between iterations so the next one starts fresh
   if ! git -C "$WORKDIR" diff --quiet 2>/dev/null || ! git -C "$WORKDIR" diff --cached --quiet 2>/dev/null; then
     echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration cleanup=resetting_dirty_worktree" | tee -a "$LOG_FILE"
+    # Salvage uncommitted work as a patch before resetting
+    SALVAGE_DIR="${LOG_ROOT}/salvage"
+    mkdir -p "$SALVAGE_DIR"
+    PATCH_FILE="${SALVAGE_DIR}/session-${SESSION_ID:-0}-iter-${iteration}-$(date -u +%Y%m%dT%H%M%SZ).patch"
+    {
+      git -C "$WORKDIR" diff 2>/dev/null
+      git -C "$WORKDIR" diff --cached 2>/dev/null
+    } > "$PATCH_FILE"
+    if [[ -s "$PATCH_FILE" ]]; then
+      echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] iteration=$iteration salvaged_patch=$PATCH_FILE" | tee -a "$LOG_FILE"
+    else
+      rm -f "$PATCH_FILE"
+    fi
     git -C "$WORKDIR" reset --hard HEAD >/dev/null 2>&1
     git -C "$WORKDIR" clean -fd >/dev/null 2>&1
   fi

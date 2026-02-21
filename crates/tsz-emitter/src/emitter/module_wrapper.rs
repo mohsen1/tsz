@@ -1,6 +1,6 @@
 use super::Printer;
 use crate::emitter::ModuleKind;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
@@ -260,7 +260,15 @@ impl<'a> Printer<'a> {
         self.increase_indent();
         self.write("\"use strict\";");
         self.write_line();
-        let hoisted_names = self.collect_system_hoisted_names(source);
+        let dep_vars = self.collect_system_dependency_vars(dependencies, source);
+        let mut hoisted_names = self.collect_system_hoisted_names(source);
+        for dep in dependencies {
+            if let Some(dep_var) = dep_vars.get(dep)
+                && !hoisted_names.iter().any(|n| n == dep_var)
+            {
+                hoisted_names.insert(0, dep_var.clone());
+            }
+        }
         if !hoisted_names.is_empty() {
             self.write("var ");
             self.write(&hoisted_names.join(", "));
@@ -272,13 +280,13 @@ impl<'a> Printer<'a> {
         self.write("return {");
         self.write_line();
         self.increase_indent();
-        self.write("setters: [],");
+        self.emit_system_setters(dependencies, &dep_vars);
         self.write_line();
         self.write("execute: function () {");
         self.write_line();
         self.increase_indent();
 
-        self.emit_system_execute_body(source_node);
+        self.emit_system_execute_body(source_node, &dep_vars);
 
         self.decrease_indent();
         self.write("}");
@@ -324,6 +332,56 @@ impl<'a> Printer<'a> {
                 continue;
             };
             if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                    && let Some(import_decl) = self.arena.get_import_decl(stmt_node)
+                    && self.import_decl_has_runtime_value(import_decl)
+                {
+                    let local_name = self.get_identifier_text_idx(import_decl.import_clause);
+                    if !local_name.is_empty() && seen.insert(local_name.clone()) {
+                        names.push(local_name);
+                    }
+                }
+                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module_decl) = self.arena.get_module(stmt_node)
+                {
+                    let module_name = self.get_identifier_text_idx(module_decl.name);
+                    if !module_name.is_empty() && seen.insert(module_name.clone()) {
+                        names.push(module_name);
+                    }
+                }
+                if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                    && let Some(export_decl) = self.arena.get_export_decl(stmt_node)
+                    && export_decl.module_specifier.is_none()
+                    && !export_decl.is_default_export
+                    && let Some(clause_node) = self.arena.get(export_decl.export_clause)
+                {
+                    if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        for name in self.collect_variable_names_from_node(clause_node) {
+                            if !name.is_empty() && seen.insert(name.clone()) {
+                                names.push(name);
+                            }
+                        }
+                        continue;
+                    }
+                    if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                        && let Some(import_decl) = self.arena.get_import_decl(clause_node)
+                        && self.import_decl_has_runtime_value(import_decl)
+                    {
+                        let name = self.get_identifier_text_idx(import_decl.import_clause);
+                        if !name.is_empty() && seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                        continue;
+                    }
+                    if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        && let Some(class_decl) = self.arena.get_class(clause_node)
+                    {
+                        let name = self.get_identifier_text_idx(class_decl.name);
+                        if !name.is_empty() && seen.insert(name.clone()) {
+                            names.push(name);
+                        }
+                    }
+                }
                 continue;
             }
             let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
@@ -360,7 +418,180 @@ impl<'a> Printer<'a> {
         names
     }
 
-    fn emit_system_execute_body(&mut self, source_node: &tsz_parser::parser::node::Node) {
+    fn collect_system_dependency_vars(
+        &self,
+        dependencies: &[String],
+        source: &tsz_parser::parser::node::SourceFileData,
+    ) -> HashMap<String, String> {
+        let mut dep_vars = HashMap::new();
+        for (idx, dep) in dependencies.iter().enumerate() {
+            let mut chosen = None;
+            for &stmt_idx in &source.statements.nodes {
+                let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                    continue;
+                };
+                if stmt_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                    continue;
+                }
+                let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                    continue;
+                };
+                if !self.import_decl_has_runtime_value(import_decl) {
+                    continue;
+                }
+                if self
+                    .system_module_specifier_text(import_decl.module_specifier)
+                    .as_deref()
+                    != Some(dep.as_str())
+                {
+                    continue;
+                }
+                let local_name = self.get_identifier_text_idx(import_decl.import_clause);
+                if !local_name.is_empty() {
+                    chosen = Some(local_name);
+                    break;
+                }
+            }
+
+            let dep_var = if let Some(local_name) = chosen {
+                local_name
+            } else {
+                let base = crate::transforms::module_commonjs::sanitize_module_name(dep);
+                format!("{base}_{}", idx + 1)
+            };
+            dep_vars.insert(dep.clone(), dep_var);
+        }
+        dep_vars
+    }
+
+    fn emit_system_setters(&mut self, dependencies: &[String], dep_vars: &HashMap<String, String>) {
+        if dependencies.is_empty() {
+            self.write("setters: [],");
+            return;
+        }
+
+        self.write("setters: [");
+        self.write_line();
+        self.increase_indent();
+        for (idx, dep) in dependencies.iter().enumerate() {
+            let Some(dep_var) = dep_vars.get(dep) else {
+                continue;
+            };
+            self.write("function (");
+            self.write(dep_var);
+            self.write("_1) {");
+            self.write_line();
+            self.increase_indent();
+            self.write(dep_var);
+            self.write(" = ");
+            self.write(dep_var);
+            self.write("_1;");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            if idx + 1 != dependencies.len() {
+                self.write(",");
+            }
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write("],");
+    }
+
+    fn register_system_import_substitutions(
+        &mut self,
+        source: &tsz_parser::parser::node::SourceFileData,
+        dep_vars: &HashMap<String, String>,
+    ) {
+        self.commonjs_named_import_substitutions.clear();
+
+        for &stmt_idx in &source.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            if !self.import_decl_has_runtime_value(import_decl) {
+                continue;
+            }
+            let Some(module_spec) = self.system_module_specifier_text(import_decl.module_specifier)
+            else {
+                continue;
+            };
+            let Some(dep_var) = dep_vars.get(&module_spec) else {
+                continue;
+            };
+            let Some(clause_node) = self.arena.get(import_decl.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if clause.is_type_only {
+                continue;
+            }
+
+            if clause.name.is_some() {
+                let local_name = self.get_identifier_text_idx(clause.name);
+                if !local_name.is_empty() {
+                    self.commonjs_named_import_substitutions
+                        .insert(local_name, format!("{dep_var}.default"));
+                }
+            }
+
+            if clause.named_bindings.is_none() {
+                continue;
+            }
+            let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+                continue;
+            };
+            let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+                continue;
+            };
+
+            if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+                let local_name = self.get_identifier_text_idx(named_imports.name);
+                if !local_name.is_empty() {
+                    self.commonjs_named_import_substitutions
+                        .insert(local_name, dep_var.clone());
+                }
+                continue;
+            }
+
+            for &spec_idx in &named_imports.elements.nodes {
+                let Some(spec_node) = self.arena.get(spec_idx) else {
+                    continue;
+                };
+                let Some(spec) = self.arena.get_specifier(spec_node) else {
+                    continue;
+                };
+                if spec.is_type_only {
+                    continue;
+                }
+                let local_name = self.get_identifier_text_idx(spec.name);
+                if local_name.is_empty() {
+                    continue;
+                }
+                let import_name = if spec.property_name.is_some() {
+                    self.get_identifier_text_idx(spec.property_name)
+                } else {
+                    local_name.clone()
+                };
+                self.commonjs_named_import_substitutions
+                    .insert(local_name, format!("{dep_var}.{import_name}"));
+            }
+        }
+    }
+
+    fn emit_system_execute_body(
+        &mut self,
+        source_node: &tsz_parser::parser::node::Node,
+        dep_vars: &HashMap<String, String>,
+    ) {
         let prev_module = self.ctx.options.module;
         let prev_auto_detect = self.ctx.auto_detect_module;
         let prev_original = self.ctx.original_module_kind;
@@ -375,20 +606,52 @@ impl<'a> Printer<'a> {
             self.ctx.original_module_kind = prev_original;
             return;
         };
+        self.register_system_import_substitutions(source, dep_vars);
 
         for &stmt_idx in &source.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
             };
+            if stmt_node.kind == syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            if stmt_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                let before_len = self.writer.len();
+                if self.emit_system_import_equals_declaration(stmt_node, dep_vars, false)
+                    && self.writer.len() > before_len
+                {
+                    self.write_line();
+                }
+                continue;
+            }
             let before_len = self.writer.len();
+
+            if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && self.emit_system_export_declaration(stmt_node, dep_vars)
+            {
+                if self.writer.len() > before_len {
+                    self.write_line();
+                }
+                continue;
+            }
 
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
                 self.emit_system_variable_initializers(stmt_node);
             } else {
+                if stmt_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module_decl) = self.arena.get_module(stmt_node)
+                {
+                    let module_name = self.get_identifier_text_idx(module_decl.name);
+                    if !module_name.is_empty() {
+                        self.declared_namespace_names.insert(module_name);
+                    }
+                }
                 self.emit(stmt_idx);
             }
 
-            if self.writer.len() > before_len {
+            if self.writer.len() > before_len
+                && stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION
+            {
                 self.write_line();
             }
         }
@@ -398,10 +661,135 @@ impl<'a> Printer<'a> {
         self.ctx.original_module_kind = prev_original;
     }
 
+    fn emit_system_import_equals_declaration(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        dep_vars: &HashMap<String, String>,
+        force_exported: bool,
+    ) -> bool {
+        let Some(import_decl) = self.arena.get_import_decl(node) else {
+            return false;
+        };
+        if !self.import_decl_has_runtime_value(import_decl) || import_decl.import_clause.is_none() {
+            return true;
+        }
+
+        let local_name = self.get_identifier_text_idx(import_decl.import_clause);
+        if local_name.is_empty() {
+            return true;
+        }
+
+        let is_exported = force_exported || self.has_export_modifier(&import_decl.modifiers);
+        let is_external = self
+            .arena
+            .get(import_decl.module_specifier)
+            .is_some_and(|module_node| {
+                module_node.kind == tsz_scanner::SyntaxKind::StringLiteral as u16
+                    || module_node.kind == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+            });
+
+        if is_external
+            && let Some(dep) = self.system_module_specifier_text(import_decl.module_specifier)
+            && dep_vars.contains_key(&dep)
+        {
+            if is_exported {
+                self.write("exports_1(\"");
+                self.write(&local_name);
+                self.write("\", ");
+                self.write(&local_name);
+                self.write(");");
+            }
+            return true;
+        }
+
+        if is_exported {
+            self.write("exports_1(\"");
+            self.write(&local_name);
+            self.write("\", ");
+        }
+        self.write(&local_name);
+        self.write(" = ");
+        if is_external {
+            if let Some(module_name) =
+                self.system_module_specifier_text(import_decl.module_specifier)
+            {
+                self.write("require(\"");
+                self.write(&module_name);
+                self.write("\")");
+            } else {
+                self.emit_entity_name(import_decl.module_specifier);
+            }
+        } else {
+            self.emit_entity_name(import_decl.module_specifier);
+        }
+        if is_exported {
+            self.write(")");
+        }
+        self.write(";");
+        true
+    }
+
+    fn emit_system_export_declaration(
+        &mut self,
+        node: &tsz_parser::parser::node::Node,
+        dep_vars: &HashMap<String, String>,
+    ) -> bool {
+        let Some(export_decl) = self.arena.get_export_decl(node) else {
+            return false;
+        };
+        if export_decl.is_default_export || export_decl.module_specifier.is_some() {
+            return false;
+        }
+        let Some(clause_node) = self.arena.get(export_decl.export_clause) else {
+            return false;
+        };
+
+        if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            self.emit_system_variable_initializers(clause_node);
+            return true;
+        }
+
+        if clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return self.emit_system_import_equals_declaration(clause_node, dep_vars, true);
+        }
+
+        if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
+            && let Some(class_decl) = self.arena.get_class(clause_node)
+        {
+            let class_name = self.get_identifier_text_idx(class_decl.name);
+            if class_name.is_empty() {
+                return false;
+            }
+            self.write(&class_name);
+            self.write(" = ");
+            self.emit_class_es6(clause_node, export_decl.export_clause);
+            self.write(";");
+            self.write_line();
+            self.write("exports_1(\"");
+            self.write(&class_name);
+            self.write("\", ");
+            self.write(&class_name);
+            self.write(");");
+            return true;
+        }
+
+        false
+    }
+
+    fn system_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
+        if specifier.is_none() {
+            return None;
+        }
+        let node = self.arena.get(specifier)?;
+        let literal = self.arena.get_literal(node)?;
+        Some(literal.text.clone())
+    }
+
     fn emit_system_variable_initializers(&mut self, node: &tsz_parser::parser::node::Node) {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
+        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -423,6 +811,19 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
+                if is_exported {
+                    let export_name = self.get_identifier_text_idx(decl.name);
+                    if !export_name.is_empty() {
+                        self.write("exports_1(\"");
+                        self.write(&export_name);
+                        self.write("\", ");
+                        self.write(&export_name);
+                        self.write(" = ");
+                        self.emit_expression(decl.initializer);
+                        self.write(");");
+                        continue;
+                    }
+                }
                 self.emit(decl.name);
                 self.write(" = ");
                 self.emit_expression(decl.initializer);

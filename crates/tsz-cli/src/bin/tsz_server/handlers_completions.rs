@@ -110,7 +110,19 @@ impl Server {
             let line = request.arguments.get("line")?.as_u64()? as u32;
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let position = Self::tsserver_to_lsp_position(line, offset);
-            let items = provider.get_completions(root, position).unwrap_or_default();
+            let completion_result = provider.get_completion_result(root, position);
+            let items = completion_result
+                .as_ref()
+                .map(|result| result.entries.clone())
+                .unwrap_or_default();
+            let member_parent = completion_result
+                .as_ref()
+                .and_then(|result| {
+                    result
+                        .is_member_completion
+                        .then(|| provider.get_member_completion_parent_type_name(root, position))
+                })
+                .flatten();
             let details: Vec<serde_json::Value> = entry_names
                 .iter()
                 .map(|entry_name| {
@@ -132,24 +144,30 @@ impl Server {
                     let display_parts = Self::build_completion_display_parts(
                         item,
                         &name,
+                        member_parent.as_deref(),
                         &arena,
                         &binder,
                         &source_text,
                     );
                     let documentation = item
                         .and_then(|i| i.documentation.as_ref())
-                        .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]))
-                        .unwrap_or(serde_json::json!([]));
-                    serde_json::json!({
-                        "name": name,
-                        "kind": kind,
-                        "kindModifiers": kind_modifiers,
-                        "displayParts": display_parts,
-                        "documentation": documentation,
-                        "tags": [],
-                        "codeActions": [],
-                        "source": [],
-                    })
+                        .filter(|doc| !doc.is_empty())
+                        .map(|doc| serde_json::json!([{"text": doc, "kind": "text"}]));
+                    let mut detail = serde_json::Map::new();
+                    detail.insert("name".to_string(), serde_json::json!(name));
+                    detail.insert("kind".to_string(), serde_json::json!(kind));
+                    detail.insert(
+                        "kindModifiers".to_string(),
+                        serde_json::json!(kind_modifiers),
+                    );
+                    detail.insert("displayParts".to_string(), display_parts);
+                    if let Some(documentation) = documentation {
+                        detail.insert("documentation".to_string(), documentation);
+                    }
+                    if let Some(source) = item.and_then(|i| i.source.as_ref()) {
+                        detail.insert("source".to_string(), serde_json::json!(source));
+                    }
+                    serde_json::Value::Object(detail)
                 })
                 .collect();
             Some(serde_json::json!(details))
@@ -162,6 +180,7 @@ impl Server {
     pub(crate) fn build_completion_display_parts(
         item: Option<&tsz::lsp::completions::CompletionItem>,
         name: &str,
+        member_parent: Option<&str>,
         arena: &tsz::parser::node::NodeArena,
         binder: &tsz::binder::BinderState,
         source_text: &str,
@@ -179,6 +198,12 @@ impl Server {
                 parts.push(serde_json::json!({"text": "class", "kind": "keyword"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                 parts.push(serde_json::json!({"text": name, "kind": "className"}));
+                if Self::is_merged_namespace_symbol(name, binder) {
+                    parts.push(serde_json::json!({"text": "\n", "kind": "lineBreak"}));
+                    parts.push(serde_json::json!({"text": "namespace", "kind": "keyword"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": name, "kind": "moduleName"}));
+                }
             }
             CompletionItemKind::Interface => {
                 parts.push(serde_json::json!({"text": "interface", "kind": "keyword"}));
@@ -218,27 +243,54 @@ impl Server {
                     arena,
                     source_text,
                 );
+                if Self::is_merged_namespace_symbol(name, binder) {
+                    parts.push(serde_json::json!({"text": "\n", "kind": "lineBreak"}));
+                    parts.push(serde_json::json!({"text": "namespace", "kind": "keyword"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": name, "kind": "moduleName"}));
+                }
             }
             CompletionItemKind::Method => {
                 parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": "method", "kind": "text"}));
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                parts.push(serde_json::json!({"text": name, "kind": "methodName"}));
+                let qualified_name = member_parent
+                    .map(|parent| format!("{parent}.{name}"))
+                    .unwrap_or_else(|| name.to_string());
+                parts.push(serde_json::json!({"text": qualified_name, "kind": "methodName"}));
+                if let Some(sig) = item
+                    .detail
+                    .as_deref()
+                    .and_then(Self::method_signature_from_detail)
+                {
+                    parts.push(serde_json::json!({"text": sig, "kind": "text"}));
+                }
             }
             CompletionItemKind::Property => {
                 parts.push(serde_json::json!({"text": "(", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": "property", "kind": "text"}));
                 parts.push(serde_json::json!({"text": ")", "kind": "punctuation"}));
                 parts.push(serde_json::json!({"text": " ", "kind": "space"}));
-                parts.push(serde_json::json!({"text": name, "kind": "propertyName"}));
-                Self::append_type_annotation_from_source(
+                let qualified_name = member_parent
+                    .map(|parent| format!("{parent}.{name}"))
+                    .unwrap_or_else(|| name.to_string());
+                parts.push(serde_json::json!({"text": qualified_name, "kind": "propertyName"}));
+                let has_annotation = Self::append_type_annotation_from_source(
                     &mut parts,
                     name,
                     binder,
                     arena,
                     source_text,
                 );
+                if !has_annotation
+                    && let Some(detail) = item.detail.as_deref()
+                    && !detail.is_empty()
+                {
+                    parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": detail, "kind": "keyword"}));
+                }
             }
             CompletionItemKind::Variable | CompletionItemKind::Parameter => {
                 if item.kind == CompletionItemKind::Parameter {
@@ -264,13 +316,22 @@ impl Server {
                     parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                     parts.push(serde_json::json!({"text": name, "kind": "localName"}));
                 }
-                Self::append_type_annotation_from_source(
+                let has_annotation = Self::append_type_annotation_from_source(
                     &mut parts,
                     name,
                     binder,
                     arena,
                     source_text,
                 );
+                if !has_annotation
+                    && item.kind == CompletionItemKind::Parameter
+                    && let Some(detail) = item.detail.as_deref()
+                    && !detail.is_empty()
+                {
+                    parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
+                    parts.push(serde_json::json!({"text": " ", "kind": "space"}));
+                    parts.push(serde_json::json!({"text": detail, "kind": "keyword"}));
+                }
             }
             CompletionItemKind::Keyword => {
                 parts.push(serde_json::json!({"text": name, "kind": "keyword"}));
@@ -283,6 +344,55 @@ impl Server {
         }
 
         serde_json::json!(parts)
+    }
+
+    fn is_merged_namespace_symbol(name: &str, binder: &tsz::binder::BinderState) -> bool {
+        use tsz::binder::symbol_flags;
+
+        binder
+            .file_locals
+            .get(name)
+            .and_then(|sym_id| binder.symbols.get(sym_id))
+            .is_some_and(|symbol| {
+                (symbol.flags & (symbol_flags::FUNCTION | symbol_flags::CLASS)) != 0
+                    && (symbol.flags
+                        & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE))
+                        != 0
+            })
+    }
+
+    fn method_signature_from_detail(detail: &str) -> Option<String> {
+        if !detail.starts_with('(') {
+            return None;
+        }
+        Some(Self::arrow_to_colon(detail))
+    }
+
+    fn arrow_to_colon(type_string: &str) -> String {
+        let bytes = type_string.as_bytes();
+        let mut depth = 0i32;
+        let mut last_close = None;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'(' => depth += 1,
+                b')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        last_close = Some(i);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(close_idx) = last_close {
+            let after = &type_string[close_idx + 1..];
+            if let Some(arrow_pos) = after.find(" => ") {
+                let before = &type_string[..close_idx + 1];
+                let ret = &after[arrow_pos + 4..];
+                return format!("{before}: {ret}");
+            }
+        }
+        type_string.to_string()
     }
 
     /// Determine var/let/const from the declaration source text.
@@ -435,7 +545,7 @@ impl Server {
         binder: &tsz::binder::BinderState,
         arena: &tsz::parser::node::NodeArena,
         source_text: &str,
-    ) {
+    ) -> bool {
         let decl_text = binder.file_locals.get(name).and_then(|sid| {
             let sym = binder.symbols.get(sid)?;
             let decl = if sym.value_declaration.is_some() {
@@ -465,10 +575,12 @@ impl Server {
                         parts.push(serde_json::json!({"text": ":", "kind": "punctuation"}));
                         parts.push(serde_json::json!({"text": " ", "kind": "space"}));
                         parts.push(serde_json::json!({"text": type_text, "kind": "keyword"}));
+                        return true;
                     }
                 }
             }
         }
+        false
     }
 
     pub(crate) fn handle_signature_help(
