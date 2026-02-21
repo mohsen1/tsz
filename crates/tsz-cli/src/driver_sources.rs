@@ -271,6 +271,17 @@ pub(crate) fn load_config(path: Option<&Path>) -> Result<Option<TsConfig>> {
     Ok(Some(config))
 }
 
+pub(crate) fn load_config_with_diagnostics(
+    path: Option<&Path>,
+) -> Result<(Option<TsConfig>, Vec<Diagnostic>)> {
+    let Some(path) = path else {
+        return Ok((None, Vec::new()));
+    };
+
+    let parsed = load_tsconfig_with_diagnostics(path)?;
+    Ok((Some(parsed.config), parsed.diagnostics))
+}
+
 pub(crate) fn config_base_dir(cwd: &Path, tsconfig_path: Option<&Path>) -> PathBuf {
     tsconfig_path
         .and_then(|path| path.parent().map(Path::to_path_buf))

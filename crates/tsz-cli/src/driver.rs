@@ -10,7 +10,8 @@ use std::time::Instant;
 use crate::args::CliArgs;
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
-    resolve_compiler_options, resolve_default_lib_files, resolve_lib_files,
+    load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
+    resolve_lib_files,
 };
 use tsz::binder::BinderOptions;
 use tsz::binder::BinderState;
@@ -701,7 +702,7 @@ fn compile_inner(
             }
         }
     };
-    let config = load_config(tsconfig_path.as_deref())?;
+    let (config, config_diagnostics) = load_config_with_diagnostics(tsconfig_path.as_deref())?;
 
     let mut resolved = resolve_compiler_options(
         config
@@ -1000,6 +1001,7 @@ fn compile_inner(
     if !binary_file_names.is_empty() {
         diagnostics.retain(|d| !binary_file_names.contains(&d.file));
     }
+    diagnostics.extend(config_diagnostics);
     diagnostics.extend(binary_file_diagnostics);
     diagnostics.extend(type_file_diagnostics);
     diagnostics.sort_by(|left, right| {
@@ -1474,7 +1476,9 @@ use driver_sources::{
     SourceEntry, SourceReadResult, build_discovery_options, collect_type_root_files,
     read_source_files, sources_have_no_default_lib, sources_have_no_types_and_symbols,
 };
-pub(crate) use driver_sources::{config_base_dir, load_config, resolve_tsconfig_path};
+pub(crate) use driver_sources::{
+    config_base_dir, load_config, load_config_with_diagnostics, resolve_tsconfig_path,
+};
 
 #[path = "driver_check.rs"]
 mod driver_check;
