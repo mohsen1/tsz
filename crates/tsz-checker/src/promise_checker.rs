@@ -531,8 +531,14 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN; // Generator support not implemented - use UNKNOWN
         }
 
-        if is_async && let Some(inner) = self.promise_like_return_type_argument(return_type) {
-            return inner;
+        if is_async {
+            // Resolve Lazy references before trying to extract Promise<T>.
+            // The return type annotation may be a Lazy(DefId) that hasn't been
+            // evaluated to an Application yet.
+            let resolved = self.resolve_ref_type(return_type);
+            if let Some(inner) = self.promise_like_return_type_argument(resolved) {
+                return inner;
+            }
         }
 
         return_type
