@@ -680,8 +680,12 @@ impl<'a> CheckerState<'a> {
             tsz_binder::symbol_flags::VALUE
         };
 
+        let reached_max_suggestions = self.ctx.spelling_suggestions_emitted >= 10;
+        self.ctx.spelling_suggestions_emitted += 1;
+
         // Try to find similar identifiers in scope for better error messages
         if !suppress_spelling_suggestion
+            && !reached_max_suggestions
             && let Some(suggestions) = self.find_similar_identifiers(name, idx, suggestion_meaning)
             && !suggestions.is_empty()
         {
