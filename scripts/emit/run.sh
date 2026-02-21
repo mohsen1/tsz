@@ -393,7 +393,11 @@ main() {
     echo ""
 
     cd "$SCRIPT_DIR"
-    node dist/runner.js "${runner_args[@]}"
+    if [[ "${#runner_args[@]}" -gt 0 ]]; then
+        node dist/runner.js "${runner_args[@]}"
+    else
+        node dist/runner.js
+    fi
 }
 
 main "$@"
