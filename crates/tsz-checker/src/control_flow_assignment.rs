@@ -82,9 +82,10 @@ impl<'a> FlowAnalyzer<'a> {
                         || bin.operator_token == SyntaxKind::QuestionQuestionEqualsToken as u16
                     {
                         if let Some(node_types) = self.node_types
-                            && let Some(&rhs_type) = node_types.get(&bin.right.0) {
-                                return Some(rhs_type);
-                            }
+                            && let Some(&rhs_type) = node_types.get(&bin.right.0)
+                        {
+                            return Some(rhs_type);
+                        }
                         return None;
                     }
 

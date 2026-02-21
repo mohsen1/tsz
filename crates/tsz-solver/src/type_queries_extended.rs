@@ -154,7 +154,8 @@ fn is_invalid_index_type_inner(
             | TypeData::Object(_)
             | TypeData::ObjectWithIndex(_)
             | TypeData::Function(_)
-            | TypeData::Callable(_),
+            | TypeData::Callable(_)
+            | TypeData::Lazy(_),
         ) => true,
         Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => db
             .type_list(list_id)
