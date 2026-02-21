@@ -51,14 +51,16 @@ pub struct EnclosingClassInfo {
     pub is_declared: bool,
     /// Whether we're in a static property initializer (for TS17011 checking).
     pub in_static_property_initializer: bool,
-    /// Whether we're in a static method context.
-    pub in_static_method: bool,
+    /// Whether we're in a static method or property context.
+    pub in_static_member: bool,
     /// Whether any `super()` call appeared while checking the current constructor body.
     pub has_super_call_in_current_constructor: bool,
     /// Cached instance `this` type for members of this class.
     pub cached_instance_this_type: Option<TypeId>,
     /// Names of the class's own type parameters (for TS2302 checking in static members).
     pub type_param_names: Vec<String>,
+    /// The type parameter infos of the class's own type parameters.
+    pub class_type_parameters: Vec<tsz_solver::TypeParamInfo>,
 }
 
 /// Info about a label in scope for break/continue validation.

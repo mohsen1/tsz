@@ -980,7 +980,7 @@ impl<'a> CheckerState<'a> {
         // Collect class type parameter names for TS2302 checking in static members
         let class_type_param_names: Vec<String> = type_param_updates
             .iter()
-            .map(|(name, _)| name.clone())
+            .map(|(name, _, _)| name.clone())
             .collect();
 
         // Check for unused type parameters (TS6133)
@@ -1116,10 +1116,11 @@ impl<'a> CheckerState<'a> {
             in_constructor: false,
             is_declared,
             in_static_property_initializer: false,
-            in_static_method: false,
+            in_static_member: false,
             has_super_call_in_current_constructor: false,
             cached_instance_this_type: None,
             type_param_names: class_type_param_names,
+            class_type_parameters: _type_params,
         });
 
         // Class bodies reset the async context — field initializers and static blocks
@@ -1257,7 +1258,7 @@ impl<'a> CheckerState<'a> {
 
         let class_type_param_names: Vec<String> = type_param_updates
             .iter()
-            .map(|(name, _)| name.clone())
+            .map(|(name, _, _)| name.clone())
             .collect();
 
         let class_name = self.get_class_name_from_decl(class_idx);
@@ -1271,10 +1272,11 @@ impl<'a> CheckerState<'a> {
             in_constructor: false,
             is_declared: false,
             in_static_property_initializer: false,
-            in_static_method: false,
+            in_static_member: false,
             has_super_call_in_current_constructor: false,
             cached_instance_this_type: None,
             type_param_names: class_type_param_names,
+            class_type_parameters: _type_params,
         });
 
         // Class bodies reset the async context — field initializers don't

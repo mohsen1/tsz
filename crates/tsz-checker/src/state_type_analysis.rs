@@ -13,7 +13,7 @@ use tsz_solver::TypeId;
 
 type TypeParamPushResult = (
     Vec<tsz_solver::TypeParamInfo>,
-    Vec<(String, Option<TypeId>)>,
+    Vec<(String, Option<TypeId>, bool)>,
 );
 
 impl<'a> CheckerState<'a> {
@@ -966,9 +966,16 @@ impl<'a> CheckerState<'a> {
                 default: None,
                 is_const: false,
             };
+            let mut shadowed_class_param = false;
+            if let Some(ref mut c) = self.ctx.enclosing_class
+                && let Some(pos) = c.type_param_names.iter().position(|x| *x == name) {
+                    c.type_param_names.remove(pos);
+                    shadowed_class_param = true;
+                }
+
             let type_id = factory.type_param(info);
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-            updates.push((name, previous));
+            updates.push((name, previous, shadowed_class_param));
             param_indices.push(param_idx);
         }
 

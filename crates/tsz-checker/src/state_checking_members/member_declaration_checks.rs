@@ -540,7 +540,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn push_missing_name_type_parameters(
         &mut self,
         type_parameters: &Option<tsz_parser::parser::NodeList>,
-    ) -> Vec<(String, Option<TypeId>)> {
+    ) -> Vec<(String, Option<TypeId>, bool)> {
         use tsz_solver::TypeParamInfo;
 
         let Some(list) = type_parameters else {
@@ -571,7 +571,7 @@ impl<'a> CheckerState<'a> {
                 is_const: false,
             });
             let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
-            updates.push((name, previous));
+            updates.push((name, previous, false));
         }
 
         updates
@@ -1219,6 +1219,34 @@ impl<'a> CheckerState<'a> {
             pushed_this = true;
         }
 
+        let is_static_member = match node.kind {
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                let decl = self.ctx.arena.get_property_decl(node).unwrap();
+                self.has_static_modifier(&decl.modifiers)
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let decl = self.ctx.arena.get_method_decl(node).unwrap();
+                self.has_static_modifier(&decl.modifiers)
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                let decl = self.ctx.arena.get_accessor(node).unwrap();
+                self.has_static_modifier(&decl.modifiers)
+            }
+            k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => true,
+            _ => false,
+        };
+
+        let prev_in_static_member = self
+            .ctx
+            .enclosing_class
+            .as_ref()
+            .map(|c| c.in_static_member)
+            .unwrap_or(false);
+
+        if let Some(ref mut class_info) = self.ctx.enclosing_class {
+            class_info.in_static_member = is_static_member;
+        }
+
         self.check_class_member_name(member_idx);
         self.check_class_member_decorator_expressions(member_idx);
 
@@ -1293,6 +1321,10 @@ impl<'a> CheckerState<'a> {
 
         if pushed_this {
             self.ctx.this_type_stack.pop();
+        }
+
+        if let Some(ref mut class_info) = self.ctx.enclosing_class {
+            class_info.in_static_member = prev_in_static_member;
         }
     }
 
@@ -1831,5 +1863,60 @@ impl<'a> CheckerState<'a> {
                 last_seen_method = None;
             }
         }
+    }
+    pub(crate) fn check_for_static_member_class_type_param_reference(
+        &mut self,
+        sym_id: tsz_binder::SymbolId,
+        error_node: NodeIndex,
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use tsz_binder::symbol_flags;
+
+        println!("Checking TS2302 for sym_id {sym_id:?}");
+
+        // Must be in a class and inside a static member
+        let Some(enclosing_class) = self.ctx.enclosing_class.as_ref() else {
+            println!("Early return: No enclosing class");
+            return;
+        };
+
+        if !enclosing_class.in_static_member {
+            println!("Early return: Not in static member");
+            return;
+        }
+
+        // Must be a type parameter
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            println!("Early return: Symbol not found");
+            return;
+        };
+        if symbol.flags & symbol_flags::TYPE_PARAMETER == 0 {
+            println!("Early return: Not a type parameter");
+            return;
+        }
+
+        // Must be a type parameter of the enclosing class
+        let class_sym_id = self
+            .ctx
+            .binder
+            .node_symbols
+            .get(&enclosing_class.class_idx.0)
+            .copied();
+
+        println!(
+            "Comparing symbol parent {:?} with class sym {:?}",
+            symbol.parent, class_sym_id
+        );
+
+        // Is sym_id a type parameter of class_sym?
+        if let Some(class_sym) = class_sym_id
+            && symbol.parent == class_sym {
+                println!("FOUND TS2302! error_node: {error_node:?}");
+                self.error_at_node(
+                    error_node,
+                    "Static members cannot reference class type parameters.",
+                    diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS,
+                );
+            }
     }
 }

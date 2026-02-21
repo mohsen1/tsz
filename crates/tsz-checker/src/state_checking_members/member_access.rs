@@ -400,7 +400,7 @@ impl<'a> CheckerState<'a> {
         // Collect interface type parameter names for TS2304 checking in heritage clauses
         let interface_type_param_names: Vec<String> = type_param_updates
             .iter()
-            .map(|(name, _)| name.clone())
+            .map(|(name, _, _)| name.clone())
             .collect();
 
         // Check heritage clauses for unresolved names (TS2304)
