@@ -1628,7 +1628,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                if t_shape.properties.is_empty() {
+                if t_shape.properties.is_empty() && t_shape.string_index.is_none() {
                     return SubtypeResult::True;
                 }
                 // If source is a CallableShape with properties, check structural compatibility
@@ -1691,7 +1691,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
             if let Some(t_shape_id) = object_with_index_shape_id(self.interner, target) {
                 let t_shape = self.interner.object_shape(t_shape_id);
-                if t_shape.properties.is_empty() {
+                if t_shape.properties.is_empty() && t_shape.string_index.is_none() {
                     if let Some(ref num_idx) = t_shape.number_index {
                         let elem_type =
                             array_element_type(self.interner, source).unwrap_or(TypeId::ANY);
