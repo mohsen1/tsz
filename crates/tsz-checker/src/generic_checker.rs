@@ -50,11 +50,7 @@ impl<'a> CheckerState<'a> {
         };
 
         let got = type_args_list.nodes.len();
-        let type_arg_error_anchor = type_args_list
-            .nodes
-            .first()
-            .copied()
-            .unwrap_or(call_idx);
+        let type_arg_error_anchor = type_args_list.nodes.first().copied().unwrap_or(call_idx);
         // Get the type parameters from the callee type. For callables with overloads,
         // prefer a signature whose type parameter arity matches the provided type args.
         let type_params =
@@ -317,11 +313,7 @@ impl<'a> CheckerState<'a> {
             return;
         };
         let got = type_args_list.nodes.len();
-        let type_arg_error_anchor = type_args_list
-            .nodes
-            .first()
-            .copied()
-            .unwrap_or(call_idx);
+        let type_arg_error_anchor = type_args_list.nodes.first().copied().unwrap_or(call_idx);
 
         // For callable types with overloaded construct signatures, prefer
         // a signature whose type parameter arity matches the provided args.
