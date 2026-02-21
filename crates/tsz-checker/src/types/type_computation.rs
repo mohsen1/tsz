@@ -94,10 +94,9 @@ impl<'a> CheckerState<'a> {
             return TypeId::ERROR;
         };
 
-        self.check_truthy_or_falsy(cond.condition);
-
         // Get condition type for type computation
         let condition_type = self.get_type_of_node(cond.condition);
+        self.check_truthy_or_falsy_with_type(cond.condition, condition_type);
 
         // Apply contextual typing to each branch for better inference,
         // but don't check assignability here - that happens at the call site.
@@ -1127,6 +1126,72 @@ impl<'a> CheckerState<'a> {
         use tsz_solver::{BinaryOpEvaluator, BinaryOpResult};
         let factory = self.ctx.types.factory();
 
+        // Hot path: pure `+` chains with stable primitive operands are common in
+        // generated benchmark fixtures. We still check every operand node (so
+        // operand diagnostics are preserved), but skip generic per-node binary
+        // operator evaluation when the final result is deterministic.
+        if let Some(root_node) = self.ctx.arena.get(idx)
+            && root_node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(root_binary) = self.ctx.arena.get_binary_expr(root_node)
+            && root_binary.operator_token == SyntaxKind::PlusToken as u16
+        {
+            let mut all_plus = true;
+            let mut operand_nodes = Vec::new();
+            let mut pending = vec![idx];
+
+            while let Some(node_idx) = pending.pop() {
+                let Some(node) = self.ctx.arena.get(node_idx) else {
+                    all_plus = false;
+                    break;
+                };
+
+                if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+                    && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+                {
+                    if binary.operator_token == SyntaxKind::PlusToken as u16 {
+                        pending.push(binary.right);
+                        pending.push(binary.left);
+                        continue;
+                    }
+                    all_plus = false;
+                    break;
+                }
+
+                operand_nodes.push(node_idx);
+            }
+
+            if all_plus && operand_nodes.len() > 1 {
+                let mut all_number = true;
+                let mut all_bigint = true;
+                let mut all_string = true;
+                let mut has_any = false;
+
+                for node_idx in operand_nodes {
+                    let ty = self.get_type_of_node(node_idx);
+                    if ty == TypeId::ERROR {
+                        return TypeId::ERROR;
+                    }
+                    has_any |= ty == TypeId::ANY;
+                    all_number &= ty == TypeId::NUMBER;
+                    all_bigint &= ty == TypeId::BIGINT;
+                    all_string &= ty == TypeId::STRING;
+                }
+
+                if all_number {
+                    return TypeId::NUMBER;
+                }
+                if all_bigint {
+                    return TypeId::BIGINT;
+                }
+                if all_string {
+                    return TypeId::STRING;
+                }
+                if has_any {
+                    return TypeId::ANY;
+                }
+            }
+        }
+
         let evaluator = BinaryOpEvaluator::new(self.ctx.types);
         let mut stack = vec![(idx, false)];
         let mut type_stack: Vec<TypeId> = Vec::new();
@@ -1420,7 +1485,7 @@ impl<'a> CheckerState<'a> {
 
             // Logical AND: `a && b`
             if op_kind == SyntaxKind::AmpersandAmpersandToken as u16 {
-                self.check_truthy_or_falsy(left_idx);
+                self.check_truthy_or_falsy_with_type(left_idx, left_type);
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
                     continue;
@@ -1436,7 +1501,7 @@ impl<'a> CheckerState<'a> {
             // Logical OR: `a || b`
             if op_kind == SyntaxKind::BarBarToken as u16 {
                 // TS2872/TS2873: left side of `||` can be syntactically always truthy/falsy.
-                self.check_truthy_or_falsy(left_idx);
+                self.check_truthy_or_falsy_with_type(left_idx, left_type);
 
                 if left_type == TypeId::ERROR || right_type == TypeId::ERROR {
                     type_stack.push(TypeId::ERROR);
@@ -1750,6 +1815,32 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     type_stack.push(TypeId::UNKNOWN);
+                    continue;
+                }
+            }
+
+            // Hot path: exact primitive arithmetic pairs do not require
+            // generic binary-op evaluation.
+            if is_arithmetic_op {
+                let direct_result = match op_str {
+                    "+" | "-" | "*" | "/" | "%" | "**"
+                        if left_type == TypeId::NUMBER && right_type == TypeId::NUMBER =>
+                    {
+                        Some(TypeId::NUMBER)
+                    }
+                    "+" if left_type == TypeId::STRING && right_type == TypeId::STRING => {
+                        Some(TypeId::STRING)
+                    }
+                    "+" | "-" | "*" | "/" | "%" | "**"
+                        if left_type == TypeId::BIGINT && right_type == TypeId::BIGINT =>
+                    {
+                        Some(TypeId::BIGINT)
+                    }
+                    _ => None,
+                };
+
+                if let Some(result_type) = direct_result {
+                    type_stack.push(result_type);
                     continue;
                 }
             }
