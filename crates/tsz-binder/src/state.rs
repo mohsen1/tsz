@@ -858,6 +858,66 @@ impl BinderState {
         result
     }
 
+    /// Resolve a name (string) by walking scopes from the given node and invoking a filter
+    /// callback on candidates.
+    ///
+    /// This keeps scope traversal in the binder while allowing callers (checker) to
+    /// apply contextual filtering (e.g., value-only vs type-only, class member filtering).
+    pub fn resolve_name_with_filter<F>(
+        &self,
+        name: &str,
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        lib_binders: &[Arc<Self>],
+        mut accept: F,
+    ) -> Option<SymbolId>
+    where
+        F: FnMut(SymbolId) -> bool,
+    {
+        let mut consider =
+            |sym_id: SymbolId| -> Option<SymbolId> { accept(sym_id).then_some(sym_id) };
+
+        if let Some(mut scope_id) = self.find_enclosing_scope(arena, node_idx) {
+            let mut iterations = 0;
+            while scope_id.is_some() {
+                iterations += 1;
+                if iterations > MAX_SCOPE_WALK_ITERATIONS {
+                    break;
+                }
+                let Some(scope) = self.scopes.get(scope_id.0 as usize) else {
+                    break;
+                };
+
+                if let Some(sym_id) = scope.table.get(name)
+                    && let Some(found) = consider(sym_id)
+                {
+                    return Some(found);
+                }
+
+                if scope.kind == ContainerKind::Module
+                    && let Some(container_sym_id) = self.get_node_symbol(scope.container_node)
+                    && let Some(container_symbol) =
+                        self.get_symbol_with_libs(container_sym_id, lib_binders)
+                    && let Some(exports) = container_symbol.exports.as_ref()
+                    && let Some(member_id) = exports.get(name)
+                    && let Some(found) = consider(member_id)
+                {
+                    return Some(found);
+                }
+
+                scope_id = scope.parent;
+            }
+        }
+
+        if let Some(sym_id) = self.file_locals.get(name)
+            && let Some(found) = consider(sym_id)
+        {
+            return Some(found);
+        }
+
+        None
+    }
+
     /// Resolve an identifier by walking scopes and invoking a filter callback on candidates.
     ///
     /// This keeps scope traversal in the binder while allowing callers (checker) to

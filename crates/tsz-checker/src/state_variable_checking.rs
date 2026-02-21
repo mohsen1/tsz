@@ -1427,7 +1427,11 @@ impl<'a> CheckerState<'a> {
 
             // Ensure binding element identifiers get the correct inferred types.
             self.assign_binding_pattern_symbol_types(var_decl.name, pattern_type);
-            self.check_binding_pattern(var_decl.name, pattern_type, true);
+            self.check_binding_pattern(
+                var_decl.name,
+                pattern_type,
+                var_decl.type_annotation.is_some(),
+            );
 
             // Track destructured binding groups for correlated narrowing.
             // Only needed for union source types where narrowing one property affects others.

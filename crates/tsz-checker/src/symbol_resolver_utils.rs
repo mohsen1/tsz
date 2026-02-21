@@ -897,4 +897,52 @@ impl<'a> CheckerState<'a> {
 
         None
     }
+
+    /// Resolves a string identifier relative to the scope of a given node.
+    #[allow(dead_code)]
+    pub(crate) fn resolve_name_at_node(&self, name: &str, node_idx: NodeIndex) -> Option<SymbolId> {
+        let ignore_libs = !self.ctx.has_lib_loaded();
+        let lib_binders = if ignore_libs {
+            Vec::new()
+        } else {
+            self.get_lib_binders()
+        };
+        let is_from_lib = |sym_id: SymbolId| self.ctx.symbol_is_from_lib(sym_id);
+        let should_skip_lib_symbol = |sym_id: SymbolId| ignore_libs && is_from_lib(sym_id);
+
+        let result = self.ctx.binder.resolve_name_with_filter(
+            name,
+            self.ctx.arena,
+            node_idx,
+            &lib_binders,
+            |sym_id| {
+                if should_skip_lib_symbol(sym_id) {
+                    return false;
+                }
+                if let Some(symbol) = self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders) {
+                    let is_class_member = Self::is_class_member_symbol(symbol.flags);
+                    if is_class_member {
+                        return is_from_lib(sym_id)
+                            && (symbol.flags & tsz_binder::symbol_flags::EXPORT_VALUE) != 0;
+                    }
+                }
+                true
+            },
+        );
+
+        if result.is_none() && !ignore_libs {
+            for lib_ctx in self.ctx.lib_contexts.iter() {
+                if let Some(lib_sym_id) = lib_ctx.binder.file_locals.get(name)
+                    && !should_skip_lib_symbol(lib_sym_id)
+                {
+                    let Some(file_sym_id) = self.ctx.binder.file_locals.get(name) else {
+                        continue;
+                    };
+                    return Some(file_sym_id);
+                }
+            }
+        }
+
+        result
+    }
 }
