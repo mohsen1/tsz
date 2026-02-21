@@ -6,7 +6,7 @@
 //! It follows the "Check Fast, Explain Slow" pattern where we first
 //! resolve types, then use the solver to explain any failures.
 
-use super::context::CheckerContext;
+use crate::context::CheckerContext;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
@@ -1577,7 +1577,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 }
 
 #[cfg(test)]
-#[path = "../tests/type_node.rs"]
+#[path = "../../tests/type_node.rs"]
 mod tests;
 
 // Check duplicate parameters from a TypeNodeChecker context.
