@@ -170,6 +170,13 @@ impl ProcessPool {
             .kill_on_drop(true)
             .spawn()?;
 
+        // If the binary doesn't support batch mode, it can exit immediately.
+        // Surface this as pool initialization failure so the runner falls back
+        // to subprocess mode instead of reporting per-test crashes.
+        if let Some(status) = child.try_wait()? {
+            anyhow::bail!("batch worker exited immediately with status: {status}");
+        }
+
         let stdin = child
             .stdin
             .take()
