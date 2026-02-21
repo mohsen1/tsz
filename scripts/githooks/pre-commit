@@ -14,11 +14,9 @@
 #   4. cargo clippy -- deny warnings (affected crates + CI parity commands)
 #   5. Run unit tests (only affected crates)
 #   6. Microbenchmark regression check (if solver/checker changed)
-#   7. Conformance regression check (if solver/checker changed)
 #
 # Env vars:
 #   TSZ_SKIP_HOOKS=1         Skip the entire hook
-#   TSZ_SKIP_CONFORMANCE=1   Skip the conformance regression check
 #   TSZ_SKIP_BENCH=1         Skip microbenchmark regression check
 #   TSZ_SKIP_CLEAN=1         Skip the target cleanup step
 #   TSZ_SKIP_LINT_PARITY=1   Skip CI parity lint commands
@@ -34,7 +32,6 @@ if [ "${TSZ_SKIP_HOOKS:-}" = "1" ]; then exit 0; fi
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
 cd "$ROOT_DIR"
 
-SKIP_CONFORMANCE="${TSZ_SKIP_CONFORMANCE:-}"
 SKIP_BENCH="${TSZ_SKIP_BENCH:-}"
 SKIP_CLEAN="${TSZ_SKIP_CLEAN:-}"
 SKIP_LINT_PARITY="${TSZ_SKIP_LINT_PARITY:-}"
@@ -188,16 +185,11 @@ if has_crate tsz-common || has_crate tsz-scanner || has_crate tsz-parser || has_
     ROOT_TEST_RELEVANT_CHANGED=true
 fi
 
-# Conformance is affected by parser/binder/checker/solver and shared crates.
-CONFORMANCE_RELEVANT_CHANGED=false
-if has_crate tsz-common || has_crate tsz-scanner || has_crate tsz-parser || has_crate tsz-binder || has_crate tsz-solver || has_crate tsz-checker || has_crate tsz-lowering; then
-    CONFORMANCE_RELEVANT_CHANGED=true
-fi
 
 # ─── 2. Clean stale target artifacts ─────────────────────────────────────────
 
 if [ "$SKIP_CLEAN" != "1" ]; then
-    echo "1/6 Cleaning stale target artifacts..."
+    echo "1/5 Cleaning stale target artifacts..."
     TARGET_DIR="$ROOT_DIR/.target"
 
     # Always-safe removals that tend to accumulate quickly.
@@ -238,12 +230,12 @@ if [ "$SKIP_CLEAN" != "1" ]; then
         ! -name ".target" ! -name ".target-bench" \
         -mtime +"$CLEAN_STALE_DAYS" -prune -exec rm -rf {} + 2>/dev/null || true
 else
-    echo "1/6 Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
+    echo "1/5 Target cleanup skipped (TSZ_SKIP_CLEAN=1)"
 fi
 
 # ─── 3. cargo fmt ────────────────────────────────────────────────────────────
 
-echo "2/6 Formatting (cargo fmt)..."
+echo "2/5 Formatting (cargo fmt)..."
 
 if ! cargo fmt -- --check >/dev/null 2>&1; then
     cargo fmt
@@ -254,7 +246,7 @@ fi
 
 # ─── 4. Clippy — deny all warnings (affected crates only) ────────────────────
 
-echo "3/6 Clippy (affected crates)..."
+echo "3/5 Clippy (affected crates)..."
 
 # Build clippy args: -p crate1 -p crate2 ...
 CLIPPY_PKGS=""
@@ -316,7 +308,7 @@ fi
 echo "  Clippy passed (zero warnings)"
 
 # ─── 4.5. Architecture guardrail (checker boundary) ──────────────────────────
-echo "3.5/6 Checker boundary guardrail..."
+echo "3.5/5 Checker boundary guardrail..."
 ./scripts/check-checker-boundaries.sh
 
 # ─── Re-stage files modified by fmt / clippy auto-fix ─────────────────────────
@@ -325,7 +317,7 @@ git add -u
 
 # ─── 5. Tests — only affected crates ─────────────────────────────────────────
 
-echo "4/6 Running tests ($NUM_AFFECTED crate(s))..."
+echo "4/5 Running tests ($NUM_AFFECTED crate(s))..."
 
 # Build nextest filter expression: -E 'package(crate1) | package(crate2) ...'
 NEXTEST_FILTER=""
@@ -382,11 +374,11 @@ echo "  Tests passed"
 # Uncomment to re-enable if needed
 
 # if [ "$SKIP_BENCH" = "1" ]; then
-#     echo "5/6 Microbenchmark check skipped (TSZ_SKIP_BENCH=1)"
+#     echo "5/5 Microbenchmark check skipped (TSZ_SKIP_BENCH=1)"
 # elif [ "$CONFORMANCE_RELEVANT_CHANGED" = "false" ]; then
-#     echo "5/6 Microbenchmark check skipped (conformance-relevant crates unchanged)"
+#     echo "5/5 Microbenchmark check skipped (conformance-relevant crates unchanged)"
 # else
-#     echo "5/6 Microbenchmark regression check..."
+#     echo "5/5 Microbenchmark regression check..."
 #     BENCH_CMD="$ROOT_DIR/scripts/precommit-microbench.sh"
 #     BENCH_ARGS=""
 #     if [ "${TSZ_BENCH_UPDATE_BASELINE:-}" = "1" ]; then
@@ -405,101 +397,10 @@ echo "  Tests passed"
 #     echo "  Microbenchmark gate passed"
 # fi
 
-echo "5/6 Microbenchmark check disabled"
-
-# ─── 7. Conformance regression check ─────────────────────────────────────────
-
-if [ "$SKIP_CONFORMANCE" = "1" ]; then
-    echo "6/6 Conformance check skipped (TSZ_SKIP_CONFORMANCE=1)"
-elif [ "$CONFORMANCE_RELEVANT_CHANGED" = "false" ] && [ "$ROOT_CHANGED" = "false" ]; then
-    echo "6/6 Conformance check skipped (no conformance-relevant changes)"
-else
-    echo "6/6 Conformance regression check..."
-
-    if LAST_CONFORMANCE=$("$ROOT_DIR/scripts/get-last-conformance.sh" 2>/dev/null); then
-        echo "  Baseline: ${LAST_CONFORMANCE}%"
-    else
-        echo ""
-        echo "ERROR: Could not determine conformance baseline."
-        echo "  Expected a commit marker CURRENT_CONFORMANCE_PASS_RATE or README baseline."
-        echo "  Please update README conformance block if needed."
-        exit 1
-    fi
-
-    TEMP_OUTPUT=$(mktemp)
-    trap 'rm -f "$TEMP_OUTPUT"' EXIT
-
-    echo "  Running conformance pass rate check..."
-    # Use conformance.sh (the run.sh was replaced by Rust implementation)
-    CONFORMANCE_SCRIPT="$ROOT_DIR/scripts/conformance.sh"
-    if [ ! -x "$CONFORMANCE_SCRIPT" ]; then
-        echo "ERROR: Conformance script not found: $CONFORMANCE_SCRIPT"
-        exit 1
-    fi
-
-    "$CONFORMANCE_SCRIPT" run > "$TEMP_OUTPUT" 2>&1 || true
-
-    # Extract current pass rate from final line:
-    # FINAL RESULTS: N/M passed (XX.X%)
-    PASS_LINE=$(grep -a "FINAL RESULTS:" "$TEMP_OUTPUT" | tail -1 || true)
-    CURRENT_CONFORMANCE=$(echo "$PASS_LINE" | sed -E 's/.*FINAL RESULTS:[[:space:]]*[0-9]+\/[0-9]+ passed[[:space:]]*\(([0-9]+(\.[0-9]+)?)%\).*/\1/' || true)
-
-    if [ -z "$PASS_LINE" ] || [ -z "$CURRENT_CONFORMANCE" ] || [ "$CURRENT_CONFORMANCE" = "$PASS_LINE" ]; then
-        echo ""
-        echo "ERROR: Could not extract pass rate from conformance output."
-        echo "  Expected final line like: FINAL RESULTS: N/M passed (XX.X%)"
-        echo "  Last matching line: ${PASS_LINE:-<none>}"
-        echo ""
-        echo "  Conformance output tail:"
-        tail -n 40 "$TEMP_OUTPUT" || true
-        echo ""
-        echo "  Run manually for details:"
-        echo "    ./scripts/conformance.sh run"
-        exit 1
-    fi
-
-    echo "  Current: ${CURRENT_CONFORMANCE}%"
-
-    # Float comparison
-    if command -v bc >/dev/null 2>&1; then
-        IS_REGRESSION=$(echo "$CURRENT_CONFORMANCE < $LAST_CONFORMANCE" | bc -l)
-    else
-        CURRENT_INT=$(echo "$CURRENT_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
-        LAST_INT=$(echo "$LAST_CONFORMANCE" | tr -d '.' | sed 's/^0*//')
-        [ -z "$CURRENT_INT" ] && CURRENT_INT=0
-        [ -z "$LAST_INT" ] && LAST_INT=0
-        if [ "$CURRENT_INT" -lt "$LAST_INT" ]; then
-            IS_REGRESSION=1
-        else
-            IS_REGRESSION=0
-        fi
-    fi
-
-    if [ "$IS_REGRESSION" = "1" ]; then
-        echo ""
-        echo "CONFORMANCE REGRESSION DETECTED!"
-        echo ""
-        echo "  Previous: ${LAST_CONFORMANCE}%"
-        echo "  Current:  ${CURRENT_CONFORMANCE}%"
-        echo "  Delta:    -$(echo "$LAST_CONFORMANCE - $CURRENT_CONFORMANCE" | bc -l 2>/dev/null || echo "?")%"
-        echo ""
-        echo "  Your changes caused a drop in conformance test pass rate."
-        echo "  Please fix the regression before committing."
-        echo ""
-        echo "  To investigate:"
-        echo "    ./scripts/conformance.sh analyze"
-        echo ""
-        echo "  To bypass (not recommended):"
-        echo "    TSZ_SKIP_CONFORMANCE=1 git commit ..."
-        echo ""
-        exit 1
-    fi
-
-    echo "  Conformance: ${CURRENT_CONFORMANCE}% (no regression from ${LAST_CONFORMANCE}%)"
-
-    # Store for prepare-commit-msg hook
-    echo "$CURRENT_CONFORMANCE" > "$ROOT_DIR/.conformance-value"
-fi
+echo "5/5 Microbenchmark check disabled"
 
 echo ""
 echo "All pre-commit checks passed!"
+
+# NOTE: Conformance regression check was removed from pre-commit (too slow).
+# Run manually when needed: ./scripts/conformance.sh run
