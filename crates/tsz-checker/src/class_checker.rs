@@ -332,7 +332,12 @@ impl<'a> CheckerState<'a> {
                 let prop_type = if !prop.type_annotation.is_none() {
                     self.get_type_from_type_node(prop.type_annotation)
                 } else if !prop.initializer.is_none() {
-                    self.get_type_of_node(prop.initializer)
+                    let init_type = self.get_type_of_node(prop.initializer);
+                    if self.has_readonly_modifier(&prop.modifiers) {
+                        init_type
+                    } else {
+                        self.widen_literal_type(init_type)
+                    }
                 } else {
                     TypeId::ANY
                 };
