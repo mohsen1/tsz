@@ -781,7 +781,9 @@ impl ParserState {
         let options = if self.parse_optional(SyntaxKind::CommaToken) {
             if self.is_token(SyntaxKind::CloseParenToken) {
                 // Trailing comma after first arg → TS1009
-                self.parse_error_at_current_token(
+                self.parse_error_at(
+                    self.token_pos().saturating_sub(1),
+                    1,
                     "Trailing comma not allowed.",
                     diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
                 );
@@ -798,7 +800,9 @@ impl ParserState {
         while self.parse_optional(SyntaxKind::CommaToken) {
             if self.is_token(SyntaxKind::CloseParenToken) {
                 // Trailing comma → TS1009
-                self.parse_error_at_current_token(
+                self.parse_error_at(
+                    self.token_pos().saturating_sub(1),
+                    1,
                     "Trailing comma not allowed.",
                     diagnostic_codes::TRAILING_COMMA_NOT_ALLOWED,
                 );

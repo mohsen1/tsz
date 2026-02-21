@@ -1137,7 +1137,7 @@ impl ParserState {
                 break;
             }
             self.parse_error_at(
-                comma_pos,
+                comma_end,
                 comma_end - comma_pos,
                 "Classes can only extend a single class.",
                 diagnostic_codes::CLASSES_CAN_ONLY_EXTEND_A_SINGLE_CLASS,
