@@ -64,29 +64,12 @@ RUNNER_WATCH_PATHS=(
     "$SCRIPT_DIR/../package.json"
     "$SCRIPT_DIR/../package-lock.json"
 )
-TSZ_STATUS_PREFIXES=(
-    "src/"
-    "crates/tsz-cli/"
-    "crates/tsz-emitter/"
-    "crates/tsz-checker/"
-    "crates/tsz-solver/"
-    "crates/tsz-parser/"
-    "crates/tsz-scanner/"
-    "crates/tsz-common/"
-    "Cargo.toml"
-    "Cargo.lock"
-)
-EMIT_REL_PATH="${SCRIPT_DIR#"$ROOT_DIR/"}"
-RUNNER_STATUS_PREFIXES=(
-    "$EMIT_REL_PATH/src/"
-    "$EMIT_REL_PATH/tsconfig.json"
-    "scripts/package.json"
-    "scripts/package-lock.json"
-)
 ROOT_GIT_AVAILABLE=0
 ROOT_GIT_HEAD=""
-ROOT_GIT_STATUS_CACHED=0
-ROOT_GIT_STATUS_OUTPUT=""
+ROOT_GIT_TSZ_STATUS_CACHED=0
+ROOT_GIT_TSZ_STATUS_OUTPUT=""
+ROOT_GIT_RUNNER_STATUS_CACHED=0
+ROOT_GIT_RUNNER_STATUS_OUTPUT=""
 
 if command -v git &>/dev/null && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree &>/dev/null; then
     ROOT_GIT_AVAILABLE=1
@@ -145,56 +128,50 @@ write_state_head() {
     printf '%s\n' "$head" > "$state_file"
 }
 
-cache_git_status_output() {
-    if [[ "$ROOT_GIT_STATUS_CACHED" -eq 1 ]]; then
+cache_tsz_watch_status() {
+    if [[ "$ROOT_GIT_TSZ_STATUS_CACHED" -eq 1 ]]; then
         return 0
     fi
-    ROOT_GIT_STATUS_CACHED=1
+    ROOT_GIT_TSZ_STATUS_CACHED=1
 
     if [[ "$ROOT_GIT_AVAILABLE" -ne 1 ]]; then
-        ROOT_GIT_STATUS_OUTPUT=""
+        ROOT_GIT_TSZ_STATUS_OUTPUT=""
         return 0
     fi
 
-    ROOT_GIT_STATUS_OUTPUT="$(git -C "$ROOT_DIR" status --porcelain -- "${TSZ_WATCH_PATHS[@]}" "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null || true)"
+    ROOT_GIT_TSZ_STATUS_OUTPUT="$(git -C "$ROOT_DIR" status --porcelain --short -- "${TSZ_WATCH_PATHS[@]}" 2>/dev/null || true)"
 }
 
-status_path_matches_prefixes() {
-    local path="$1"
-    local -n prefixes_ref="$2"
-    local prefix
+cache_runner_watch_status() {
+    if [[ "$ROOT_GIT_RUNNER_STATUS_CACHED" -eq 1 ]]; then
+        return 0
+    fi
+    ROOT_GIT_RUNNER_STATUS_CACHED=1
 
-    for prefix in "${prefixes_ref[@]}"; do
-        case "$path" in
-            "$prefix" | "$prefix"/*) return 0 ;;
-        esac
-    done
+    if [[ "$ROOT_GIT_AVAILABLE" -ne 1 ]]; then
+        ROOT_GIT_RUNNER_STATUS_OUTPUT=""
+        return 0
+    fi
+
+    ROOT_GIT_RUNNER_STATUS_OUTPUT="$(git -C "$ROOT_DIR" status --porcelain --short -- "${RUNNER_WATCH_PATHS[@]}" 2>/dev/null || true)"
+}
+
+tsz_watched_changes() {
+    cache_tsz_watch_status
+
+    if [[ -n "$ROOT_GIT_TSZ_STATUS_OUTPUT" ]]; then
+        return 0
+    fi
 
     return 1
 }
 
-cache_contains_watched_changes() {
-    local -n prefixes_ref="$1"
-    local raw_line raw_path raw_left raw_right
+runner_watched_changes() {
+    cache_runner_watch_status
 
-    if [[ -z "$ROOT_GIT_STATUS_OUTPUT" ]]; then
-        return 1
+    if [[ -n "$ROOT_GIT_RUNNER_STATUS_OUTPUT" ]]; then
+        return 0
     fi
-
-    while IFS= read -r raw_line; do
-        raw_path="${raw_line:3}"
-        if [[ "$raw_path" == *" -> "* ]]; then
-            raw_left="${raw_path%% -> *}"
-            raw_right="${raw_path##* -> }"
-            if status_path_matches_prefixes "$raw_left" "$1" || status_path_matches_prefixes "$raw_right" "$1"; then
-                return 0
-            fi
-        else
-            if status_path_matches_prefixes "$raw_path" "$1"; then
-                return 0
-            fi
-        fi
-    done <<< "$ROOT_GIT_STATUS_OUTPUT"
 
     return 1
 }
@@ -264,13 +241,10 @@ ensure_tsz_binary() {
     local state_file="$(dirname "$tsz_bin")/.tsz_binary_head"
 
     if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
-        cache_git_status_output
-        if cache_contains_watched_changes TSZ_STATUS_PREFIXES; then
+        if ! state_head_matches "$state_file" "$ROOT_GIT_HEAD"; then
             stale=1
-        else
-            if ! state_head_matches "$state_file" "$ROOT_GIT_HEAD"; then
-                stale=1
-            fi
+        elif tsz_watched_changes; then
+            stale=1
         fi
     else
         # Fallback when not in a git checkout: use filesystem mtime checks.
@@ -305,13 +279,10 @@ build_runner() {
         stale=1
     else
         if [[ "$ROOT_GIT_AVAILABLE" -eq 1 ]]; then
-            cache_git_status_output
-            if cache_contains_watched_changes RUNNER_STATUS_PREFIXES; then
+            if ! state_head_matches "$state_file" "$ROOT_GIT_HEAD"; then
                 stale=1
-            else
-                if ! state_head_matches "$state_file" "$ROOT_GIT_HEAD"; then
-                    stale=1
-                fi
+            elif runner_watched_changes; then
+                stale=1
             fi
         else
             # Fallback when not in a git checkout: use filesystem mtime checks.
