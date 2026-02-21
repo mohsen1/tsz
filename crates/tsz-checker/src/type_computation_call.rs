@@ -43,10 +43,7 @@ impl<'a> CheckerState<'a> {
         result
     }
 
-    pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
-        // Defined at end of impl block (merged version)
-        self.get_type_of_tagged_template_expression_impl(idx)
-    }
+    // Tagged template expression type computation is defined at end of impl block.
 
     /// Inner implementation of call expression type resolution.
     pub(crate) fn get_type_of_call_expression_inner(&mut self, idx: NodeIndex) -> TypeId {
@@ -1749,7 +1746,7 @@ impl<'a> CheckerState<'a> {
     ///
     /// This computes the return type of the tag function and ensures
     /// the template substitution expressions are type-checked.
-    fn get_type_of_tagged_template_expression_impl(&mut self, idx: NodeIndex) -> TypeId {
+    pub(crate) fn get_type_of_tagged_template_expression(&mut self, idx: NodeIndex) -> TypeId {
         use crate::query_boundaries::iterable_checker::{
             call_signatures_for_type, function_shape_for_type,
         };
