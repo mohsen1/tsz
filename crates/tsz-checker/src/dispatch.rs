@@ -912,6 +912,11 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 }
             }
 
+            // Tagged Template expression (e.g., `tag\`hello ${name}\``)
+            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
+                self.checker.get_type_of_tagged_template_expression(idx)
+            }
+
             // Template expression (e.g., `hello ${name}`)
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => {
                 self.checker.get_type_of_template_expression(idx)
