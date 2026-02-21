@@ -3,6 +3,7 @@
 use crate::EnclosingClassInfo;
 use crate::error_handler::ErrorHandler;
 use crate::flow_analysis::{ComputedKey, PropertyKey};
+use crate::query_boundaries::class_type as class_query;
 use crate::query_boundaries::definite_assignment::{
     check_constructor_property_use_before_assignment, constructor_assigned_properties,
 };
@@ -111,7 +112,7 @@ impl<'a> CheckerState<'a> {
                         if total_type_params == 0 {
                             let symbol_type = self.get_type_of_symbol(heritage_sym);
                             let has_generic_construct_signature =
-                                tsz_solver::type_queries::get_construct_signatures(
+                                class_query::construct_signatures_for_type(
                                     self.ctx.types,
                                     symbol_type,
                                 )
@@ -343,7 +344,7 @@ impl<'a> CheckerState<'a> {
                         } else if !is_class_declaration
                             && symbol_type != TypeId::ERROR
                             && symbol_type != TypeId::ANY
-                            && tsz_solver::type_queries::is_mapped_type(self.ctx.types, symbol_type)
+                            && class_query::is_mapped_type(self.ctx.types, symbol_type)
                         {
                             use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                             self.error_at_node(
@@ -365,12 +366,11 @@ impl<'a> CheckerState<'a> {
                     {
                         let expr_type = self.get_type_of_node(expr_idx);
                         let has_generic_construct_sig =
-                            tsz_solver::type_queries::get_construct_signatures(
-                                self.ctx.types,
-                                expr_type,
-                            )
-                            .is_some_and(|sigs| sigs.iter().any(|sig| !sig.type_params.is_empty()));
-                        if !tsz_solver::type_queries::is_generic_type(self.ctx.types, expr_type)
+                            class_query::construct_signatures_for_type(self.ctx.types, expr_type)
+                                .is_some_and(|sigs| {
+                                    sigs.iter().any(|sig| !sig.type_params.is_empty())
+                                });
+                        if !class_query::is_generic_type(self.ctx.types, expr_type)
                             && !has_generic_construct_sig
                             && expr_type != TypeId::ERROR
                             && expr_type != TypeId::ANY
@@ -1541,10 +1541,10 @@ impl<'a> CheckerState<'a> {
         if is_derived_class {
             // In derived classes, properties without definite assignment assertions
             // need initialization unless they include undefined in their type
-            return !tsz_solver::type_queries::type_includes_undefined(self.ctx.types, prop_type);
+            return !class_query::type_includes_undefined(self.ctx.types, prop_type);
         }
 
-        !tsz_solver::type_queries::type_includes_undefined(self.ctx.types, prop_type)
+        !class_query::type_includes_undefined(self.ctx.types, prop_type)
     }
 
     // Note: class_has_base, type_includes_undefined, find_constructor_body are in type_checking.rs

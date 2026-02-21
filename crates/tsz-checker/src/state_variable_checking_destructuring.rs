@@ -133,10 +133,8 @@ impl<'a> CheckerState<'a> {
                 // for mutable destructured bindings (var/let).
                 // This includes unions like `undefined | null`.
                 let final_type = if !self.ctx.strict_null_checks()
-                    && tsz_solver::type_queries::is_only_null_or_undefined(
-                        self.ctx.types,
-                        element_type,
-                    ) {
+                    && query::is_only_null_or_undefined(self.ctx.types, element_type)
+                {
                     TypeId::ANY
                 } else {
                     element_type
@@ -503,11 +501,9 @@ impl<'a> CheckerState<'a> {
             if let Some(members) = query::union_members(self.ctx.types, parent_type) {
                 let mut prop_types = Vec::new();
                 for member in members {
-                    if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
-                        self.ctx.types,
-                        member,
-                        prop_name_str,
-                    ) {
+                    if let Some(prop) =
+                        query::find_property_in_object_by_str(self.ctx.types, member, prop_name_str)
+                    {
                         prop_types.push(property_optional_type(prop.type_id, prop.optional));
                     }
                 }
@@ -516,11 +512,9 @@ impl<'a> CheckerState<'a> {
                 } else {
                     tsz_solver::utils::union_or_single(self.ctx.types, prop_types)
                 }
-            } else if let Some(prop) = tsz_solver::type_queries::find_property_in_object_by_str(
-                self.ctx.types,
-                parent_type,
-                prop_name_str,
-            ) {
+            } else if let Some(prop) =
+                query::find_property_in_object_by_str(self.ctx.types, parent_type, prop_name_str)
+            {
                 property_optional_type(prop.type_id, prop.optional)
             } else {
                 TypeId::ANY

@@ -465,11 +465,7 @@ impl<'a> PropertyAccessEvaluator<'a> {
         }
 
         // Reconstruct obj_type for PropertyNotFound result
-        let obj_type = self
-            .interner()
-            .intern(crate::types::TypeData::ObjectWithIndex(ObjectShapeId(
-                shape_id,
-            )));
+        let obj_type = self.interner().object_with_index((*shape).clone());
 
         Some(PropertyAccessResult::PropertyNotFound {
             type_id: obj_type,

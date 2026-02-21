@@ -539,7 +539,10 @@ impl<'a> CheckerState<'a> {
         if result_type == TypeId::ERROR
             && let Some(index) = literal_index
             && let Some(tuple_elements) =
-                tsz_solver::type_queries::get_tuple_elements(self.ctx.types, object_type_for_access)
+                crate::query_boundaries::type_computation_access::tuple_elements(
+                    self.ctx.types,
+                    object_type_for_access,
+                )
         {
             let has_rest_tail = tuple_elements.last().is_some_and(|element| element.rest);
             if !has_rest_tail && index >= tuple_elements.len() {
@@ -822,7 +825,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        tsz_solver::type_queries::get_literal_property_name(
+                        crate::query_boundaries::type_computation_access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -848,7 +851,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        tsz_solver::type_queries::get_literal_property_name(
+                        crate::query_boundaries::type_computation_access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -960,10 +963,12 @@ impl<'a> CheckerState<'a> {
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        if let Some(atom) = tsz_solver::type_queries::get_literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        ) {
+                        if let Some(atom) =
+                            crate::query_boundaries::type_computation_access::literal_property_name(
+                                self.ctx.types,
+                                prop_name_type,
+                            )
+                        {
                             if !skip_duplicate_check
                                 && explicit_property_names.contains(&atom)
                                 && !self.ctx.has_parse_errors
@@ -1176,7 +1181,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        tsz_solver::type_queries::get_literal_property_name(
+                        crate::query_boundaries::type_computation_access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -1261,10 +1266,12 @@ impl<'a> CheckerState<'a> {
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        if let Some(atom) = tsz_solver::type_queries::get_literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        ) {
+                        if let Some(atom) =
+                            crate::query_boundaries::type_computation_access::literal_property_name(
+                                self.ctx.types,
+                                prop_name_type,
+                            )
+                        {
                             if !skip_duplicate_check
                                 && explicit_property_names.contains(&atom)
                                 && !self.ctx.has_parse_errors
@@ -1313,7 +1320,7 @@ impl<'a> CheckerState<'a> {
                 if elem_node.kind == syntax_kind_ext::SET_ACCESSOR {
                     let name_opt = self.get_property_name(accessor.name).or_else(|| {
                         let prop_name_type = self.get_type_of_node(accessor.name);
-                        tsz_solver::type_queries::get_literal_property_name(
+                        crate::query_boundaries::type_computation_access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -1367,7 +1374,7 @@ impl<'a> CheckerState<'a> {
                     {
                         let computed = self.ctx.arena.get_computed_property(prop_name_node)?;
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        tsz_solver::type_queries::get_literal_property_name(
+                        crate::query_boundaries::type_computation_access::literal_property_name(
                             self.ctx.types,
                             prop_name_type,
                         )
@@ -1569,10 +1576,12 @@ impl<'a> CheckerState<'a> {
                         && let Some(computed) = self.ctx.arena.get_computed_property(prop_name_node)
                     {
                         let prop_name_type = self.get_type_of_node(computed.expression);
-                        if let Some(atom) = tsz_solver::type_queries::get_literal_property_name(
-                            self.ctx.types,
-                            prop_name_type,
-                        ) {
+                        if let Some(atom) =
+                            crate::query_boundaries::type_computation_access::literal_property_name(
+                                self.ctx.types,
+                                prop_name_type,
+                            )
+                        {
                             let is_getter =
                                 elem_node.kind == tsz_parser::parser::syntax_kind_ext::GET_ACCESSOR;
                             let is_complementary_pair = if is_getter {
@@ -1640,7 +1649,7 @@ impl<'a> CheckerState<'a> {
                     // TS2698: Spread types may only be created from object types
                     let resolved_spread = self.resolve_type_for_property_access(spread_type);
                     let resolved_spread = self.resolve_lazy_type(resolved_spread);
-                    if !tsz_solver::type_queries::is_valid_spread_type(
+                    if !crate::query_boundaries::type_computation_access::is_valid_spread_type(
                         self.ctx.types,
                         resolved_spread,
                     ) {

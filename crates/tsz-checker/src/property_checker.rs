@@ -1,5 +1,6 @@
 //! Property access checking (accessibility, computed names, const modifiers).
 
+use crate::query_boundaries::property_checker as query;
 use crate::state::CheckerState;
 use crate::state::MemberAccessLevel;
 use tsz_parser::parser::NodeIndex;
@@ -253,7 +254,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if !tsz_solver::type_queries::is_type_usable_as_property_name(self.ctx.types, expr_type) {
+        if !query::is_type_usable_as_property_name(self.ctx.types, expr_type) {
             self.error_at_node(name_idx, message, code);
         }
     }

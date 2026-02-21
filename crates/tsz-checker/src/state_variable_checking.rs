@@ -939,10 +939,8 @@ impl<'a> CheckerState<'a> {
                                 .is_some_and(|lit| lit.elements.nodes.is_empty())
                     });
                 if init_is_direct_empty_array
-                    && tsz_solver::type_queries::get_array_element_type(
-                        checker.ctx.types,
-                        init_type,
-                    ) == Some(TypeId::NEVER)
+                    && query::array_element_type(checker.ctx.types, init_type)
+                        == Some(TypeId::NEVER)
                 {
                     init_type = checker.ctx.types.factory().array(TypeId::ANY);
                 }
@@ -993,10 +991,7 @@ impl<'a> CheckerState<'a> {
                 // When strictNullChecks is off, undefined and null widen to any
                 // regardless of freshness (this applies to destructured bindings too)
                 if !checker.ctx.strict_null_checks()
-                    && tsz_solver::type_queries::is_only_null_or_undefined(
-                        checker.ctx.types,
-                        widened,
-                    )
+                    && query::is_only_null_or_undefined(checker.ctx.types, widened)
                 {
                     TypeId::ANY
                 } else {
@@ -1038,7 +1033,7 @@ impl<'a> CheckerState<'a> {
 
                 // Then try semantic check
                 let semantic_circular = !ast_circular
-                    && tsz_solver::type_queries::has_type_query_for_symbol(
+                    && query::has_type_query_for_symbol(
                         self.ctx.types,
                         final_type,
                         sym_id.0,

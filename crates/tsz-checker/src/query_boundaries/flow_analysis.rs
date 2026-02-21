@@ -60,6 +60,34 @@ pub(crate) fn is_assignable_strict_null(
     .is_related()
 }
 
+pub(crate) const fn is_compound_assignment_operator(operator_token: u16) -> bool {
+    tsz_solver::is_compound_assignment_operator(operator_token)
+}
+
+pub(crate) const fn map_compound_assignment_to_binary(operator_token: u16) -> Option<&'static str> {
+    tsz_solver::map_compound_assignment_to_binary(operator_token)
+}
+
+pub(crate) fn fallback_compound_assignment_result(
+    db: &dyn TypeDatabase,
+    operator_token: u16,
+    rhs_literal_type: Option<TypeId>,
+) -> Option<TypeId> {
+    tsz_solver::fallback_compound_assignment_result(db, operator_token, rhs_literal_type)
+}
+
+pub(crate) fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    tsz_solver::type_queries::widen_literal_to_primitive(db, type_id)
+}
+
+pub(crate) fn get_array_element_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries::get_array_element_type(db, type_id)
+}
+
+pub(crate) fn is_unit_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_unit_type(db, type_id)
+}
+
 pub(crate) fn are_types_mutually_subtype_with_env(
     db: &dyn TypeDatabase,
     env: &tsz_solver::TypeEnvironment,
