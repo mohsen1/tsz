@@ -42,11 +42,14 @@ wasm-pack build crates/tsz-wasm --target bundler --out-dir "$PKG/bundler"
 # `npm publish` to exclude all files inside those directories.  Remove them.
 rm -f "$PKG/node/.gitignore" "$PKG/bundler/.gitignore"
 
-echo "Writing unified package.json..."
-cat > "$PKG/package.json" <<'EOF'
+# Extract version from workspace Cargo.toml so npm package stays in sync.
+CARGO_VERSION=$(grep '^version' "$PROJECT_ROOT/Cargo.toml" | head -1 | sed 's/.*"\(.*\)"/\1/')
+
+echo "Writing unified package.json (version $CARGO_VERSION)..."
+cat > "$PKG/package.json" <<EOF
 {
   "name": "@mohsen-azimi/tsz-dev",
-  "version": "0.1.0",
+  "version": "$CARGO_VERSION",
   "description": "WebAssembly bindings for the tsz TypeScript compiler",
   "license": "Apache-2.0",
   "author": "Mohsen Azimi <mohsen@users.noreply.github.com>",
