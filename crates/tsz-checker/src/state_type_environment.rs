@@ -610,6 +610,47 @@ impl<'a> CheckerState<'a> {
     /// interface SortedMap<K extends Comparable, V> {}
     /// // get_type_params_for_symbol(SortedMap) → [K: Comparable, V]
     /// ```
+    fn extract_type_params_from_decl(
+        checker: &mut CheckerState,
+        flags: u32,
+        decl_idx: NodeIndex,
+        sym_escaped_name: &str,
+    ) -> Option<Vec<tsz_solver::TypeParamInfo>> {
+        if let Some(node) = checker.ctx.arena.get(decl_idx) {
+            if flags & symbol_flags::TYPE_ALIAS != 0
+                && let Some(type_alias) = checker.ctx.arena.get_type_alias(node)
+            {
+                let (params, updates) = checker.push_type_parameters(&type_alias.type_parameters);
+                checker.pop_type_parameters(updates);
+                return Some(params);
+            }
+            if flags & symbol_flags::CLASS != 0
+                && let Some(class) = checker.ctx.arena.get_class(node)
+            {
+                let (params, updates) = checker.push_type_parameters(&class.type_parameters);
+                checker.pop_type_parameters(updates);
+                return Some(params);
+            }
+            if flags & symbol_flags::INTERFACE != 0
+                && let Some(iface) = checker.ctx.arena.get_interface(node)
+            {
+                if let Some(name_node) = checker.ctx.arena.get(iface.name)
+                    && let Some(name_ident) = checker.ctx.arena.get_identifier(name_node)
+                {
+                    if name_ident.escaped_text.as_str() != sym_escaped_name {
+                        return None;
+                    }
+                } else {
+                    // Accept if name cannot be resolved for backward compatibility
+                }
+                let (params, updates) = checker.push_type_parameters(&iface.type_parameters);
+                checker.pop_type_parameters(updates);
+                return Some(params);
+            }
+        }
+        None
+    }
+
     pub(crate) fn get_type_params_for_symbol(
         &mut self,
         sym_id: SymbolId,
@@ -662,159 +703,141 @@ impl<'a> CheckerState<'a> {
             self.ctx.leave_recursion();
             return Vec::new();
         }
-
-        if let Some(symbol_arena) = self.ctx.binder.symbol_arenas.get(&sym_id)
-            && !std::ptr::eq(symbol_arena.as_ref(), self.ctx.arena)
-        {
-            // Guard against deep cross-arena recursion (shared with all delegation points)
-            if !Self::enter_cross_arena_delegation() {
-                self.ctx.leave_recursion();
-                return Vec::new();
-            }
-
-            let mut checker = Box::new(CheckerState::with_parent_cache(
-                symbol_arena.as_ref(),
-                self.ctx.binder,
-                self.ctx.types,
-                self.ctx.file_name.clone(),
-                self.ctx.compiler_options.clone(),
-                self, // Share parent's cache to fix Cache Isolation Bug
-            ));
-            let result = checker.get_type_params_for_symbol(sym_id);
-
-            // DO NOT merge child's symbol_types back. See delegate_cross_arena_symbol_resolution
-            // for the full explanation: node_symbols collisions across arenas cause cache poisoning.
-
-            Self::leave_cross_arena_delegation();
-
-            if !result.is_empty() {
-                self.ctx.insert_def_type_params(def_id, result.clone());
-                self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-                self.ctx.leave_recursion();
-                return result;
-            }
-            // Cross-arena delegation returned no type params. This can happen when
-            // a user-defined generic type (e.g., `interface Tag<T>`) is merged with
-            // a non-generic lib symbol of the same name. The lib arena doesn't have
-            // the user's declaration, so it finds no type params. Fall through to
-            // check the current arena's declarations below.
+        let mut decl_candidates = Vec::new();
+        if value_decl != tsz_parser::parser::NodeIndex::NONE {
+            decl_candidates.push(value_decl);
         }
-
-        // Type alias - get type parameters from declaration
-        if flags & symbol_flags::TYPE_ALIAS != 0 {
-            let decl_idx = if value_decl.is_some() {
-                value_decl
-            } else {
-                declarations.first().copied().unwrap_or(NodeIndex::NONE)
-            };
-            if decl_idx.is_some()
-                && let Some(node) = self.ctx.arena.get(decl_idx)
-                && let Some(type_alias) = self.ctx.arena.get_type_alias(node)
-            {
-                let (params, updates) = self.push_type_parameters(&type_alias.type_parameters);
-                self.pop_type_parameters(updates);
-                if !params.is_empty() {
-                    self.ctx.insert_def_type_params(def_id, params.clone());
-                    self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-                } else {
-                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
-                }
-                self.ctx.leave_recursion();
-                return params;
+        for &decl in &declarations {
+            if decl != value_decl {
+                decl_candidates.push(decl);
             }
         }
 
-        // Class - get type parameters from declaration
-        if flags & symbol_flags::CLASS != 0 {
-            let decl_idx = if value_decl.is_some() {
-                value_decl
-            } else {
-                declarations.first().copied().unwrap_or(NodeIndex::NONE)
-            };
-            if decl_idx.is_some()
-                && let Some(node) = self.ctx.arena.get(decl_idx)
-                && let Some(class) = self.ctx.arena.get_class(node)
-            {
-                let (params, updates) = self.push_type_parameters(&class.type_parameters);
-                self.pop_type_parameters(updates);
-                if !params.is_empty() {
-                    self.ctx.insert_def_type_params(def_id, params.clone());
-                    self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-                } else {
-                    self.ctx.def_no_type_params.borrow_mut().insert(def_id);
-                }
-                self.ctx.leave_recursion();
-                return params;
-            }
-        }
+        let mut merged_params: Option<Vec<tsz_solver::TypeParamInfo>> = None;
+        let mut fallback_params = None;
 
-        // Interface - get type parameters from merged declarations.
-        // When interfaces are merged (e.g., `interface Foo {}` + `interface Foo<T> {}`),
-        // we must check ALL declarations because the first one may not have type params.
-        // TypeScript considers the union of type parameters across all declarations.
-        if flags & symbol_flags::INTERFACE != 0 {
-            // Helper: verify that a node in the given arena is an interface whose name
-            // matches the symbol's escaped_name. This prevents cross-arena NodeIndex
-            // collisions from returning the wrong interface's type parameters (e.g.,
-            // Promise declarations that accidentally resolve to Float32Array in a
-            // different lib arena).
-            let is_matching_interface =
-                |arena: &tsz_parser::parser::NodeArena, decl: NodeIndex| -> bool {
-                    if let Some(node) = arena.get(decl)
-                        && let Some(iface) = arena.get_interface(node)
-                    {
-                        if let Some(name_node) = arena.get(iface.name)
-                            && let Some(name_ident) = arena.get_identifier(name_node)
-                        {
-                            return name_ident.escaped_text.as_str() == sym_escaped_name;
+        for decl_idx in decl_candidates {
+            let mut checked_local = false;
+
+            if let Some(arenas) = self.ctx.binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    if std::ptr::eq(arena.as_ref(), self.ctx.arena) {
+                        checked_local = true;
+                        if let Some(params) = Self::extract_type_params_from_decl(
+                            self,
+                            flags,
+                            decl_idx,
+                            &sym_escaped_name,
+                        ) {
+                            if !params.is_empty() {
+                                if let Some(ref mut merged) = merged_params {
+                                    for (i, p) in params.into_iter().enumerate() {
+                                        if i < merged.len()
+                                            && merged[i].default.is_none()
+                                            && p.default.is_some()
+                                        {
+                                            merged[i].default = p.default;
+                                        }
+                                        if i < merged.len()
+                                            && merged[i].constraint.is_none()
+                                            && p.constraint.is_some()
+                                        {
+                                            merged[i].constraint = p.constraint;
+                                        }
+                                    }
+                                } else {
+                                    merged_params = Some(params);
+                                }
+                            } else if fallback_params.is_none() {
+                                fallback_params = Some(params);
+                            }
                         }
-                        // If we can't resolve the name, accept it (backwards compat)
-                        return true;
+                    } else {
+                        if !Self::enter_cross_arena_delegation() {
+                            continue;
+                        }
+                        let mut checker = Box::new(CheckerState::with_parent_cache(
+                            arena.as_ref(),
+                            self.ctx.binder,
+                            self.ctx.types,
+                            self.ctx.file_name.clone(),
+                            self.ctx.compiler_options.clone(),
+                            self,
+                        ));
+                        if let Some(params) = Self::extract_type_params_from_decl(
+                            &mut checker,
+                            flags,
+                            decl_idx,
+                            &sym_escaped_name,
+                        ) {
+                            if !params.is_empty() {
+                                if let Some(ref mut merged) = merged_params {
+                                    for (i, p) in params.into_iter().enumerate() {
+                                        if i < merged.len()
+                                            && merged[i].default.is_none()
+                                            && p.default.is_some()
+                                        {
+                                            merged[i].default = p.default;
+                                        }
+                                        if i < merged.len()
+                                            && merged[i].constraint.is_none()
+                                            && p.constraint.is_some()
+                                        {
+                                            merged[i].constraint = p.constraint;
+                                        }
+                                    }
+                                } else {
+                                    merged_params = Some(params);
+                                }
+                            } else if fallback_params.is_none() {
+                                fallback_params = Some(params);
+                            }
+                        }
+                        Self::leave_cross_arena_delegation();
                     }
-                    false
-                };
+                }
+            }
 
-            // First try value_decl, then search all declarations for one with type params
-            let mut decl_candidates = Vec::new();
-            if value_decl.is_some() && is_matching_interface(self.ctx.arena, value_decl) {
-                decl_candidates.push(value_decl);
-            }
-            for &decl in &declarations {
-                if decl != value_decl && is_matching_interface(self.ctx.arena, decl) {
-                    decl_candidates.push(decl);
-                }
-            }
-            // Try each interface declaration; use the first one that has type parameters
-            for decl_idx in &decl_candidates {
-                if let Some(node) = self.ctx.arena.get(*decl_idx)
-                    && let Some(iface) = self.ctx.arena.get_interface(node)
-                    && iface
-                        .type_parameters
-                        .as_ref()
-                        .is_some_and(|tp| !tp.is_empty())
-                {
-                    let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                    self.pop_type_parameters(updates);
-                    if !params.is_empty() {
-                        self.ctx.insert_def_type_params(def_id, params.clone());
-                        self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
-                        self.ctx.leave_recursion();
-                        return params;
-                    }
-                }
-            }
-            // Fallback: if no declaration has type params, use the first declaration
-            if let Some(&decl_idx) = decl_candidates.first()
-                && let Some(node) = self.ctx.arena.get(decl_idx)
-                && let Some(iface) = self.ctx.arena.get_interface(node)
+            if !checked_local
+                && let Some(params) =
+                    Self::extract_type_params_from_decl(self, flags, decl_idx, &sym_escaped_name)
             {
-                let (params, updates) = self.push_type_parameters(&iface.type_parameters);
-                self.pop_type_parameters(updates);
-                // params will be empty - mark as no type params
-                self.ctx.def_no_type_params.borrow_mut().insert(def_id);
-                self.ctx.leave_recursion();
-                return params;
+                if !params.is_empty() {
+                    if let Some(ref mut merged) = merged_params {
+                        for (i, p) in params.into_iter().enumerate() {
+                            if i < merged.len()
+                                && merged[i].default.is_none()
+                                && p.default.is_some()
+                            {
+                                merged[i].default = p.default;
+                            }
+                            if i < merged.len()
+                                && merged[i].constraint.is_none()
+                                && p.constraint.is_some()
+                            {
+                                merged[i].constraint = p.constraint;
+                            }
+                        }
+                    } else {
+                        merged_params = Some(params);
+                    }
+                } else if fallback_params.is_none() {
+                    fallback_params = Some(params);
+                }
             }
+        }
+
+        if let Some(params) = merged_params {
+            self.ctx.insert_def_type_params(def_id, params.clone());
+            self.ctx.def_no_type_params.borrow_mut().remove(&def_id);
+            self.ctx.leave_recursion();
+            return params;
+        }
+
+        if let Some(params) = fallback_params {
+            self.ctx.def_no_type_params.borrow_mut().insert(def_id);
+            self.ctx.leave_recursion();
+            return params;
         }
 
         self.ctx.def_no_type_params.borrow_mut().insert(def_id);
