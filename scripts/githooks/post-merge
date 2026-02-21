@@ -1,0 +1,11 @@
+#!/bin/bash
+#
+# post-merge hook for tsz
+#
+# Git does not have a dedicated "post-pull" hook. post-merge runs after
+# pull when pull performs a merge.
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../" && pwd)"
+"$ROOT_DIR/scripts/reset-ts-submodule.sh"
