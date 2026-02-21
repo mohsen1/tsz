@@ -1,6 +1,7 @@
 //! Completions and signature help handlers for tsz-server.
 
 use super::{Server, TsServerRequest, TsServerResponse};
+use tsz::lsp::Project;
 use tsz::lsp::completions::Completions;
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
@@ -27,6 +28,73 @@ impl Server {
         }
     }
 
+    fn project_completion_items(
+        &self,
+        file_name: &str,
+        position: tsz::lsp::position::Position,
+    ) -> Vec<tsz::lsp::completions::CompletionItem> {
+        let mut files = self.open_files.clone();
+        if !files.contains_key(file_name)
+            && let Ok(content) = std::fs::read_to_string(file_name)
+        {
+            files.insert(file_name.to_string(), content);
+        }
+        if files.is_empty() {
+            return Vec::new();
+        }
+
+        let mut project = Project::new();
+        for (path, text) in files {
+            project.set_file(path, text);
+        }
+        project
+            .get_completions(file_name, position)
+            .unwrap_or_default()
+    }
+
+    fn completion_entry_from_item(
+        item: &tsz::lsp::completions::CompletionItem,
+        line_map: &LineMap,
+        source_text: &str,
+    ) -> serde_json::Value {
+        let kind = Self::completion_kind_to_str(item.kind);
+        let sort_text = item.effective_sort_text();
+        let mut entry = serde_json::json!({
+            "name": item.label,
+            "kind": kind,
+            "sortText": sort_text,
+            "kindModifiers": item.kind_modifiers.clone().unwrap_or_default(),
+        });
+
+        if item.has_action {
+            entry["hasAction"] = serde_json::json!(true);
+            if let Some(insert_text) = item.insert_text.as_ref() {
+                entry["insertText"] = serde_json::json!(insert_text);
+            }
+            if item.is_snippet {
+                entry["isSnippet"] = serde_json::json!(true);
+            }
+        }
+        if let Some(source) = item.source.as_ref() {
+            entry["source"] = serde_json::json!(source);
+            entry["sourceDisplay"] = serde_json::json!([{ "text": source, "kind": "text" }]);
+            entry["data"] = serde_json::json!({
+                "name": item.label,
+                "source": source,
+            });
+        }
+        if let Some((start, end)) = item.replacement_span {
+            let start_pos = line_map.offset_to_position(start, source_text);
+            let end_pos = line_map.offset_to_position(end, source_text);
+            entry["replacementSpan"] = serde_json::json!({
+                "start": Self::lsp_to_tsserver_position(start_pos),
+                "end": Self::lsp_to_tsserver_position(end_pos),
+            });
+        }
+
+        entry
+    }
+
     pub(crate) fn handle_completions(
         &mut self,
         seq: u64,
@@ -44,35 +112,29 @@ impl Server {
                 &line_map,
                 &interner,
                 &source_text,
-                file,
+                file.clone(),
             );
-            let completion_result = provider.get_completion_result(root, position)?;
+            let completion_result = provider.get_completion_result(root, position);
+            let provider_items = completion_result
+                .as_ref()
+                .map(|result| result.entries.clone())
+                .unwrap_or_default();
+            let project_items = self.project_completion_items(&file, position);
+            let items = if project_items.is_empty() {
+                provider_items
+            } else {
+                project_items
+            };
 
-            let entries: Vec<serde_json::Value> = completion_result
-                .entries
+            let entries: Vec<serde_json::Value> = items
                 .iter()
-                .map(|item| {
-                    let kind = Self::completion_kind_to_str(item.kind);
-                    // sort_text values already use tsserver's SortText format directly
-                    let sort_text = item.effective_sort_text();
-                    let mut entry = serde_json::json!({
-                        "name": item.label,
-                        "kind": kind,
-                        "sortText": sort_text,
-                    });
-                    if let Some(ref modifiers) = item.kind_modifiers {
-                        entry["kindModifiers"] = serde_json::json!(modifiers);
-                    } else {
-                        entry["kindModifiers"] = serde_json::json!("");
-                    }
-                    entry
-                })
+                .map(|item| Self::completion_entry_from_item(item, &line_map, &source_text))
                 .collect();
 
             Some(serde_json::json!({
-                "isGlobalCompletion": completion_result.is_global_completion,
-                "isMemberCompletion": completion_result.is_member_completion,
-                "isNewIdentifierLocation": completion_result.is_new_identifier_location,
+                "isGlobalCompletion": completion_result.as_ref().map(|r| r.is_global_completion).unwrap_or(false),
+                "isMemberCompletion": completion_result.as_ref().map(|r| r.is_member_completion).unwrap_or(false),
+                "isNewIdentifierLocation": completion_result.as_ref().map(|r| r.is_new_identifier_location).unwrap_or(false),
                 "entries": entries,
             }))
         })();
@@ -111,10 +173,16 @@ impl Server {
             let offset = request.arguments.get("offset")?.as_u64()? as u32;
             let position = Self::tsserver_to_lsp_position(line, offset);
             let completion_result = provider.get_completion_result(root, position);
-            let items = completion_result
+            let provider_items = completion_result
                 .as_ref()
                 .map(|result| result.entries.clone())
                 .unwrap_or_default();
+            let project_items = self.project_completion_items(file, position);
+            let items = if project_items.is_empty() {
+                provider_items
+            } else {
+                project_items
+            };
             let member_parent = completion_result
                 .as_ref()
                 .and_then(|result| {
@@ -126,18 +194,32 @@ impl Server {
             let details: Vec<serde_json::Value> = entry_names
                 .iter()
                 .map(|entry_name| {
-                    let name = if let Some(s) = entry_name.as_str() {
-                        s.to_string()
+                    let (name, requested_source) = if let Some(s) = entry_name.as_str() {
+                        (s.to_string(), None)
                     } else if let Some(obj) = entry_name.as_object() {
-                        obj.get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string()
+                        (
+                            obj.get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                            obj.get("source")
+                                .and_then(|v| v.as_str())
+                                .map(std::string::ToString::to_string),
+                        )
                     } else {
-                        String::new()
+                        (String::new(), None)
                     };
                     // Try to find the matching completion item
-                    let item = items.iter().find(|i| i.label == name);
+                    let item = items.iter().find(|i| {
+                        if i.label != name {
+                            return false;
+                        }
+                        if let Some(source) = requested_source.as_deref() {
+                            i.source.as_deref() == Some(source)
+                        } else {
+                            true
+                        }
+                    });
                     let kind = item.map_or("property", |i| Self::completion_kind_to_str(i.kind));
                     let kind_modifiers =
                         item.and_then(|i| i.kind_modifiers.as_deref()).unwrap_or("");
@@ -165,7 +247,51 @@ impl Server {
                         detail.insert("documentation".to_string(), documentation);
                     }
                     if let Some(source) = item.and_then(|i| i.source.as_ref()) {
-                        detail.insert("source".to_string(), serde_json::json!(source));
+                        let source_display =
+                            serde_json::json!([{ "text": source, "kind": "text" }]);
+                        detail.insert("source".to_string(), source_display.clone());
+                        detail.insert("sourceDisplay".to_string(), source_display);
+                    }
+                    if let Some(item) = item
+                        && item.has_action
+                        && let Some(edits) = item.additional_text_edits.as_ref()
+                        && !edits.is_empty()
+                    {
+                        let text_changes: Vec<serde_json::Value> = edits
+                            .iter()
+                            .map(|edit| {
+                                let start = line_map
+                                    .position_to_offset(edit.range.start, &source_text)
+                                    .unwrap_or(0);
+                                let end = line_map
+                                    .position_to_offset(edit.range.end, &source_text)
+                                    .unwrap_or(start);
+                                serde_json::json!({
+                                    "span": {
+                                        "start": start,
+                                        "length": end.saturating_sub(start),
+                                    },
+                                    "newText": edit.new_text,
+                                })
+                            })
+                            .collect();
+
+                        let description = item
+                            .source
+                            .as_deref()
+                            .map(|source| format!("Add import from \"{source}\""))
+                            .unwrap_or_else(|| format!("Apply completion for '{}'", item.label));
+
+                        detail.insert(
+                            "codeActions".to_string(),
+                            serde_json::json!([{
+                                "description": description,
+                                "changes": [{
+                                    "fileName": file,
+                                    "textChanges": text_changes,
+                                }],
+                            }]),
+                        );
                     }
                     serde_json::Value::Object(detail)
                 })

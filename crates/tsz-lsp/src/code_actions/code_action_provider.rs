@@ -1124,6 +1124,7 @@ impl<'a> CodeActionProvider<'a> {
         }
 
         let (insert_pos, needs_newline) = self.import_insertion_point(root)?;
+        let insert_at_file_start = insert_pos.line == 0 && insert_pos.character == 0;
         let mut new_text = String::new();
         if needs_newline {
             new_text.push('\n');
@@ -1156,6 +1157,9 @@ impl<'a> CodeActionProvider<'a> {
         new_text.push_str(" from \"");
         new_text.push_str(&candidate.module_specifier);
         new_text.push_str("\";\n");
+        if insert_at_file_start {
+            new_text.push('\n');
+        }
 
         Some(vec![TextEdit {
             range: Range::new(insert_pos, insert_pos),

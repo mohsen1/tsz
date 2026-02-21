@@ -25,6 +25,7 @@ use crate::rename::WorkspaceEdit;
 use crate::resolver::{ScopeCache, ScopeCacheStats};
 use crate::signature_help::{SignatureHelp, SignatureHelpProvider};
 use crate::symbol_index::SymbolIndex;
+use crate::utils::find_node_at_offset;
 use crate::workspace_symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 use tsz_binder::BinderState;
 use tsz_binder::SymbolId;
@@ -1643,23 +1644,43 @@ impl Project {
                 let skip = self.is_member_access_node(file.arena(), node_idx);
                 (Some(name), skip)
             } else {
-                (None, false)
+                let offset = file
+                    .line_map()
+                    .position_to_offset(position, file.source_text())
+                    .unwrap_or(0) as usize;
+                let mut node_idx = find_node_at_offset(file.arena(), offset as u32);
+                if node_idx.is_none() && offset > 0 {
+                    node_idx = find_node_at_offset(file.arena(), (offset - 1) as u32);
+                }
+                let in_string_literal = file.arena().get(node_idx).is_some_and(|node| {
+                    node.kind == SyntaxKind::StringLiteral as u16
+                        || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        || node.kind == SyntaxKind::TemplateHead as u16
+                        || node.kind == SyntaxKind::TemplateMiddle as u16
+                        || node.kind == SyntaxKind::TemplateTail as u16
+                });
+                let source = file.source_text().as_bytes();
+                let mut idx = offset.min(source.len());
+                while idx > 0 && source[idx - 1].is_ascii_whitespace() {
+                    idx -= 1;
+                }
+                let skip = in_string_literal || (idx > 0 && source[idx - 1] == b'.');
+                (None, skip)
             }
         };
 
-        if let Some(missing_name) = missing_name
-            && !skip_auto_import
-        {
+        if !skip_auto_import {
             let file = self.files.get(file_name)?;
             let mut candidates = Vec::new();
             let mut seen = FxHashSet::default();
+            let prefix = missing_name.unwrap_or_default();
 
             // Use prefix matching for better completion UX
             // If the missing_name is not in existing completions, try to find symbols
             // that start with this prefix (e.g., "use" → "useEffect", "useState")
             self.collect_import_candidates_for_prefix(
                 file,
-                &missing_name,
+                &prefix,
                 &existing,
                 &mut candidates,
                 &mut seen,
@@ -1680,16 +1701,14 @@ impl Project {
                     continue;
                 }
 
-                let mut item = self.completion_from_import_candidate(&candidate);
-
                 // Generate additional text edits for auto-import
                 if let Some(edits) =
                     code_action_provider.build_auto_import_edit(file.root(), &candidate)
                 {
+                    let mut item = self.completion_from_import_candidate(&candidate);
                     item = item.with_additional_edits(edits);
+                    completions.push(item);
                 }
-
-                completions.push(item);
             }
         }
 
