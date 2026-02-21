@@ -398,5 +398,5 @@ pub fn merge_assignment_states(states: &[AssignmentStateMap]) -> AssignmentState
 }
 
 #[cfg(test)]
-#[path = "../tests/flow_analyzer.rs"]
+#[path = "../../tests/flow_analyzer.rs"]
 mod tests;

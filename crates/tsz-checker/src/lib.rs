@@ -20,98 +20,94 @@ pub mod accessor_checker;
 pub mod assignability_checker;
 pub mod assignment_checker;
 pub mod call_checker;
-pub mod class_checker;
-mod class_checker_compat;
-mod class_implements_checker;
-pub mod class_inheritance;
-pub mod class_type;
-pub mod constructor_checker;
 pub mod context;
 mod context_constructors;
 mod context_def_mapping;
 mod context_resolver;
-pub mod control_flow;
-mod control_flow_assignment;
-mod control_flow_narrowing;
-mod control_flow_type_guards;
-pub mod declarations;
-mod declarations_module;
-mod declarations_module_helpers;
 pub mod decorators;
 pub mod dispatch;
 pub mod enum_checker;
 pub mod error_handler;
 pub mod error_reporter;
 pub mod expr;
-pub mod flow_analysis;
-mod flow_analysis_definite;
-mod flow_analysis_usage;
-pub mod flow_analyzer;
-pub mod flow_graph_builder;
-pub mod function_type;
 pub mod generic_checker;
-pub mod import_checker;
-mod import_declaration_checker;
-pub mod interface_type;
 pub mod iterable_checker;
 pub mod jsx_checker;
 pub mod judge_integration;
-pub mod literal_type;
-pub mod module_checker;
 pub mod module_resolution;
-pub mod namespace_checker;
-pub mod object_type;
 pub mod optional_chain;
 pub mod parameter_checker;
-pub mod private_checker;
 pub mod promise_checker;
-mod property_access_type;
 pub mod property_checker;
 mod query_boundaries;
-pub mod reachability_analyzer;
-pub mod reachability_checker;
-pub mod scope_finder;
 pub mod signature_builder;
-pub mod state;
-pub mod state_checking;
-mod state_checking_members;
-mod state_class_checking;
-mod state_property_checking;
-pub mod state_type_analysis;
-mod state_type_analysis_computed;
-mod state_type_analysis_computed_helpers;
-mod state_type_analysis_cross_file;
-pub mod state_type_environment;
-mod state_type_environment_lazy;
-pub mod state_type_resolution;
-mod state_type_resolution_module;
-mod state_variable_checking;
-mod state_variable_checking_destructuring;
 pub mod statements;
-pub mod super_checker;
-pub mod symbol_resolver;
-mod symbol_resolver_utils;
 pub mod triple_slash_validator;
-pub mod type_checking;
-mod type_checking_declarations;
-mod type_checking_declarations_utils;
-mod type_checking_global;
-mod type_checking_property_init;
-mod type_checking_queries;
-mod type_checking_queries_binding;
-mod type_checking_queries_class;
-mod type_checking_queries_lib;
-mod type_checking_unused;
-mod type_checking_utilities;
-mod type_checking_utilities_enum;
-mod type_checking_utilities_jsdoc;
-pub mod type_computation;
-mod type_computation_access;
-mod type_computation_call;
-mod type_computation_call_helpers;
-mod type_computation_complex;
-pub mod type_literal_checker;
-pub mod type_node;
+
+#[path = "classes/mod.rs"]
+mod classes_domain;
+#[path = "declarations/mod.rs"]
+mod declarations_domain;
+#[path = "flow/mod.rs"]
+mod flow_domain;
+#[path = "state/mod.rs"]
+mod state_domain;
+#[path = "symbols/mod.rs"]
+mod symbols_domain;
+#[path = "types/mod.rs"]
+mod types_domain;
+
+pub use classes_domain::{
+    class_checker, class_inheritance, constructor_checker, private_checker, super_checker,
+};
+#[allow(unused_imports)]
+pub(crate) use classes_domain::{class_checker_compat, class_implements_checker};
+
+pub use declarations_domain::{declarations, import_checker, module_checker, namespace_checker};
+#[allow(unused_imports)]
+pub(crate) use declarations_domain::{
+    declarations_module, declarations_module_helpers, import_declaration_checker,
+};
+
+pub use flow_domain::{
+    control_flow, flow_analysis, flow_analyzer, flow_graph_builder, reachability_analyzer,
+    reachability_checker,
+};
+#[allow(unused_imports)]
+pub(crate) use flow_domain::{
+    control_flow_assignment, control_flow_narrowing, control_flow_type_guards,
+    flow_analysis_definite, flow_analysis_usage,
+};
+
+pub use state_domain::{
+    state, state_checking, state_type_analysis, state_type_environment, state_type_resolution,
+};
+#[allow(unused_imports)]
+pub(crate) use state_domain::{
+    state_checking_members, state_class_checking, state_property_checking,
+    state_type_analysis_computed, state_type_analysis_computed_helpers,
+    state_type_analysis_cross_file, state_type_environment_lazy, state_type_resolution_module,
+    state_variable_checking, state_variable_checking_destructuring,
+};
+
+pub use symbols_domain::{scope_finder, symbol_resolver};
+#[allow(unused_imports)]
+pub(crate) use symbols_domain::symbol_resolver_utils;
+
+pub use types_domain::{
+    class_type, function_type, interface_type, literal_type, object_type, type_checking,
+    type_computation, type_literal_checker, type_node,
+};
+#[allow(unused_imports)]
+pub(crate) use types_domain::{
+    property_access_type, type_checking_declarations, type_checking_declarations_utils,
+    type_checking_global, type_checking_property_init, type_checking_queries,
+    type_checking_queries_binding, type_checking_queries_class, type_checking_queries_lib,
+    type_checking_unused, type_checking_utilities, type_checking_utilities_enum,
+    type_checking_utilities_jsdoc, type_computation_access, type_computation_call,
+    type_computation_call_helpers, type_computation_complex,
+};
+
 pub mod diagnostics {
     pub use tsz_common::diagnostics::{
         Diagnostic, DiagnosticCategory, DiagnosticRelatedInformation, diagnostic_codes,

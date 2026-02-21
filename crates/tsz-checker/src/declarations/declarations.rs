@@ -3,7 +3,7 @@
 //! Handles classes, interfaces, functions, and variable declarations.
 //! This module separates declaration checking logic from the monolithic `CheckerState`.
 
-use super::context::CheckerContext;
+use crate::context::CheckerContext;
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -1320,5 +1320,5 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 }
 
 #[cfg(test)]
-#[path = "../tests/declarations.rs"]
+#[path = "../../tests/declarations.rs"]
 mod tests;
