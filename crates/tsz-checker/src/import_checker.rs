@@ -349,6 +349,10 @@ impl<'a> CheckerState<'a> {
 
                     let import_name = &identifier.escaped_text;
 
+                    if import_name == "default" && self.ctx.allow_synthetic_default_imports() {
+                        continue;
+                    }
+
                     // Check re-export chains before emitting TS2305
                     let found_via_reexport = self
                         .ctx
@@ -442,6 +446,10 @@ impl<'a> CheckerState<'a> {
                 };
 
                 let import_name = &identifier.escaped_text;
+
+                if import_name == "default" && self.ctx.allow_synthetic_default_imports() {
+                    continue;
+                }
 
                 if !exports_table.has(import_name)
                     && !self.has_named_export_via_export_equals(&exports_table, import_name)
