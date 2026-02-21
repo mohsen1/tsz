@@ -261,8 +261,9 @@ fn test_control_flow_avoids_direct_union_interning() {
 
 #[test]
 fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
-    let src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
-        .expect("failed to read ambient signature checker for architecture guard");
+    let src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs").expect(
+        "failed to read state_checking_members/ambient_signature_checks.rs for architecture guard",
+    );
     assert!(
         !src.contains("tsz_solver::type_queries::rewrite_function_error_slots_to_any"),
         "ambient_signature_checks should route function error-slot rewrite via query boundaries"
