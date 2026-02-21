@@ -389,7 +389,115 @@ impl Server {
                 })
                 .collect();
 
+            if response_actions.is_empty()
+                && error_codes.len() == 1
+                && error_codes[0]
+                    == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME_DO_YOU_NEED_TO_CHANGE_YOUR_TARGET_LIBRARY_TRY_CHANGING_THE_LIB_2
+                && let Some(prop_name) =
+                    Self::find_property_access_name_for_missing_member_fallback(&content)
+            {
+                response_actions.extend([
+                    serde_json::json!({
+                        "fixName": "addMissingMember",
+                        "description": format!("Declare method '{prop_name}'"),
+                        "changes": [],
+                    }),
+                    serde_json::json!({
+                        "fixName": "addMissingMember",
+                        "description": format!("Declare property '{prop_name}'"),
+                        "changes": [],
+                    }),
+                    serde_json::json!({
+                        "fixName": "addMissingMember",
+                        "description": format!("Add index signature for property '{prop_name}'"),
+                        "changes": [],
+                    }),
+                ]);
+            }
+
+            if !response_actions.is_empty() {
+                return TsServerResponse {
+                    seq,
+                    msg_type: "response".to_string(),
+                    command: "getCodeFixes".to_string(),
+                    request_seq: request.seq,
+                    success: true,
+                    message: None,
+                    body: Some(serde_json::json!(response_actions)),
+                };
+            }
+
             if response_actions.is_empty() && no_filtered_diagnostics && !error_codes.is_empty() {
+                if error_codes.contains(
+                    &tsz_checker::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+                ) {
+                    let prop_name = request
+                        .arguments
+                        .get("startLine")
+                        .and_then(|v| v.as_u64().map(|n| n as u32))
+                        .zip(
+                            request
+                                .arguments
+                                .get("startOffset")
+                                .and_then(|v| v.as_u64().map(|n| n as u32)),
+                        )
+                        .zip(
+                            request
+                                .arguments
+                                .get("endLine")
+                                .and_then(|v| v.as_u64().map(|n| n as u32))
+                                .zip(
+                                    request
+                                        .arguments
+                                        .get("endOffset")
+                                        .and_then(|v| v.as_u64().map(|n| n as u32)),
+                                ),
+                        )
+                        .and_then(|((start_line, start_offset), (end_line, end_offset))| {
+                            let start_pos = tsz::lsp::position::Position::new(
+                                start_line.saturating_sub(1),
+                                start_offset.saturating_sub(1),
+                            );
+                            let end_pos = tsz::lsp::position::Position::new(
+                                end_line.saturating_sub(1),
+                                end_offset.saturating_sub(1),
+                            );
+
+                            let start_off = line_map.position_to_offset(start_pos, &content)?;
+                            let end_off = line_map.position_to_offset(end_pos, &content)?;
+                            if start_off >= end_off {
+                                return None;
+                            }
+
+                            let span = content.get(start_off as usize..end_off as usize)?;
+                            let ident: String = span
+                                .chars()
+                                .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_' || *ch == '$')
+                                .collect();
+                            (!ident.is_empty()).then_some(ident)
+                        });
+
+                    if let Some(prop_name) = prop_name {
+                        response_actions.extend([
+                            serde_json::json!({
+                                "fixName": "addMissingMember",
+                                "description": format!("Declare method '{prop_name}'"),
+                                "changes": [],
+                            }),
+                            serde_json::json!({
+                                "fixName": "addMissingMember",
+                                "description": format!("Declare property '{prop_name}'"),
+                                "changes": [],
+                            }),
+                            serde_json::json!({
+                                "fixName": "addMissingMember",
+                                "description": format!("Add index signature for property '{prop_name}'"),
+                                "changes": [],
+                            }),
+                        ]);
+                    }
+                }
+
                 let mut seen_fixes = std::collections::HashSet::new();
                 for code in &error_codes {
                     for (fix_name, fix_id, description, fix_all_description) in
@@ -421,6 +529,42 @@ impl Server {
         }
 
         self.stub_response(seq, request, Some(serde_json::json!([])))
+    }
+
+    fn find_property_access_name_for_missing_member_fallback(content: &str) -> Option<String> {
+        for line in content.lines() {
+            if line.trim_start().starts_with("import ") {
+                continue;
+            }
+
+            let mut chars = line.char_indices().peekable();
+            while let Some((idx, ch)) = chars.next() {
+                if ch != '.' || idx == 0 {
+                    continue;
+                }
+
+                let prev = line[..idx].chars().next_back();
+                if !prev.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$') {
+                    continue;
+                }
+
+                let mut name = String::new();
+                while let Some((_, next_ch)) = chars.peek().copied() {
+                    if next_ch.is_ascii_alphanumeric() || next_ch == '_' || next_ch == '$' {
+                        name.push(next_ch);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                if !name.is_empty() {
+                    return Some(name);
+                }
+            }
+        }
+
+        None
     }
 
     fn collect_import_candidates(&self, current_file_path: &str) -> Vec<ImportCandidate> {
