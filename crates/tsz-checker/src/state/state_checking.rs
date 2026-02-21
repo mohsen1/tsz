@@ -1031,8 +1031,11 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
+            let report_idx = self
+                .await_identifier_name_node_for_decl(decl_idx)
+                .unwrap_or(decl_idx);
             self.error_at_node(
-                decl_idx,
+                report_idx,
                 "Identifier expected. 'await' is a reserved word at the top-level of a module.",
                 crate::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_AT_THE_TOP_LEVEL_OF_A_MODULE,
             );
