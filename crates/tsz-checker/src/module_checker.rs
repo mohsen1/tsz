@@ -650,4 +650,120 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+    /// Eagerly checks all alias symbols in the current file for circular definitions.
+    /// Emits TS2303 for any alias that circularly references itself.
+    pub(crate) fn check_circular_import_aliases(&mut self) {
+        use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+        use tsz_binder::symbol_flags;
+        use tsz_parser::parser::syntax_kind_ext;
+
+        for (id_idx, sym) in self.ctx.binder.symbols.iter().enumerate() {
+            if sym.flags & symbol_flags::ALIAS != 0 {
+                let sym_id = tsz_binder::SymbolId(id_idx as u32);
+                let mut current_binder = self.ctx.binder;
+                let mut current_sym_id = sym_id;
+                let mut visited = Vec::new();
+                let mut cycle_detected = false;
+
+                for _ in 0..128 {
+                    let key = (current_binder as *const _, current_sym_id.0);
+                    if visited.contains(&key) {
+                        if std::ptr::eq(key.0, self.ctx.binder) && key.1 == sym_id.0 {
+                            cycle_detected = true;
+                        }
+                        break;
+                    }
+                    visited.push(key);
+
+                    let curr_sym = match current_binder.symbols.get(current_sym_id) {
+                        Some(s) => s,
+                        None => break,
+                    };
+
+                    if curr_sym.flags & symbol_flags::ALIAS == 0 {
+                        break;
+                    }
+
+                    if let Some(resolved_id) = current_binder.resolve_import_symbol(current_sym_id)
+                    {
+                        current_sym_id = resolved_id;
+                        continue;
+                    }
+
+                    let mut found = false;
+                    if let Some(ref module_name) = curr_sym.import_module {
+                        let export_name = curr_sym
+                            .import_name
+                            .as_deref()
+                            .unwrap_or(&curr_sym.escaped_name);
+
+                        if let Some(exports) = current_binder.module_exports.get(module_name)
+                            && let Some(target_sym_id) = exports.get(export_name)
+                        {
+                            current_sym_id = target_sym_id;
+                            found = true;
+                        } else if let Some(binders) = &self.ctx.all_binders {
+                            for b in binders.iter() {
+                                if let Some(exports) = b.module_exports.get(module_name)
+                                    && let Some(target_sym_id) = exports.get(export_name)
+                                {
+                                    current_binder = &**b;
+                                    current_sym_id = target_sym_id;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if !found {
+                        break;
+                    }
+                }
+
+                if cycle_detected {
+                    let decl_idx = if !sym.value_declaration.is_none() {
+                        sym.value_declaration
+                    } else if let Some(first) = sym.declarations.first() {
+                        *first
+                    } else {
+                        continue;
+                    };
+
+                    let mut error_node_idx = decl_idx;
+
+                    if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
+                        if decl_node.kind == syntax_kind_ext::EXPORT_SPECIFIER
+                            || decl_node.kind == syntax_kind_ext::IMPORT_SPECIFIER
+                        {
+                            if let Some(spec) = self.ctx.arena.get_specifier(decl_node) {
+                                let name_idx = if !spec.name.is_none() {
+                                    spec.name
+                                } else {
+                                    spec.property_name
+                                };
+                                if !name_idx.is_none() {
+                                    error_node_idx = name_idx;
+                                }
+                            }
+                        } else if decl_node.kind == syntax_kind_ext::IMPORT_CLAUSE
+                            && let Some(import_clause) = self.ctx.arena.get_import_clause(decl_node)
+                                && !import_clause.name.is_none() {
+                                    error_node_idx = import_clause.name;
+                                }
+                    }
+
+                    let message = format_message(
+                        diagnostic_messages::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                        &[&sym.escaped_name],
+                    );
+                    self.error_at_node(
+                        error_node_idx,
+                        &message,
+                        diagnostic_codes::CIRCULAR_DEFINITION_OF_IMPORT_ALIAS,
+                    );
+                }
+            }
+        }
+    }
 }
