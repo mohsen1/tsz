@@ -2240,6 +2240,7 @@ impl Project {
             return Some(package_specifier);
         }
 
+        let style = self.relative_import_style(from_file);
         let from_dir = Path::new(from_file)
             .parent()
             .unwrap_or_else(|| Path::new(""));
@@ -2253,7 +2254,69 @@ impl Project {
         if !spec.starts_with('.') {
             spec = format!("./{spec}");
         }
+
+        match style {
+            RelativeImportStyle::Minimal => {}
+            RelativeImportStyle::Ts => {
+                if let Some(ext) = ts_source_extension(target_file) {
+                    spec.push_str(ext);
+                }
+            }
+            RelativeImportStyle::Js => {
+                spec.push_str(".js");
+            }
+        }
+
         Some(spec)
+    }
+
+    fn relative_import_style(&self, from_file: &str) -> RelativeImportStyle {
+        if self.import_module_specifier_ending.as_deref() == Some("js") {
+            return RelativeImportStyle::Ts;
+        }
+
+        let Some(file) = self.files.get(from_file) else {
+            return RelativeImportStyle::Minimal;
+        };
+        let arena = file.arena();
+        let Some(source_file) = arena.get_source_file_at(file.root()) else {
+            return RelativeImportStyle::Minimal;
+        };
+
+        let mut saw_ts = false;
+        let mut saw_js = false;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::IMPORT_DECLARATION {
+                continue;
+            }
+            let Some(import_decl) = arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_text) = arena.get_literal_text(import_decl.module_specifier) else {
+                continue;
+            };
+            if !module_text.starts_with('.') {
+                continue;
+            }
+
+            if has_ts_extension(module_text) {
+                saw_ts = true;
+            } else if has_js_extension(module_text) {
+                saw_js = true;
+            }
+        }
+
+        if saw_js {
+            RelativeImportStyle::Js
+        } else if saw_ts {
+            RelativeImportStyle::Ts
+        } else {
+            RelativeImportStyle::Minimal
+        }
     }
 
     fn module_specifier_candidates(&self, from_file: &str, module_specifier: &str) -> Vec<String> {
@@ -2291,6 +2354,13 @@ impl Project {
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 const TS_EXTENSION_SUFFIXES: [&str; 7] =
     [".d.ts", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts"];
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RelativeImportStyle {
+    Minimal,
+    Ts,
+    Js,
+}
 
 fn normalize_path(path: &Path) -> PathBuf {
     let mut normalized = PathBuf::new();
@@ -2367,6 +2437,34 @@ fn package_specifier_from_node_modules(target_file: &str) -> Option<String> {
     }
 
     if spec.is_empty() { None } else { Some(spec) }
+}
+
+fn has_ts_extension(module_text: &str) -> bool {
+    module_text.ends_with(".ts")
+        || module_text.ends_with(".tsx")
+        || module_text.ends_with(".mts")
+        || module_text.ends_with(".cts")
+}
+
+fn has_js_extension(module_text: &str) -> bool {
+    module_text.ends_with(".js")
+        || module_text.ends_with(".jsx")
+        || module_text.ends_with(".mjs")
+        || module_text.ends_with(".cjs")
+}
+
+fn ts_source_extension(target_file: &str) -> Option<&'static str> {
+    if target_file.ends_with(".tsx") {
+        Some(".tsx")
+    } else if target_file.ends_with(".ts") && !target_file.ends_with(".d.ts") {
+        Some(".ts")
+    } else if target_file.ends_with(".mts") && !target_file.ends_with(".d.mts") {
+        Some(".mts")
+    } else if target_file.ends_with(".cts") && !target_file.ends_with(".d.cts") {
+        Some(".cts")
+    } else {
+        None
+    }
 }
 
 fn relative_path(from: &Path, to: &Path) -> PathBuf {

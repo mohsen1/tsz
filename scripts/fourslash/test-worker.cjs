@@ -218,15 +218,38 @@ function patchSessionClient(SessionClient, ts) {
         return response.body || undefined;
     };
 
-    // Override getCompletionsAtPosition to return undefined when no entries
-    // The fourslash harness distinguishes "no completions" (undefined) from
-    // "completions with 0 entries" (object with empty entries array)
+    // Override getCompletionsAtPosition to:
+    // 1) honor per-call preferences in Native-mode harness flows by forwarding
+    //    them through configure, and
+    // 2) return undefined when there are no entries (harness contract).
     const _origGetCompletions = proto.getCompletionsAtPosition;
     proto.getCompletionsAtPosition = function(fileName, position, preferences) {
+        const oldPreferences = this.preferences;
+        if (preferences) this.configure(preferences);
         const result = _origGetCompletions.call(this, fileName, position, preferences);
+        if (preferences) this.configure(oldPreferences || {});
         if (result && result.entries && result.entries.length === 0) {
             return undefined;
         }
+        return result;
+    };
+
+    // Same preference forwarding for completion details.
+    const _origGetCompletionEntryDetails = proto.getCompletionEntryDetails;
+    proto.getCompletionEntryDetails = function(fileName, position, entryName, options, source, preferences, data) {
+        const oldPreferences = this.preferences;
+        if (preferences) this.configure(preferences);
+        const result = _origGetCompletionEntryDetails.call(
+            this,
+            fileName,
+            position,
+            entryName,
+            options,
+            source,
+            preferences,
+            data,
+        );
+        if (preferences) this.configure(oldPreferences || {});
         return result;
     };
 

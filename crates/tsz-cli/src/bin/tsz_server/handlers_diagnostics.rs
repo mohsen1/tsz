@@ -44,7 +44,14 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
-        // Accept configuration but most options are not yet wired
+        self.completion_import_module_specifier_ending = request
+            .arguments
+            .get("preferences")
+            .and_then(|p| p.get("importModuleSpecifierEnding"))
+            .and_then(|v| v.as_str())
+            .map(std::string::ToString::to_string);
+
+        // Accept configuration; selected completion preferences are wired.
         TsServerResponse {
             seq,
             msg_type: "response".to_string(),
