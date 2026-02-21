@@ -726,6 +726,9 @@ impl Server {
 
     fn normalize_jsdoc_type(raw: &str) -> String {
         let t = raw.trim();
+        if let Some(inner) = t.strip_prefix("...") {
+            return format!("{}[]", Self::normalize_jsdoc_type(inner));
+        }
         if t == "*" || t == "?" {
             return "any".to_string();
         }
