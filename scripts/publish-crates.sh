@@ -10,8 +10,8 @@
 #   cargo login   (token from https://crates.io/settings/tokens)
 #
 # Publish order respects the dependency graph:
-#   tsz-common -> tsz-scanner -> tsz-parser -> tsz-binder -> tsz-lowering
-#   -> tsz-solver -> tsz-emitter -> tsz-checker -> tsz-lsp -> tsz-cli -> tsz
+#   tsz-common -> tsz-scanner -> tsz-parser -> tsz-binder -> tsz-solver
+#   -> tsz-lowering -> tsz-emitter -> tsz-checker -> tsz-lsp -> tsz-cli -> tsz
 
 set -e
 
@@ -25,8 +25,8 @@ CRATES=(
     tsz-scanner
     tsz-parser
     tsz-binder
-    tsz-lowering
     tsz-solver
+    tsz-lowering
     tsz-emitter
     tsz-checker
     tsz-lsp
