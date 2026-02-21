@@ -618,15 +618,21 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             let index_type = self.check(indexed_access.index_type);
 
             // TS2538: Check if the index type is valid (string, number, symbol, or literal thereof)
-            if self.is_invalid_index_type(index_type)
-                && let Some(inode) = self.ctx.arena.get(indexed_access.index_type)
-            {
-                self.ctx.error(
-                    inode.pos,
-                    inode.end - inode.pos,
-                    "Type cannot be used as an index type.".to_string(),
-                    2538,
-                );
+            if let Some(invalid_member) = self.get_invalid_index_type_member(index_type) {
+                if let Some(inode) = self.ctx.arena.get(indexed_access.index_type) {
+                    let mut formatter = self.ctx.create_type_formatter();
+                    let index_type_str = formatter.format(invalid_member);
+                    let message = crate::diagnostics::format_message(
+                        crate::diagnostics::diagnostic_messages::TYPE_CANNOT_BE_USED_AS_AN_INDEX_TYPE,
+                        &[&index_type_str],
+                    );
+                    self.ctx.error(
+                        inode.pos,
+                        inode.end - inode.pos,
+                        message,
+                        2538,
+                    );
+                }
             }
 
             factory.index_access(object_type, index_type)
@@ -635,9 +641,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
     }
 
-    /// Check if a type cannot be used as an index type (TS2538).
-    fn is_invalid_index_type(&self, type_id: TypeId) -> bool {
-        tsz_solver::type_queries::is_invalid_index_type(self.ctx.types, type_id)
+    /// Get the specific type that makes this type invalid as an index type (TS2538).
+    fn get_invalid_index_type_member(&self, type_id: TypeId) -> Option<TypeId> {
+        tsz_solver::type_queries::get_invalid_index_type_member(self.ctx.types, type_id)
     }
 
     // =========================================================================

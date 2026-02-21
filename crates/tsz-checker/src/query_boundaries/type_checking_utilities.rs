@@ -45,8 +45,8 @@ pub(crate) fn classify_type_query(db: &dyn TypeDatabase, type_id: TypeId) -> Typ
     tsz_solver::type_queries_extended::classify_type_query(db, type_id)
 }
 
-pub(crate) fn is_invalid_index_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    tsz_solver::type_queries_extended::is_invalid_index_type(db, type_id)
+pub(crate) fn get_invalid_index_type_member(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    tsz_solver::type_queries_extended::get_invalid_index_type_member(db, type_id)
 }
 
 pub(crate) fn classify_for_type_parameter_constraint(

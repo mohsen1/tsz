@@ -401,9 +401,9 @@ impl<'a> CheckerState<'a> {
     // Type Query Helper Functions
     // =========================================================================
 
-    /// Check if a type cannot be used as an index type (TS2538).
-    pub(crate) fn type_is_invalid_index_type(&self, type_id: TypeId) -> bool {
-        query::is_invalid_index_type(self.ctx.types, type_id)
+    /// Get the specific type that makes this type invalid as an index type (TS2538).
+    pub(crate) fn type_get_invalid_index_type_member(&self, type_id: TypeId) -> Option<TypeId> {
+        query::get_invalid_index_type_member(self.ctx.types, type_id)
     }
 
     fn classify_simple_overlap_type(&self, type_id: TypeId) -> Option<SimpleOverlapType> {
