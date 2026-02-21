@@ -143,7 +143,8 @@ fn bench_phase_timing(c: &mut Criterion) {
         // Phase 1: Parse only
         group.bench_with_input(BenchmarkId::new("1_parse", &label), &source, |b, src| {
             b.iter(|| {
-                let mut parser = tsz_core::parser::ParserState::new("bench.ts".to_string(), src.clone());
+                let mut parser =
+                    tsz_core::parser::ParserState::new("bench.ts".to_string(), src.clone());
                 let _root = parser.parse_source_file();
                 criterion::black_box(&parser);
             });

@@ -290,7 +290,7 @@ if [ "$SKIP_LINT_PARITY" = "1" ]; then
     echo "  CI lint parity checks skipped (TSZ_SKIP_LINT_PARITY=1)"
 else
     # Match CI lint commands exactly to prevent local-vs-CI drift.
-    CI_CLIPPY_PKGS="-p tsz-core-common -p tsz-core-scanner -p tsz-core-parser -p tsz-core-binder -p tsz-core-solver -p tsz-core-checker -p tsz-core-emitter -p tsz-core-lowering -p tsz-core-lsp"
+    CI_CLIPPY_PKGS="-p tsz-common -p tsz-scanner -p tsz-parser -p tsz-binder -p tsz-solver -p tsz-checker -p tsz-emitter -p tsz-lowering -p tsz-lsp"
     CI_CLIPPY_OUTPUT=$(cargo clippy $CI_CLIPPY_PKGS --all-targets -- -D warnings 2>&1) || {
         echo ""
         echo "ERROR: CI parity lint failed (workspace crates deny warnings):"

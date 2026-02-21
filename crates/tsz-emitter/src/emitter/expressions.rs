@@ -1133,14 +1133,18 @@ impl<'a> Printer<'a> {
                         self.write(".");
                         self.write_line();
                         self.increase_indent();
-                        self.emit_property_name_without_import_substitution(access.name_or_argument);
+                        self.emit_property_name_without_import_substitution(
+                            access.name_or_argument,
+                        );
                         self.decrease_indent();
                     } else {
                         // Newline before dot: `expr\n    .name`
                         self.write_line();
                         self.increase_indent();
                         self.write(".");
-                        self.emit_property_name_without_import_substitution(access.name_or_argument);
+                        self.emit_property_name_without_import_substitution(
+                            access.name_or_argument,
+                        );
                         self.decrease_indent();
                     }
                 } else {

@@ -542,6 +542,19 @@ where
 
 /// Walk all transitively referenced type IDs from `root`.
 ///
+/// Convenience wrapper around [`for_each_child`] that takes a `TypeId` instead of `&TypeData`.
+///
+/// Looks up the type data for `type_id` and visits its direct children.
+/// If the type cannot be resolved, this is a no-op.
+pub fn for_each_child_by_id<F>(db: &dyn TypeDatabase, type_id: TypeId, f: F)
+where
+    F: FnMut(TypeId),
+{
+    if let Some(type_data) = db.lookup(type_id) {
+        for_each_child(db, &type_data, f);
+    }
+}
+
 /// The callback is invoked once per unique reachable type (including `root`).
 pub fn walk_referenced_types<F>(types: &dyn TypeDatabase, root: TypeId, mut f: F)
 where
