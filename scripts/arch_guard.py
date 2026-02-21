@@ -62,6 +62,41 @@ CHECKS = [
         {"exclude_dirs": {"tests"}},
     ),
     (
+        "Checker boundary: direct solver relation queries outside query boundaries/tests",
+        ROOT / "crates" / "tsz-checker",
+        re.compile(r"\btsz_solver::(is_subtype_of|is_assignable_to)\s*\("),
+        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
+    ),
+    (
+        "Checker boundary: direct CallEvaluator usage outside query boundaries/tests",
+        ROOT / "crates" / "tsz-checker",
+        re.compile(r"\btsz_solver::CallEvaluator\b|\bCallEvaluator::new\s*\("),
+        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
+    ),
+    (
+        "Checker boundary: direct CompatChecker construction outside query boundaries/tests",
+        ROOT / "crates" / "tsz-checker",
+        re.compile(r"\bCompatChecker::new\s*\(|\bCompatChecker::with_resolver\s*\("),
+        {"exclude_dirs": {"query_boundaries", "tests"}, "ignore_comment_lines": True},
+    ),
+    (
+        "Checker query boundary: call_checker must not construct CompatChecker directly",
+        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries",
+        re.compile(r"\bCompatChecker::with_resolver\s*\("),
+        {
+            "exclude_files": {
+                "crates/tsz-checker/src/query_boundaries/assignability.rs",
+            },
+            "ignore_comment_lines": True,
+        },
+    ),
+    (
+        "Checker query boundary: call_checker must not use concrete CallEvaluator<CompatChecker>",
+        ROOT / "crates" / "tsz-checker" / "src" / "query_boundaries",
+        re.compile(r"\bCallEvaluator::<\s*tsz_solver::CompatChecker\s*>::"),
+        {"ignore_comment_lines": True},
+    ),
+    (
         "Checker boundary: raw interner access",
         ROOT / "crates" / "tsz-checker",
         re.compile(r"\.intern\s*\("),
@@ -166,6 +201,14 @@ MANIFEST_CHECKS = [
     ),
 ]
 
+LINE_LIMIT_CHECKS = [
+    (
+        "Checker boundary: src files must stay under 2000 LOC",
+        ROOT / "crates" / "tsz-checker" / "src",
+        2000,
+    ),
+]
+
 EXCLUDE_DIRS = {".git", "target", "node_modules"}
 def iter_rs_files(base: pathlib.Path):
     for path in base.rglob("*.rs"):
@@ -208,6 +251,21 @@ def scan(base, pattern, excludes):
     return hits
 
 
+def scan_line_limits(base: pathlib.Path, limit: int):
+    hits = []
+    for path, rel in iter_rs_files(base):
+        line_count = 0
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                for line_count, _line in enumerate(handle, start=1):
+                    pass
+        except OSError:
+            continue
+        if line_count > limit:
+            hits.append(f"{rel}:{line_count} lines (limit {limit})")
+    return hits
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run TSZ architecture guardrails"
@@ -244,6 +302,14 @@ def main() -> int:
             if pattern.search(line):
                 rel = manifest_path.relative_to(ROOT).as_posix()
                 hits.append(f"{rel}:{i}")
+        total_hits += len(hits)
+        if hits:
+            failures.append((name, hits))
+
+    for name, base, limit in LINE_LIMIT_CHECKS:
+        if not base.exists():
+            continue
+        hits = scan_line_limits(base, limit)
         total_hits += len(hits)
         if hits:
             failures.append((name, hits))

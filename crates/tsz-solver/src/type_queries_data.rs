@@ -713,6 +713,79 @@ pub fn get_function_shape(
     }
 }
 
+/// Return a function type with all `ERROR` parameter and return positions rewritten to `ANY`.
+///
+/// Returns the original `type_id` when:
+/// - it is not a function type
+/// - the function shape does not contain `ERROR` in parameter or return positions
+pub fn rewrite_function_error_slots_to_any(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(shape) = get_function_shape(db, type_id) else {
+        return type_id;
+    };
+
+    let has_error = shape.params.iter().any(|p| p.type_id == TypeId::ERROR)
+        || shape.return_type == TypeId::ERROR;
+    if !has_error {
+        return type_id;
+    }
+
+    let params = shape
+        .params
+        .iter()
+        .map(|p| crate::types::ParamInfo {
+            type_id: if p.type_id == TypeId::ERROR {
+                TypeId::ANY
+            } else {
+                p.type_id
+            },
+            ..p.clone()
+        })
+        .collect();
+    let return_type = if shape.return_type == TypeId::ERROR {
+        TypeId::ANY
+    } else {
+        shape.return_type
+    };
+
+    db.function(crate::types::FunctionShape {
+        type_params: shape.type_params.clone(),
+        params,
+        this_type: shape.this_type,
+        return_type,
+        type_predicate: shape.type_predicate.clone(),
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    })
+}
+
+/// Return a function type with the same signature but a replaced return type.
+///
+/// Returns the original `type_id` when:
+/// - it is not a function type
+/// - the existing return type already equals `new_return`
+pub fn replace_function_return_type(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    new_return: TypeId,
+) -> TypeId {
+    let Some(shape) = get_function_shape(db, type_id) else {
+        return type_id;
+    };
+    if shape.return_type == new_return {
+        return type_id;
+    }
+
+    db.function(crate::types::FunctionShape {
+        type_params: shape.type_params.clone(),
+        params: shape.params.clone(),
+        this_type: shape.this_type,
+        return_type: new_return,
+        type_predicate: shape.type_predicate.clone(),
+        is_constructor: shape.is_constructor,
+        is_method: shape.is_method,
+    })
+}
+
 /// Get the conditional type info for a conditional type.
 ///
 /// Returns None if the type is not a Conditional.

@@ -14,15 +14,24 @@ INPUT_JSON = REPORT_DIR / "arch_guard_report.json"
 OUTPUT_MD = REPORT_DIR / "arch_guard_report.md"
 
 
-def collect_largest_rs_files(limit: int = 10) -> list[tuple[str, int]]:
+def count_lines(path: Path) -> int | None:
+    try:
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            return sum(1 for _ in handle)
+    except OSError:
+        return None
+
+
+def collect_largest_rs_files(limit: int = 10, *, include_tests: bool = True) -> list[tuple[str, int]]:
     rows: list[tuple[str, int]] = []
     for path in ROOT.rglob("*.rs"):
         parts = set(path.parts)
         if "target" in parts or ".git" in parts:
             continue
-        try:
-            line_count = sum(1 for _ in path.open("r", encoding="utf-8", errors="ignore"))
-        except OSError:
+        if not include_tests and "tests" in parts:
+            continue
+        line_count = count_lines(path)
+        if line_count is None:
             continue
         rel = path.relative_to(ROOT).as_posix()
         rows.append((rel, line_count))
@@ -30,7 +39,7 @@ def collect_largest_rs_files(limit: int = 10) -> list[tuple[str, int]]:
     return rows[:limit]
 
 
-def collect_largest_by_crate() -> list[tuple[str, str, int]]:
+def collect_largest_by_crate(*, include_tests: bool = True) -> list[tuple[str, str, int]]:
     targets = {
         "tsz-checker": "crates/tsz-checker",
         "tsz-solver": "crates/tsz-solver",
@@ -43,9 +52,10 @@ def collect_largest_by_crate() -> list[tuple[str, str, int]]:
         largest_file = ""
         largest_lines = -1
         for path in root.rglob("*.rs"):
-            try:
-                line_count = sum(1 for _ in path.open("r", encoding="utf-8", errors="ignore"))
-            except OSError:
+            if not include_tests and "tests" in path.parts:
+                continue
+            line_count = count_lines(path)
+            if line_count is None:
                 continue
             if line_count > largest_lines:
                 largest_lines = line_count
@@ -60,7 +70,9 @@ def render_markdown(payload: dict) -> str:
     total_hits = payload.get("total_hits", 0)
     failures = payload.get("failures", [])
     largest_files = collect_largest_rs_files()
+    largest_source_files = collect_largest_rs_files(include_tests=False)
     largest_by_crate = collect_largest_by_crate()
+    largest_source_by_crate = collect_largest_by_crate(include_tests=False)
 
     lines: list[str] = []
     lines.append("# Architecture Guard Report")
@@ -81,11 +93,27 @@ def render_markdown(payload: dict) -> str:
         lines.append(f"| `{rel}` | {line_count} |")
     lines.append("")
 
+    lines.append("## Largest Rust source files (excluding tests)")
+    lines.append("")
+    lines.append("| File | Lines |")
+    lines.append("|---|---:|")
+    for rel, line_count in largest_source_files:
+        lines.append(f"| `{rel}` | {line_count} |")
+    lines.append("")
+
     lines.append("## Largest file per core crate")
     lines.append("")
     lines.append("| Crate | File | Lines |")
     lines.append("|---|---|---:|")
     for crate_name, rel, line_count in largest_by_crate:
+        lines.append(f"| `{crate_name}` | `{rel}` | {line_count} |")
+    lines.append("")
+
+    lines.append("## Largest source file per core crate (excluding tests)")
+    lines.append("")
+    lines.append("| Crate | File | Lines |")
+    lines.append("|---|---|---:|")
+    for crate_name, rel, line_count in largest_source_by_crate:
         lines.append(f"| `{crate_name}` | `{rel}` | {line_count} |")
     lines.append("")
 

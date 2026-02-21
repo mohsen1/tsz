@@ -1708,6 +1708,63 @@ pub fn infer_generic_function<C: AssignabilityChecker>(
     evaluator.infer_generic_function(func, arg_types)
 }
 
+pub fn resolve_call_with_checker<C: AssignabilityChecker>(
+    interner: &dyn QueryDatabase,
+    checker: &mut C,
+    func_type: TypeId,
+    arg_types: &[TypeId],
+    force_bivariant_callbacks: bool,
+    contextual_type: Option<TypeId>,
+    actual_this_type: Option<TypeId>,
+) -> (CallResult, Option<(TypePredicate, Vec<ParamInfo>)>) {
+    let mut evaluator = CallEvaluator::new(interner, checker);
+    evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
+    evaluator.set_contextual_type(contextual_type);
+    evaluator.set_actual_this_type(actual_this_type);
+    let result = evaluator.resolve_call(func_type, arg_types);
+    let predicate = evaluator.last_instantiated_predicate.take();
+    (result, predicate)
+}
+
+pub fn resolve_new_with_checker<C: AssignabilityChecker>(
+    interner: &dyn QueryDatabase,
+    checker: &mut C,
+    type_id: TypeId,
+    arg_types: &[TypeId],
+    force_bivariant_callbacks: bool,
+) -> CallResult {
+    let mut evaluator = CallEvaluator::new(interner, checker);
+    evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
+    evaluator.resolve_new(type_id, arg_types)
+}
+
+pub fn compute_contextual_types_with_compat_checker<'a, R, F>(
+    interner: &'a dyn QueryDatabase,
+    resolver: &'a R,
+    shape: &FunctionShape,
+    arg_types: &[TypeId],
+    contextual_type: Option<TypeId>,
+    configure_checker: F,
+) -> TypeSubstitution
+where
+    R: crate::TypeResolver,
+    F: FnOnce(&mut crate::CompatChecker<'a, R>),
+{
+    let mut checker = crate::CompatChecker::with_resolver(interner, resolver);
+    configure_checker(&mut checker);
+
+    let mut evaluator = CallEvaluator::new(interner, &mut checker);
+    evaluator.set_contextual_type(contextual_type);
+    evaluator.compute_contextual_types(shape, arg_types)
+}
+
+pub fn get_contextual_signature_with_compat_checker(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<FunctionShape> {
+    CallEvaluator::<crate::CompatChecker>::get_contextual_signature(db, type_id)
+}
+
 // Re-exports from extracted modules
 pub use crate::operations_generics::{GenericInstantiationResult, solve_generic_instantiation};
 pub use crate::operations_iterators::{

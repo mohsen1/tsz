@@ -1,7 +1,7 @@
 use tsz_solver::operations::CallResult;
 use tsz_solver::{
-    AssignabilityChecker, CompatChecker, FunctionShape, QueryDatabase, TupleElement, TypeDatabase,
-    TypeId, TypeSubstitution,
+    AssignabilityChecker, FunctionShape, QueryDatabase, TupleElement, TypeDatabase, TypeId,
+    TypeSubstitution,
 };
 
 pub(crate) fn array_element_type_for_type(
@@ -33,7 +33,7 @@ pub(crate) fn get_contextual_signature(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    tsz_solver::CallEvaluator::<tsz_solver::CompatChecker>::get_contextual_signature(db, type_id)
+    tsz_solver::get_contextual_signature_with_compat_checker(db, type_id)
 }
 
 pub(crate) fn resolve_call<C: AssignabilityChecker>(
@@ -48,13 +48,15 @@ pub(crate) fn resolve_call<C: AssignabilityChecker>(
     CallResult,
     Option<(tsz_solver::TypePredicate, Vec<tsz_solver::ParamInfo>)>,
 ) {
-    let mut evaluator = tsz_solver::CallEvaluator::new(db, checker);
-    evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-    evaluator.set_contextual_type(contextual_type);
-    evaluator.set_actual_this_type(actual_this_type);
-    let result = evaluator.resolve_call(func_type, arg_types);
-    let predicate = evaluator.last_instantiated_predicate.take();
-    (result, predicate)
+    tsz_solver::operations::resolve_call_with_checker(
+        db,
+        checker,
+        func_type,
+        arg_types,
+        force_bivariant_callbacks,
+        contextual_type,
+        actual_this_type,
+    )
 }
 
 pub(crate) fn resolve_new<C: AssignabilityChecker>(
@@ -64,21 +66,13 @@ pub(crate) fn resolve_new<C: AssignabilityChecker>(
     arg_types: &[TypeId],
     force_bivariant_callbacks: bool,
 ) -> CallResult {
-    let mut evaluator = tsz_solver::CallEvaluator::new(db, checker);
-    evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-    evaluator.resolve_new(type_id, arg_types)
-}
-
-pub(crate) fn compute_contextual_types<C: AssignabilityChecker>(
-    db: &dyn QueryDatabase,
-    checker: &mut C,
-    shape: &tsz_solver::FunctionShape,
-    arg_types: &[TypeId],
-    contextual_type: Option<TypeId>,
-) -> TypeSubstitution {
-    let mut evaluator = tsz_solver::CallEvaluator::new(db, checker);
-    evaluator.set_contextual_type(contextual_type);
-    evaluator.compute_contextual_types(shape, arg_types)
+    tsz_solver::operations::resolve_new_with_checker(
+        db,
+        checker,
+        type_id,
+        arg_types,
+        force_bivariant_callbacks,
+    )
 }
 
 pub(crate) fn compute_contextual_types_with_context(
@@ -89,7 +83,12 @@ pub(crate) fn compute_contextual_types_with_context(
     arg_types: &[TypeId],
     contextual_type: Option<TypeId>,
 ) -> TypeSubstitution {
-    let mut checker = CompatChecker::with_resolver(db, env);
-    ctx.configure_compat_checker(&mut checker);
-    compute_contextual_types(db, &mut checker, shape, arg_types, contextual_type)
+    tsz_solver::operations::compute_contextual_types_with_compat_checker(
+        db,
+        env,
+        shape,
+        arg_types,
+        contextual_type,
+        |checker| ctx.configure_compat_checker(checker),
+    )
 }

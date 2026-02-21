@@ -3,7 +3,7 @@
 //! operations, providing cleaner APIs for common patterns.
 
 use crate::diagnostics::Diagnostic;
-use crate::query_boundaries::type_computation::union_members;
+use crate::query_boundaries::type_computation::evaluate_contextual_structure_with;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -58,29 +58,9 @@ impl<'a> CheckerState<'a> {
     /// member is an unevaluated Application type that the solver's `NumberLikeVisitor`
     /// can't handle.
     pub(crate) fn evaluate_type_for_binary_ops(&mut self, type_id: TypeId) -> TypeId {
-        let factory = self.ctx.types.factory();
-        // First try top-level evaluation
-        let evaluated = self.evaluate_type_with_resolution(type_id);
-
-        // If it's a union, evaluate each member individually
-        if let Some(members) = union_members(self.ctx.types, evaluated) {
-            let mut changed = false;
-            let new_members: Vec<TypeId> = members
-                .iter()
-                .map(|&m| {
-                    let eval_m = self.evaluate_type_with_resolution(m);
-                    if eval_m != m {
-                        changed = true;
-                    }
-                    eval_m
-                })
-                .collect();
-            if changed {
-                return factory.union(new_members);
-            }
-        }
-
-        evaluated
+        let db = self.ctx.types;
+        let mut evaluate_leaf = |leaf_type: TypeId| self.evaluate_type_with_resolution(leaf_type);
+        evaluate_contextual_structure_with(db, type_id, &mut evaluate_leaf)
     }
 
     /// Evaluate a contextual type that may contain unevaluated mapped/conditional types.
@@ -91,72 +71,8 @@ impl<'a> CheckerState<'a> {
     /// `NoopResolver` and can't resolve these. This method uses the Judge (which has access
     /// to the `TypeEnvironment` resolver) to evaluate such types into concrete object types.
     pub(crate) fn evaluate_contextual_type(&self, type_id: TypeId) -> TypeId {
-        use tsz_solver::type_queries::{
-            EvaluationNeeded, classify_for_evaluation, get_lazy_def_id,
-        };
-        match classify_for_evaluation(self.ctx.types, type_id) {
-            EvaluationNeeded::Union(members) => {
-                let factory = self.ctx.types.factory();
-                // Distribute evaluation over union members so lazy/application/etc.
-                // inside a union get resolved through the checker's type environment.
-                let mut changed = false;
-                let evaluated: Vec<TypeId> = members
-                    .iter()
-                    .map(|&member| {
-                        let ev = self.evaluate_contextual_type(member);
-                        if ev != member {
-                            changed = true;
-                        }
-                        ev
-                    })
-                    .collect();
-                return if changed {
-                    factory.union(evaluated)
-                } else {
-                    type_id
-                };
-            }
-            EvaluationNeeded::Intersection(members) => {
-                let factory = self.ctx.types.factory();
-                // Distribute evaluation over intersection members so lazy/application/etc.
-                // inside an intersection get resolved through the checker's type environment.
-                let mut changed = false;
-                let evaluated: Vec<TypeId> = members
-                    .iter()
-                    .map(|&member| {
-                        let ev = self.evaluate_contextual_type(member);
-                        if ev != member {
-                            changed = true;
-                        }
-                        ev
-                    })
-                    .collect();
-                return if changed {
-                    factory.intersection(evaluated)
-                } else {
-                    type_id
-                };
-            }
-            _ => {}
-        }
-
-        let needs_evaluation = get_lazy_def_id(self.ctx.types, type_id).is_some()
-            || matches!(
-                classify_for_evaluation(self.ctx.types, type_id),
-                EvaluationNeeded::Application { .. }
-                    | EvaluationNeeded::Mapped { .. }
-                    | EvaluationNeeded::Conditional { .. }
-            );
-
-        if !needs_evaluation {
-            return type_id;
-        }
-
-        let evaluated = self.judge_evaluate(type_id);
-        if evaluated != type_id {
-            return evaluated;
-        }
-        type_id
+        let mut evaluate_leaf = |leaf_type: TypeId| self.judge_evaluate(leaf_type);
+        evaluate_contextual_structure_with(self.ctx.types, type_id, &mut evaluate_leaf)
     }
 
     /// Get the type of a conditional expression (ternary operator).

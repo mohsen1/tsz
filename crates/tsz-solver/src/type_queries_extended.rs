@@ -1592,6 +1592,17 @@ pub enum AbstractConstructorKind {
     NotAbstract,
 }
 
+/// Fully-resolved abstract-constructor anchor after peeling applications.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbstractConstructorAnchor {
+    /// `TypeQuery` (typeof `AbstractClass`) - checker resolves symbol flags.
+    TypeQuery(crate::types::SymbolRef),
+    /// Callable type id that checker can consult for abstract constructor metadata.
+    CallableType(TypeId),
+    /// Not an abstract constructor candidate.
+    NotAbstract,
+}
+
 /// Classify a type for abstract constructor checking.
 pub fn classify_for_abstract_constructor(
     db: &dyn TypeDatabase,
@@ -1607,6 +1618,39 @@ pub fn classify_for_abstract_constructor(
         TypeData::Application(app_id) => AbstractConstructorKind::Application(app_id),
         _ => AbstractConstructorKind::NotAbstract,
     }
+}
+
+/// Resolve abstract-constructor candidates by unwrapping application types.
+///
+/// This keeps type-shape traversal in solver and lets checker only apply
+/// source-context rules (e.g. symbol flags and diagnostics).
+pub fn resolve_abstract_constructor_anchor(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> AbstractConstructorAnchor {
+    let mut current = type_id;
+    let mut visited = FxHashSet::default();
+
+    while visited.insert(current) {
+        match classify_for_abstract_constructor(db, current) {
+            AbstractConstructorKind::TypeQuery(sym_ref) => {
+                return AbstractConstructorAnchor::TypeQuery(sym_ref);
+            }
+            AbstractConstructorKind::Callable(_) => {
+                return AbstractConstructorAnchor::CallableType(current);
+            }
+            AbstractConstructorKind::Application(app_id) => {
+                let app = db.type_application(app_id);
+                if app.base == current {
+                    break;
+                }
+                current = app.base;
+            }
+            AbstractConstructorKind::NotAbstract => break,
+        }
+    }
+
+    AbstractConstructorAnchor::NotAbstract
 }
 
 // =============================================================================

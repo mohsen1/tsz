@@ -1,8 +1,9 @@
 use tsz_solver::TypeId;
 
-pub(crate) fn union_members(
-    db: &dyn tsz_solver::TypeDatabase,
+pub(crate) fn evaluate_contextual_structure_with(
+    db: &dyn tsz_solver::QueryDatabase,
     type_id: TypeId,
-) -> Option<Vec<TypeId>> {
-    tsz_solver::type_queries::get_union_members(db, type_id)
+    evaluate_leaf: &mut dyn FnMut(TypeId) -> TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::evaluate_contextual_structure_with(db, type_id, evaluate_leaf)
 }

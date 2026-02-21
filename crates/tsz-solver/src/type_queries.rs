@@ -27,7 +27,7 @@
 //! }
 //! ```
 
-use crate::{TypeData, TypeDatabase, TypeId};
+use crate::{QueryDatabase, TypeData, TypeDatabase, TypeId};
 use tsz_common::Atom;
 
 // Re-export extended type queries so callers can use `type_queries::*`
@@ -1601,6 +1601,82 @@ pub fn classify_for_evaluation(db: &dyn TypeDatabase, type_id: TypeId) -> Evalua
         | TypeData::Enum(_, _)
         | TypeData::Error => EvaluationNeeded::Resolved(type_id),
     }
+}
+
+/// Evaluate contextual wrapper structure while delegating leaf evaluation.
+///
+/// Solver owns traversal over semantic type shape; caller provides the concrete
+/// leaf evaluator (for example checker's judge-based environment evaluation).
+pub fn evaluate_contextual_structure_with(
+    db: &dyn QueryDatabase,
+    type_id: TypeId,
+    evaluate_leaf: &mut dyn FnMut(TypeId) -> TypeId,
+) -> TypeId {
+    fn visit(
+        db: &dyn QueryDatabase,
+        type_id: TypeId,
+        evaluate_leaf: &mut dyn FnMut(TypeId) -> TypeId,
+    ) -> TypeId {
+        match classify_for_evaluation(db, type_id) {
+            EvaluationNeeded::Union(members) => {
+                let mut changed = false;
+                let evaluated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| {
+                        let ev = visit(db, member, evaluate_leaf);
+                        if ev != member {
+                            changed = true;
+                        }
+                        ev
+                    })
+                    .collect();
+                if changed {
+                    db.factory().union(evaluated)
+                } else {
+                    type_id
+                }
+            }
+            EvaluationNeeded::Intersection(members) => {
+                let mut changed = false;
+                let evaluated: Vec<TypeId> = members
+                    .iter()
+                    .map(|&member| {
+                        let ev = visit(db, member, evaluate_leaf);
+                        if ev != member {
+                            changed = true;
+                        }
+                        ev
+                    })
+                    .collect();
+                if changed {
+                    db.factory().intersection(evaluated)
+                } else {
+                    type_id
+                }
+            }
+            EvaluationNeeded::Application { .. }
+            | EvaluationNeeded::Mapped { .. }
+            | EvaluationNeeded::Conditional { .. } => {
+                let evaluated = evaluate_leaf(type_id);
+                if evaluated != type_id {
+                    evaluated
+                } else {
+                    type_id
+                }
+            }
+            _ if get_lazy_def_id(db, type_id).is_some() => {
+                let evaluated = evaluate_leaf(type_id);
+                if evaluated != type_id {
+                    evaluated
+                } else {
+                    type_id
+                }
+            }
+            _ => type_id,
+        }
+    }
+
+    visit(db, type_id, evaluate_leaf)
 }
 
 // =============================================================================

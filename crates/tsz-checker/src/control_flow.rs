@@ -18,6 +18,7 @@
 //! }
 //! ```
 
+use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -267,6 +268,32 @@ impl<'a> FlowAnalyzer<'a> {
         self
     }
 
+    pub(crate) fn is_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        if let Some(env) = &self.type_environment {
+            return query::is_assignable_with_env(
+                self.interner,
+                &env.borrow(),
+                source,
+                target,
+                false,
+            );
+        }
+        query::is_assignable(self.interner, source, target)
+    }
+
+    pub(crate) fn is_assignable_to_strict_null(&self, source: TypeId, target: TypeId) -> bool {
+        if let Some(env) = &self.type_environment {
+            return query::is_assignable_with_env(
+                self.interner,
+                &env.borrow(),
+                source,
+                target,
+                true,
+            );
+        }
+        query::is_assignable_strict_null(self.interner, source, target)
+    }
+
     /// Set the `TypeEnvironment` for resolving Lazy types during narrowing.
     pub fn with_type_environment(
         mut self,
@@ -446,7 +473,8 @@ impl<'a> FlowAnalyzer<'a> {
                 let back_edge_type = self.get_flow_type(reference, current_type, back_edge);
 
                 // Union current type with back-edge type
-                current_type = self.interner.union(vec![current_type, back_edge_type]);
+                current_type =
+                    query::union_types(self.interner, vec![current_type, back_edge_type]);
             }
 
             // Check if we've reached a fixed point (type stopped changing)
@@ -458,7 +486,7 @@ impl<'a> FlowAnalyzer<'a> {
         // Fixed point not reached within iteration limit
         // Conservative widening: return union of entry type and initial declared type
         // This matches TypeScript's behavior for complex loops
-        let widened = self.interner.union(vec![entry_type, initial_type]);
+        let widened = query::union_types(self.interner, vec![entry_type, initial_type]);
 
         // Update cache with final widened result
         if let (Some(sym_id), Some(cache)) = (symbol_id, self.flow_cache) {
@@ -513,8 +541,7 @@ impl<'a> FlowAnalyzer<'a> {
         // CRITICAL: Check if initial type contains type parameters ONCE, outside the loop.
         // This prevents caching generic types across different instantiations.
         // See: https://github.com/microsoft/TypeScript/issues/9998
-        let initial_has_type_params =
-            tsz_solver::type_queries::contains_type_parameters_db(self.interner, initial_type);
+        let initial_has_type_params = query::contains_type_parameters(self.interner, initial_type);
 
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));
@@ -1016,7 +1043,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if types.len() == 1 {
                     types[0]
                 } else {
-                    self.interner.union(types)
+                    query::union_types(self.interner, types)
                 }
             } else if flow.has_any_flags(flow_flags::BRANCH_LABEL | flow_flags::LOOP_LABEL)
                 && !flow.antecedent.is_empty()
@@ -1031,7 +1058,7 @@ impl<'a> FlowAnalyzer<'a> {
                 if ant_types.len() == 1 {
                     ant_types[0]
                 } else if !ant_types.is_empty() {
-                    self.interner.union(ant_types)
+                    query::union_types(self.interner, ant_types)
                 } else {
                     result_type
                 }
@@ -1048,10 +1075,8 @@ impl<'a> FlowAnalyzer<'a> {
             if let Some(sym_id) = symbol_id
                 && let Some(cache) = self.flow_cache
             {
-                let final_has_type_params = tsz_solver::type_queries::contains_type_parameters_db(
-                    self.interner,
-                    final_type,
-                );
+                let final_has_type_params =
+                    query::contains_type_parameters(self.interner, final_type);
 
                 // Only cache if neither initial nor final types contain type parameters
                 if !initial_has_type_params && !final_has_type_params {

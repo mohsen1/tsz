@@ -139,6 +139,7 @@ pub use object_literal::ObjectLiteralBuilder;
 pub use objects::*;
 pub use operations::{
     AssignabilityChecker, CallEvaluator, CallResult, MAX_CONSTRAINT_RECURSION_DEPTH,
+    get_contextual_signature_with_compat_checker,
 };
 pub use relation_queries::*;
 pub use sound::*;
@@ -259,6 +260,12 @@ mod tuple_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/type_parameter_comprehensive_tests.rs"]
 mod type_parameter_comprehensive_tests;
+#[cfg(test)]
+#[path = "tests/type_queries_contextual_structure_tests.rs"]
+mod type_queries_contextual_structure_tests;
+#[cfg(test)]
+#[path = "tests/type_queries_function_rewrite_tests.rs"]
+mod type_queries_function_rewrite_tests;
 #[cfg(test)]
 #[path = "tests/type_queries_property_names_tests.rs"]
 mod type_queries_property_names_tests;
