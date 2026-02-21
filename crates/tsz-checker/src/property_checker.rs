@@ -311,6 +311,7 @@ impl<'a> CheckerState<'a> {
         // tokens, not Identifier nodes. The type dispatch table doesn't route them to
         // get_type_of_identifier, so they silently return ERROR without emitting TS2304.
         // Detect this case and explicitly resolve them as identifiers.
+        self.ctx.checking_computed_property_name = Some(name_idx);
         let expr_type = if let Some(expr_node) = self.ctx.arena.get(computed.expression)
             && expr_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
             && self.ctx.arena.get_identifier(expr_node).is_some()
@@ -320,6 +321,7 @@ impl<'a> CheckerState<'a> {
         } else {
             self.get_type_of_node(computed.expression)
         };
+        self.ctx.checking_computed_property_name = None;
 
         // Skip error types to avoid cascading diagnostics
         if expr_type == tsz_solver::TypeId::ERROR {
@@ -362,5 +364,85 @@ impl<'a> CheckerState<'a> {
             }
         }
         None
+    }
+}
+
+impl<'a> CheckerState<'a> {
+    pub(crate) fn check_type_parameter_reference_for_computed_property(
+        &mut self,
+        name: &str,
+        type_name_idx: tsz_parser::parser::NodeIndex,
+    ) {
+        let Some(name_idx) = self.ctx.checking_computed_property_name else {
+            return;
+        };
+
+        let mut enclosing_decl = None;
+        let mut current = Some(name_idx);
+        while let Some(idx) = current {
+            let Some(ext) = self.ctx.arena.get_extended(idx) else {
+                break;
+            };
+            let Some(parent) = self.ctx.arena.get(ext.parent) else {
+                break;
+            };
+            if parent.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION
+                || parent.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION
+                || parent.kind == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION
+            {
+                enclosing_decl = Some(ext.parent);
+                break;
+            }
+            current = Some(ext.parent);
+        }
+
+        let Some(decl_idx) = enclosing_decl else {
+            return;
+        };
+
+        let decl_node = self.ctx.arena.get(decl_idx).unwrap();
+        let type_params_list =
+            if decl_node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.type_parameters.as_ref())
+            } else if decl_node.kind == tsz_parser::parser::syntax_kind_ext::INTERFACE_DECLARATION {
+                self.ctx
+                    .arena
+                    .get_interface(decl_node)
+                    .and_then(|i| i.type_parameters.as_ref())
+            } else if decl_node.kind == tsz_parser::parser::syntax_kind_ext::CLASS_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_class(decl_node)
+                    .and_then(|c| c.type_parameters.as_ref())
+            } else {
+                None
+            };
+
+        if let Some(list) = type_params_list {
+            for &tp_idx in &list.nodes {
+                if let Some(tp_node) = self.ctx.arena.get(tp_idx)
+                    && let Some(tp) = self.ctx.arena.get_type_parameter(tp_node) {
+                        let tp_name = self
+                            .ctx
+                            .arena
+                            .get_identifier(self.ctx.arena.get(tp.name).unwrap())
+                            .unwrap()
+                            .escaped_text
+                            .clone();
+                        if tp_name == name {
+                            use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
+                            self.error_at_node(
+                                type_name_idx,
+                                diagnostic_messages::A_COMPUTED_PROPERTY_NAME_CANNOT_REFERENCE_A_TYPE_PARAMETER_FROM_ITS_CONTAINING_T,
+                                diagnostic_codes::A_COMPUTED_PROPERTY_NAME_CANNOT_REFERENCE_A_TYPE_PARAMETER_FROM_ITS_CONTAINING_T,
+                            );
+                            return;
+                        }
+                    }
+            }
+        }
     }
 }
