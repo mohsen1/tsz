@@ -333,7 +333,8 @@ impl<'a> CheckerState<'a> {
         got: usize,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
+        let report_idx = self.call_error_anchor_node(idx);
+        if let Some(loc) = self.get_source_location(report_idx) {
             let mut builder = tsz_solver::SpannedDiagnosticBuilder::with_symbols(
                 self.ctx.types,
                 &self.ctx.binder.symbols,
@@ -363,7 +364,8 @@ impl<'a> CheckerState<'a> {
         got: usize,
         idx: NodeIndex,
     ) {
-        if let Some(loc) = self.get_source_location(idx) {
+        let report_idx = self.call_error_anchor_node(idx);
+        if let Some(loc) = self.get_source_location(report_idx) {
             let message = format!("Expected at least {expected_min} arguments, but got {got}.");
             self.ctx.diagnostics.push(Diagnostic::error(
                 self.ctx.file_name.clone(),
@@ -373,6 +375,33 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::EXPECTED_AT_LEAST_ARGUMENTS_BUT_GOT,
             ));
         }
+    }
+
+    /// Prefer callee name span for call-arity diagnostics.
+    fn call_error_anchor_node(&self, idx: NodeIndex) -> NodeIndex {
+        use tsz_parser::parser::syntax_kind_ext;
+
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return idx;
+        };
+        if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return idx;
+        }
+
+        let Some(call) = self.ctx.arena.get_call_expr(node) else {
+            return idx;
+        };
+        let Some(callee_node) = self.ctx.arena.get(call.expression) else {
+            return idx;
+        };
+
+        if callee_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let Some(access) = self.ctx.arena.get_access_expr(callee_node)
+        {
+            return access.name_or_argument;
+        }
+
+        call.expression
     }
 
     /// Report "No overload matches this call" with related overload failures.

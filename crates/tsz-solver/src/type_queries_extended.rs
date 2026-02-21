@@ -174,9 +174,10 @@ fn is_invalid_index_type_inner(
         }
         Some(TypeData::TypeParameter(info)) => {
             if let Some(constraint) = info.constraint
-                && let Some(invalid_member) = is_invalid_index_type_inner(db, constraint, visited) {
-                    return Some(invalid_member);
-                }
+                && let Some(invalid_member) = is_invalid_index_type_inner(db, constraint, visited)
+            {
+                return Some(invalid_member);
+            }
             false
         }
         _ => false,
