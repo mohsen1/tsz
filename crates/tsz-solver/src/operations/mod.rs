@@ -61,6 +61,10 @@ use tracing::{debug, trace};
 
 /// Maximum recursion depth for type constraint collection to prevent infinite loops.
 pub const MAX_CONSTRAINT_RECURSION_DEPTH: usize = 100;
+/// Maximum number of constrain-types steps per call evaluator pass.
+/// This caps pathological recursive inference explosions while preserving
+/// normal inference behavior on real-world calls.
+pub const MAX_CONSTRAINT_STEPS: usize = 20_000;
 
 pub trait AssignabilityChecker {
     fn is_assignable_to(&mut self, source: TypeId, target: TypeId) -> bool;
@@ -174,6 +178,8 @@ pub struct CallEvaluator<'a, C: AssignabilityChecker> {
     pub(crate) actual_this_type: Option<TypeId>,
     /// Current recursion depth for `constrain_types` to prevent infinite loops
     pub(crate) constraint_recursion_depth: RefCell<usize>,
+    /// Total constrain-types steps for the current inference pass.
+    pub(crate) constraint_step_count: RefCell<usize>,
     /// Visited (source, target) pairs during constraint collection.
     pub(crate) constraint_pairs: RefCell<FxHashSet<(TypeId, TypeId)>>,
     /// After a generic call resolves, holds the instantiated type predicate (if any).
@@ -191,6 +197,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             contextual_type: None,
             actual_this_type: None,
             constraint_recursion_depth: RefCell::new(0),
+            constraint_step_count: RefCell::new(0),
             constraint_pairs: RefCell::new(FxHashSet::default()),
             last_instantiated_predicate: None,
         }

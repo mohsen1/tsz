@@ -4,6 +4,7 @@ use super::*;
 use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
+use crate::operations::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::types::{TypeData, Visibility};
 
@@ -224,6 +225,39 @@ fn test_call_weak_type_with_compat_checker() {
 
     let result = evaluator.resolve_call(func, &[arg]);
     assert!(matches!(result, CallResult::ArgumentTypeMismatch { .. }));
+}
+
+#[test]
+fn test_generic_call_resets_constraint_step_budget() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let tp_name = interner.intern_string("T");
+    let tp = TypeParamInfo {
+        is_const: false,
+        name: tp_name,
+        constraint: None,
+        default: None,
+    };
+    let tp_id = interner.type_param(tp.clone());
+    let identity = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(tp_id)],
+        this_type: None,
+        return_type: tp_id,
+        type_params: vec![tp],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    *evaluator.constraint_step_count.borrow_mut() = MAX_CONSTRAINT_STEPS;
+
+    let result = evaluator.resolve_call(identity, &[TypeId::STRING]);
+    match result {
+        CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
+        _ => panic!("Expected successful generic inference, got {result:?}"),
+    }
 }
 
 #[test]
