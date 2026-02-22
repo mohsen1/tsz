@@ -934,6 +934,35 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         for key in &bad_keys {
             compiler_opts.remove(key);
         }
+
+        // Check moduleResolution/module compatibility (TS5095)
+        // "bundler" moduleResolution requires module to be preserve, commonjs, or es2015+.
+        if let Some(serde_json::Value::String(mr)) = compiler_opts.get("moduleResolution")
+            && mr.eq_ignore_ascii_case("bundler")
+        {
+            let module_incompatible =
+                if let Some(serde_json::Value::String(m)) = compiler_opts.get("module") {
+                    let m_lower = m.to_lowercase();
+                    matches!(m_lower.as_str(), "amd" | "umd" | "system" | "none")
+                } else {
+                    false // no module specified = default, which is compatible
+                };
+            if module_incompatible {
+                let start = find_value_offset_in_source(&stripped, "moduleResolution");
+                let value_len = mr.len() as u32 + 2; // include quotes
+                let msg = format_message(
+                        diagnostic_messages::OPTION_CAN_ONLY_BE_USED_WHEN_MODULE_IS_SET_TO_PRESERVE_COMMONJS_OR_ES2015_OR_LAT,
+                        &["bundler"],
+                    );
+                diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        value_len,
+                        msg,
+                        diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULE_IS_SET_TO_PRESERVE_COMMONJS_OR_ES2015_OR_LAT,
+                    ));
+            }
+        }
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
@@ -2190,6 +2219,54 @@ mod tests {
         assert!(
             !codes.contains(&5102),
             "Should NOT emit TS5102 for valid option 'strict', got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5095_bundler_with_amd() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"amd"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5095),
+            "Expected TS5095 for bundler+amd, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5095_bundler_with_system() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"system"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5095),
+            "Expected TS5095 for bundler+system, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_commonjs() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"commonjs"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+commonjs, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_esnext() {
+        let source = r#"{"compilerOptions":{"moduleResolution":"bundler","module":"esnext"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+esnext, got: {:?}",
             codes
         );
     }
