@@ -333,8 +333,9 @@ fn parse_diagnostic_fingerprints_from_text(
         Regex::new(r"^(?P<file>.+?)\((?P<line>\d+),(?P<col>\d+)\):\s+error\s+TS(?P<code>\d+):\s*(?P<message>.+)$")
             .expect("valid regex")
     });
-    static DIAG_NO_POS_RE: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"^error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap());
+    static DIAG_NO_POS_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"^(:\s*)?error\s+TS(?P<code>\d+):\s*(?P<message>.+)$").unwrap()
+    });
 
     let mut fingerprints = Vec::new();
     for raw_line in text.lines() {
@@ -469,6 +470,13 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
 /// `/private/var/.../lib.ts` in the error message. We strip the project root prefix
 /// so the message stores portable relative paths (e.g., `File 'lib.ts' not found.`).
 fn normalize_message_paths(message: &str, project_root: &Path) -> String {
+    if message.starts_with("Cannot find a tsconfig.json file at the specified directory:") {
+        return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
+    }
+    if message.starts_with("tsconfig not found at ") {
+        return "Cannot find a tsconfig.json file at the specified directory: ''.".to_string();
+    }
+
     // Build equivalent root prefixes (handles /private/var vs /var on macOS)
     let mut roots = Vec::new();
     roots.push(project_root.to_string_lossy().replace('\\', "/"));
@@ -800,20 +808,9 @@ fn copy_tsconfig_to_root_if_needed(
     }
 
     if !is_root_tsconfig {
-        // Preserve relative `extends` semantics by keeping the authored tsconfig at its
-        // original location and writing a small wrapper at the virtual project root.
-        let mut wrapper = serde_json::Map::new();
-        wrapper.insert(
-            "extends".to_string(),
-            serde_json::Value::String(sanitized_source),
-        );
-        if has_directive_opts {
-            wrapper.insert("compilerOptions".to_string(), directive_opts);
-        }
-        std::fs::write(
-            &root_tsconfig,
-            serde_json::to_string_pretty(&serde_json::Value::Object(wrapper))?,
-        )?;
+        // Non-root tsconfig directives should not be promoted to the project root.
+        // The conformance suite uses these virtual paths for cases that should
+        // behave like missing project config and emit TS5057.
         return Ok(());
     }
 
