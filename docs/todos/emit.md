@@ -1,8 +1,18 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9228/13623 = 67.7% JS, 762/2173 = 35.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 4894/7163 = 68.3% JS, 406/1139 = 35.6% DTS)
 
 ### Fixed This Session
+- **JSX self-closing element space before `/>`** (+16 JS tests):
+  Self-closing JSX elements (`<Tag />`) were emitted without the space before `/>`,
+  producing `<Tag/>`. tsc always calls `writeSpace()` after the tag name in
+  `emitJsxSelfClosingElement`, so when there are no attributes the space appears
+  before `/>`. When attributes are present, `emit_jsx_attributes` already prepends
+  a space before each attribute, so no extra space is needed. Fixed by checking
+  `has_attributes` in `emit_jsx_self_closing_element` and writing `" "` only when
+  there are no attributes. Results: JS 4878→4894, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **Deduplicate overloaded function exports in CommonJS** (+4 JS tests):
   Overloaded functions produce multiple `FUNCTION_DECLARATION` AST nodes (one per
   overload signature + implementation). `collect_export_names` and
@@ -80,6 +90,12 @@
 
 ### Investigated but Deferred (this session)
 
+- **Node modules CJS/ESM format comment (~21 tests)**: tsz emits `// cjs format file` while tsc emits `// esm format file` for `.js` files inside `node_modules` when the containing package has `"type": "module"` in `package.json`. Module format detection is wrong for these files under `node16`/`node18`/`node20`/`nodenext` module modes. Affects `nodeModulesAllowJs*` family.
+- **Extra source comments on transformed constructs (~37 tests)**: tsz emits source-level comments (like `// error`, `// no error`, `// should not error`) that tsc strips during transformation. Broader than item #13 which only covers erased constructs — these comments are attached to parameter lists, expressions, and statement-level constructs that tsc transforms.
+- **Numeric literal not downleveled for ES5 (~13 tests)**: Octal literals (`01`, `0o00`) and hex literals (`0xA0B0C0`) are emitted verbatim instead of being converted to decimal equivalents for ES3/ES5 targets. Affects `scannerES3NumericLiteral*`, `scannerNumericLiteral*`, `octalLiteralInStrictModeES3`.
+- **Missing hoisted temp var declarations (~8 tests)**: When lowering optional chaining, nullish coalescing, or element access chains, tsc hoists temporary variable declarations (`var _a, _b`) to the top of the enclosing scope. tsz omits these declarations. Affects `elementAccessChain.2`, `nullishCoalescingOperator10/12`, `spreadUnionPropOverride`.
+- **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
+- **Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**: CJS module preamble is missing for `moduleDetection=force` and related edge cases.
 - **Remaining duplicate-export affected tests (~90)**: The overload dedup fix resolves the duplicate `exports.X = X;` issue, but ~90 tests that had this as one of multiple issues remain failing due to other causes (missing helpers, wrong comment placement, module transform gaps). No action needed on the dedup side; remaining failures need other fixes.
 - **`exports.default` ordering (~19 tests)**: tsc emits `exports.default = X;` in the preamble (before the function), but tsz emits it after the function body. Requires reordering default export assignment in the CommonJS preamble emission path.
 - **Missing `exports.X = X;` for scoped declarations (~42 tests)**: tsc emits `exports.X = X;` for class/function exports declared inside nested scopes (e.g., conditionals, namespaces). The export collector only scans top-level statements, missing these. Would need deeper AST traversal or a different approach.

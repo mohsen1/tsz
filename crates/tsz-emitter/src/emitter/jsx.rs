@@ -26,6 +26,17 @@ impl<'a> Printer<'a> {
         self.write("<");
         self.emit(jsx.tag_name);
         self.emit(jsx.attributes);
+        // tsc always emits writeSpace() after tagName. Our emit_jsx_attributes
+        // already prepends a space before each attribute, so the space is only
+        // missing when there are no attributes at all.
+        let has_attributes = self
+            .arena
+            .get(jsx.attributes)
+            .and_then(|n| self.arena.get_jsx_attributes(n))
+            .is_some_and(|a| !a.properties.nodes.is_empty());
+        if !has_attributes {
+            self.write(" ");
+        }
         self.write("/>");
     }
 
@@ -124,5 +135,47 @@ impl<'a> Printer<'a> {
         self.emit(ns.namespace);
         self.write(":");
         self.emit(ns.name);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    fn emit_jsx(source: &str) -> String {
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        printer.finish().code
+    }
+
+    #[test]
+    fn self_closing_no_attributes_has_space_before_slash() {
+        let output = emit_jsx("const x = <Tag />;");
+        assert!(
+            output.contains("<Tag />"),
+            "Self-closing element without attributes should have space before />.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn self_closing_with_attributes_has_no_space_before_slash() {
+        let output = emit_jsx("const x = <Tag foo=\"bar\"/>;");
+        assert!(
+            output.contains("<Tag foo=\"bar\"/>"),
+            "Self-closing element with attributes should NOT have extra space before />.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn self_closing_with_expression_attribute_no_extra_space() {
+        let output = emit_jsx("const x = <Tag value={42}/>;");
+        assert!(
+            output.contains("<Tag value={42}/>"),
+            "Self-closing element with expression attribute should NOT have extra space before />.\nOutput: {output}"
+        );
     }
 }
