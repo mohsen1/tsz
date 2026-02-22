@@ -321,6 +321,33 @@ impl ParserState {
             SyntaxKind::ClassKeyword => self.parse_class_declaration(),
             SyntaxKind::AbstractKeyword => self.parse_abstract_class_declaration(),
             SyntaxKind::InterfaceKeyword => self.parse_interface_declaration(),
+            SyntaxKind::AtToken => {
+                // export default @dec class {} — parse decorators then class
+                let decorators = self.parse_decorators();
+                match self.token() {
+                    SyntaxKind::ClassKeyword => {
+                        self.parse_class_declaration_with_decorators(decorators, self.token_pos())
+                    }
+                    SyntaxKind::AbstractKeyword => self
+                        .parse_abstract_class_declaration_with_decorators(
+                            decorators,
+                            self.token_pos(),
+                        ),
+                    _ => {
+                        // Decorators are not valid on non-class default exports
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at(
+                            start_pos,
+                            0,
+                            "Decorators are not valid here.",
+                            diagnostic_codes::DECORATORS_ARE_NOT_VALID_HERE,
+                        );
+                        let expr = self.parse_assignment_expression();
+                        self.parse_semicolon();
+                        expr
+                    }
+                }
+            }
             _ => {
                 let expr = self.parse_assignment_expression();
                 self.parse_semicolon();

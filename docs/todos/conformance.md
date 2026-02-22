@@ -84,9 +84,27 @@ start at the beginning of the statement.
 - **Remaining TS2300 issues**: `let`/`const` redeclarations conflicting with parameters
   in the same block scope are not yet detected (pre-existing gap, separate from this fix).
 
+## TS1206 — ES decorators on class expressions (Fixed)
+
+**Status**: Fixed. Removed unconditional TS1206 from parser for class expression
+decorators and added `@dec` handling in `export default` path. ES decorators
+(TC39 Stage 3) are valid on class expressions in TypeScript 5.0+. Result: +19
+tests passing (offset 6000 slice: 3665→3684).
+
+### Remaining TS1206 issues
+- `decoratorOnUsing.ts` — `@dec using` still emits TS1206 from parser
+  `parse_decorated_declaration` (UsingKeyword branch). TSC produces TS1134
+  instead. Needs parser to unify decorator-on-invalid-declaration error codes.
+- With `--experimentalDecorators`, class expression decorators should emit
+  TS1206 from the checker (not parser). No tests currently exercise this path.
+
 ## Deferred issues from this run (not fixed)
 
 - **TS2300**: `TypeScript/tests/cases/compiler/collisionArgumentsArrowFunctions.ts` — remaining failure is TS5025 (compiler option casing), not TS2300.
 - **TS2300**: `TypeScript/tests/cases/compiler/collisionArgumentsInterfaceMembers.ts` — remaining failure is TS5025.
 - **TS5057**: `TypeScript/tests/cases/compiler/commonSourceDir1.ts` — requires project/tsconfig discovery and compiler option plumbing that is not yet wired into the current checker flow.
 - **TS5095**: `TypeScript/tests/cases/compiler/declarationEmitBundleWithAmbientReferences.ts` — requires moduleResolution validation against module-kind constraints, which is still outside current scope.
+- **TS2322 (62 missing)**: Many tests still miss TS2322 assignability errors — ongoing solver/checker type relation work.
+- **TS2339 (52 missing)**: Property access errors not yet emitted for union-typed or intersection-typed values in some cases.
+- **TS2304 (57 extra)**: Over-emission of "cannot find name" — requires broader lib resolution and module resolution improvements.
+- **TS1202 (36 extra)**: Import assignment errors emitted for non-ESM module targets — needs module-kind check before emitting.

@@ -72,6 +72,10 @@ mod state_type_tests;
 #[path = "../../tests/state_declaration_tests.rs"]
 mod state_declaration_tests;
 
+#[cfg(test)]
+#[path = "../../tests/decorator_tests.rs"]
+mod decorator_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 
