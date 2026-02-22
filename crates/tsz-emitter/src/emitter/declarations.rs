@@ -1374,6 +1374,51 @@ impl<'a> Printer<'a> {
     // Declarations - Enum, Interface, Type Alias
     // =========================================================================
 
+    /// Determines whether an enum declaration should use `let` instead of `var`.
+    ///
+    /// tsc uses `var` for top-level enums and `let` for block-scoped enums
+    /// (inside functions, methods, namespaces) when targeting ES2015+.
+    fn should_use_let_for_enum(&self, enum_idx: NodeIndex) -> bool {
+        // Always use `let` inside namespace IIFEs (existing behavior).
+        if self.in_namespace_iife {
+            return true;
+        }
+        // Only upgrade to `let` for ES2015+ targets.
+        if self.ctx.target_es5 {
+            return false;
+        }
+        // Walk parent chain to check if enum is inside a block scope
+        // (function body, method, etc.) rather than at source file top level.
+        let mut current = enum_idx;
+        for _ in 0..32 {
+            let Some(ext) = self.arena.get_extended(current) else {
+                return false;
+            };
+            let parent = ext.parent;
+            if parent.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.arena.get(parent) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::SOURCE_FILE => return false,
+                syntax_kind_ext::FUNCTION_DECLARATION
+                | syntax_kind_ext::FUNCTION_EXPRESSION
+                | syntax_kind_ext::ARROW_FUNCTION
+                | syntax_kind_ext::METHOD_DECLARATION
+                | syntax_kind_ext::CONSTRUCTOR
+                | syntax_kind_ext::GET_ACCESSOR
+                | syntax_kind_ext::SET_ACCESSOR
+                | syntax_kind_ext::MODULE_DECLARATION => return true,
+                _ => {
+                    current = parent;
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn emit_enum_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(enum_decl) = self.arena.get_enum(node) else {
             return;
@@ -1418,8 +1463,9 @@ impl<'a> Printer<'a> {
                     if output.starts_with(&var_prefix) {
                         output = output[var_prefix.len()..].to_string();
                     }
-                } else if self.in_namespace_iife && !enum_name.is_empty() {
-                    // Inside namespace IIFE, use `let` instead of `var` for enum declarations
+                } else if !enum_name.is_empty() && self.should_use_let_for_enum(idx) {
+                    // Inside a block scope (namespace IIFE or function body) at ES2015+,
+                    // use `let` instead of `var` to preserve block scoping semantics.
                     let var_prefix = format!("var {enum_name};");
                     let let_prefix = format!("let {enum_name};");
                     if output.starts_with(&var_prefix) {

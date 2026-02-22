@@ -98,7 +98,14 @@ impl<'a> IRPrinter<'a> {
         members: &[EnumMember],
         namespace: &str,
     ) {
-        self.write("var ");
+        // Inside namespace body, use `let` (ES2015+ block scoping).
+        let keyword = if self.in_namespace_iife_body {
+            "let"
+        } else {
+            "var"
+        };
+        self.write(keyword);
+        self.write(" ");
         self.write(enum_name);
         self.write(";");
         self.write_line();
@@ -1415,8 +1422,14 @@ impl<'a> IRPrinter<'a> {
                 if let Some(ns) = namespace_export {
                     self.emit_namespace_bound_enum_iife(name, members, ns);
                 } else {
-                    // var E;
-                    self.write("var ");
+                    // var E; (top-level) or let E; (inside namespace/function body at ES2015+)
+                    let keyword = if self.in_namespace_iife_body {
+                        "let"
+                    } else {
+                        "var"
+                    };
+                    self.write(keyword);
+                    self.write(" ");
                     self.write(name);
                     self.write(";");
                     self.write_line();

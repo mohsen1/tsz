@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9455/13623 = 69.4% JS, 762/1990 = 38.3% DTS)
+## Pattern Analysis (JS+DTS mode, current 4982/7163 = 69.6% JS, 406/1036 = 39.2% DTS)
 
 ### Fixed This Session
+- **Enum IIFE `var` → `let` for block-scoped enums at ES2015+** (+7 JS tests):
+  tsc uses `var` for top-level enums but `let` for enums inside block scopes (functions,
+  methods, constructors, namespaces) when targeting ES2015+. Two code paths needed fixing:
+  1. **IR printer path** (`ir_printer.rs`): `EnumIIFE` handler and `emit_namespace_bound_enum_iife`
+     now check `in_namespace_iife_body` flag to choose `let` vs `var`.
+  2. **Direct emit path** (`declarations.rs`): Added `should_use_let_for_enum(idx)` helper that
+     walks the AST parent chain to detect if the enum is inside a function/method/namespace rather
+     than at source file top level. The string replacement `var E;` → `let E;` only fires when
+     this returns true AND target is ES2015+.
+  Tests fixed: `unusedLocalsInMethod4(target=es2015)`, `internalAliasEnumInsideLocalModuleWithoutExport`,
+  `internalAliasEnumInsideLocalModuleWithoutExportAccessError`, and 4 others.
+  Note: `localTypes1(target=es2015)` still fails due to a pre-existing `declared_namespace_names`
+  scoping bug — the set is file-global, so repeated enum names across different function scopes
+  cause the first branch (strip `var E;\n`) to match instead of the let-replacement branch.
+
 - **ImportKeyword emission in emit_node_by_kind dispatch** (+13 JS tests):
   `SyntaxKind::ImportKeyword` was missing from the emitter's `emit_node_by_kind` match table.
   Dynamic `import('path')` calls have a `CallExpression` with an `ImportKeyword` token node as
@@ -202,6 +217,14 @@
   (skip trailing-semicolon consumption when member is itself a `SEMICOLON_CLASS_ELEMENT`).
 
 ### Investigated but Deferred
+
+- **`declared_namespace_names` set is file-global, not scope-local (~5-10 tests)**:
+  The `declared_namespace_names` set in the Printer tracks enum names for namespace/enum merges,
+  but it's never cleared or scoped when entering/exiting function bodies. If two different functions
+  both declare `enum E`, the second one's `var E;\n` prefix gets stripped entirely (the
+  namespace-merge branch fires instead of the let-replacement branch). Affects `localTypes1(target=es2015)`
+  and similar tests with repeated enum names across different function scopes. Fix would require
+  scoping the set by function/block context, similar to how temp name scoping works.
 
 - **"use strict" deduplication is context-dependent (~145 remaining tests, ~29 sole-fix)**:
   Investigated removing `dedupeUseStrictPreamble()` from the cli-transpiler and fixing the
