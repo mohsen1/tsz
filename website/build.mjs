@@ -398,6 +398,7 @@ function build() {
   // Copy WASM if available
   const wasmSources = [
     path.join(ROOT, "npm", "tsz", "wasm", "bundler"),
+    path.join(ROOT, "pkg", "bundler"),
     path.join(ROOT, "pkg"),
   ];
   for (const wasmSrc of wasmSources) {

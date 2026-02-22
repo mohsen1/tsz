@@ -87,8 +87,38 @@ jobs:
           path: artifacts/bench-vs-tsgo-*.json
           retention-days: 7
 
+  wasm:
+    needs: check
+    if: needs.check.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+
+      - name: Build WASM (bundler target)
+        run: |
+          cp LICENSE.txt crates/tsz-wasm/LICENSE.txt
+          wasm-pack build crates/tsz-wasm --target bundler --out-dir ../../pkg/bundler
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-bundler
+          path: pkg/bundler/
+          retention-days: 7
+
   build:
-    needs: [check, benchmark]
+    needs: [check, benchmark, wasm]
     if: needs.check.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -115,6 +145,13 @@ jobs:
         with:
           name: benchmark-data
           path: website/data
+        continue-on-error: true
+
+      - name: Download WASM
+        uses: actions/download-artifact@v4
+        with:
+          name: wasm-bundler
+          path: pkg/bundler
         continue-on-error: true
 
       # Rename to expected filename
