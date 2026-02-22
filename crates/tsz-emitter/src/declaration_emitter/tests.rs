@@ -375,3 +375,45 @@ fn test_simple_template_literal_type() {
         "Must not have double semicolon in simple template literal type: {output}"
     );
 }
+
+#[test]
+fn test_public_modifier_omitted_from_dts_class_members() {
+    // tsc omits `public` from .d.ts output since it's the default accessibility
+    let source = r#"
+    export class Foo {
+        public x: number;
+        public greet(): string { return "hello"; }
+        protected y: number;
+        private z: number;
+    }
+    "#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    // `public` should be stripped (it's the default)
+    assert!(
+        !output.contains("public "),
+        "Expected `public` modifier to be omitted from .d.ts output: {output}"
+    );
+    // `protected` and `private` should be preserved
+    assert!(
+        output.contains("protected y"),
+        "Expected `protected` modifier to be preserved: {output}"
+    );
+    assert!(
+        output.contains("private z"),
+        "Expected `private` modifier to be preserved: {output}"
+    );
+    // Members themselves should still be present
+    assert!(
+        output.contains("x: number"),
+        "Expected public property to still be emitted (without modifier): {output}"
+    );
+    assert!(
+        output.contains("greet("),
+        "Expected public method to still be emitted (without modifier): {output}"
+    );
+}

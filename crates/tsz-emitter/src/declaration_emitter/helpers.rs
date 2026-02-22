@@ -189,39 +189,42 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(tlt) = self.arena.get_template_literal_type(type_node) {
                     // Emit the head text (includes opening backtick + text before first `${`)
                     if let Some(head_node) = self.arena.get(tlt.head)
-                        && let Some(lit) = self.arena.get_literal(head_node) {
-                            if head_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
-                                self.write("`");
-                                self.write(&lit.text);
-                                self.write("`");
-                            } else {
-                                // TemplateHead: text before first substitution
-                                self.write("`");
-                                self.write(&lit.text);
-                                self.write("${");
-                            }
+                        && let Some(lit) = self.arena.get_literal(head_node)
+                    {
+                        if head_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                            self.write("`");
+                            self.write(&lit.text);
+                            self.write("`");
+                        } else {
+                            // TemplateHead: text before first substitution
+                            self.write("`");
+                            self.write(&lit.text);
+                            self.write("${");
                         }
+                    }
                     // Emit each span: type + middle/tail literal
                     for (i, &span_idx) in tlt.template_spans.nodes.iter().enumerate() {
                         if let Some(span_node) = self.arena.get(span_idx)
-                            && let Some(span) = self.arena.get_template_span(span_node) {
-                                // Emit the type inside ${...}
-                                self.emit_type(span.expression);
-                                // Emit the literal part (TemplateMiddle or TemplateTail)
-                                if let Some(lit_node) = self.arena.get(span.literal)
-                                    && let Some(lit) = self.arena.get_literal(lit_node) {
-                                        let is_last = i == tlt.template_spans.nodes.len() - 1;
-                                        if is_last {
-                                            self.write("}");
-                                            self.write(&lit.text);
-                                            self.write("`");
-                                        } else {
-                                            self.write("}");
-                                            self.write(&lit.text);
-                                            self.write("${");
-                                        }
-                                    }
+                            && let Some(span) = self.arena.get_template_span(span_node)
+                        {
+                            // Emit the type inside ${...}
+                            self.emit_type(span.expression);
+                            // Emit the literal part (TemplateMiddle or TemplateTail)
+                            if let Some(lit_node) = self.arena.get(span.literal)
+                                && let Some(lit) = self.arena.get_literal(lit_node)
+                            {
+                                let is_last = i == tlt.template_spans.nodes.len() - 1;
+                                if is_last {
+                                    self.write("}");
+                                    self.write(&lit.text);
+                                    self.write("`");
+                                } else {
+                                    self.write("}");
+                                    self.write(&lit.text);
+                                    self.write("${");
+                                }
                             }
+                        }
                     }
                 }
             }
