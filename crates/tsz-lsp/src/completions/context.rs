@@ -50,7 +50,9 @@ impl<'a> Completions<'a> {
                 || k == syntax_kind_ext::INTERFACE_DECLARATION
             {
                 let text_before = &self.source_text[..offset as usize];
-                if text_before[node.pos as usize..].contains('{') {
+                let in_decl_text = &text_before[node.pos as usize..];
+                let last_non_ws = in_decl_text.trim_end().as_bytes().last().copied();
+                if matches!(last_non_ws, Some(b'{') | Some(b';')) {
                     return true;
                 }
             }
@@ -115,8 +117,8 @@ impl<'a> Completions<'a> {
                 }
             }
             // After these characters, a new identifier/expression may start.
-            Some(b'(') | Some(b',') | Some(b'[') | Some(b'{') | Some(b'<') | Some(b':')
-            | Some(b'?') | Some(b'|') | Some(b'&') | Some(b'!') => return true,
+            Some(b'(') | Some(b',') | Some(b'[') | Some(b'{') | Some(b'<') | Some(b'?')
+            | Some(b'|') | Some(b'&') | Some(b'!') => return true,
             _ => {}
         }
 
@@ -179,7 +181,6 @@ impl<'a> Completions<'a> {
                     | '['
                     | '{'
                     | '<'
-                    | ':'
                     | '?'
                     | '|'
                     | '&'
