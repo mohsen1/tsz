@@ -976,6 +976,7 @@ impl Server {
             }
 
             if let Some((column, name)) = parse_bare_identifier_expression(line)
+                .or_else(|| parse_identifier_call_expression(line))
                 && binder.file_locals.get(name).is_none()
                 && self.has_potential_auto_import_symbol(file_path, name)
                 && seen_spans.insert((offset + column, name.len()))
@@ -4254,6 +4255,80 @@ fn parse_bare_identifier_expression(line: &str) -> Option<(usize, &str)> {
     Some((leading_ws, expr))
 }
 
+fn parse_identifier_call_expression(line: &str) -> Option<(usize, &str)> {
+    let trimmed_start = line.trim_start();
+    let leading_ws = line.len().saturating_sub(trimmed_start.len());
+    let trimmed = trimmed_start.trim_end();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let expr = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
+    if expr.is_empty() {
+        return None;
+    }
+
+    let mut chars = expr.char_indices();
+    let (_, first) = chars.next()?;
+    if !(first.is_ascii_alphabetic() || first == '_' || first == '$') {
+        return None;
+    }
+
+    let mut ident_end = first.len_utf8();
+    for (idx, ch) in chars {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '$' {
+            ident_end = idx + ch.len_utf8();
+            continue;
+        }
+        ident_end = idx;
+        break;
+    }
+
+    let name = expr.get(..ident_end)?;
+    if !is_identifier(name) {
+        return None;
+    }
+    if is_reserved_word(name) {
+        return None;
+    }
+
+    let rest = expr.get(ident_end..)?.trim_start();
+    if !rest.starts_with('(') {
+        return None;
+    }
+
+    Some((leading_ws, name))
+}
+
+fn is_reserved_word(name: &str) -> bool {
+    matches!(
+        name,
+        "if" | "else"
+            | "for"
+            | "while"
+            | "do"
+            | "switch"
+            | "case"
+            | "default"
+            | "break"
+            | "continue"
+            | "return"
+            | "throw"
+            | "try"
+            | "catch"
+            | "finally"
+            | "function"
+            | "class"
+            | "new"
+            | "this"
+            | "super"
+            | "typeof"
+            | "void"
+            | "delete"
+            | "await"
+            | "yield"
+    )
+}
+
 fn find_jsdoc_import_line(
     content: &str,
 ) -> Option<(u32, String, String, String, Vec<ImportSpecifierEntry>)> {
@@ -4424,7 +4499,9 @@ fn reorder_import_candidates_for_package_roots(candidates: &mut [ImportCandidate
 
 #[cfg(test)]
 mod tests {
-    use super::{Server, TsServerRequest};
+    use super::{
+        LineMap, Server, TsServerRequest, parse_identifier_call_expression, positions_overlap,
+    };
     use crate::{LogConfig, LogLevel, ServerMode};
     use rustc_hash::FxHashMap;
     use std::path::PathBuf;
@@ -5028,5 +5105,189 @@ mod tests {
             "expected JSDoc @import merge edit, got {:?}",
             import_fix_texts[0]
         );
+    }
+
+    #[test]
+    fn get_code_fixes_adds_missing_value_import_with_existing_type_only_import() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/node_modules/react/index.d.ts".to_string(),
+            "export interface ComponentType {}\nexport interface ComponentProps {}\nexport declare function useState<T>(initialState: T): [T, (newState: T) => void];\nexport declare function useEffect(callback: () => void, deps: any[]): void;\n".to_string(),
+        );
+        server.open_files.insert(
+            "/main.ts".to_string(),
+            "import type { ComponentType } from \"react\";\nimport { useState } from \"react\";\n\nexport function Component({ prop } : { prop: ComponentType }) {\n    const codeIsUnimportant = useState(1);\n    useEffect(() => {}, []);\n}\n".to_string(),
+        );
+
+        let content = server
+            .open_files
+            .get("/main.ts")
+            .expect("missing main.ts")
+            .clone();
+        let line_map = LineMap::build(&content);
+        let (_, binder, _, _) = server
+            .parse_and_bind_file("/main.ts")
+            .expect("expected parse_and_bind_file for /main.ts");
+        let synthetic =
+            server.synthetic_missing_name_expression_diagnostics("/main.ts", &content, &binder);
+        assert!(
+            synthetic.iter().any(|diag| {
+                diag.code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                    && diag.message_text.contains("useEffect")
+                    && {
+                        let start = line_map.offset_to_position(diag.start, &content);
+                        let end = line_map.offset_to_position(diag.start + diag.length, &content);
+                        positions_overlap(
+                            tsz::lsp::position::Position::new(5, 4),
+                            tsz::lsp::position::Position::new(5, 13),
+                            start,
+                            end,
+                        )
+                    }
+            }),
+            "expected synthetic cannot-find-name diagnostic for useEffect, got {synthetic:?}"
+        );
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/main.ts",
+                "startLine": 6,
+                "startOffset": 5,
+                "endLine": 6,
+                "endOffset": 14,
+                "errorCodes": [2304]
+            }),
+        };
+
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+        let body = resp.body.expect("expected getCodeFixes body");
+        let fixes = body.as_array().expect("expected array response");
+        let mut import_fix_texts = Vec::new();
+        for fix in fixes {
+            if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let Some(text_changes) = change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                for text_change in text_changes {
+                    if let Some(new_text) = text_change
+                        .get("newText")
+                        .and_then(serde_json::Value::as_str)
+                    {
+                        import_fix_texts.push(new_text.to_string());
+                    }
+                }
+            }
+        }
+
+        assert!(
+            import_fix_texts
+                .iter()
+                .any(|text| text.contains("useEffect")),
+            "expected import fix text to include useEffect, got {import_fix_texts:?}"
+        );
+    }
+
+    #[test]
+    fn get_code_fixes_prefers_merging_type_only_import_into_type_clause() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/node_modules/react/index.d.ts".to_string(),
+            "export interface ComponentType {}\nexport interface ComponentProps {}\nexport declare function useState<T>(initialState: T): [T, (newState: T) => void];\n".to_string(),
+        );
+        server.open_files.insert(
+            "/main2.ts".to_string(),
+            "import { useState } from \"react\";\nimport type { ComponentType } from \"react\";\n\ntype _ = ComponentProps;\n".to_string(),
+        );
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCodeFixes".to_string(),
+            arguments: serde_json::json!({
+                "file": "/main2.ts",
+                "startLine": 4,
+                "startOffset": 10,
+                "endLine": 4,
+                "endOffset": 24,
+                "errorCodes": [2304]
+            }),
+        };
+
+        let resp = server.handle_get_code_fixes(1, &req);
+        assert!(resp.success, "expected getCodeFixes to succeed");
+        let body = resp.body.expect("expected getCodeFixes body");
+        let fixes = body.as_array().expect("expected array response");
+        let mut first_import_changes: Option<Vec<serde_json::Value>> = None;
+        for fix in fixes {
+            if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let Some(text_changes) = change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                first_import_changes = Some(text_changes.clone());
+                break;
+            }
+            if first_import_changes.is_some() {
+                break;
+            }
+        }
+
+        let mut updated = server
+            .open_files
+            .get("/main2.ts")
+            .expect("missing main2.ts")
+            .clone();
+        let mut edits = first_import_changes.expect("expected at least one import fix");
+        edits.sort_by(|a, b| {
+            let a_line = a["start"]["line"].as_u64().unwrap_or(0);
+            let a_offset = a["start"]["offset"].as_u64().unwrap_or(0);
+            let b_line = b["start"]["line"].as_u64().unwrap_or(0);
+            let b_offset = b["start"]["offset"].as_u64().unwrap_or(0);
+            (b_line, b_offset).cmp(&(a_line, a_offset))
+        });
+        for edit in edits {
+            updated = Server::apply_change(
+                &updated,
+                edit["start"]["line"].as_u64().expect("start line") as u32,
+                edit["start"]["offset"].as_u64().expect("start offset") as u32,
+                edit["end"]["line"].as_u64().expect("end line") as u32,
+                edit["end"]["offset"].as_u64().expect("end offset") as u32,
+                edit["newText"].as_str().expect("new text"),
+            );
+        }
+        assert!(
+            updated.contains("import type { ComponentProps, ComponentType } from \"react\";"),
+            "expected merged type-only import, got {updated:?}"
+        );
+    }
+
+    #[test]
+    fn parse_identifier_call_expression_ignores_keywords() {
+        assert_eq!(
+            parse_identifier_call_expression("useEffect(() => {})"),
+            Some((0, "useEffect"))
+        );
+        assert_eq!(parse_identifier_call_expression("if (cond)"), None);
     }
 }

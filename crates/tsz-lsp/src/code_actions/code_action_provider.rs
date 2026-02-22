@@ -1285,7 +1285,9 @@ impl<'a> CodeActionProvider<'a> {
             return MergeNamedImport::NoMatch;
         };
 
-        let mut default_target = None;
+        let mut default_target_type_only = None;
+        let mut default_target_value = None;
+        let mut fallback_value_named_edits: Option<Vec<TextEdit>> = None;
 
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1344,19 +1346,35 @@ impl<'a> CodeActionProvider<'a> {
                         &candidate.local_name,
                         &spec_text,
                     ) {
+                        if candidate.is_type_only && !clause.is_type_only {
+                            if fallback_value_named_edits.is_none() {
+                                fallback_value_named_edits = Some(edits);
+                            }
+                            continue;
+                        }
                         return MergeNamedImport::Edits(edits);
                     }
                     return MergeNamedImport::NoMatch;
                 }
+            } else if clause.is_type_only {
+                default_target_type_only = Some(stmt_idx);
             } else {
-                default_target = Some(stmt_idx);
+                default_target_value = Some(stmt_idx);
             }
         }
 
+        let default_target = if candidate.is_type_only {
+            default_target_type_only.or(default_target_value)
+        } else {
+            default_target_value.or(default_target_type_only)
+        };
         if let Some(import_idx) = default_target
             && let Some(edit) = self.build_default_import_named_edit(import_idx, candidate)
         {
             return MergeNamedImport::Edits(vec![edit]);
+        }
+        if let Some(edits) = fallback_value_named_edits {
+            return MergeNamedImport::Edits(edits);
         }
 
         MergeNamedImport::NoMatch
