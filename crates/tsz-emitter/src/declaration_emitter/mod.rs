@@ -34,7 +34,7 @@ pub mod usage_analyzer;
 mod tests;
 
 use crate::enums::evaluator::EnumEvaluator;
-use crate::source_writer::{SourcePosition, SourceWriter};
+use crate::output::source_writer::{SourcePosition, SourceWriter};
 use crate::type_cache_view::TypeCacheView;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::Arc;

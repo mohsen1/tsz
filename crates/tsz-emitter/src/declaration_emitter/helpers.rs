@@ -4,7 +4,7 @@
 
 use super::{DeclarationEmitter, ImportPlan, PlannedImportModule, PlannedImportSymbol};
 use crate::emitter::type_printer::TypePrinter;
-use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tracing::debug;

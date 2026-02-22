@@ -934,7 +934,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::printer::{PrintOptions, Printer};
+    use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
     /// Regression test: type-only import-equals inside a namespace must not

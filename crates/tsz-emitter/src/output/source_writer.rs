@@ -572,5 +572,5 @@ pub fn source_position_from_offset(text: &str, pos: u32) -> SourcePosition {
 }
 
 #[cfg(test)]
-#[path = "../tests/source_writer.rs"]
+#[path = "../../tests/source_writer.rs"]
 mod tests;

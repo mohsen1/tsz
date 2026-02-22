@@ -1174,7 +1174,7 @@ impl<'a> Printer<'a> {
 #[cfg(test)]
 mod tests {
     use crate::emitter::ScriptTarget;
-    use crate::printer::{PrintOptions, Printer};
+    use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
     /// Regression test: trailing comments on static class fields must be

@@ -140,7 +140,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::printer::{PrintOptions, Printer};
+    use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
     fn emit_jsx(source: &str) -> String {

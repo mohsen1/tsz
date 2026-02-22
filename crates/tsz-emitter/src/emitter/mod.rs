@@ -24,7 +24,7 @@
 
 use crate::context::emit::EmitContext;
 use crate::context::transform::{IdentifierId, TransformContext, TransformDirective};
-use crate::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
+use crate::output::source_writer::{SourcePosition, SourceWriter, source_position_from_offset};
 use crate::transforms::{ClassES5Emitter, EnumES5Emitter, NamespaceES5Emitter};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
