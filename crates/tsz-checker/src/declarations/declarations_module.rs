@@ -790,6 +790,30 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             return;
         }
 
+        // First check if any non-ambient function with a body merges with this namespace.
+        // When a function merge exists, the global duplicate-check path in
+        // type_checking_global.rs handles TS2434 for the function case, and we
+        // should suppress TS2434 for any class that also merges (tsc emits
+        // TS2813/TS2814 for the class conflict, not TS2434).
+        let has_merged_function = symbol.declarations.iter().any(|&decl_idx| {
+            if decl_idx == module_idx {
+                return false;
+            }
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return false;
+            }
+            if self.is_ambient_declaration(decl_idx) {
+                return false;
+            }
+            self.ctx
+                .arena
+                .get_function(decl_node)
+                .is_some_and(|f| f.body.is_some())
+        });
+
         // Look for a non-ambient class or function declaration among the merged declarations
         for &decl_idx in &symbol.declarations {
             if decl_idx == module_idx {
@@ -843,6 +867,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 // Function-order TS2434 is already handled by the global duplicate-check path;
                 // keep this path for class-order checks to avoid duplicate TS2434 diagnostics.
                 if is_function {
+                    continue;
+                }
+
+                // Skip class-order TS2434 when the namespace also merges with a function;
+                // tsc emits TS2813/TS2814 for the class conflict, not TS2434.
+                if is_class && has_merged_function {
                     continue;
                 }
 
