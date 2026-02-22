@@ -104,10 +104,13 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // Find the target callable at this position. Prefer explicit symbol
         // resolution from callsites (e.g. `bar()` -> `const bar = function(){}`).
-        let func_idx = match self
+        let mut func_idx = self
             .resolve_reference_callable(node_idx)
-            .or_else(|| self.find_function_at_or_around(node_idx))
-        {
+            .or_else(|| self.find_function_at_or_around(node_idx));
+        if func_idx.is_none() {
+            func_idx = self.export_equals_anonymous_function_callable();
+        }
+        let func_idx = match func_idx {
             Some(idx) => idx,
             None => return results,
         };
@@ -244,15 +247,21 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // Find the target callable at this position. Prefer explicit symbol
         // resolution from callsites (e.g. `bar()` -> `const bar = function(){}`).
-        let func_idx = match self
+        let mut func_idx = self
             .resolve_reference_callable(node_idx)
-            .or_else(|| self.find_function_at_or_around(node_idx))
-        {
+            .or_else(|| self.find_function_at_or_around(node_idx));
+        if func_idx.is_none() {
+            func_idx = self.export_equals_anonymous_function_callable();
+        }
+        let func_idx = match func_idx {
             Some(idx) => idx,
             None => return results,
         };
 
         let prepared_bounds = self.prepare(_root, position).and_then(|item| {
+            if item.kind == SymbolKind::Module {
+                return None;
+            }
             let start = self
                 .line_map
                 .position_to_offset(item.range.start, self.source_text)?;
@@ -1033,6 +1042,9 @@ impl<'a> CallHierarchyProvider<'a> {
         if !node.is_function_like() {
             return None;
         }
+        if let Some(module_item) = self.export_equals_anonymous_function_item(func_idx) {
+            return Some(module_item);
+        }
 
         let name = self.get_function_name(func_idx);
         let kind = self.get_function_symbol_kind(func_idx);
@@ -1073,6 +1085,74 @@ impl<'a> CallHierarchyProvider<'a> {
                     .and_then(|_| self.member_container_hint_for_callable(func_idx))
             }),
         })
+    }
+
+    fn export_equals_anonymous_function_item(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<CallHierarchyItem> {
+        let func_node = self.arena.get(func_idx)?;
+        if func_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+            || self.get_function_name_idx(func_idx).is_some()
+        {
+            return None;
+        }
+
+        let parent = self.arena.get_extended(func_idx)?.parent;
+        if parent.is_none() {
+            return None;
+        }
+        let parent_node = self.arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+            return None;
+        }
+
+        let export_assignment = self.arena.get_export_assignment(parent_node)?;
+        if !export_assignment.is_export_equals || export_assignment.expression != func_idx {
+            return None;
+        }
+
+        let start = self.line_map.offset_to_position(0, self.source_text);
+        let end = self
+            .line_map
+            .offset_to_position(self.source_text.len() as u32, self.source_text);
+
+        Some(CallHierarchyItem {
+            name: self.file_name.clone(),
+            kind: SymbolKind::Module,
+            uri: self.file_name.clone(),
+            range: Range::new(start, end),
+            selection_range: Range::new(start, start),
+            container_name: None,
+        })
+    }
+
+    fn export_equals_anonymous_function_callable(&self) -> Option<NodeIndex> {
+        for node in &self.arena.nodes {
+            if node.kind != syntax_kind_ext::EXPORT_ASSIGNMENT {
+                continue;
+            }
+            let Some(export_assignment) = self.arena.get_export_assignment(node) else {
+                continue;
+            };
+            if !export_assignment.is_export_equals || export_assignment.expression.is_none() {
+                continue;
+            }
+            let Some(expr_node) = self.arena.get(export_assignment.expression) else {
+                continue;
+            };
+            if expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION {
+                continue;
+            }
+            if self
+                .get_function_name_idx(export_assignment.expression)
+                .is_some()
+            {
+                continue;
+            }
+            return Some(export_assignment.expression);
+        }
+        None
     }
 
     /// Build a `CallHierarchyItem` for a declaration node that may be

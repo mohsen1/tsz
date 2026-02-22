@@ -76,6 +76,56 @@ fn test_prepare_not_on_function() {
 }
 
 #[test]
+fn test_prepare_on_export_equals_anonymous_function_uses_module_item() {
+    let source = "export = function () {\n  baz();\n}\nfunction baz() {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position inside `function` keyword of `export = function () {}`.
+    let pos = Position::new(0, 10);
+    let item = provider
+        .prepare(root, pos)
+        .expect("Should prepare call hierarchy item for export-equals function");
+
+    assert_eq!(item.name, "test.ts");
+    assert_eq!(item.kind, SymbolKind::Module);
+    assert_eq!(item.range.start, Position::new(0, 0));
+    assert_eq!(item.selection_range.start, Position::new(0, 0));
+    assert_eq!(item.selection_range.end, Position::new(0, 0));
+}
+
+#[test]
+fn test_outgoing_calls_from_export_equals_module_selection_span() {
+    let source = "export = function () {\n  baz();\n}\nfunction baz() {}\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CallHierarchyProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Fourslash follow-up call hierarchy requests use the prepare item's selection span.
+    let calls = provider.outgoing_calls(root, Position::new(0, 0));
+
+    assert!(
+        calls.iter().any(|call| call.to.name == "baz"),
+        "Expected outgoing call to `baz` from export-equals module selection span"
+    );
+}
+
+#[test]
 fn test_outgoing_calls_simple() {
     let source = "function greet() {}\nfunction main() {\n  greet();\n}\n";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
