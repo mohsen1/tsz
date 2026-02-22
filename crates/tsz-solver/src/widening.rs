@@ -14,7 +14,7 @@
 //! - **Type parameters**: Never widened
 //! - **Unique symbols**: Never widened
 
-use crate::types::{LiteralValue, TypeData, TypeId};
+use crate::types::{TypeData, TypeId};
 
 /// Public API to widen a literal type to its primitive.
 ///
@@ -32,12 +32,7 @@ use crate::types::{LiteralValue, TypeData, TypeId};
 pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
         // String/Number/Boolean/BigInt literals widen to their primitives
-        Some(TypeData::Literal(ref value)) => match value {
-            LiteralValue::String(_) => TypeId::STRING,
-            LiteralValue::Number(_) => TypeId::NUMBER,
-            LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-            LiteralValue::BigInt(_) => TypeId::BIGINT,
-        },
+        Some(TypeData::Literal(ref value)) => value.primitive_type_id(),
 
         // Unique Symbol widens to Symbol
         Some(TypeData::UniqueSymbol(_)) => TypeId::SYMBOL,

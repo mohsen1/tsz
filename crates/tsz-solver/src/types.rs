@@ -767,6 +767,23 @@ pub enum LiteralValue {
     Boolean(bool),
 }
 
+impl LiteralValue {
+    /// Returns the primitive `TypeId` that this literal widens to.
+    ///
+    /// - `String(_)` → `TypeId::STRING`
+    /// - `Number(_)` → `TypeId::NUMBER`
+    /// - `Boolean(_)` → `TypeId::BOOLEAN`
+    /// - `BigInt(_)` → `TypeId::BIGINT`
+    pub const fn primitive_type_id(&self) -> TypeId {
+        match self {
+            Self::String(_) => TypeId::STRING,
+            Self::Number(_) => TypeId::NUMBER,
+            Self::Boolean(_) => TypeId::BOOLEAN,
+            Self::BigInt(_) => TypeId::BIGINT,
+        }
+    }
+}
+
 /// Wrapper for f64 that implements Eq and Hash for use in `TypeData`
 #[derive(Clone, Copy, Debug)]
 pub struct OrderedFloat(pub f64);

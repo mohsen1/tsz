@@ -819,10 +819,7 @@ pub fn classify_for_private_brand(db: &dyn TypeDatabase, type_id: TypeId) -> Pri
 /// Get the widened type for a literal type.
 pub fn get_widened_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
-        Some(TypeData::Literal(crate::LiteralValue::String(_))) => Some(TypeId::STRING),
-        Some(TypeData::Literal(crate::LiteralValue::Number(_))) => Some(TypeId::NUMBER),
-        Some(TypeData::Literal(crate::LiteralValue::BigInt(_))) => Some(TypeId::BIGINT),
-        Some(TypeData::Literal(crate::LiteralValue::Boolean(_))) => Some(TypeId::BOOLEAN),
+        Some(TypeData::Literal(ref lit)) => Some(lit.primitive_type_id()),
         _ => None,
     }
 }
@@ -893,12 +890,7 @@ pub fn get_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate
 /// Non-literal types are returned unchanged.
 pub fn widen_literal_to_primitive(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     match db.lookup(type_id) {
-        Some(TypeData::Literal(ref lit)) => match lit {
-            crate::LiteralValue::String(_) => TypeId::STRING,
-            crate::LiteralValue::Number(_) => TypeId::NUMBER,
-            crate::LiteralValue::Boolean(_) => TypeId::BOOLEAN,
-            crate::LiteralValue::BigInt(_) => TypeId::BIGINT,
-        },
+        Some(TypeData::Literal(ref lit)) => lit.primitive_type_id(),
         _ => type_id,
     }
 }
