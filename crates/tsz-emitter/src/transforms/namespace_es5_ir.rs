@@ -372,7 +372,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient namespaces (declare namespace)
-        if has_declare_modifier(self.arena, &ns_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -385,7 +388,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         // Check if exported from modifiers OR if forced (when wrapped in EXPORT_DECLARATION)
-        let is_exported = force_exported || has_export_modifier(self.arena, &ns_data.modifiers);
+        let is_exported = force_exported
+            || self
+                .arena
+                .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform the innermost body - use the last name part for member exports
         let mut body = self.transform_namespace_body(innermost_body, &name_parts);
@@ -869,7 +875,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         let import = self.arena.get_import_decl_at(import_idx)?;
         let alias = get_identifier_text(self.arena, import.import_clause)?;
         let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
-        let is_exported = has_export_modifier(self.arena, &import.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             Some(IRNode::NamespaceExport {
@@ -934,7 +942,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
-        let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
         let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
 
@@ -994,7 +1004,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
-        let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform the class to ES5 using the class transformer
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
@@ -1038,7 +1050,9 @@ impl<'a> NamespaceES5Transformer<'a> {
     fn transform_variable_in_namespace(&self, ns_name: &str, var_idx: NodeIndex) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
-        let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             // For exported variables, emit directly as namespace property assignments:
@@ -1078,7 +1092,9 @@ impl<'a> NamespaceES5Transformer<'a> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
-        let is_exported = has_export_modifier(self.arena, &enum_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
 
         let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
@@ -1124,7 +1140,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
-        if has_declare_modifier(self.arena, &ns_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -1133,7 +1152,9 @@ impl<'a> NamespaceES5Transformer<'a> {
             return None;
         }
 
-        let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform body
         let mut body = self.transform_namespace_body(ns_data.body, &name_parts);
@@ -1181,7 +1202,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
-        if has_declare_modifier(self.arena, &ns_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -1249,7 +1273,10 @@ impl<'a> NamespaceTransformContext<'a> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient namespaces
-        if has_declare_modifier(self.arena, &ns_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -1259,7 +1286,9 @@ impl<'a> NamespaceTransformContext<'a> {
             return None;
         }
 
-        let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform body
         let mut body = self.transform_namespace_body(innermost_body, &name_parts);
@@ -1447,7 +1476,9 @@ impl<'a> NamespaceTransformContext<'a> {
         }
 
         let func_name = get_identifier_text(self.arena, func_data.name)?;
-        let is_exported = has_export_modifier(self.arena, &func_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
         let body_source_range = self.arena.get(func_data.body).map(|n| (n.pos, n.end));
 
@@ -1511,7 +1542,9 @@ impl<'a> NamespaceTransformContext<'a> {
         let class_data = self.arena.get_class_at(class_idx)?;
 
         let class_name = get_identifier_text(self.arena, class_data.name)?;
-        let is_exported = has_export_modifier(self.arena, &class_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform the class to ES5 using the class transformer
         let mut class_transformer = ES5ClassTransformer::new(self.arena);
@@ -1563,7 +1596,9 @@ impl<'a> NamespaceTransformContext<'a> {
     ) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
-        let is_exported = has_export_modifier(self.arena, &var_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
         if is_exported {
             Some(IRNode::Sequence(convert_exported_variable_declarations(
                 self.arena,
@@ -1601,7 +1636,9 @@ impl<'a> NamespaceTransformContext<'a> {
         let enum_node = self.arena.get(enum_idx)?;
         let enum_data = self.arena.get_enum(enum_node)?;
 
-        let is_exported = has_export_modifier(self.arena, &enum_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
 
         let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
 
@@ -1641,7 +1678,10 @@ impl<'a> NamespaceTransformContext<'a> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
-        if has_declare_modifier(self.arena, &ns_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -1651,7 +1691,9 @@ impl<'a> NamespaceTransformContext<'a> {
             return None;
         }
 
-        let is_exported = has_export_modifier(self.arena, &ns_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
         // Transform body
         let mut body = self.transform_namespace_body(innermost_body, &name_parts);
@@ -1694,7 +1736,10 @@ impl<'a> NamespaceTransformContext<'a> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
         // Skip ambient nested namespaces
-        if has_declare_modifier(self.arena, &ns_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 

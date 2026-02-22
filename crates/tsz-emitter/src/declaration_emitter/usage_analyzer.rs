@@ -95,12 +95,6 @@ pub struct UsageAnalyzer<'a> {
 }
 
 impl<'a> UsageAnalyzer<'a> {
-    /// Check if a node has the Export modifier.
-    fn has_export_modifier(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
-    }
-
     /// Create a new usage analyzer.
     pub fn new(
         arena: &'a NodeArena,
@@ -157,14 +151,18 @@ impl<'a> UsageAnalyzer<'a> {
             // Exported declarations - only analyze if they have the Export modifier
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = self.arena.get_function(stmt_node)
-                    && self.has_export_modifier(&func.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                 {
                     self.analyze_function_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = self.arena.get_class(stmt_node)
-                    && self.has_export_modifier(&class.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
                 {
                     self.analyze_class_declaration(stmt_idx);
                 }
@@ -176,21 +174,27 @@ impl<'a> UsageAnalyzer<'a> {
             }
             k if k == syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
                 if let Some(alias) = self.arena.get_type_alias(stmt_node)
-                    && self.has_export_modifier(&alias.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword)
                 {
                     self.analyze_type_alias_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_data) = self.arena.get_enum(stmt_node)
-                    && self.has_export_modifier(&enum_data.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword)
                 {
                     self.analyze_enum_declaration(stmt_idx);
                 }
             }
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(stmt_node)
-                    && self.has_export_modifier(&var_stmt.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
                 {
                     self.analyze_variable_statement(stmt_idx);
                 }

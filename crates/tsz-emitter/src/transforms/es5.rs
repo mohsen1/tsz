@@ -66,7 +66,10 @@ impl<'a> ES5ClassTransformer<'a> {
         let class_data = self.arena.get_class(class_node)?;
 
         // Skip ambient/declare classes
-        if self.has_declare_modifier(&class_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -859,11 +862,6 @@ impl<'a> ES5ClassTransformer<'a> {
             _ => "?",
         }
         .to_string()
-    }
-
-    fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     fn is_static(&self, modifiers: &Option<NodeList>) -> bool {

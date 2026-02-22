@@ -672,12 +672,6 @@ impl<'a> Printer<'a> {
     // Modifier Helpers
     // =========================================================================
 
-    /// Check if modifiers include the `declare` keyword
-    pub(super) fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
-    }
-
     /// Check if a top-level statement is erased in JS emit (type-only, ambient, etc.).
     /// This includes interfaces, type aliases, declare function/class/enum/module/var,
     /// const enums, and function overload signatures (no body).
@@ -693,21 +687,25 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = self.arena.get_function(node) {
-                    self.has_declare_modifier(&func.modifiers) || func.body.is_none()
+                    self.arena
+                        .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                        || func.body.is_none()
                 } else {
                     false
                 }
             }
             syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = self.arena.get_class(node) {
-                    self.has_declare_modifier(&class.modifiers)
+                    self.arena
+                        .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
                 } else {
                     false
                 }
             }
             syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
-                    self.has_declare_modifier(&enum_decl.modifiers)
+                    self.arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                         || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
                 } else {
                     false
@@ -715,7 +713,8 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    self.has_declare_modifier(&module.modifiers)
+                    self.arena
+                        .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                         || !self.is_instantiated_module(module.body)
                 } else {
                     false
@@ -723,7 +722,8 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
-                    self.has_declare_modifier(&var_stmt.modifiers)
+                    self.arena
+                        .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
                 } else {
                     false
                 }
@@ -782,18 +782,6 @@ impl<'a> Printer<'a> {
     /// TypeScript skips emitting IIFE wrappers for non-instantiated modules.
     pub(super) fn is_instantiated_module(&self, module_body: NodeIndex) -> bool {
         crate::transforms::emit_utils::is_instantiated_module(self.arena, module_body)
-    }
-
-    /// Check if modifiers include the `export` keyword
-    pub(super) fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
-    }
-
-    /// Check if modifiers include the `default` keyword
-    pub(super) fn has_default_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::DefaultKeyword)
     }
 
     /// Scan forward from `pos` past whitespace and comments to find the actual

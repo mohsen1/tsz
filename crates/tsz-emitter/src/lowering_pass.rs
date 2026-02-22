@@ -1135,13 +1135,19 @@ impl<'a> LoweringPass<'a> {
         }
 
         // Skip ambient declarations (declare class)
-        if self.has_declare_modifier(&class.modifiers) {
+        if self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return;
         }
 
         let mut is_exported = self.is_commonjs()
             && !self.has_export_assignment
-            && (force_export || self.has_export_modifier(&class.modifiers));
+            && (force_export
+                || self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword));
 
         if force_export && self.is_commonjs() && !self.has_export_assignment {
             is_exported = true;
@@ -1150,7 +1156,8 @@ impl<'a> LoweringPass<'a> {
         let is_default = if force_export {
             force_default
         } else {
-            self.has_default_modifier(&class.modifiers)
+            self.arena
+                .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword)
         };
 
         // Get class name only if we might need it for exports.
@@ -1298,7 +1305,10 @@ impl<'a> LoweringPass<'a> {
 
         let mut is_exported = self.is_commonjs()
             && !self.has_export_assignment
-            && (force_export || self.has_export_modifier(&func.modifiers));
+            && (force_export
+                || self
+                    .arena
+                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword));
         if force_export && self.is_commonjs() && !self.has_export_assignment {
             is_exported = true;
         }
@@ -1306,7 +1316,8 @@ impl<'a> LoweringPass<'a> {
         let is_default = if force_export {
             force_default
         } else {
-            self.has_default_modifier(&func.modifiers)
+            self.arena
+                .has_modifier(&func.modifiers, SyntaxKind::DefaultKeyword)
         };
 
         let func_name = if is_exported && func.name.is_some() {
@@ -1403,7 +1414,9 @@ impl<'a> LoweringPass<'a> {
         };
 
         // Skip ambient and const enums (declare/const enums are erased)
-        if self.has_declare_modifier(&enum_decl.modifiers)
+        if self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
             || self.has_const_modifier(&enum_decl.modifiers)
         {
             return;
@@ -1411,7 +1424,10 @@ impl<'a> LoweringPass<'a> {
 
         let mut is_exported = self.is_commonjs()
             && !self.has_export_assignment
-            && (force_export || self.has_export_modifier(&enum_decl.modifiers));
+            && (force_export
+                || self
+                    .arena
+                    .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword));
         if force_export && self.is_commonjs() && !self.has_export_assignment {
             is_exported = true;
         }
@@ -1474,7 +1490,10 @@ impl<'a> LoweringPass<'a> {
         };
 
         // Skip ambient declarations (declare namespace/module)
-        if self.has_declare_modifier(&module_decl.modifiers) {
+        if self
+            .arena
+            .has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return;
         }
 
@@ -1496,7 +1515,10 @@ impl<'a> LoweringPass<'a> {
 
         let mut is_exported = self.is_commonjs()
             && !self.has_export_assignment
-            && (force_export || self.has_export_modifier(&module_decl.modifiers));
+            && (force_export
+                || self
+                    .arena
+                    .has_modifier(&module_decl.modifiers, SyntaxKind::ExportKeyword));
         if force_export && self.is_commonjs() && !self.has_export_assignment {
             is_exported = true;
         }
@@ -1812,7 +1834,10 @@ impl<'a> LoweringPass<'a> {
 
         let is_exported = self.is_commonjs()
             && !self.has_export_assignment
-            && (force_export || self.has_export_modifier(&var_stmt.modifiers));
+            && (force_export
+                || self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword));
 
         if is_exported {
             let export_names = self.collect_variable_names(&var_stmt.declarations);

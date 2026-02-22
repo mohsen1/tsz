@@ -34,27 +34,9 @@ impl<'a> LoweringPass<'a> {
         self.commonjs_mode
     }
 
-    /// Check if a modifier list contains the 'declare' keyword
-    pub(super) fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
-    }
-
     /// Check if a modifier list contains the 'const' keyword
     pub(super) fn has_const_modifier(&self, modifiers: &Option<NodeList>) -> bool {
         self.arena.has_modifier(modifiers, SyntaxKind::ConstKeyword)
-    }
-
-    /// Check if a modifier list contains the 'export' keyword
-    pub(super) fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
-    }
-
-    /// Check if a modifier list contains the 'default' keyword
-    pub(super) fn has_default_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.arena
-            .has_modifier(modifiers, SyntaxKind::DefaultKeyword)
     }
 
     /// Check if a class member (method, property, accessor) is static
@@ -651,32 +633,48 @@ impl<'a> LoweringPass<'a> {
                     k if k == syntax_kind_ext::EXPORT_ASSIGNMENT => return true,
                     k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                         if let Some(var_stmt) = self.arena.get_variable(node)
-                            && self.has_export_modifier(&var_stmt.modifiers)
-                            && !self.has_declare_modifier(&var_stmt.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                            && !self
+                                .arena
+                                .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                         if let Some(func) = self.arena.get_function(node)
-                            && self.has_export_modifier(&func.modifiers)
-                            && !self.has_declare_modifier(&func.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                            && !self
+                                .arena
+                                .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::CLASS_DECLARATION => {
                         if let Some(class) = self.arena.get_class(node)
-                            && self.has_export_modifier(&class.modifiers)
-                            && !self.has_declare_modifier(&class.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                            && !self
+                                .arena
+                                .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
                         {
                             return true;
                         }
                     }
                     k if k == syntax_kind_ext::ENUM_DECLARATION => {
                         if let Some(enum_decl) = self.arena.get_enum(node)
-                            && self.has_export_modifier(&enum_decl.modifiers)
-                            && !self.has_declare_modifier(&enum_decl.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
+                            && !self
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                             && !self.has_const_modifier(&enum_decl.modifiers)
                         {
                             return true;
@@ -684,8 +682,12 @@ impl<'a> LoweringPass<'a> {
                     }
                     k if k == syntax_kind_ext::MODULE_DECLARATION => {
                         if let Some(module) = self.arena.get_module(node)
-                            && self.has_export_modifier(&module.modifiers)
-                            && !self.has_declare_modifier(&module.modifiers)
+                            && self
+                                .arena
+                                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+                            && !self
+                                .arena
+                                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                         {
                             return true;
                         }

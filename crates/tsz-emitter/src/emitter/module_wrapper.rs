@@ -3,6 +3,7 @@ use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     fn hoist_decorate_helper_before_wrapper(&mut self) -> bool {
@@ -866,7 +867,10 @@ impl<'a> Printer<'a> {
             return true;
         }
 
-        let is_exported = force_exported || self.has_export_modifier(&import_decl.modifiers);
+        let is_exported = force_exported
+            || self
+                .arena
+                .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword);
         let is_external = self
             .arena
             .get(import_decl.module_specifier)
@@ -976,7 +980,9 @@ impl<'a> Printer<'a> {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
-        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
