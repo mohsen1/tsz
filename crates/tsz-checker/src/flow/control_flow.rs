@@ -38,9 +38,9 @@ type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
 
 // Guard against pathological requeue loops in flow traversal.
-const FLOW_STEP_BUDGET_MIN: usize = 4_096;
-const FLOW_STEP_BUDGET_SCALE: usize = 64;
-const FLOW_STEP_BUDGET_MAX: usize = 1_000_000;
+const FLOW_STEP_BUDGET_MIN: usize = 1_024;
+const FLOW_STEP_BUDGET_SCALE: usize = 16;
+const FLOW_STEP_BUDGET_MAX: usize = 100_000;
 
 const fn flow_step_budget(flow_node_count: usize) -> usize {
     let scaled = flow_node_count.saturating_mul(FLOW_STEP_BUDGET_SCALE);
