@@ -755,19 +755,17 @@ pub(super) fn collect_diagnostics(
         c.export_hashes.retain(|path, _| used_paths.contains(path));
     }
 
-    if let Some(helper_diag) = detect_missing_tslib_helper_diagnostic(program, options) {
-        diagnostics.push(helper_diag);
-    }
+    diagnostics.extend(detect_missing_tslib_helper_diagnostics(program, options));
 
     diagnostics
 }
 
-pub(super) fn detect_missing_tslib_helper_diagnostic(
+pub(super) fn detect_missing_tslib_helper_diagnostics(
     program: &MergedProgram,
     options: &ResolvedCompilerOptions,
-) -> Option<Diagnostic> {
+) -> Vec<Diagnostic> {
     if !options.import_helpers {
-        return None;
+        return Vec::new();
     }
 
     let tslib_file = program.files.iter().find(|file| {
@@ -775,36 +773,60 @@ pub(super) fn detect_missing_tslib_helper_diagnostic(
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.eq_ignore_ascii_case("tslib.d.ts"))
-    })?;
+    });
 
-    let tslib_exports_empty = program
-        .module_exports
-        .get(&tslib_file.file_name)
-        .is_none_or(tsz_binder::SymbolTable::is_empty);
+    let mut result = Vec::new();
 
-    if !tslib_exports_empty {
-        return None;
+    match tslib_file {
+        None => {
+            // tslib module not found at all → TS2354 for each file needing helpers
+            for file in &program.files {
+                if file.file_name.ends_with(".d.ts") {
+                    continue;
+                }
+                if let Some((_helper_name, start, length)) = first_required_helper(file) {
+                    result.push(Diagnostic::error(
+                        file.file_name.clone(),
+                        start,
+                        length,
+                        "This syntax requires an imported helper but module 'tslib' cannot be found.".to_string(),
+                        2354,
+                    ));
+                }
+            }
+        }
+        Some(tslib_file) => {
+            // tslib found but check if specific helper exists → TS2343
+            let tslib_exports_empty = program
+                .module_exports
+                .get(&tslib_file.file_name)
+                .is_none_or(tsz_binder::SymbolTable::is_empty);
+
+            if !tslib_exports_empty {
+                return Vec::new();
+            }
+
+            for file in &program.files {
+                if file.file_name == tslib_file.file_name || file.file_name.ends_with(".d.ts") {
+                    continue;
+                }
+
+                if let Some((helper_name, start, length)) = first_required_helper(file) {
+                    result.push(Diagnostic::error(
+                        file.file_name.clone(),
+                        start,
+                        length,
+                        format!(
+                            "This syntax requires an imported helper named '{helper_name}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'."
+                        ),
+                        2343,
+                    ));
+                }
+            }
+        }
     }
 
-    for file in &program.files {
-        if file.file_name == tslib_file.file_name || file.file_name.ends_with(".d.ts") {
-            continue;
-        }
-
-        if let Some((helper_name, start, length)) = first_required_helper(file) {
-            return Some(Diagnostic::error(
-                file.file_name.clone(),
-                start,
-                length,
-                format!(
-                    "This syntax requires an imported helper named '{helper_name}' which does not exist in 'tslib'. Consider upgrading your version of 'tslib'."
-                ),
-                2343,
-            ));
-        }
-    }
-
-    None
+    result
 }
 
 pub(super) fn first_required_helper(file: &BoundFile) -> Option<(&'static str, u32, u32)> {
