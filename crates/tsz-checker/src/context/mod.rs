@@ -478,6 +478,11 @@ pub struct CheckerContext<'a> {
     /// Positions (start) of syntax parse errors (excluding conflict markers TS1185).
     /// Used for targeted TS2304 suppression near parse error sites.
     pub syntax_parse_error_positions: Vec<u32>,
+    /// Whether the file has "real" syntax errors (TS1005, TS1109, TS1127, TS1128,
+    /// TS1135, etc.) that indicate actual parse failure, as opposed to grammar
+    /// checks (TS1100, TS1173, TS1212, etc.) which are semantic errors emitted
+    /// during parsing. Used for broader TS2304 suppression matching tsc behavior.
+    pub has_real_syntax_errors: bool,
 
     /// Diagnostics produced during type checking.
     pub diagnostics: Vec<Diagnostic>,

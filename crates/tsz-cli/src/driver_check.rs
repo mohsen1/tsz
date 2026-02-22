@@ -679,6 +679,14 @@ pub(super) fn collect_diagnostics(
                 .filter(|d| d.code != 1185 && d.code != 1009)
                 .map(|d| d.start)
                 .collect();
+            // Track whether the file has "real" syntax errors (actual parse
+            // failures like missing tokens or invalid characters) vs grammar
+            // checks (strict mode violations, decorator errors, etc.).
+            // Real syntax errors broadly suppress TS2304 to match tsc behavior.
+            checker.ctx.has_real_syntax_errors = file
+                .parse_diagnostics
+                .iter()
+                .any(|d| is_real_syntax_error(d.code));
             let mut file_diagnostics = Vec::new();
             for parse_diagnostic in &file.parse_diagnostics {
                 file_diagnostics.push(parse_diagnostic_to_checker(
@@ -988,6 +996,10 @@ pub(super) fn check_file_for_parallel<'a>(
         .filter(|d| d.code != 1185 && d.code != 1009)
         .map(|d| d.start)
         .collect();
+    checker.ctx.has_real_syntax_errors = file
+        .parse_diagnostics
+        .iter()
+        .any(|d| is_real_syntax_error(d.code));
 
     // Collect parse diagnostics
     let mut file_diagnostics: Vec<Diagnostic> = file
@@ -1664,4 +1676,66 @@ pub(super) fn create_cross_file_lookup_binder(
     }
     binder.is_external_module = file.is_external_module;
     binder
+}
+
+/// Classify a parse diagnostic code as a "real" syntax error (actual parse failure)
+/// vs a grammar/semantic check emitted during parsing.
+///
+/// Real syntax errors indicate that the parser couldn't parse the source normally
+/// and had to recover. tsc propagates `ThisNodeHasError` flags from these errors
+/// to suppress cascading semantic errors like TS2304.
+///
+/// Grammar checks (e.g., strict mode violations, decorator errors) are emitted
+/// during parsing but don't indicate parse failure — tsc still emits TS2304 for
+/// undeclared names in these files.
+fn is_real_syntax_error(code: u32) -> bool {
+    matches!(
+        code,
+        1005  // '{0}' expected
+        | 1009 // Trailing comma not allowed (sometimes real syntax error)
+        | 1014 // A rest parameter must be last in a parameter list
+        | 1036 // Statements are not allowed in ambient contexts
+        | 1109 // Expression expected
+        | 1110 // Type expected
+        | 1126 // Unexpected end of text
+        | 1127 // Invalid character
+        | 1128 // Declaration or statement expected
+        | 1129 // '{' or ';' expected
+        | 1130 // '}' expected
+        | 1131 // Property assignment expected
+        | 1134 // Variable declaration expected
+        | 1135 // Argument expression expected
+        | 1136 // Property or signature expected
+        | 1137 // Expression or comma expected
+        | 1138 // Parameter declaration expected
+        | 1141 // Type parameter declaration expected
+        | 1146 // Declaration expected
+        | 1155 // 'const' declarations must be initialized
+        | 1160 // Unterminated template literal
+        | 1161 // Unterminated regular expression literal
+        | 1002 // Unterminated string literal
+        | 1003 // Identifier expected
+        | 1006 // A file cannot have a reference to itself
+        | 1007 // The parser expected to find a '}' 
+        | 1010 // 'while' expected
+        | 1011 // '(' or '<' expected
+        | 1012 // '{' expected
+        | 1035 // Only ambient modules can use quoted names
+        | 1101 // 'with' statements are not allowed in strict mode
+        | 1103 // A character literal must contain exactly one character
+        | 1121 // Octal literals are not allowed in strict mode
+        | 1124 // Digit expected
+        | 1144 // '{' or ';' expected
+        | 1145 // '{' or JSX element expected
+        | 1147 // Import declarations in a namespace cannot reference a module
+        | 1164 // Computed property names are not allowed in enums
+        | 1185 // Merge conflict marker encountered
+        | 1191 // An import declaration cannot have modifiers
+        | 1313 // 'else' is not allowed after rest element
+        | 1351 // An identifier or keyword cannot immediately follow a numeric literal
+        | 1357 // A default clause cannot appear more than once
+        | 1378 // Top-level 'for await' loops are only allowed...
+        | 1432 // 'await' expressions are only allowed within async functions
+        | 1434 // Top-level 'await' expressions are only allowed...
+    )
 }

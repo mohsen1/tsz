@@ -134,13 +134,16 @@ impl ParserState {
             }
 
             // Handle Unknown tokens (invalid characters) - must be checked FIRST
+            // In tsc, the scanner emits TS1127 for each invalid character individually.
+            // We must NOT resync here, because resync would skip over subsequent Unknown
+            // tokens without emitting TS1127 for each one. Just advance one token.
             if self.is_token(SyntaxKind::Unknown) {
                 use tsz_common::diagnostics::diagnostic_codes;
                 self.parse_error_at_current_token(
                     "Invalid character.",
                     diagnostic_codes::INVALID_CHARACTER,
                 );
-                self.resync_after_error_with_statement_starts(false);
+                self.next_token();
                 continue;
             }
 

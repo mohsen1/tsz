@@ -224,7 +224,6 @@ impl<'a> CheckerState<'a> {
     /// library change suggestions for ES2015+ types.
     pub fn error_cannot_find_name_at(&mut self, name: &str, idx: NodeIndex) {
         use tsz_binder::lib_loader;
-        use tsz_parser::parser::node_flags;
         use tsz_parser::parser::syntax_kind_ext;
 
         // TS1212/TS1213/TS1214: Emit strict-mode reserved word diagnostic
@@ -532,40 +531,26 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Skip TS2304 for nodes that directly have parse errors, but only when
-        // the file has real syntax parse errors (not just conflict markers TS1185).
-        // Conflict markers are treated as trivia in TS and should not suppress
-        // semantic "Cannot find name" diagnostics.
-        // Exception: computed property name expressions — tsc always emits TS2304 for these.
+        // tsc propagates `ThisNodeHasError` / `ThisNodeOrAnySubNodesHasError`
+        // flags through the AST when parse errors occur. The checker skips
+        // semantic resolution for error-flagged nodes, effectively suppressing
+        // TS2304 for identifiers in or near error-recovery AST regions.
         //
-        // Only check the identifier itself and its direct parent — NOT distant
-        // ancestors. Distant ancestor errors (e.g., enum declaration with TS1164)
-        // should not suppress TS2304 for unrelated child expressions.
-        if self.has_syntax_parse_errors() && !is_in_computed_property {
-            if let Some(node) = self.ctx.arena.get(idx) {
-                let flags = node.flags as u32;
-                if !force_emit_for_ambiguous_generic
-                    && (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                {
-                    return;
-                }
-            }
-            // Check immediate parent — but not when the parent is an instantiation
-            // expression (EXPRESSION_WITH_TYPE_ARGUMENTS). In that case the parse
-            // error is in the `<>` type-argument span, not in the expression child,
-            // so the identifier (e.g. `List`) should still be name-resolved.
-            if let Some(ext) = self.ctx.arena.get_extended(idx)
-                && ext.parent.is_some()
-                && let Some(parent_node) = self.ctx.arena.get(ext.parent)
-                && parent_node.kind != syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
-            {
-                let flags = parent_node.flags as u32;
-                if !force_emit_for_ambiguous_generic
-                    && (flags & node_flags::THIS_NODE_HAS_ERROR) != 0
-                {
-                    return;
-                }
-            }
+        // Since our parser uses a compact u16 flags field that cannot store
+        // bit-18 error flags, we approximate tsc's behavior with a file-level
+        // check: when the file has "real" syntax errors (TS1005/TS1109/TS1127
+        // etc. that indicate actual parse failure), suppress TS2304 broadly.
+        //
+        // Grammar-only errors (TS1100, TS1173, TS1212) should NOT suppress
+        // TS2304 — tsc still emits TS2304 in those files.
+        //
+        // Exception: computed property name expressions — tsc always emits
+        // TS2304 for these even in files with parse errors.
+        if self.ctx.has_real_syntax_errors
+            && !is_in_computed_property
+            && !force_emit_for_ambiguous_generic
+        {
+            return;
         }
 
         // In files with real syntax errors, unresolved names inside `typeof` type queries
