@@ -21,6 +21,8 @@ fn make_server() -> Server {
             trace_to_console: false,
         },
         enable_telemetry: false,
+        allow_importing_ts_extensions: false,
+        auto_import_specifier_exclude_regexes: Vec::new(),
     }
 }
 

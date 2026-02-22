@@ -225,6 +225,9 @@ type BadPropertyType<T extends object, K> = T[K];
 
 #[test]
 fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
     let diagnostics =
         compile_and_get_diagnostics_with_lib(r#"type ValidRecord = Record<string, number>;"#);
     assert!(
@@ -235,6 +238,9 @@ fn test_record_constraint_checked_with_lib_param_prewarm_filtering() {
 
 #[test]
 fn test_primitive_property_access_works_with_conditional_boxed_registration() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
     let diagnostics = compile_and_get_diagnostics_with_lib(
         r#"
 const upper = "hello".toUpperCase();
@@ -248,6 +254,9 @@ const upper = "hello".toUpperCase();
 
 #[test]
 fn test_global_array_augmentation_uses_lib_resolution_without_diagnostics() {
+    if load_lib_files_for_test().is_empty() {
+        return;
+    }
     let diagnostics = compile_and_get_diagnostics_with_lib_and_options(
         r#"
 export {};
