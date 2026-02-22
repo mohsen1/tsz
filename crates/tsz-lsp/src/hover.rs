@@ -397,6 +397,13 @@ impl<'a> HoverProvider<'a> {
             return format!("(enum member) {} = {}", symbol.escaped_name, type_string);
         }
         if f & symbol_flags::PROPERTY != 0 {
+            let mut type_string = type_string.to_string();
+            if type_string == "any"
+                && let Some(annotation_type) =
+                    self.property_declaration_annotation_text(decl_node_idx)
+            {
+                type_string = annotation_type;
+            }
             let parent_name = self.get_parent_name(decl_node_idx);
             if let Some(parent) = parent_name {
                 return format!(
@@ -442,6 +449,12 @@ impl<'a> HoverProvider<'a> {
                     keyword, symbol.escaped_name, type_string
                 );
             }
+            if let Some(namespace_name) = self.namespace_container_name(decl_node_idx) {
+                return format!(
+                    "{} {}.{}: {}",
+                    keyword, namespace_name, symbol.escaped_name, type_string
+                );
+            }
             return format!("{} {}: {}", keyword, symbol.escaped_name, type_string);
         }
         if f & symbol_flags::FUNCTION_SCOPED_VARIABLE != 0 {
@@ -468,6 +481,12 @@ impl<'a> HoverProvider<'a> {
             }
             if self.is_local_variable(decl_node_idx) {
                 return format!("(local var) {}: {}", symbol.escaped_name, type_string);
+            }
+            if let Some(namespace_name) = self.namespace_container_name(decl_node_idx) {
+                return format!(
+                    "var {}.{}: {}",
+                    namespace_name, symbol.escaped_name, type_string
+                );
             }
             return format!("var {}: {}", symbol.escaped_name, type_string);
         }
@@ -1136,6 +1155,39 @@ impl<'a> HoverProvider<'a> {
         None
     }
 
+    fn namespace_container_name(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+
+        let mut names = Vec::new();
+        let mut current = decl_node_idx;
+        while current.is_some() {
+            let parent_idx = self.arena.get_extended(current)?.parent;
+            if !parent_idx.is_some() {
+                break;
+            }
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_data) = self.arena.get_module(parent_node)
+                && let Some(name_node) = self.arena.get(module_data.name)
+                && let Some(name_ident) = self.arena.get_identifier(name_node)
+            {
+                names.push(self.arena.resolve_identifier_text(name_ident).to_string());
+            }
+            current = parent_idx;
+        }
+
+        if names.is_empty() {
+            None
+        } else {
+            names.reverse();
+            Some(names.join("."))
+        }
+    }
+
     fn contextual_parameter_annotation_text(&self, param_decl_idx: NodeIndex) -> Option<String> {
         let param_node = self.arena.get(param_decl_idx)?;
         let param = self.arena.get_parameter(param_node)?;
@@ -1163,6 +1215,27 @@ impl<'a> HoverProvider<'a> {
         }
 
         self.type_node_text(contextual_param.type_annotation)
+            .map(Self::normalize_annotation_text)
+    }
+
+    fn property_declaration_annotation_text(&self, decl_node_idx: NodeIndex) -> Option<String> {
+        if !decl_node_idx.is_some() {
+            return None;
+        }
+        let decl_node = self.arena.get(decl_node_idx)?;
+        let property_decl = self.arena.get_property_decl(decl_node)?;
+        if !property_decl.type_annotation.is_some() {
+            return None;
+        }
+        self.type_node_text(property_decl.type_annotation)
+            .map(Self::normalize_annotation_text)
+    }
+
+    fn normalize_annotation_text(text: String) -> String {
+        text.trim_end()
+            .trim_end_matches([',', ';', '='])
+            .trim_end()
+            .to_string()
     }
 
     fn contextual_function_type_node_for_expression(
@@ -1200,6 +1273,16 @@ impl<'a> HoverProvider<'a> {
 
             if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
                 && let Some(decl) = self.arena.get_variable_declaration(parent)
+                && decl.initializer == current
+                && decl.type_annotation.is_some()
+                && let Some(type_node) = self.arena.get(decl.type_annotation)
+                && type_node.kind == syntax_kind_ext::FUNCTION_TYPE
+            {
+                return Some(decl.type_annotation);
+            }
+
+            if parent.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                && let Some(decl) = self.arena.get_property_decl(parent)
                 && decl.initializer == current
                 && decl.type_annotation.is_some()
                 && let Some(type_node) = self.arena.get(decl.type_annotation)

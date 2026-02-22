@@ -121,6 +121,39 @@ fn test_hover_contextually_typed_function_expression_parameter() {
 }
 
 #[test]
+fn test_hover_property_uses_explicit_function_type_annotation() {
+    let source =
+        "class C1T5 {\n    foo: (i: number, s: string) => number = function(i) { return i; }\n}";
+    let info = get_hover_at(source, 1, 4).expect("Should find hover info for property");
+    assert_eq!(
+        info.display_string, "(property) C1T5.foo: (i: number, s: string) => number",
+        "Property hover should prefer the explicit declaration type annotation over inferred any"
+    );
+}
+
+#[test]
+fn test_hover_property_initializer_parameter_uses_contextual_annotation() {
+    let source =
+        "class C1T5 {\n    foo: (i: number, s: string) => number = function(i) { return i; }\n}";
+    let info = get_hover_at(source, 1, 53)
+        .expect("Should find hover info for contextually typed parameter");
+    assert_eq!(
+        info.display_string, "(parameter) i: number",
+        "Parameter hover should use contextual type from class property function type annotation"
+    );
+}
+
+#[test]
+fn test_hover_namespace_exported_var_includes_namespace_container() {
+    let source = "namespace C2T5 {\n    export var foo: (i: number, s: string) => number = function(i) { return i; };\n}";
+    let info = get_hover_at(source, 1, 15).expect("Should find hover info for namespace var");
+    assert_eq!(
+        info.display_string, "var C2T5.foo: (i: number, s: string) => number",
+        "Namespace-exported variable hover should include namespace container in display string"
+    );
+}
+
+#[test]
 fn test_hover_best_common_type_object_literal_array_multiline() {
     let source =
         "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";
