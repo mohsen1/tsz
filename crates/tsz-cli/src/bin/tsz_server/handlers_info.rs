@@ -11,6 +11,7 @@ use tsz::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use tsz::lsp::position::LineMap;
 use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
+use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::node::NodeAccess;
 use tsz::parser::syntax_kind_ext;
 use tsz_solver::TypeInterner;
@@ -501,6 +502,219 @@ impl Server {
         })
     }
 
+    fn constructor_quickinfo_from_new_expression(
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        line_map: &LineMap,
+        source_text: &str,
+        root: tsz::parser::NodeIndex,
+        type_cache: &mut Option<tsz::checker::TypeCache>,
+        interner: &TypeInterner,
+        file: &str,
+        probe_offset: u32,
+    ) -> Option<HoverInfo> {
+        let mut current =
+            tsz::lsp::utils::find_node_at_or_before_offset(arena, probe_offset, source_text);
+        if !current.is_some() {
+            return None;
+        }
+        let new_expr = loop {
+            let node = arena.get(current)?;
+            if node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                break current;
+            }
+            let parent = arena.get_extended(current)?.parent;
+            if !parent.is_some() {
+                return None;
+            }
+            current = parent;
+        };
+
+        let new_node = arena.get(new_expr)?;
+        let call_expr = arena.get_call_expr(new_node)?;
+        let callee_node = arena.get(call_expr.expression)?;
+        if probe_offset < new_node.pos || probe_offset > callee_node.end {
+            return None;
+        }
+
+        let call_start = new_node.pos as usize;
+        let call_end = (new_node.end as usize).min(source_text.len());
+        let call_text = &source_text[call_start..call_end];
+        let delimiter = call_text.find('(').or_else(|| {
+            if call_expr.type_arguments.is_some() {
+                call_text.find('<')
+            } else {
+                None
+            }
+        })?;
+        let signature_probe = (call_start + delimiter + 1) as u32;
+        if signature_probe >= source_text.len() as u32 {
+            return None;
+        }
+
+        let sig_provider = SignatureHelpProvider::new(
+            arena,
+            binder,
+            line_map,
+            interner,
+            source_text,
+            file.to_string(),
+        );
+        let sig_help = sig_provider.get_signature_help(
+            root,
+            line_map.offset_to_position(signature_probe, source_text),
+            type_cache,
+        )?;
+        let signature = sig_help
+            .signatures
+            .get(sig_help.active_signature as usize)
+            .or_else(|| sig_help.signatures.first())?;
+        let signature_name = signature
+            .label
+            .split('(')
+            .next()
+            .map(str::trim)
+            .unwrap_or_default();
+        let base_name = signature_name
+            .find('<')
+            .map(|idx| signature_name[..idx].trim())
+            .unwrap_or(signature_name);
+        let generic_params: Vec<String> = signature_name
+            .find('<')
+            .and_then(|start| signature_name.rfind('>').map(|end| (start, end)))
+            .and_then(|(start, end)| {
+                (end > start + 1).then(|| {
+                    signature_name[start + 1..end]
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default();
+        let mut resolved_type_args = Vec::new();
+        if let Some(type_args) = &call_expr.type_arguments {
+            let arg_texts: Vec<String> = type_args
+                .nodes
+                .iter()
+                .filter_map(|&arg_idx| {
+                    arena
+                        .get(arg_idx)
+                        .and_then(|arg| source_text.get(arg.pos as usize..arg.end as usize))
+                        .map(str::trim)
+                        .map(|text| text.trim_end_matches('>').trim())
+                        .filter(|text| !text.is_empty())
+                        .map(str::to_string)
+                })
+                .collect();
+            if !arg_texts.is_empty() {
+                resolved_type_args = arg_texts;
+            }
+        }
+
+        let can_infer_from_args = generic_params
+            .iter()
+            .any(|param| signature.label.contains(&format!(": {param}")));
+        if resolved_type_args.is_empty() && !generic_params.is_empty() && can_infer_from_args {
+            let compiler_options = tsz::checker::context::CheckerOptions::default();
+            let mut checker = if let Some(cache) = type_cache.take() {
+                tsz::checker::state::CheckerState::with_cache(
+                    arena,
+                    binder,
+                    interner,
+                    file.to_string(),
+                    cache,
+                    compiler_options,
+                )
+            } else {
+                tsz::checker::state::CheckerState::new(
+                    arena,
+                    binder,
+                    interner,
+                    file.to_string(),
+                    compiler_options,
+                )
+            };
+            if let Some(arguments) = &call_expr.arguments {
+                for arg_idx in arguments.nodes.iter().take(generic_params.len()) {
+                    let arg_type_id = checker.get_type_of_node(*arg_idx);
+                    resolved_type_args.push(checker.format_type(arg_type_id));
+                }
+            }
+            *type_cache = Some(checker.extract_cache());
+            while resolved_type_args.len() < generic_params.len() {
+                resolved_type_args.push("unknown".to_string());
+            }
+        }
+
+        let instance_type = if !generic_params.is_empty() {
+            let mut args = resolved_type_args.clone();
+            while args.len() < generic_params.len() {
+                args.push("unknown".to_string());
+            }
+            format!("{base_name}<{}>", args.join(", "))
+        } else {
+            let compiler_options = tsz::checker::context::CheckerOptions::default();
+            let mut checker = if let Some(cache) = type_cache.take() {
+                tsz::checker::state::CheckerState::with_cache(
+                    arena,
+                    binder,
+                    interner,
+                    file.to_string(),
+                    cache,
+                    compiler_options,
+                )
+            } else {
+                tsz::checker::state::CheckerState::new(
+                    arena,
+                    binder,
+                    interner,
+                    file.to_string(),
+                    compiler_options,
+                )
+            };
+            let instance_type_id = checker.get_type_of_node(new_expr);
+            let instance_type = checker.format_type(instance_type_id);
+            *type_cache = Some(checker.extract_cache());
+            instance_type
+        };
+        let mut params_segment = signature
+            .label
+            .find('(')
+            .and_then(|open| {
+                signature.label.rfind("):").map(|end| {
+                    let close = end;
+                    signature.label[open..=close].to_string()
+                })
+            })
+            .unwrap_or_else(|| "()".to_string());
+        for (idx, param_name) in generic_params.iter().enumerate() {
+            let replacement = resolved_type_args
+                .get(idx)
+                .map(String::as_str)
+                .unwrap_or("unknown");
+            params_segment =
+                params_segment.replace(&format!(": {param_name}"), &format!(": {replacement}"));
+        }
+        let display_string = format!(
+            "constructor {}{}: {}",
+            instance_type, params_segment, instance_type
+        );
+
+        let start = line_map.offset_to_position(callee_node.pos, source_text);
+        let end = line_map.offset_to_position(callee_node.end, source_text);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(tsz::lsp::position::Range::new(start, end)),
+            display_string,
+            kind: "constructor".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
+    }
+
     fn extract_alias_module_name(display_string: &str) -> Option<String> {
         let prefix = "(alias) module \"";
         let rest = display_string.strip_prefix(prefix)?;
@@ -757,13 +971,41 @@ impl Server {
             let line_map = LineMap::build(&source_text);
             let position = Self::tsserver_to_lsp_position(line, offset);
             let interner = TypeInterner::new();
-            let provider =
-                HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file.clone());
+            let provider = HoverProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                &interner,
+                &source_text,
+                file.clone(),
+            );
             let mut type_cache = None;
             let mut info = provider.get_hover(root, position, &mut type_cache);
             let bytes = source_text.as_bytes();
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
                 let len = bytes.len() as u32;
+                let mut ctor_probe = base_offset;
+                while ctor_probe < len && bytes[ctor_probe as usize].is_ascii_whitespace() {
+                    ctor_probe += 1;
+                }
+                if let Some(ctor_hover) = Self::constructor_quickinfo_from_new_expression(
+                    &arena,
+                    &binder,
+                    &line_map,
+                    &source_text,
+                    root,
+                    &mut type_cache,
+                    &interner,
+                    &file,
+                    ctor_probe,
+                ) && info.as_ref().is_none_or(|hover| {
+                    hover.kind == "class"
+                        || hover.display_string.starts_with("(local class)")
+                        || hover.display_string.starts_with("class ")
+                }) {
+                    info = Some(ctor_hover);
+                }
+
                 // On `.`/`?.` cursor positions, tsserver quickinfo resolves the RHS member.
                 let mut rhs_member_probe = None;
                 if base_offset < len {
@@ -812,8 +1054,8 @@ impl Server {
                         container_hint, member_name, member_type
                     );
                     let start = line_map.offset_to_position(member_probe, &source_text);
-                    let end =
-                        line_map.offset_to_position(member_probe + member_name.len() as u32, &source_text);
+                    let end = line_map
+                        .offset_to_position(member_probe + member_name.len() as u32, &source_text);
                     info = Some(HoverInfo {
                         contents: vec![format!("```typescript\n{display_string}\n```")],
                         range: Some(tsz::lsp::position::Range::new(start, end)),
@@ -967,13 +1209,8 @@ impl Server {
                 if info.is_none() {
                     // Fallback: when direct hover misses (common for some member-access
                     // usage positions), reuse definition resolution and hover the declaration.
-                    let def_provider = GoToDefinition::new(
-                        &arena,
-                        &binder,
-                        &line_map,
-                        file.clone(),
-                        &source_text,
-                    );
+                    let def_provider =
+                        GoToDefinition::new(&arena, &binder, &line_map, file.clone(), &source_text);
                     if let Some(defs) = def_provider.get_definition_info(root, position)
                         && let Some(first_def) = defs.first()
                         && first_def.location.file_path == file
