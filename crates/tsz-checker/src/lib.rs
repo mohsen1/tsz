@@ -58,52 +58,23 @@ pub use assignability_domain::{
 pub use classes_domain::{
     class_checker, class_inheritance, constructor_checker, private_checker, super_checker,
 };
-#[allow(unused_imports)]
-pub(crate) use classes_domain::{class_checker_compat, class_implements_checker};
 
 pub use declarations_domain::{declarations, import_checker, module_checker, namespace_checker};
-#[allow(unused_imports)]
-pub(crate) use declarations_domain::{
-    declarations_module, declarations_module_helpers, import_declaration_checker,
-};
 
 pub use flow_domain::{
     control_flow, flow_analysis, flow_analyzer, flow_graph_builder, reachability_analyzer,
     reachability_checker,
 };
-#[allow(unused_imports)]
-pub(crate) use flow_domain::{
-    control_flow_assignment, control_flow_narrowing, control_flow_type_guards,
-    flow_analysis_definite, flow_analysis_usage,
-};
 
 pub use state_domain::{
     state, state_checking, state_type_analysis, state_type_environment, state_type_resolution,
 };
-#[allow(unused_imports)]
-pub(crate) use state_domain::{
-    state_checking_members, state_class_checking, state_property_checking,
-    state_type_analysis_computed, state_type_analysis_computed_helpers,
-    state_type_analysis_cross_file, state_type_environment_lazy, state_type_resolution_module,
-    state_variable_checking, state_variable_checking_destructuring,
-};
 
-#[allow(unused_imports)]
-pub(crate) use symbols_domain::symbol_resolver_utils;
 pub use symbols_domain::{scope_finder, symbol_resolver};
 
 pub use types_domain::{
     class_type, function_type, interface_type, literal_type, object_type, type_checking,
     type_computation, type_literal_checker, type_node,
-};
-#[allow(unused_imports)]
-pub(crate) use types_domain::{
-    property_access_type, type_checking_declarations, type_checking_declarations_utils,
-    type_checking_global, type_checking_property_init, type_checking_queries,
-    type_checking_queries_binding, type_checking_queries_class, type_checking_queries_lib,
-    type_checking_queries_lib_prime, type_checking_unused, type_checking_utilities,
-    type_checking_utilities_enum, type_checking_utilities_jsdoc, type_computation_access,
-    type_computation_call, type_computation_call_helpers, type_computation_complex,
 };
 
 pub mod diagnostics {

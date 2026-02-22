@@ -382,7 +382,7 @@ impl<'a> CheckerState<'a> {
     /// This lets inference learn e.g. `State = number` from `state: 100` even when
     /// the overall object literal is context-sensitive.
     pub(crate) fn extract_non_sensitive_object_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
-        use crate::type_computation_complex::is_contextually_sensitive;
+        use super::type_computation_complex::is_contextually_sensitive;
 
         let node = self.ctx.arena.get(idx)?;
         if node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {

@@ -4,9 +4,9 @@
 //! by extracting the tag function type, collecting substitution expressions,
 //! and performing two-pass generic inference when needed.
 
+use super::type_computation_complex::is_contextually_sensitive;
 use crate::query_boundaries::call_checker;
 use crate::state::CheckerState;
-use crate::type_computation_complex::is_contextually_sensitive;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{ContextualTypeContext, TypeId};
