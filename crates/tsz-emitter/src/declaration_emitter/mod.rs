@@ -1057,7 +1057,26 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Parameters - omit types for private accessors
         self.write("(");
-        self.emit_parameters_without_types(&accessor.parameters, is_private);
+        if is_private && !is_getter {
+            // TypeScript emits a canonical `value` identifier for private setters in `.d.ts`
+            // and intentionally strips the source identifier.
+            if let Some(first_param_idx) = accessor.parameters.nodes.first()
+                && let Some(first_param_node) = self.arena.get(*first_param_idx)
+                && let Some(first_param) = self.arena.get_parameter(first_param_node)
+            {
+                if first_param.dot_dot_dot_token {
+                    self.write("...");
+                }
+
+                self.write("value");
+
+                if first_param.question_token {
+                    self.write("?");
+                }
+            }
+        } else {
+            self.emit_parameters_without_types(&accessor.parameters, is_private);
+        }
         self.write(")");
 
         // Return type (for getters) - omit for private accessors
