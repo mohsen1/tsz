@@ -234,6 +234,73 @@ fn check_with_resolved_modules(
         .collect()
 }
 
+/// Like `check_with_resolved_modules` but accepts custom `CheckerOptions`.
+fn check_with_resolved_modules_opts(
+    source: &str,
+    file_name: &str,
+    resolved_modules: Vec<&str>,
+    unresolved_modules: Vec<&str>,
+    opts: CheckerOptions,
+) -> Vec<(u32, String)> {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "Parse errors in {}: {:?}",
+        file_name,
+        parser.get_diagnostics()
+    );
+
+    let mut binder = BinderState::new();
+    merge_shared_lib_symbols(&mut binder);
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let types = TypeInterner::new();
+    let mut checker = CheckerState::new(
+        parser.get_arena(),
+        &binder,
+        &types,
+        file_name.to_string(),
+        opts,
+    );
+    setup_lib_contexts(&mut checker);
+
+    checker.ctx.report_unresolved_imports = true;
+    let modules: rustc_hash::FxHashSet<String> = resolved_modules
+        .iter()
+        .map(std::string::ToString::to_string)
+        .collect();
+    checker.ctx.set_resolved_modules(modules);
+
+    let mut errors: rustc_hash::FxHashMap<
+        (usize, String),
+        crate::checker::context::ResolutionError,
+    > = rustc_hash::FxHashMap::default();
+    for module_name in unresolved_modules {
+        errors.insert(
+            (0, module_name.to_string()),
+            crate::checker::context::ResolutionError {
+                code: TS2882,
+                message: format!(
+                    "Cannot find module or type declarations for side-effect import of '{module_name}'."
+                ),
+            },
+        );
+    }
+    checker
+        .ctx
+        .set_resolved_module_errors(std::sync::Arc::new(errors));
+
+    checker.check_source_file(root);
+
+    checker
+        .ctx
+        .diagnostics
+        .iter()
+        .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
 /// Helper to simply parse, bind, and check a file with no cross-file context.
 fn check_single_file(source: &str, file_name: &str) -> Vec<(u32, String)> {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
@@ -364,13 +431,35 @@ fn test_es_side_effect_import_resolved() {
 
 #[test]
 fn test_es_side_effect_import_unresolved() {
+    // Side-effect imports are only checked when noUncheckedSideEffectImports is true.
+    // With the default (false, matching tsc), side-effect imports are silently accepted.
     let source = r#"import "./nonexistent";"#;
-    let diags = check_with_resolved_modules(source, "main.ts", vec![], vec![]);
+    let diags = check_with_resolved_modules_opts(
+        source,
+        "main.ts",
+        vec![],
+        vec![],
+        CheckerOptions {
+            no_unchecked_side_effect_imports: true,
+            ..CheckerOptions::default()
+        },
+    );
     // TS2882: Cannot find module or type declarations for side-effect import.
-    // (Changed from TS2307 after feat(checker): emit TS2882 for unresolvable side-effect imports)
     assert!(
         has_error_code(&diags, TS2882),
-        "Unresolved side-effect import should emit TS2882, got: {diags:?}"
+        "Unresolved side-effect import should emit TS2882 when noUncheckedSideEffectImports is true, got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_es_side_effect_import_unresolved_default_no_error() {
+    // With default options (noUncheckedSideEffectImports: false), unresolved
+    // side-effect imports should not produce errors (matching tsc behavior).
+    let source = r#"import "./nonexistent";"#;
+    let diags = check_with_resolved_modules(source, "main.ts", vec![], vec![]);
+    assert!(
+        no_error_code(&diags, TS2882) && no_error_code(&diags, TS2307),
+        "Side-effect imports should be silently accepted by default, got: {diags:?}"
     );
 }
 

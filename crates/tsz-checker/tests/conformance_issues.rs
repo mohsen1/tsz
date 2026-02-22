@@ -697,6 +697,31 @@ class C {}
     );
 }
 
+/// Forward-reference class relationships should not trigger TS2506.
+/// Derived extends Base, where Base is declared after Derived.
+/// The `class_instance_resolution_set` recursion guard should not be
+/// confused with a real circular inheritance cycle.
+#[test]
+fn test_complex_class_relationships_no_ts2506() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Derived extends Base {
+    public static createEmpty(): Derived {
+        var item = new Derived();
+        return item;
+    }
+}
+class Base {
+    ownerCollection: any;
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect TS2506 for forward-reference class extends. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_interface_extends_primitive_reports_ts2840() {
     let diagnostics = compile_and_get_diagnostics(
@@ -2245,17 +2270,35 @@ function f10() {
 
 // TS2882: Cannot find module or type declarations for side-effect import
 
-/// TS2882 should fire for side-effect imports by default (tsc 6.0 default: true).
+/// TS2882 should NOT fire by default (tsc 6.0 default: noUncheckedSideEffectImports = false).
 #[test]
-fn test_ts2882_side_effect_import_default() {
-    // Default CheckerOptions has no_unchecked_side_effect_imports: true
+fn test_ts2882_side_effect_import_default_off() {
+    // Default CheckerOptions has no_unchecked_side_effect_imports: false (matching tsc)
     let diagnostics = compile_imports_and_get_diagnostics(
         r#"import 'nonexistent-module';"#,
         CheckerOptions::default(),
     );
     assert!(
+        !has_error(&diagnostics, 2882),
+        "Should NOT emit TS2882 by default (noUncheckedSideEffectImports defaults to false).\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 for side-effect import.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS2882 should fire when noUncheckedSideEffectImports is explicitly true.
+#[test]
+fn test_ts2882_side_effect_import_option_true() {
+    let opts = CheckerOptions {
+        no_unchecked_side_effect_imports: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_imports_and_get_diagnostics(r#"import 'nonexistent-module';"#, opts);
+    assert!(
         has_error(&diagnostics, 2882),
-        "Should emit TS2882 for side-effect import by default.\nActual errors: {diagnostics:#?}"
+        "Should emit TS2882 when noUncheckedSideEffectImports is true.\nActual errors: {diagnostics:#?}"
     );
     assert!(
         !has_error(&diagnostics, 2307),
