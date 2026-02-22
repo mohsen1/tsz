@@ -1,4 +1,5 @@
 pub(crate) mod compat;
+pub(crate) mod compat_overrides;
 pub(crate) mod judge;
 pub(crate) mod lawyer;
 pub(crate) mod relation_queries;
