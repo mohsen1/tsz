@@ -1,8 +1,22 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5056/7163 = 70.6% JS, 415/1036 = 40.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 5063/7163 = 70.7% JS, 416/1036 = 40.2% DTS)
 
 ### Fixed This Session
+- **Numeric separator downleveling for hex/octal/binary literals** (+7 JS):
+  When numeric literals contain separators (`_`, an ES2021 feature) and the target is < ES2021,
+  tsc converts all prefixed forms (`0b`, `0o`, `0x`) to their decimal equivalents. tsz was
+  stripping the underscores but not converting the base prefix to decimal — so `0x00_11` became
+  `0x0011` instead of `17`. Fix: added a `had_separators` flag to `emit_numeric_literal` and
+  extended `convert_numeric_literal_downlevel` with a `needs_separator_downlevel` condition that
+  fires when `had_separators && target < ES2021`. Added a new `0x`/`0X` match arm for hex-to-decimal
+  conversion. Four unit tests added.
+  Tests fixed: `numericUnderscoredSeparator(target=es5/es2015/es2016/es2017)`,
+  `parser.numericSeparators.hex`, `parser.numericSeparators.octal`,
+  `parser.numericSeparators.octalNegative`.
+  JS: 5056 → 5063, DTS unchanged, zero regressions.
+
+### Previously Fixed
 - **Hoisted CJS exports for `export { f }` referencing function declarations** (+2 JS):
   When `export { f }` re-exports a locally-declared function, tsc emits `exports.f = f;` in
   the CJS preamble (before the function body) because JS function declarations are hoisted.
@@ -476,7 +490,7 @@
   resolves all escapes into `token_value`. Fixing this would require changes to the scanner's string literal
   handling or the emitter's string literal emission to use source slices. Affects `enumWithUnicodeEscape1`,
   `constEnumSyntheticNodesComments`, `templateLiteralEscapeSequence`.
-- ~~**Numeric literal not downleveled for ES5 (~13 tests)**~~ — **PARTIALLY FIXED** (see "Fixed This Session"): Legacy octal conversion now works for all targets. Remaining: ES2015 octal (`0o`) with numeric separators at ES2015+ targets may need additional handling (affects `parser.numericSeparators.octal`/`octalNegative`). Enum IIFE initializer paths still use un-converted source text.
+- ~~**Numeric literal not downleveled for ES5 (~13 tests)**~~ — **FIXED**: Legacy octal conversion works for all targets, and numeric separator downleveling now converts `0b`/`0o`/`0x` prefixed literals to decimal at targets < ES2021 when the original had separators. Remaining: enum IIFE initializer paths still use un-converted source text (affects `es5-oldStyleOctalLiteralInEnums`, `strictModeOctalLiterals`).
 - **Missing hoisted temp var declarations (~8 tests)**: When lowering optional chaining, nullish coalescing, or element access chains, tsc hoists temporary variable declarations (`var _a, _b`) to the top of the enclosing scope. tsz omits these declarations. Affects `elementAccessChain.2`, `nullishCoalescingOperator10/12`, `spreadUnionPropOverride`.
 - **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
 - ~~**Missing `Object.defineProperty(exports, "__esModule")` for moduleDetection=force (~10 tests)**~~ — **FIXED** (see "Fixed This Session").

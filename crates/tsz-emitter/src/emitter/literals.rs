@@ -132,7 +132,8 @@ impl<'a> Printer<'a> {
     pub(super) fn emit_numeric_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
             // Strip numeric separators: 1_000_000 → 1000000
-            let text = if lit.text.contains('_') {
+            let had_separators = lit.text.contains('_');
+            let text = if had_separators {
                 lit.text.chars().filter(|&c| c != '_').collect::<String>()
             } else {
                 lit.text.clone()
@@ -141,7 +142,9 @@ impl<'a> Printer<'a> {
             // Convert numeric literals that need downleveling:
             // - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
             // - Legacy octal (01, 076): for ALL targets (TSC always converts these)
-            if let Some(converted) = self.convert_numeric_literal_downlevel(&text) {
+            // - Any prefixed literal (0b/0o/0x) with numeric separators: for < ES2021 targets
+            //   (tsc converts these to decimal because separators are an ES2021 feature)
+            if let Some(converted) = self.convert_numeric_literal_downlevel(&text, had_separators) {
                 self.write(&converted);
                 return;
             }
@@ -153,7 +156,13 @@ impl<'a> Printer<'a> {
     /// Convert numeric literals that need downleveling:
     /// - Binary (0b/0B) and ES2015 octal (0o/0O): only for pre-ES2015 targets
     /// - Legacy octal (01, 076): for ALL targets
-    fn convert_numeric_literal_downlevel(&self, text: &str) -> Option<String> {
+    /// - Binary/octal/hex with numeric separators: for < ES2021 targets
+    ///   (numeric separators are ES2021; tsc converts prefixed literals to decimal)
+    fn convert_numeric_literal_downlevel(
+        &self,
+        text: &str,
+        had_separators: bool,
+    ) -> Option<String> {
         if text.len() < 2 {
             return None;
         }
@@ -162,8 +171,12 @@ impl<'a> Printer<'a> {
             return None;
         }
         let needs_es5_downlevel = !self.ctx.options.target.supports_es2015();
+        // When the original literal had numeric separators (ES2021 feature),
+        // tsc converts all prefixed forms (0b, 0o, 0x) to decimal for targets < ES2021.
+        let needs_separator_downlevel =
+            had_separators && !self.ctx.options.target.supports_es2021();
         match bytes[1] {
-            b'b' | b'B' if needs_es5_downlevel => {
+            b'b' | b'B' if needs_es5_downlevel || needs_separator_downlevel => {
                 // Binary literal: parse and convert to decimal (or scientific notation for large values)
                 let digits = &text[2..];
                 if digits.is_empty() {
@@ -180,7 +193,7 @@ impl<'a> Printer<'a> {
                     });
                 Some(format_js_number(value))
             }
-            b'o' | b'O' if needs_es5_downlevel => {
+            b'o' | b'O' if needs_es5_downlevel || needs_separator_downlevel => {
                 // ES2015 octal literal: parse and convert to decimal
                 let digits = &text[2..];
                 if digits.is_empty() {
@@ -192,6 +205,27 @@ impl<'a> Printer<'a> {
                         digits
                             .bytes()
                             .fold(0.0_f64, |acc, b| acc * 8.0 + (b - b'0') as f64)
+                    });
+                Some(format_js_number(value))
+            }
+            b'x' | b'X' if needs_separator_downlevel => {
+                // Hex literal with numeric separators: convert to decimal for < ES2021
+                let digits = &text[2..];
+                if digits.is_empty() {
+                    return None;
+                }
+                let value: f64 = u128::from_str_radix(digits, 16)
+                    .map(|v| v as f64)
+                    .unwrap_or_else(|_| {
+                        digits.bytes().fold(0.0_f64, |acc, b| {
+                            let d = match b {
+                                b'0'..=b'9' => (b - b'0') as f64,
+                                b'a'..=b'f' => (b - b'a' + 10) as f64,
+                                b'A'..=b'F' => (b - b'A' + 10) as f64,
+                                _ => 0.0,
+                            };
+                            acc * 16.0 + d
+                        })
                     });
                 Some(format_js_number(value))
             }
@@ -647,6 +681,109 @@ mod tests {
             !output.starts_with("var A ="),
             "Unicode escape should NOT be resolved to 'A'.\nGot: {output}"
         );
+    }
+
+    /// When numeric literals have separators (ES2021 feature) and the target
+    /// is < ES2021, tsc converts 0b/0o/0x prefixed literals to decimal.
+    #[test]
+    fn numeric_separator_hex_converted_to_decimal_below_es2021() {
+        use tsz_common::ScriptTarget;
+        // 0x00_11 → 17 (after stripping separators: 0x0011 → 17)
+        let cases = [
+            ("0x00_11;", "17;"),
+            ("0X0_1;", "1;"),
+            ("0x1100_0011;", "285212689;"),
+            ("0xA0_B0_C0;", "10531008;"),
+        ];
+        for (source, expected) in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+            let opts = PrintOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            };
+            let mut printer = Printer::new(&parser.arena, opts);
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected),
+                "Hex with separators {source} at ES2015 should emit {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    /// Octal literals with separators converted to decimal at < ES2021
+    #[test]
+    fn numeric_separator_octal_converted_to_decimal_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let cases = [
+            ("0o00_11;", "9;"),
+            ("0O0_1;", "1;"),
+            ("0o1100_0011;", "2359305;"),
+        ];
+        for (source, expected) in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+            let opts = PrintOptions {
+                target: ScriptTarget::ES2020,
+                ..Default::default()
+            };
+            let mut printer = Printer::new(&parser.arena, opts);
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(expected),
+                "Octal with separators {source} at ES2020 should emit {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    /// Binary literals with separators converted to decimal at < ES2021
+    #[test]
+    fn numeric_separator_binary_converted_to_decimal_below_es2021() {
+        use tsz_common::ScriptTarget;
+        let source = "0b1010_0001_1000_0101;";
+        let expected = "41349;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains(expected),
+            "Binary with separators {source} at ES2015 should emit {expected}\nGot: {output}"
+        );
+    }
+
+    /// Hex/octal/binary WITHOUT separators should NOT be converted at ES2015+
+    /// (they are only converted at ES5 for 0b/0o syntax support)
+    #[test]
+    fn prefixed_literals_without_separators_unchanged_at_es2015() {
+        use tsz_common::ScriptTarget;
+        let cases = ["0x0011;", "0o0011;", "0b1010;"];
+        for source in cases {
+            let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+            let root = parser.parse_source_file();
+            let opts = PrintOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            };
+            let mut printer = Printer::new(&parser.arena, opts);
+            printer.set_source_text(source);
+            printer.print(root);
+            let output = printer.finish().code;
+            assert!(
+                output.contains(source.trim_end_matches('\n')),
+                "Prefixed literal {source} without separators should be unchanged at ES2015.\nGot: {output}"
+            );
+        }
     }
 
     /// Unicode escape sequences in property names must be preserved.
