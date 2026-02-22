@@ -54,6 +54,7 @@ pub mod project_operations;
 pub mod references;
 pub mod rename;
 pub mod resolver;
+mod resolver_children;
 pub mod selection_range;
 pub mod semantic_tokens;
 pub mod signature_help;
