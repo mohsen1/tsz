@@ -1391,7 +1391,7 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.enter_function_scope();
 
         // Extract comments. Triple-slash references (/// <reference ...>) are
-        // preserved in output (TypeScript keeps them in JS emit).
+        // preserved in output — tsc keeps them in JS emit for most cases.
         // Only AMD-specific directives (/// <amd ...) are stripped.
         // Store on self so nested blocks can also distribute comments.
         self.all_comments = if !self.ctx.options.remove_comments {

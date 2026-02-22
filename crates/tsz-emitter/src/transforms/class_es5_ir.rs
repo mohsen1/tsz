@@ -275,64 +275,6 @@ impl<'a> ES5ClassTransformer<'a> {
         None
     }
 
-    fn extract_leading_class_comment(
-        &self,
-        class_node: &tsz_parser::parser::node::Node,
-    ) -> Option<String> {
-        let source_text = self.source_text?;
-        let limit = std::cmp::min(class_node.pos as usize, source_text.len());
-        let mut comments: Vec<(u32, u32)> = Vec::new();
-        let bytes = source_text.as_bytes();
-        let mut i = 0usize;
-
-        while i < limit {
-            if bytes[i].is_ascii_whitespace() {
-                i += 1;
-                continue;
-            }
-
-            if bytes[i] == b'/' && i + 1 < limit {
-                if bytes[i + 1] == b'/' {
-                    let start = i as u32;
-                    i += 2;
-                    while i < limit && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                        i += 1;
-                    }
-                    comments.push((start, i as u32));
-                    continue;
-                }
-
-                if bytes[i + 1] == b'*' {
-                    let start = i as u32;
-                    i += 2;
-                    while i + 1 < limit {
-                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                    comments.push((start, i as u32));
-                    continue;
-                }
-            }
-
-            // Non-comment token content. Continue past it to find the last
-            // leading comment before the class node.
-            i += 1;
-        }
-
-        comments
-            .into_iter()
-            .rev()
-            .find(|&(_, end)| {
-                source_text[end as usize..limit]
-                    .bytes()
-                    .all(|b| b.is_ascii_whitespace())
-            })
-            .map(|(start, end)| source_text[start as usize..end as usize].to_string())
-    }
-
     /// Convert an AST statement to IR (avoids `ASTRef` when possible)
     fn convert_statement(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
@@ -516,15 +458,18 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        let class_leading_comment = self.extract_leading_class_comment(class_node);
-
+        // NOTE: We intentionally pass `None` for `leading_comment` here.
+        // The statement-level comment handler (`emit_comments_before_pos`) in
+        // the block/source-file loop already emits any leading comments that
+        // precede the class declaration. Extracting and re-emitting the same
+        // comment in the IR printer would produce duplicate output.
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone(),
             base_class: base_class.map(Box::new),
             body,
             weakmap_decls,
             weakmap_inits,
-            leading_comment: class_leading_comment,
+            leading_comment: None,
             deferred_static_blocks,
         })
     }
