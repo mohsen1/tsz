@@ -251,12 +251,12 @@ pub fn collect_export_names_categorized(
         };
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(node)
-                && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
-                && let Some(name) = get_identifier_text(arena, func.name)
-                && !func_decl_names.contains(&name)
-            {
-                func_decl_names.push(name);
-            }
+            && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+            && let Some(name) = get_identifier_text(arena, func.name)
+            && !func_decl_names.contains(&name)
+        {
+            func_decl_names.push(name);
+        }
     }
 
     // Second pass: categorize exports as function (hoisted) vs other
@@ -316,9 +316,11 @@ pub fn collect_export_names_categorized(
                     };
                     let exported_name = get_identifier_text(arena, spec.name);
                     if let (Some(local), Some(exported)) = (local_name, exported_name)
-                        && func_decl_names.contains(&local) && !func_exports.contains(&exported) {
-                            func_exports.push(exported);
-                        }
+                        && func_decl_names.contains(&local)
+                        && !func_exports.contains(&exported)
+                    {
+                        func_exports.push(exported);
+                    }
                 }
             }
         }
