@@ -1,8 +1,20 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9478/13623 = 69.6% JS, 763/1990 = 38.3% DTS)
+## Pattern Analysis (JS+DTS mode, current 9483/13623 = 69.6% JS, 763/1990 = 38.3% DTS)
 
 ### Fixed This Session
+- **Duplicate leading comments in ES5 class IIFE lowering** (+5 JS, +1 DTS tests):
+  When classes were lowered to ES5 IIFEs (`var C = /** @class */ (function () { ... })()`),
+  leading comments before the class (e.g., `// No errors`) were emitted twice:
+  1. By the statement-level comment handler (`emit_comments_before_pos` in the block loop)
+  2. By the IR printer via `ES5ClassIIFE.leading_comment`
+  Fix: pass `None` for `leading_comment` in the IIFE IR construction and remove the
+  `extract_leading_class_comment` method. The statement loop already handles leading
+  comments for all statement types including class declarations. Two unit tests added.
+  Tests fixed: `ES5For-ofTypeCheck10(target=es5)`, `accessibilityModifiers(target=es5)`,
+  `accessorAccidentalCallDiagnostic(target=es5)`, and 2 others.
+
+### Previously Fixed
 - **Legacy octal literal conversion** (+20 JS tests):
   tsc always converts legacy octal literals (`01`, `076`, `009`) to their decimal equivalents
   in emitted JS, regardless of target. tsz was emitting them verbatim. The fix adds a
@@ -253,7 +265,7 @@
   explicitly via `@alwaysStrict: true` comment vs. inferred from other options. Reverted.
   Affects `amdDeclarationEmitNoExtraDeclare`, `impliedNodeFormatEmit1(module=amd)`,
   `emitBundleWithPrologueDirectives1`.
-- **Triple-slash reference directives in JS output (~21 tests)**: `/// <reference path="..." />` comments are emitted in JS output where tsc strips them. Affects `augmentExportEquals3_1`, `doNotemitTripleSlashComments`, `jsxEmptyExpressionNotCountedAsChild`.
+- **Triple-slash reference directives in JS output (~21 tests, caution: complex)**: `/// <reference path="..." />` comments are emitted in JS output where tsc strips them in SOME contexts. Investigated blanket stripping of `/// <reference` directives in the comment filter — this caused 136 regressions because tsc PRESERVES them in many test baselines. The stripping behavior is context-dependent (file-header-only vs inline references, or possibly depends on module format / bundling). Needs careful analysis of tsc's exact rules before fixing. Affects `augmentExportEquals3_1`, `doNotemitTripleSlashComments`, `jsxEmptyExpressionNotCountedAsChild`.
 - **Const enum value folding (~33 tests)**: Const enum member property accesses (`E.A`) are not replaced with their literal values (`0 /* E.A */`). Requires solver integration. Affects `constEnumPropertyAccess*`.
 - **Node modules CJS/ESM format comment (~21 tests)**: tsz emits `// cjs format file` while tsc emits `// esm format file` for `.js` files inside `node_modules` when the containing package has `"type": "module"` in `package.json`. Module format detection is wrong for these files under `node16`/`node18`/`node20`/`nodenext` module modes. Affects `nodeModulesAllowJs*` family.
 - **Extra source comments on transformed constructs (~37 tests)**: tsz emits source-level comments (like `// error`, `// no error`, `// should not error`) that tsc strips during transformation. Broader than item #13 which only covers erased constructs — these comments are attached to parameter lists, expressions, and statement-level constructs that tsc transforms.
