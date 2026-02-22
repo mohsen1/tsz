@@ -8,14 +8,13 @@
 //! - `BinderState` - Name resolution and symbol table construction
 //! - `LibFile` - Lib file loading for built-in type definitions
 
+mod binding;
 pub mod flow;
 pub mod lib_loader;
 mod modules;
 mod nodes;
 pub mod scopes;
 pub mod state;
-mod state_binding;
-mod state_binding_validation;
 mod state_flow_helpers;
 mod state_lib_merge;
 mod state_resolution;
