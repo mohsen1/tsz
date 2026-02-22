@@ -24,14 +24,14 @@ tsz check --sound src/
 
 | Feature | Status | Diagnostic |
 |---------|--------|------------|
-| Sticky freshness | ✅ | TS9001 |
-| Mutable array covariance | ✅ | TS9002 |
-| Method bivariance | ✅ | TS9003 |
-| `any` escape detection | ✅ | TS9004 |
-| Enum-number assignment | ✅ | TS9005 |
-| Missing index signature | ✅ | TS9006 |
-| Unsafe type assertion | ✅ | TS9007 |
-| Unchecked indexed access | ✅ | TS9008 |
+| Sticky freshness | ✅ | TSZ0001 |
+| Mutable array covariance | ✅ | TSZ0002 |
+| Method bivariance | ✅ | TSZ0003 |
+| `any` escape detection | ✅ | TSZ0004 |
+| Enum-number assignment | ✅ | TSZ0005 |
+| Missing index signature | ✅ | TSZ0006 |
+| Unsafe type assertion | ✅ | TSZ0007 |
+| Unchecked indexed access | ✅ | TSZ0008 |
 
 See `src/solver/sound.rs` for implementation details.
 
@@ -123,18 +123,55 @@ b.compare(new Box());  // 💥 Runtime: StringBox.compare gets wrong type
 
 **Sound Mode:** Make classes with `this` in contravariant positions invariant.
 
-### Category 2: The `any` Escape Hatch
+### Category 2: The `any` Epidemic and Ecosystem Integration
 
-#### 2.1 `any` as Both Top and Bottom Type
+`any` is the biggest source of unsoundness in TypeScript. It infects anything it touches by acting as both a top and a bottom type.
+
+#### 2.1 Developer Strategies for Sound Boundaries
+
+When developers consume external code that isn't inherently sound, they must build an explicit "Soundness Wall" to prevent `any` and other unsound types from leaking into their codebase. This is achieved through:
+
+1.  **Runtime Validation (The Gold Standard):** Whenever external data crosses the boundary (e.g., API responses, loosely typed callbacks), developers should use schema validation libraries like Zod or ArkType. This converts `unknown` or `any` into a structurally validated, sound type at runtime.
+2.  **Explicit Module Augmentation (Shadowing):** If an external library's `.d.ts` file is unsound but the behavior is known, developers can use declaration merging to override the specific exports with strict types:
+    ```typescript
+    // sound-overrides.d.ts
+    declare module "unsafe-lib" {
+        export function processData(payload: unknown): void; // Overriding 'any'
+    }
+    ```
+3.  **Strict Adapter Layers:** Wrap external libraries in internal functions or classes that strictly define the inputs and outputs, ensuring the rest of the application only interacts with the sound adapter, not the raw external API.
+4.  **Deep Type Transformation (`ReplaceAnyDeep`):** For complex nested structures imported from third-party libraries, developers can utilize a generic utility type (like `ReplaceAnyDeep<T, unknown>`) to statically map all instances of `any` to `unknown` at the point of ingestion, effectively quarantining the type before it spreads.
+
+#### 2.2 Sound Core Libraries (`*.sound.lib.d.ts`)
+
+Standard libraries often return `any` for ergonomics. A true Sound Mode defaults to sound alternative core typings (e.g., `dom.sound.lib.d.ts`, `es2022.sound.lib.d.ts`).
 
 **TypeScript allows:**
 ```typescript
-const x: any = "hello";
-const y: number = x;      // ✅ tsc: any → number
-y.toFixed(2);             // 💥 Runtime: "hello".toFixed()
+const data = JSON.parse('{"a": 1}');
+const val: number = data.b.c.d; // ✅ tsc allows, crashes at runtime
 ```
 
-**Sound Mode:** Treat `any` as only a top type (like `unknown`). Require explicit casts to use as a specific type.
+**Sound Mode (`sound.lib.d.ts`):**
+In the sound core libs:
+- `JSON.parse` returns `unknown`
+- `Response.json()` (from `fetch`) returns `Promise<unknown>`
+Developers must explicitly validate the data (e.g., using Zod or `typeof` checks) before using it.
+
+#### 2.3 `SoundlyTyped`: Automated Ecosystem Soundness
+
+To handle the massive ecosystem of `node_modules` and DefinitelyTyped (DT), we will introduce **`SoundlyTyped`**—a fully automated infrastructure layer that sits on top of npm package types.
+
+**The `SoundlyTyped` Architecture:**
+- **Zero Hand-Coded Types:** Unlike DT, `SoundlyTyped` is purely mechanical. It does not accept manual PRs for type definitions.
+- **Automated Transformation:** A pipeline ingests upstream `.d.ts` files (from packages or DT) and outputs sound equivalents. It systematically rewrites `any` to `unknown`, closes open numeric enums, patches bivariant method signatures to contravariant properties, and enforces strict array bounds.
+- **Evergreen Sync:** Whenever an upstream package updates, `SoundlyTyped` automatically regenerates and publishes the sound definitions.
+
+This guarantees an explicit, mathematically sound boundary without requiring the core compiler to guess, silently mangle types, or slow down during resolution.
+
+#### 2.4 Ban Explicit `any` (and `any` as Top/Bottom)
+
+In Sound Mode, developers are banned from writing explicit `any`. They must use `unknown`. If an `any` type still somehow bypasses the `SoundlyTyped` infrastructure, the compiler strictly treats it as a top type equivalent to `unknown`. It cannot be assigned to more specific types without an explicit cast.
 
 ### Category 3: Unchecked Access
 
@@ -290,6 +327,146 @@ Primitives can be assigned to `Object` and `{}` because they have apparent membe
 
 **Sound Mode:** Reject primitive-to-`Object`/`{}` assignment. Primitives should only be assignable to their intrinsic types, `unknown`, or their explicit wrapper types (`Number`, `String`, etc.).
 
+### Category 11: Exact Types & Object Iteration
+
+#### 11.1 Structural Subtyping and Iteration
+
+**TypeScript allows:**
+```typescript
+interface User { name: string; }
+const admin = { name: "Alice", role: "admin" };
+const user: User = admin;  // ✅ tsc allows structural subtyping
+
+// Later, passing this to an object iterator:
+Object.keys(user).forEach(key => {
+    // 💥 Runtime: visits "role", which is invisible to the type system!
+});
+```
+
+Because TypeScript allows excess properties on variables (though not directly on object literals), `Object.keys()` is notoriously unsafe, returning `string[]` instead of `(keyof User)[]`.
+
+**Sound Mode:**
+Sound mode could introduce "Exact Types" (a highly requested feature, see TypeScript #12936), either as an opt-in `Exact<T>` or by default, where objects are strictly forbidden from containing extra un-declared properties. This ensures that downcasting or iterating over objects is perfectly sound. If Exact Types are enforced, `Object.keys(user)` can safely return `(keyof User)[]`.
+
+### Category 12: Switch Statement Exhaustiveness
+
+#### 12.1 Implicit Switch Fall-through to `undefined`
+
+**TypeScript allows:**
+```typescript
+type Direction = "Up" | "Down";
+
+function move(d: Direction) {
+    switch (d) {
+        case "Up": return 1;
+        // ⚠️ tsc allows missing "Down" unless you use strict null checks + return types
+    }
+}
+```
+
+Unless a function explicitly requires a non-void return, TypeScript does not enforce that a `switch` statement over a union type handles all possible cases.
+
+**Sound Mode:**
+Enforce native switch exhaustiveness. If a switch statement operates over a discriminated union or finite literal union, all cases must be handled explicitly (or via a `default` case).
+
+### Category 13: Strict Array/Set Membership
+
+#### 13.1 `includes` and `has` Type Constraints
+
+**TypeScript restricts:**
+```typescript
+const arr: string[] = ["a", "b"];
+arr.includes(1); // ❌ tsc errors: Argument of type 'number' is not assignable to parameter of type 'string'.
+```
+Ironically, TypeScript is *too* restrictive here in an unsound way. `Array.prototype.includes` accepts `any` value at runtime (returning `false` if it doesn't match). By enforcing `T` for the parameter, TypeScript limits flexibility but doesn't actually prevent runtime crashes.
+
+**Sound Mode:**
+Modify core library definitions (or compiler overrides) so that:
+- `Array<T>.prototype.includes(searchElement: unknown)`
+- `Set<T>.prototype.has(value: unknown)`
+This allows perfectly safe membership checks without arbitrary subtyping restrictions.
+
+### Category 14: Non-Empty Array Reduction
+
+#### 14.1 `reduce` Without Initial Value
+
+**TypeScript allows:**
+```typescript
+const arr: number[] = [];
+const sum = arr.reduce((a, b) => a + b); // ✅ tsc allows, 💥 Runtime: TypeError on empty array
+```
+
+**Sound Mode:**
+If `reduce` is called without an initial value, the array must be proven to be non-empty (e.g., `[T, ...T[]]`), or the return type evaluates to `T | undefined` forcing the developer to handle the potential empty state.
+
+### Category 15: Readonly Property Aliasing
+
+#### 15.1 Aliasing Immutable to Mutable
+
+**TypeScript allows:**
+```typescript
+interface Immutable { readonly id: number; }
+interface Mutable { id: number; }
+
+const ro: Immutable = { id: 1 };
+const mut: Mutable = ro;  // ✅ tsc allows dropping 'readonly'
+mut.id = 2;               // 💥 Runtime: ro.id is now 2!
+```
+Because TypeScript checks properties structurally and ignores the `readonly` modifier during assignment compatibility, a readonly reference can be trivially aliased to a mutable one, destroying the immutability guarantee.
+
+**Sound Mode:**
+A type with a `readonly` property cannot be assigned to a type where that property is mutable. This enforces that `readonly` guarantees hold true across aliases (a highly requested fix, see TypeScript #13347).
+
+### Category 16: Tuple Length Mutation
+
+#### 16.1 Tuples Inheriting Array Methods
+
+**TypeScript allows:**
+```typescript
+const tuple: [number, string] = [1, "hello"];
+tuple.push(2);      // ✅ tsc allows, tuple is now [1, "hello", 2]
+const len = tuple.length; // ✅ tsc says '2', 💥 Runtime: actual length is 3
+```
+Tuples in TypeScript inherit from `Array.prototype`, meaning methods like `push`, `pop`, `shift`, and `splice` are perfectly valid to call on them, completely desynchronizing the runtime length from the type system's known length.
+
+**Sound Mode:**
+Tuple types should either omit length-mutating methods entirely, or those methods should be typed to require `never` as an argument, preventing mutation of a fixed-length structure (see TypeScript #3336, #32063).
+
+### Category 17: Implicit `any` in Error Handling
+
+#### 17.1 Unenforced Catch Variables
+
+**TypeScript allows (historically):**
+```typescript
+try { throw { message: "oops" }; } 
+catch (e) { 
+    e.toUpperCase(); // ✅ tsc allows if useUnknownInCatchVariables is false
+}
+```
+While modern TypeScript introduced `useUnknownInCatchVariables`, many codebases still have it disabled or use older `strict` configurations where `e` is `any`.
+
+**Sound Mode:**
+Strictly enforce `unknown` for catch variables. Developers *must* type-narrow or cast `e` before interacting with it. Furthermore, Sound Mode could introduce a strictly enforced `@throws` or explicit `throws ErrorType` syntax for function signatures to allow safely typing the catch block.
+
+### Category 18: Unsafe Object Mutation
+
+#### 18.1 `Object.assign` Target Poisoning
+
+**TypeScript allows:**
+```typescript
+interface User { name: string; age: number; }
+const user: User = { name: "Alice", age: 30 };
+
+// Mutating a property to an incompatible type!
+Object.assign(user, { age: "thirty" }); // ✅ tsc allows
+
+user.age.toFixed(); // 💥 Runtime: user.age is a string!
+```
+Because `Object.assign(target, source)` is typed to return an intersection (`T & U`), it doesn't enforce that the `source` object is a valid patch for the `target` object's existing properties. It assumes you are creating a *new* combined type, ignoring that the `target` reference is being unsafely mutated in place.
+
+**Sound Mode:**
+`Object.assign(target, ...sources)` must enforce that any overlapping properties in `sources` are deeply assignable to the corresponding properties in `target`. The target mutation must be type-safe.
+
 ---
 
 ## What Sound Mode Would NOT Change
@@ -339,12 +516,20 @@ TypeScript already does excellent CFA for narrowing. Sound Mode wouldn't change 
     "soundArrayVariance": true,  // Invariant mutable arrays
     "soundMethodVariance": true, // Contravariant method params
     "soundThisVariance": true,   // Contravariant this type
-    "soundAnyType": true,        // any as top-only
+    "soundAnyType": true,        // any as top-only (Unknown conversion)
     "soundFunctionType": true,   // Strict Function type
     "soundIndexAccess": true,    // T | undefined for index access
     "soundEnums": true,          // Closed numeric enums
     "soundGenerics": true,       // Strict generic identity
     "soundBoxing": true,         // No implicit primitive boxing
+    "soundExactTypes": true,     // Opt-in Exact Object checking
+    "soundSwitchExhaustive": true, // Exhaustive switch for unions
+    "soundMembershipChecks": true, // Allows unknown in .includes/.has
+    "soundArrayReduce": true,    // Non-Empty arrays required for reduce
+    "soundReadonlyAliasing": true, // Reject assigning readonly to mutable
+    "soundTuples": true,         // Omit array mutation methods on tuples
+    "soundCatchVariables": true, // Always enforce unknown in catch blocks
+    "soundObjectAssign": true,   // Enforce target compatibility on assign
   }
 }
 ```
@@ -414,7 +599,7 @@ Key implementation locations:
 | Array variance | Covariant (unsafe) | Invariant for mutable |
 | Method params | Bivariant | Contravariant |
 | `this` in params | Covariant | Contravariant |
-| `any` type | Top + Bottom | Top only |
+| `any` type | Top + Bottom | Top only (or quarantine wall) |
 | `Function` type | Accepts all callables | Requires explicit cast |
 | Index access | `T` | `T \| undefined` |
 | Numeric enums | Open to any number | Closed to defined values |
@@ -424,6 +609,14 @@ Key implementation locations:
 | Generic identity | Constraint-based | Structural identity |
 | Primitive boxing | `number` → `Object` OK | Explicit wrapper required |
 | Split accessors | Assignment allowed | Check setter accepts write type |
+| Structural Excess | Accepted on variables | Rejected/Opt-in `Exact<T>` |
+| Switch Exh. | Checked via return type | Checked implicitly |
+| Array.includes | Subtype match required | `unknown` type allowed |
+| Array.reduce | Permissive | `NonEmptyArray` or `T \| undefined` |
+| Readonly Props | Assignable to mutable | Rejected (strict aliasing) |
+| Tuples | Inherit Array mutations | Mutation methods typed `never` |
+| Error handling | Implicit `any` | Strict `unknown` |
+| Object.assign | Intersects `T & U` | Enforces structural compatibility |
 
 **The fundamental trade-off:** Sound Mode catches more bugs but requires more explicit annotations. It's not "better" - it's different. Choose based on your project's needs.
 

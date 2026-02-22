@@ -234,12 +234,14 @@ impl Diagnostic {
     /// Returns a string like: "file.ts(1,5): error TS2304: Cannot find name 'foo'."
     pub fn format(&self, source_file: &mut SourceFile) -> String {
         let pos = source_file.offset_to_position(self.span.start);
+        let prefix = if self.code >= 9000 { "TSZ" } else { "TS" };
         format!(
-            "{}({},{}): {} TS{}: {}",
+            "{}({},{}): {} {}{}: {}",
             self.file_name,
             pos.line + 1,
             pos.character + 1,
             self.severity,
+            prefix,
             self.code,
             self.message
         )
@@ -249,7 +251,11 @@ impl Diagnostic {
     ///
     /// Returns a string like: "error[TS2304]: Cannot find name 'foo'"
     pub fn format_simple(&self) -> String {
-        format!("{}[TS{}]: {}", self.severity, self.code, self.message)
+        let prefix = if self.code >= 9000 { "TSZ" } else { "TS" };
+        format!(
+            "{}[{}{}]: {}",
+            self.severity, prefix, self.code, self.message
+        )
     }
 
     /// Convert to LSP Range (requires source file for position conversion).
