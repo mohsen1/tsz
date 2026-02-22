@@ -114,5 +114,43 @@ To ensure absolute `tsc` compatibility and performance regressions aren't introd
 *   *Test Scenario:* Compile a simulated 500-project monorepo (1M+ lines of code) with `check_files_parallel`.
 *   *Validation:* The memory ceiling must remain flat (determined by `GlobalTypeInterner` capacity + `N * NodeArena`, where `N` is the thread count, rather than `Total_Files * NodeArena`).
 
-### 7.3 Incremental Performance Benchmarks
-*   **Semantic API Cache Hit Rate:** Introduce an end-to-end benchmark in `benches/parallel_bench.rs` to mutate a function body (an internal change) within an upstream project. Verify that the cache invalidation graph is successfully pruned by the Semantic API Fingerprint, and that NO downstream projects re-run the `check_files_parallel` phase.
+## 8. Gradual Implementation Strategy (The Strangler Fig)
+
+A "big bang" rewrite of the checker and binder would stall feature development and destabilize the project. Instead, we will transition to the Global Query Graph through a sequence of non-breaking, incremental phases. The test suite must remain green at every step.
+
+### Phase A: Symbol Location Decoupling (Non-Breaking)
+**Goal:** Break the strict `Symbol` -> `NodeIndex` memory dependency without dropping ASTs yet.
+1. Add `file_id` and `span` (start/end bytes) to the `Symbol` struct alongside the existing `declarations: Vec<NodeIndex>`.
+2. Update the `Binder` to populate these new fields during `parse_and_bind_parallel`.
+3. Introduce a `NodeLocator` utility in the `Checker`. Update the checker's resolution logic to look up nodes via `(FileId, Span) -> NodeIndex` instead of reading `Symbol.declarations` directly.
+4. Once all code paths use the `NodeLocator`, safely remove `declarations: Vec<NodeIndex>` from `Symbol`.
+*Result: Symbols are now memory-independent. No performance change, but structural readiness is achieved.*
+
+### Phase B: Concurrent Global Indexing (CPU Optimization)
+**Goal:** Eliminate the Amdahl's Law bottleneck in `MergedProgram`.
+1. Replace `merge_bind_results` with a concurrent merging strategy.
+2. Instead of sequential merging, worker threads write directly to a global `DashMap<Atom, SymbolId>` (or `DefId`) during the bind phase.
+3. Keep the `Arc<NodeArena>`s alive for now (do not evict yet).
+*Result: Immediate reduction in wall-clock time for large monorepos due to concurrent merging. Memory usage remains high.*
+
+### Phase C: The AST Eviction Pool (Memory Optimization)
+**Goal:** Implement the Two-Tier Memory Model.
+1. Wrap the `Vec<Arc<NodeArena>>` (currently in `MergedProgram`) in an LRU Cache managed by the `QueryDatabase`.
+2. Hook the cache up to an RSS monitor (or set a hard limit like `max_arenas = Num_Cores * 2`).
+3. Implement the `Hydrate` logic: if the `NodeLocator` requests a file that was evicted, the Virtual File System re-reads the file, re-parses it, and returns the new `NodeArena`.
+*Result: Peak RSS drops massively. The compiler can now theoretically compile infinitely large monorepos without OOM crashes.*
+
+### Phase D: Demand-Driven Cycle Resolution (Correctness)
+**Goal:** Allow `tsz` to handle circular dependencies without static topological sorting.
+1. Shift the `Checker` from a push-model to a pull-model. When evaluating an imported symbol, use `QueryDatabase::evaluate_type(DefId)`.
+2. Implement the active-query stack in the `QueryDatabase`.
+3. Add the Fixpoint Iteration fallback: when a thread detects it is querying a `DefId` already in its active stack, it traps the cycle, isolates the SCC, and resolves it sequentially.
+*Result: Cross-package cycles no longer crash the compiler. Synthetic cycle tests turn green.*
+
+### Phase E: CLI Control Flow Inversion (The Final Cutover)
+**Goal:** Delete the old `tsc --build` emulation loop.
+1. Add the `--global-graph` flag to the CLI.
+2. When active, bypass `tsconfig.json` reference sorting. Pass all files directly to the `QueryDatabase`.
+3. Implement the Deterministic Diagnostics Buffer.
+4. Once validated against large real-world repos (e.g., Azure SDK), make `--global-graph` the default behavior and deprecate sequential project builds.
+*Result: Zero-config monorepo parallelism is achieved.*
