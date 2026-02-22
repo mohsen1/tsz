@@ -646,10 +646,14 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
 
     let mut state_type_resolution_src = fs::read_to_string("src/state/state_type_resolution.rs")
         .expect("failed to read src/state/state_type_resolution.rs for architecture guard");
-    // Include split-off module that is part of the state_type_resolution logical module
+    // Include split-off modules that are part of the state_type_resolution logical module
     state_type_resolution_src.push_str(
         &fs::read_to_string("src/state/state_type_resolution_module.rs")
             .expect("failed to read src/state/state_type_resolution_module.rs"),
+    );
+    state_type_resolution_src.push_str(
+        &fs::read_to_string("src/state/state_type_resolution_constructors.rs")
+            .expect("failed to read src/state/state_type_resolution_constructors.rs"),
     );
     assert!(
         state_type_resolution_src.contains("ensure_relation_input_ready("),
