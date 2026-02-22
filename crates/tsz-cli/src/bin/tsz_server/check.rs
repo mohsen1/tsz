@@ -831,6 +831,8 @@ impl Server {
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_mode: tsz_common::checker_options::JsxMode::None,
             module_explicitly_set: options.module.is_some(),
+            suppress_excess_property_errors: false,
+            suppress_implicit_any_index_errors: false,
         }
     }
 }

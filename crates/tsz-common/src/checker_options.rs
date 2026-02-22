@@ -95,6 +95,12 @@ pub struct CheckerOptions {
     /// When false, the module kind was computed from defaults (e.g. based on target).
     /// tsc only emits TS1202 (import assignment in ESM) when module is explicitly set.
     pub module_explicitly_set: bool,
+    /// When true, suppress TS2353 (excess property) errors.
+    /// This is a removed option (TS5102) but tsc still honors its suppression behavior.
+    pub suppress_excess_property_errors: bool,
+    /// When true, suppress TS7053 (implicit any index) errors.
+    /// This is a removed option (TS5102) but tsc still honors its suppression behavior.
+    pub suppress_implicit_any_index_errors: bool,
 }
 
 /// JSX emit mode controlling how JSX is transformed.
@@ -154,6 +160,8 @@ impl Default for CheckerOptions {
             jsx_fragment_factory: "React.Fragment".to_string(),
             jsx_mode: JsxMode::None,
             module_explicitly_set: false,
+            suppress_excess_property_errors: false,
+            suppress_implicit_any_index_errors: false,
         }
     }
 }

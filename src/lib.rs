@@ -599,6 +599,8 @@ impl CompilerOptions {
             no_implicit_override: false,
             jsx_mode: tsz_common::checker_options::JsxMode::None,
             module_explicitly_set: false,
+            suppress_excess_property_errors: false,
+            suppress_implicit_any_index_errors: false,
         }
     }
 }

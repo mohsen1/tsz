@@ -819,6 +819,12 @@ pub fn parse_tsconfig(source: &str) -> Result<TsConfig> {
 pub struct ParsedTsConfig {
     pub config: TsConfig,
     pub diagnostics: Vec<Diagnostic>,
+    /// Captured from removed option `suppressExcessPropertyErrors` before stripping.
+    /// tsc still honors its effect even after removal (TS5102).
+    pub suppress_excess_property_errors: bool,
+    /// Captured from removed option `suppressImplicitAnyIndexErrors` before stripping.
+    /// tsc still honors its effect even after removal (TS5102).
+    pub suppress_implicit_any_index_errors: bool,
 }
 
 /// Parse tsconfig.json source and collect diagnostics for unknown compiler options.
@@ -834,6 +840,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         serde_json::from_str(&normalized).context("failed to parse tsconfig JSON")?;
 
     let mut diagnostics = Vec::new();
+    let mut suppress_excess = false;
+    let mut suppress_any_index = false;
 
     // Check compiler options for unknown/miscased keys
     if let Some(obj) = raw.as_object_mut()
@@ -920,6 +928,17 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 removed_keys.push(key);
             }
         }
+        // Capture removed-but-still-honored suppress flags before stripping.
+        // tsc still honors these even after removal (TS5102 is emitted but suppression stays).
+        suppress_excess = matches!(
+            compiler_opts.get("suppressExcessPropertyErrors"),
+            Some(serde_json::Value::Bool(true))
+        );
+        suppress_any_index = matches!(
+            compiler_opts.get("suppressImplicitAnyIndexErrors"),
+            Some(serde_json::Value::Bool(true))
+        );
+
         // Strip removed options so they don't reach serde or subsequent validation
         for key in &removed_keys {
             compiler_opts.remove(key);
@@ -1286,6 +1305,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
     Ok(ParsedTsConfig {
         config,
         diagnostics,
+        suppress_excess_property_errors: suppress_excess,
+        suppress_implicit_any_index_errors: suppress_any_index,
     })
 }
 

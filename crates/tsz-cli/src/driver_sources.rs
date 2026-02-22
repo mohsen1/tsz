@@ -271,15 +271,31 @@ pub(crate) fn load_config(path: Option<&Path>) -> Result<Option<TsConfig>> {
     Ok(Some(config))
 }
 
-pub(crate) fn load_config_with_diagnostics(
-    path: Option<&Path>,
-) -> Result<(Option<TsConfig>, Vec<Diagnostic>)> {
+/// Return type for config loading that includes removed-but-honored suppress flags.
+pub(crate) struct LoadedConfig {
+    pub config: Option<TsConfig>,
+    pub diagnostics: Vec<Diagnostic>,
+    pub suppress_excess_property_errors: bool,
+    pub suppress_implicit_any_index_errors: bool,
+}
+
+pub(crate) fn load_config_with_diagnostics(path: Option<&Path>) -> Result<LoadedConfig> {
     let Some(path) = path else {
-        return Ok((None, Vec::new()));
+        return Ok(LoadedConfig {
+            config: None,
+            diagnostics: Vec::new(),
+            suppress_excess_property_errors: false,
+            suppress_implicit_any_index_errors: false,
+        });
     };
 
     let parsed = load_tsconfig_with_diagnostics(path)?;
-    Ok((Some(parsed.config), parsed.diagnostics))
+    Ok(LoadedConfig {
+        config: Some(parsed.config),
+        diagnostics: parsed.diagnostics,
+        suppress_excess_property_errors: parsed.suppress_excess_property_errors,
+        suppress_implicit_any_index_errors: parsed.suppress_implicit_any_index_errors,
+    })
 }
 
 pub(crate) fn config_base_dir(cwd: &Path, tsconfig_path: Option<&Path>) -> PathBuf {
