@@ -1,5 +1,3 @@
-use std::rc::Rc;
-
 use crate::state::CheckerState;
 use crate::statements::StatementCheckCallbacks;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -911,7 +909,7 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
         &mut self,
         _stmt_idx: NodeIndex,
         expression: NodeIndex,
-        case_block: NodeIndex,
+        _case_block: NodeIndex,
         has_default: bool,
     ) {
         // If there's a default clause, the switch is syntactically exhaustive
@@ -919,31 +917,11 @@ impl<'a> StatementCheckCallbacks for CheckerState<'a> {
             return;
         }
 
-        // Get the discriminant type
-        let discriminant_type = self.get_type_of_node(expression);
+        // Evaluate discriminant type (populates type caches needed by flow analysis)
+        let _ = self.get_type_of_node(expression);
 
-        // Create a FlowAnalyzer to check exhaustiveness
-        let analyzer =
-            crate::control_flow::FlowAnalyzer::new(self.ctx.arena, self.ctx.binder, self.ctx.types)
-                .with_reference_match_cache(&self.ctx.flow_reference_match_cache)
-                .with_type_environment(Rc::clone(&self.ctx.type_environment));
-
-        // Create a narrowing context
-        let narrowing = tsz_solver::NarrowingContext::new(self.ctx.types);
-
-        // Calculate the "no-match" type (what type the discriminant would have
-        // if none of the case clauses match)
-        let _no_match_type = analyzer.narrow_by_default_switch_clause(
-            discriminant_type,
-            expression,
-            case_block,
-            expression, // target is the discriminant itself
-            &narrowing,
-        );
-
-        // The no_match_type is used for narrowing within the flow analyzer.
-        // The actual "not all code paths return" error (TS2366) should be
-        // reported at the FUNCTION level in control flow analysis, not here.
+        // Note: exhaustiveness narrowing for switch is handled at the function level
+        // in control flow analysis (TS2366), not at the switch statement level.
         //
         // This is because:
         // 1. Code after the switch might handle missing cases

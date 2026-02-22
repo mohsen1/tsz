@@ -31,20 +31,6 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let _member_type = match self.enum_kind(sym_id) {
-            Some(EnumKind::String) => TypeId::STRING,
-            Some(EnumKind::Numeric) => TypeId::NUMBER,
-            Some(EnumKind::Mixed) => {
-                // Mixed enums have both string and numeric members
-                // Fall back to NUMBER for type compatibility
-                TypeId::NUMBER
-            }
-            None => {
-                // Return UNKNOWN instead of ANY for enum without explicit kind
-                TypeId::UNKNOWN
-            }
-        };
-
         let mut props: FxHashMap<Atom, PropertyInfo> = FxHashMap::default();
         for &decl_idx in &symbol.declarations {
             let Some(node) = self.ctx.arena.get(decl_idx) else {

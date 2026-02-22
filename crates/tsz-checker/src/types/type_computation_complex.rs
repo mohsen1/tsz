@@ -302,7 +302,6 @@ impl<'a> CheckerState<'a> {
                 Some(a) => a.nodes.as_slice(),
                 None => &[],
             };
-            let _ctx_helper = tsz_solver::ContextualTypeContext::new(self.ctx.types);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,

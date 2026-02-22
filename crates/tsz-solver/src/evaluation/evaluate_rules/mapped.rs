@@ -865,11 +865,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(MappedModifier::Remove) => false,
                 None => elem.optional, // Preserve original optional
             };
-            let _readonly = match mapped.readonly_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) | None => false,
-                // Tuple elements don't have readonly in current TypeScript
-            };
+            // Note: readonly modifier is intentionally ignored for tuple elements,
+            // as TypeScript doesn't support readonly on individual tuple elements.
 
             mapped_elements.push(TupleElement {
                 type_id: mapped_type,
