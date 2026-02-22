@@ -1,7 +1,7 @@
 //! Import candidate collection and auto-import suggestion utilities.
 //!
 //! Module specifier resolution (computing which path string to use in an import statement)
-//! lives in the sibling `project_module_specifiers` module.
+//! lives in the sibling `module_specifiers` submodule.
 
 use std::path::Path;
 
@@ -17,7 +17,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
-use super::project::{ExportMatch, ImportKind, ImportTarget, Project, ProjectFile};
+use super::{ExportMatch, ImportKind, ImportTarget, Project, ProjectFile};
 
 impl Project {
     pub(crate) fn definition_from_import(

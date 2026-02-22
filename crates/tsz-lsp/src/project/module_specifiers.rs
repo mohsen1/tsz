@@ -12,7 +12,7 @@ use rustc_hash::FxHashSet;
 
 use tsz_parser::parser::node::NodeAccess;
 
-use super::project::Project;
+use super::Project;
 
 const TS_EXTENSION_CANDIDATES: [&str; 7] = ["ts", "tsx", "d.ts", "mts", "cts", "d.mts", "d.cts"];
 const TS_EXTENSION_SUFFIXES: [&str; 7] =

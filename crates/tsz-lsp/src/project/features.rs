@@ -2,19 +2,19 @@
 //!
 //! Each method looks up the target file, delegates to the appropriate LSP
 //! provider, and records performance timing.  This keeps the core `Project`
-//! struct (file management, dependencies, configuration) in `project.rs` while
+//! struct (file management, dependencies, configuration) in `mod.rs` while
 //! the feature-facing surface lives here.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use web_time::Instant;
 
+use super::{Project, ProjectRequestKind};
 use crate::code_actions::{CodeAction, CodeActionContext, CodeActionKind, CodeActionProvider};
 use crate::code_lens::CodeLens;
 use crate::completions::CompletionItem;
 use crate::definition::GoToDefinition;
 use crate::diagnostics::LspDiagnostic;
 use crate::hover::HoverInfo;
-use crate::project::{Project, ProjectRequestKind};
 use crate::resolver::ScopeCacheStats;
 use crate::signature_help::SignatureHelp;
 use crate::utils::find_node_at_offset;
