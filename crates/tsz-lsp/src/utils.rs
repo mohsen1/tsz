@@ -118,6 +118,93 @@ pub fn is_symbol_query_node(arena: &NodeArena, node: NodeIndex) -> bool {
     node.kind >= SyntaxKind::BreakKeyword as u16 && node.kind <= SyntaxKind::DeferKeyword as u16
 }
 
+/// Search backward from `offset` (up to 256 chars or newline) for the nearest
+/// symbol-query node.  Returns `None` if no identifier/keyword is found.
+pub fn find_symbol_query_node_at_or_before(
+    arena: &NodeArena,
+    source_text: &str,
+    offset: u32,
+) -> Option<NodeIndex> {
+    let mut probe = offset.min(source_text.len() as u32);
+    let bytes = source_text.as_bytes();
+    let mut remaining = 256u32;
+
+    while probe > 0 && remaining > 0 {
+        probe -= 1;
+        remaining -= 1;
+
+        let candidate = find_node_at_or_before_offset(arena, probe, source_text);
+        if candidate.is_some() && is_symbol_query_node(arena, candidate) {
+            return Some(candidate);
+        }
+
+        let ch = bytes[probe as usize];
+        if ch == b'\n' || ch == b'\r' {
+            break;
+        }
+    }
+
+    None
+}
+
+/// Heuristic: is the cursor sitting inside (or immediately adjacent to) a comment?
+pub fn is_comment_context(source_text: &str, offset: u32) -> bool {
+    let bytes = source_text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+    let idx = (offset as usize).min(bytes.len());
+
+    if idx > 0 {
+        let prev = bytes[idx - 1];
+        if prev == b'/' || prev == b'*' {
+            return true;
+        }
+    }
+    if idx < bytes.len() {
+        let current = bytes[idx];
+        if current == b'/' || current == b'*' {
+            return true;
+        }
+    }
+
+    let prefix = &source_text[..idx];
+    if let Some(start) = prefix.rfind("/*")
+        && prefix[start + 2..].rfind("*/").is_none()
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Heuristic: the cursor is at the end of an identifier token (i.e. previous
+/// char is word-like, current char is not), so the user likely wants the
+/// symbol immediately before the cursor.
+pub fn should_backtrack_to_previous_symbol(source_text: &str, offset: u32) -> bool {
+    let bytes = source_text.as_bytes();
+    if bytes.is_empty() {
+        return false;
+    }
+
+    let idx = (offset as usize).min(bytes.len());
+    if idx == 0 {
+        return false;
+    }
+
+    let prev = bytes[idx - 1];
+    if !(prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$') {
+        return false;
+    }
+
+    if idx >= bytes.len() {
+        return true;
+    }
+
+    let current = bytes[idx];
+    !(current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
+}
+
 /// Calculate the new relative path for an import statement after a file rename.
 ///
 /// # Arguments
