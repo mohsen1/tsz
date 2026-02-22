@@ -234,9 +234,7 @@ when `strict` is not specified. Harmless for conformance (runner injects `strict
   suggested). 5 different parser root causes. Deferred.
 - **TS5102 (already implemented)**: All remaining failures are due to OTHER unimplemented
   error codes in the same tests, not TS5102 itself. Deferred.
-- **TS2882 (stale cache)**: Our `noUncheckedSideEffectImports` implementation matches TSC 6.0
-  behavior (defaults to `true`). The cache was generated with TSC 5.9.3 where the default was
-  `false`. Not a compiler bug — cache staleness issue. Deferred.
+- **TS2882 (FIXED)**: See "TS2882 — noUncheckedSideEffectImports default" section below.
 
 ## TS6133 — Write-only parameters incorrectly suppressed (Fixed)
 
@@ -321,3 +319,50 @@ covers local variables in destructuring patterns only, matching TSC's nuanced be
   computed property names, JSDoc type annotations. Each requires targeted flow analysis work.
 - **TS18046 (10 tests, not implemented)**: "'x' is of type 'unknown'". Needs checks at
   property access, function calls, and binary operations on `unknown` type. Medium complexity.
+
+## TS2882 — noUncheckedSideEffectImports default (Fixed)
+
+**Status**: Fixed. +10 tests passing (part of 3915→3933 batch).
+**Error code:** TS2882 ("Cannot find module or type declarations for side-effect import of '...'.")
+**Root cause**: `CheckerOptions::default()` had `no_unchecked_side_effect_imports: true`, but
+tsc 6.0 defaults to `false`. This caused all tests with side-effect imports (`import "module"`)
+to be checked for module resolution even when the option wasn't explicitly set.
+**Fix**: Changed default in `crates/tsz-common/src/checker_options.rs` from `true` to `false`.
+Updated 3 test files that relied on the old default to explicitly set the option when needed.
+**Previous diagnosis was wrong**: Earlier session noted this as "stale cache" issue — it was
+actually a wrong default in `CheckerOptions`.
+
+## TS2506 — False circular reference in heritage checking (Fixed)
+
+**Status**: Fixed. +8 tests passing (part of 3915→3933 batch).
+**Error code:** TS2506 ("'X' is referenced directly or indirectly in its own base expression.")
+**Root cause**: `state_heritage_checking.rs` emitted TS2506 whenever a cross-file symbol was
+found in `class_instance_resolution_set` during heritage clause checking. But this set is a
+recursion guard (tracks symbols currently being type-resolved), NOT a cycle detector. A symbol
+being in this set just means its type is being computed up the call stack — it does not prove
+a circular base expression. This caused false positives for legitimate forward-reference class
+relationships like `class Derived extends Base` where `Base` is declared later.
+**Fix**: Removed the diagnostic emission block at lines 227-243 in `state_heritage_checking.rs`.
+The recursion guard (`TypeId::ERROR` fallback) is preserved to prevent stack overflow. True
+TS2506 cycle detection is handled by dedicated inheritance checks elsewhere.
+
+## Deferred from this session (not fixed)
+
+- **TS2693 (9 tests, false positive)**: "X only refers to a type, but is being used as a value
+  here." False TS2693 emitted for expressions like `number[]`, `string[]`, `boolean[]` in value
+  positions (e.g., `var na = new number[]`). tsc emits only TS1011 for the missing bracket
+  argument. Root cause: `type_computation_access.rs` (lines 27-73) emits TS2693 for primitive
+  keywords in element access parse-recovery, and `type_computation_identifier.rs` (lines 867-883)
+  also emits TS2693 for unresolved primitive keywords. Fix: suppress TS2693 when parent is
+  element access with missing argument (TS1011 already covers it). EASY difficulty.
+- **TS18004 (5 tests, false positive)**: "No value exists in scope for the shorthand property."
+  Emitted for parser error-recovery shorthand properties in `{ a; b; c }` (semicolons instead
+  of commas). tsc suppresses this near parse errors. Attempted fix with `node_has_nearby_parse_error`
+  didn't work — the check returned false despite nearby TS1005 errors. Needs debugging of why
+  parse error positions don't align with shorthand property node spans. MEDIUM difficulty.
+- **TS2322 (63 extra)**: Largest single-code false positive source. Complex type mismatch false
+  positives across many test patterns. Requires ongoing solver/checker assignability work.
+- **TS2339 (54 extra)**: Property access false positives. Ongoing.
+- **TS2345 (52 extra)**: Argument type mismatch false positives. Ongoing.
+
+## Current score: 3933/5997 (65.6%) — first 6000 tests
