@@ -144,6 +144,17 @@ fn test_hover_property_initializer_parameter_uses_contextual_annotation() {
 }
 
 #[test]
+fn test_hover_array_element_function_parameter_uses_contextual_call_signature() {
+    let source = "var fns: {(n: number, s: string): string;}[] = [function(n, s) { return s; }];";
+    let info = get_hover_at(source, 0, 57)
+        .expect("Should find hover info for contextually typed array-element parameter");
+    assert_eq!(
+        info.display_string, "(parameter) n: number",
+        "Parameter hover should use contextual call signature from typed array element"
+    );
+}
+
+#[test]
 fn test_hover_namespace_exported_var_includes_namespace_container() {
     let source = "namespace C2T5 {\n    export var foo: (i: number, s: string) => number = function(i) { return i; };\n}";
     let info = get_hover_at(source, 1, 15).expect("Should find hover info for namespace var");

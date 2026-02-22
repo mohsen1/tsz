@@ -1205,9 +1205,16 @@ impl<'a> HoverProvider<'a> {
             .position(|&idx| idx == param_decl_idx)?;
 
         let contextual_type_node = self.contextual_function_type_node_for_expression(fn_idx)?;
-        let fn_type_node = self.arena.get(contextual_type_node)?;
-        let fn_type = self.arena.get_function_type(fn_type_node)?;
-        let contextual_param_idx = *fn_type.parameters.nodes.get(param_index)?;
+        let contextual_node = self.arena.get(contextual_type_node)?;
+        let contextual_param_idx =
+            if let Some(fn_type) = self.arena.get_function_type(contextual_node) {
+                *fn_type.parameters.nodes.get(param_index)?
+            } else if let Some(signature) = self.arena.get_signature(contextual_node) {
+                let params = signature.parameters.as_ref()?;
+                *params.nodes.get(param_index)?
+            } else {
+                return None;
+            };
         let contextual_param_node = self.arena.get(contextual_param_idx)?;
         let contextual_param = self.arena.get_parameter(contextual_param_node)?;
         if !contextual_param.type_annotation.is_some() {
@@ -1258,6 +1265,13 @@ impl<'a> HoverProvider<'a> {
                 continue;
             }
 
+            if parent.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                && let Some(callable_type) =
+                    self.contextual_callable_type_for_array_element(parent_idx, current)
+            {
+                return Some(callable_type);
+            }
+
             if parent.kind == syntax_kind_ext::TYPE_ASSERTION
                 || parent.kind == syntax_kind_ext::AS_EXPRESSION
                 || parent.kind == syntax_kind_ext::SATISFIES_EXPRESSION
@@ -1295,6 +1309,116 @@ impl<'a> HoverProvider<'a> {
         }
 
         None
+    }
+
+    fn contextual_callable_type_for_array_element(
+        &self,
+        array_literal_idx: NodeIndex,
+        element_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+
+        let array_literal_node = self.arena.get(array_literal_idx)?;
+        let literal_expr = self.arena.get_literal_expr(array_literal_node)?;
+        let element_index = literal_expr
+            .elements
+            .nodes
+            .iter()
+            .position(|&idx| idx == element_idx)?;
+
+        let array_ext = self.arena.get_extended(array_literal_idx)?;
+        let container_idx = array_ext.parent;
+        if !container_idx.is_some() {
+            return None;
+        }
+        let container_node = self.arena.get(container_idx)?;
+
+        let annotation_type_idx = if container_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
+            let decl = self.arena.get_variable_declaration(container_node)?;
+            if decl.initializer != array_literal_idx || !decl.type_annotation.is_some() {
+                return None;
+            }
+            decl.type_annotation
+        } else if container_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+            let decl = self.arena.get_property_decl(container_node)?;
+            if decl.initializer != array_literal_idx || !decl.type_annotation.is_some() {
+                return None;
+            }
+            decl.type_annotation
+        } else if container_node.kind == syntax_kind_ext::TYPE_ASSERTION
+            || container_node.kind == syntax_kind_ext::AS_EXPRESSION
+            || container_node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+        {
+            let assertion = self.arena.get_type_assertion(container_node)?;
+            if assertion.expression != array_literal_idx {
+                return None;
+            }
+            assertion.type_node
+        } else {
+            return None;
+        };
+
+        self.callable_type_from_array_annotation(annotation_type_idx, element_index)
+    }
+
+    fn callable_type_from_array_annotation(
+        &self,
+        annotation_type_idx: NodeIndex,
+        element_index: usize,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+
+        let annotation_type_idx = self.unwrap_parenthesized_type_node(annotation_type_idx)?;
+        let annotation_type_node = self.arena.get(annotation_type_idx)?;
+
+        if annotation_type_node.kind == syntax_kind_ext::ARRAY_TYPE {
+            let array_type = self.arena.get_array_type(annotation_type_node)?;
+            return self.callable_type_node_from_type_node(array_type.element_type);
+        }
+
+        if annotation_type_node.kind == syntax_kind_ext::TUPLE_TYPE {
+            let tuple_type = self.arena.get_tuple_type(annotation_type_node)?;
+            let element_type = *tuple_type.elements.nodes.get(element_index)?;
+            return self.callable_type_node_from_type_node(element_type);
+        }
+
+        None
+    }
+
+    fn callable_type_node_from_type_node(&self, type_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+
+        let type_idx = self.unwrap_parenthesized_type_node(type_idx)?;
+        let type_node = self.arena.get(type_idx)?;
+
+        if type_node.kind == syntax_kind_ext::FUNCTION_TYPE {
+            return Some(type_idx);
+        }
+
+        if type_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let type_literal = self.arena.get_type_literal(type_node)?;
+            for &member_idx in &type_literal.members.nodes {
+                let member_node = self.arena.get(member_idx)?;
+                if member_node.kind == syntax_kind_ext::CALL_SIGNATURE {
+                    return Some(member_idx);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn unwrap_parenthesized_type_node(&self, mut type_idx: NodeIndex) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+
+        loop {
+            let type_node = self.arena.get(type_idx)?;
+            if type_node.kind != syntax_kind_ext::PARENTHESIZED_TYPE {
+                return Some(type_idx);
+            }
+            let wrapped = self.arena.get_wrapped_type(type_node)?;
+            type_idx = wrapped.type_node;
+        }
     }
 
     fn type_node_text(&self, type_node_idx: NodeIndex) -> Option<String> {

@@ -1422,6 +1422,41 @@ impl Server {
             let bytes = source_text.as_bytes();
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
                 let len = bytes.len() as u32;
+
+                // Fourslash quickinfo markers are commonly comment-based (`/*1*/`).
+                // Probe the identifier immediately after the marker so we don't keep
+                // a weaker hover result (e.g. contextual parameter type falling back to `any`).
+                if base_offset + 1 < len
+                    && bytes[base_offset as usize] == b'/'
+                    && bytes[(base_offset + 1) as usize] == b'*'
+                {
+                    let mut probe = base_offset + 2;
+                    while probe + 1 < len {
+                        if bytes[probe as usize] == b'*' && bytes[(probe + 1) as usize] == b'/' {
+                            probe += 2;
+                            break;
+                        }
+                        probe += 1;
+                    }
+                    while probe < len && bytes[probe as usize].is_ascii_whitespace() {
+                        probe += 1;
+                    }
+                    if probe < len {
+                        let probe_pos = line_map.offset_to_position(probe, &source_text);
+                        if let Some(marker_hover) =
+                            provider.get_hover(root, probe_pos, &mut type_cache)
+                        {
+                            let should_replace = info.as_ref().is_none_or(|existing| {
+                                existing.display_string.contains(": any")
+                                    && !marker_hover.display_string.contains(": any")
+                            });
+                            if should_replace {
+                                info = Some(marker_hover);
+                            }
+                        }
+                    }
+                }
+
                 let mut ctor_probe = base_offset;
                 while ctor_probe < len && bytes[ctor_probe as usize].is_ascii_whitespace() {
                     ctor_probe += 1;

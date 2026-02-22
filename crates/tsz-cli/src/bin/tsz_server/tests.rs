@@ -769,6 +769,44 @@ fn test_quickinfo_arrow_token_uses_contextual_signature() {
 }
 
 #[test]
+fn test_quickinfo_marker_comment_before_parameter_uses_contextual_type() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "var c3t11: {(n: number, s: string): string;}[] = [function(/*25*/n, s) { return s; }];\n"
+            .to_string(),
+    );
+    let req = make_request(
+        "quickinfo",
+        // Cursor on the `/` in /*25*/ before parameter `n`.
+        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 60}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body["displayString"].as_str().unwrap_or(""),
+        "(parameter) n: number"
+    );
+    assert_eq!(body["kind"].as_str().unwrap_or(""), "parameter");
+
+    let req_on_identifier = make_request(
+        "quickinfo",
+        // Cursor on `n` after /*25*/.
+        serde_json::json!({"file": "/test.ts", "line": 1, "offset": 66}),
+    );
+    let resp_on_identifier = server.handle_tsserver_request(req_on_identifier);
+    assert!(resp_on_identifier.success);
+    let body_on_identifier = resp_on_identifier
+        .body
+        .expect("quickinfo should return a body on identifier");
+    assert_eq!(
+        body_on_identifier["displayString"].as_str().unwrap_or(""),
+        "(parameter) n: number"
+    );
+}
+
+#[test]
 fn test_prepare_call_hierarchy_class_property_arrow_function() {
     let mut server = make_server();
     server.open_files.insert(
