@@ -857,6 +857,35 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
             }
         }
 
+        // Check for removed compiler options (TS5102)
+        // These options were deprecated in TS 5.0 and removed in TS 5.5.
+        for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
+            if removed_compiler_option(&key).is_some() {
+                let value = compiler_opts.get(&key);
+                // Only emit TS5102 if the option is actually set (non-null, non-default)
+                let is_set = match value {
+                    Some(serde_json::Value::Bool(b)) => *b,
+                    Some(serde_json::Value::String(s)) => !s.is_empty(),
+                    Some(serde_json::Value::Null) | None => false,
+                    Some(_) => true,
+                };
+                if is_set {
+                    let start = find_key_offset_in_source(&stripped, &key);
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                        &[&key],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key.len() as u32 + 2, // include quotes
+                        msg,
+                        diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                    ));
+                }
+            }
+        }
+
         // Check compiler option value types (TS5024)
         // Collect keys that have type mismatches so we can remove them after iteration.
         let keys_after_rename: Vec<String> = compiler_opts.keys().cloned().collect();
@@ -1052,6 +1081,23 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         // Object options
         "paths" => "object",
         _ => "",
+    }
+}
+
+/// Check if a compiler option has been removed in TypeScript 5.5.
+/// Returns `Some(use_instead)` if removed, where `use_instead` is "" or a replacement name.
+/// These options were deprecated in TS 5.0 and removed in TS 5.5.
+fn removed_compiler_option(key: &str) -> Option<&'static str> {
+    match key {
+        "noImplicitUseStrict"
+        | "keyofStringsOnly"
+        | "suppressExcessPropertyErrors"
+        | "suppressImplicitAnyIndexErrors"
+        | "noStrictGenericChecks"
+        | "charset"
+        | "out" => Some(""),
+        "importsNotUsedAsValues" | "preserveValueImports" => Some("verbatimModuleSyntax"),
+        _ => None,
     }
 }
 
@@ -2068,5 +2114,76 @@ mod tests {
         // When no options at all, module_explicitly_set should be false.
         let resolved = resolve_compiler_options(None).unwrap();
         assert!(!resolved.checker.module_explicitly_set);
+    }
+
+    #[test]
+    fn test_removed_compiler_option_lookup() {
+        assert!(removed_compiler_option("noImplicitUseStrict").is_some());
+        assert!(removed_compiler_option("keyofStringsOnly").is_some());
+        assert!(removed_compiler_option("suppressExcessPropertyErrors").is_some());
+        assert!(removed_compiler_option("suppressImplicitAnyIndexErrors").is_some());
+        assert!(removed_compiler_option("noStrictGenericChecks").is_some());
+        assert!(removed_compiler_option("charset").is_some());
+        assert!(removed_compiler_option("out").is_some());
+        assert_eq!(
+            removed_compiler_option("importsNotUsedAsValues"),
+            Some("verbatimModuleSyntax")
+        );
+        assert_eq!(
+            removed_compiler_option("preserveValueImports"),
+            Some("verbatimModuleSyntax")
+        );
+        // Non-removed options return None
+        assert!(removed_compiler_option("strict").is_none());
+        assert!(removed_compiler_option("target").is_none());
+    }
+
+    #[test]
+    fn test_ts5102_emitted_for_removed_option() {
+        let source = r#"{"compilerOptions":{"noImplicitUseStrict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5102),
+            "Expected TS5102 for removed option noImplicitUseStrict, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5102_not_emitted_for_false_removed_option() {
+        // When a removed boolean option is set to false, tsc doesn't emit TS5102
+        let source = r#"{"compilerOptions":{"noImplicitUseStrict":false}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5102),
+            "Should NOT emit TS5102 for false-valued removed option, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5102_emitted_for_string_removed_option() {
+        let source = r#"{"compilerOptions":{"importsNotUsedAsValues":"error"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5102),
+            "Expected TS5102 for removed option importsNotUsedAsValues, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5102_not_emitted_for_valid_option() {
+        let source = r#"{"compilerOptions":{"strict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5102),
+            "Should NOT emit TS5102 for valid option 'strict', got: {:?}",
+            codes
+        );
     }
 }
