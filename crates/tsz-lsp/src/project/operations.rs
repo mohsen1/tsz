@@ -16,7 +16,7 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
-use super::project::{
+use super::{
     ImportKind, ImportSpecifierTarget, NamespaceReexportTarget, Project, ProjectFile,
     ProjectRequestKind,
 };

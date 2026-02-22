@@ -3,6 +3,11 @@
 //! This provides a lightweight home for parsed files, binders, and line maps so
 //! LSP features can be extended across multiple files.
 
+pub(crate) mod features;
+pub(crate) mod imports;
+pub(crate) mod module_specifiers;
+pub(crate) mod operations;
+
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::Path;
 use web_time::Duration;
