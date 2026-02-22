@@ -1,8 +1,19 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9644/13623 = 70.8% JS, 777/1988 = 39.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9647/13623 = 70.8% JS, 775/1988 = 39.0% DTS)
 
 ### Fixed This Session
+- **Abstract methods with body incorrectly erased** (+3 JS):
+  The `is_erased` logic for `METHOD_DECLARATION` used `has_modifier(Abstract) || body.is_none()`,
+  which erased abstract methods WITH a body. While these are error cases in TS, tsc still emits
+  them, so we must match that behavior. Fix: changed method condition to just `body.is_none()`.
+  For accessors, changed from `has_modifier(Abstract)` (which would erase abstract accessors
+  even if they had a body) to `has_modifier(Abstract) && body.is_none()` — both conditions
+  required. Three unit tests added.
+  Tests fixed: `classAbstractMethodInNonAbstractClass`, `classAbstractMethodWithImplementation`,
+  `classAbstractInstantiations2`.
+  JS: 9644→9647, DTS: 775→775, zero regressions.
+
 - **Spurious `export` on merged enum/namespace IIFEs in ESM** (+7 JS, +1 DTS):
   When multiple `export enum` or `export namespace` declarations share the same
   name (merged declarations), tsc emits `export var E;` once on the first declaration,
