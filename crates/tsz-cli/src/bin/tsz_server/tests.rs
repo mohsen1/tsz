@@ -680,6 +680,50 @@ fn test_quickinfo_class_keyword_returns_local_class_display() {
 }
 
 #[test]
+fn test_quickinfo_member_call_property_at_member_start() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "interface I {\n    /** Doc */\n    m: () => void;\n}\nfunction f(x: I): void {\n    x.m();\n}\n"
+            .to_string(),
+    );
+    let req = make_request(
+        "quickinfo",
+        // Cursor between `.` and `m` in `x.m()` (equivalent to fourslash marker `x./**/m()`).
+        serde_json::json!({"file": "/test.ts", "line": 6, "offset": 6}),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("quickinfo should return a body");
+    assert_eq!(
+        body["displayString"].as_str().unwrap_or(""),
+        "(property) I.m: () => void"
+    );
+    assert_eq!(
+        body["documentation"],
+        serde_json::json!([{"kind":"text","text":"Doc"}])
+    );
+
+    let req_at_member = make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 6, "offset": 7}),
+    );
+    let resp_at_member = server.handle_tsserver_request(req_at_member);
+    assert!(resp_at_member.success);
+    let body_at_member = resp_at_member
+        .body
+        .expect("quickinfo at member should return a body");
+    assert_eq!(
+        body_at_member["displayString"].as_str().unwrap_or(""),
+        "(property) I.m: () => void"
+    );
+    assert_eq!(
+        body_at_member["documentation"],
+        serde_json::json!([{"kind":"text","text":"Doc"}])
+    );
+}
+
+#[test]
 fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let mut server = make_server();
     let file = "/test.ts";
