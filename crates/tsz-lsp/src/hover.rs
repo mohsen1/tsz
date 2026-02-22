@@ -473,6 +473,13 @@ impl<'a> HoverProvider<'a> {
             let mut type_string = self
                 .merged_function_initializer_display_type(decl_node_idx)
                 .unwrap_or_else(|| type_string.to_string());
+            if type_string == "any"
+                && self.is_parameter_declaration(decl_node_idx)
+                && let Some(contextual_type) =
+                    self.contextual_parameter_annotation_text(decl_node_idx)
+            {
+                type_string = contextual_type;
+            }
             if type_string == "error"
                 && let Some(array_type) =
                     self.array_constructor_initializer_display_type(decl_node_idx)
@@ -1011,6 +1018,104 @@ impl<'a> HoverProvider<'a> {
             return Some(self.arena.resolve_identifier_text(id).to_string());
         }
         None
+    }
+
+    fn contextual_parameter_annotation_text(&self, param_decl_idx: NodeIndex) -> Option<String> {
+        let param_node = self.arena.get(param_decl_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        if param.type_annotation.is_some() {
+            return None;
+        }
+
+        let fn_idx = self.arena.get_extended(param_decl_idx)?.parent;
+        let fn_node = self.arena.get(fn_idx)?;
+        let fn_data = self.arena.get_function(fn_node)?;
+        let param_index = fn_data
+            .parameters
+            .nodes
+            .iter()
+            .position(|&idx| idx == param_decl_idx)?;
+
+        let contextual_type_node = self.contextual_function_type_node_for_expression(fn_idx)?;
+        let fn_type_node = self.arena.get(contextual_type_node)?;
+        let fn_type = self.arena.get_function_type(fn_type_node)?;
+        let contextual_param_idx = *fn_type.parameters.nodes.get(param_index)?;
+        let contextual_param_node = self.arena.get(contextual_param_idx)?;
+        let contextual_param = self.arena.get_parameter(contextual_param_node)?;
+        if !contextual_param.type_annotation.is_some() {
+            return None;
+        }
+
+        self.type_node_text(contextual_param.type_annotation)
+    }
+
+    fn contextual_function_type_node_for_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        use tsz_parser::syntax_kind_ext;
+
+        let mut current = expr_idx;
+        while current.is_some() {
+            let ext = self.arena.get_extended(current)?;
+            let parent_idx = ext.parent;
+            if !parent_idx.is_some() {
+                return None;
+            }
+            let parent = self.arena.get(parent_idx)?;
+
+            if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent_idx;
+                continue;
+            }
+
+            if parent.kind == syntax_kind_ext::TYPE_ASSERTION
+                || parent.kind == syntax_kind_ext::AS_EXPRESSION
+                || parent.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                let assertion = self.arena.get_type_assertion(parent)?;
+                if assertion.expression == current {
+                    let type_node = self.arena.get(assertion.type_node)?;
+                    if type_node.kind == syntax_kind_ext::FUNCTION_TYPE {
+                        return Some(assertion.type_node);
+                    }
+                }
+            }
+
+            if parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
+                && let Some(decl) = self.arena.get_variable_declaration(parent)
+                && decl.initializer == current
+                && decl.type_annotation.is_some()
+                && let Some(type_node) = self.arena.get(decl.type_annotation)
+                && type_node.kind == syntax_kind_ext::FUNCTION_TYPE
+            {
+                return Some(decl.type_annotation);
+            }
+
+            current = parent_idx;
+        }
+
+        None
+    }
+
+    fn type_node_text(&self, type_node_idx: NodeIndex) -> Option<String> {
+        let type_node = self.arena.get(type_node_idx)?;
+        let start = type_node.pos as usize;
+        let end = type_node.end.min(self.source_text.len() as u32) as usize;
+        (start < end).then(|| {
+            let mut text = self.source_text[start..end].trim().to_string();
+            while text.ends_with(')') {
+                let opens = text.chars().filter(|&c| c == '(').count();
+                let closes = text.chars().filter(|&c| c == ')').count();
+                if closes > opens {
+                    text.pop();
+                    text = text.trim_end().to_string();
+                } else {
+                    break;
+                }
+            }
+            text
+        })
     }
 
     /// Extract plain documentation text from `JSDoc` (without markdown formatting).

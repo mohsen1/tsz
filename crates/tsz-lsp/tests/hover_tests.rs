@@ -110,6 +110,16 @@ fn test_hover_function() {
     }
 }
 
+#[test]
+fn test_hover_contextually_typed_function_expression_parameter() {
+    let source = "<(aa: number) =>void >(function myFn(bb) { });\nbb;";
+    let info = get_hover_at(source, 0, 37).expect("Should find hover info for parameter");
+    assert_eq!(
+        info.display_string, "(parameter) bb: number",
+        "Parameter hover should use contextual type from function expression target"
+    );
+}
+
 // =========================================================================
 // New tests for tsserver-compatible quickinfo format
 // =========================================================================
