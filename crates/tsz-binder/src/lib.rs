@@ -11,14 +11,13 @@
 pub mod flow;
 pub mod lib_loader;
 mod modules;
+mod nodes;
 pub mod scopes;
 pub mod state;
 mod state_binding;
 mod state_binding_validation;
 mod state_flow_helpers;
 mod state_lib_merge;
-mod state_node_binding;
-mod state_node_binding_names;
 mod state_resolution;
 pub mod symbols;
 
