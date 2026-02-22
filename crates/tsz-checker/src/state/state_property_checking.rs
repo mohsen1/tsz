@@ -487,7 +487,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         prop_name: &str,
-    ) -> tsz_solver::operations_property::PropertyAccessResult {
+    ) -> tsz_solver::operations::property::PropertyAccessResult {
         // Resolve TypeQuery types (typeof X) before property access.
         // The solver-internal evaluator has no TypeResolver, so TypeQuery types
         // can't be resolved there. Resolve them here using the checker's environment.
@@ -531,8 +531,8 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         prop_name: &str,
-        result: tsz_solver::operations_property::PropertyAccessResult,
-    ) -> tsz_solver::operations_property::PropertyAccessResult {
+        result: tsz_solver::operations::property::PropertyAccessResult,
+    ) -> tsz_solver::operations::property::PropertyAccessResult {
         let mut result = result;
 
         // If property not found and the type is an Application (e.g. Promise<number>),
@@ -540,7 +540,7 @@ impl<'a> CheckerState<'a> {
         // to its structural form and retry property access on the expanded type.
         if matches!(
             result,
-            tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound { .. }
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
         ) && tsz_solver::is_generic_application(self.ctx.types, object_type)
         {
             let expanded = self.evaluate_application_type(object_type);
@@ -558,7 +558,7 @@ impl<'a> CheckerState<'a> {
         // Expand the mapped type using the checker's type environment and retry.
         if matches!(
             result,
-            tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound { .. }
+            tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
         ) && query::is_mapped_type(self.ctx.types, object_type)
         {
             if let Some(mapped_property) =
@@ -589,7 +589,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         mapped_type: TypeId,
         prop_name: &str,
-    ) -> Option<tsz_solver::operations_property::PropertyAccessResult> {
+    ) -> Option<tsz_solver::operations::property::PropertyAccessResult> {
         let mapped_id = tsz_solver::mapped_type_id(self.ctx.types, mapped_type)?;
         let mapped = self.ctx.types.mapped_type(mapped_id);
 
@@ -613,12 +613,12 @@ impl<'a> CheckerState<'a> {
                 .copied()
         {
             return Some(match cached {
-                Some(type_id) => tsz_solver::operations_property::PropertyAccessResult::Success {
+                Some(type_id) => tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id,
                     write_type: None,
                     from_index_signature: false,
                 },
-                None => tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound {
+                None => tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                     type_id: mapped_type,
                     property_name: prop_atom,
                 },
@@ -638,7 +638,7 @@ impl<'a> CheckerState<'a> {
                         .insert(cache_key, None);
                 }
                 return Some(
-                    tsz_solver::operations_property::PropertyAccessResult::PropertyNotFound {
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound {
                         type_id: mapped_type,
                         property_name: prop_atom,
                     },
@@ -673,7 +673,7 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(
-            tsz_solver::operations_property::PropertyAccessResult::Success {
+            tsz_solver::operations::property::PropertyAccessResult::Success {
                 type_id: property_type,
                 write_type: None,
                 from_index_signature: false,
@@ -716,7 +716,7 @@ impl<'a> CheckerState<'a> {
                         // Check if the property resolved through an index signature
                         // (either the explicit "index signature" sentinel or via
                         // from_index_signature on a named property).
-                        use tsz_solver::operations_property::PropertyAccessResult;
+                        use tsz_solver::operations::property::PropertyAccessResult;
                         let from_idx_sig = if name == "index signature" {
                             true
                         } else {
@@ -832,7 +832,7 @@ impl<'a> CheckerState<'a> {
         // If the property doesn't exist, skip the readonly check - TS2339 will be
         // reported elsewhere. This matches tsc behavior which checks existence before
         // readonly status.
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
         let property_result =
             self.resolve_property_access_with_env(readonly_check_type, &prop_name);
         let (property_exists, prop_from_index_sig) = match &property_result {

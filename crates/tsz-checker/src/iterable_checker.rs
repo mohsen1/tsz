@@ -137,7 +137,7 @@ impl<'a> CheckerState<'a> {
     /// files, Callable types with iterator properties, and other complex cases where simple
     /// shape inspection fails but the full checker resolution machinery can find the property.
     fn type_has_symbol_iterator_via_property_access(&mut self, type_id: TypeId) -> bool {
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
         let result = self.resolve_property_access_with_env(type_id, "[Symbol.iterator]");
         matches!(result, PropertyAccessResult::Success { .. })
     }
@@ -201,7 +201,7 @@ impl<'a> CheckerState<'a> {
             AsyncIterableTypeKind::NotAsyncIterable => {
                 // Use property access to check for [Symbol.asyncIterator] on types
                 // that couldn't be classified (e.g., Application types with Lazy bases).
-                use tsz_solver::operations_property::PropertyAccessResult;
+                use tsz_solver::operations::property::PropertyAccessResult;
                 let result =
                     self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
                 match result {
@@ -311,7 +311,7 @@ impl<'a> CheckerState<'a> {
     /// Follows the chain: type[Symbol.iterator] → call result → .`next()` → .value
     /// Returns ANY as fallback if the protocol cannot be resolved.
     fn resolve_iterator_element_type(&mut self, type_id: TypeId) -> TypeId {
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         // Step 1: Get [Symbol.iterator] property
         let iterator_fn = self.resolve_property_access_with_env(type_id, "[Symbol.iterator]");

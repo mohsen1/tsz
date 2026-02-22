@@ -6277,7 +6277,7 @@ c.y;
 
 #[test]
 fn test_strict_null_checks_property_access() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
     use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     // Test property access on nullable types
@@ -6318,7 +6318,7 @@ fn test_strict_null_checks_property_access() {
 
 #[test]
 fn test_strict_null_checks_undefined_type() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
     use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     // Test property access on possibly undefined types
@@ -6357,7 +6357,7 @@ fn test_strict_null_checks_undefined_type() {
 
 #[test]
 fn test_strict_null_checks_both_null_and_undefined() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
     use tsz_solver::{PropertyInfo, TypeData, TypeId, Visibility};
 
     // Test property access on type that is both null and undefined
@@ -6408,7 +6408,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
 
 #[test]
 fn test_strict_null_checks_non_nullable_success() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
     use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
     // Test that non-nullable types succeed normally
@@ -6442,7 +6442,7 @@ fn test_strict_null_checks_non_nullable_success() {
 
 #[test]
 fn test_strict_null_checks_null_only() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing property directly on null type
     let types = TypeInterner::new();
@@ -6586,7 +6586,7 @@ fn test_variable_self_reference_no_2403() {
 
 #[test]
 fn test_symbol_property_access_description() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing .description on symbol type
     let types = TypeInterner::new();
@@ -6615,7 +6615,7 @@ fn test_symbol_property_access_description() {
 
 #[test]
 fn test_symbol_property_access_methods() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing methods on symbol type
     let types = TypeInterner::new();
@@ -6651,7 +6651,7 @@ fn test_symbol_property_access_methods() {
 
 #[test]
 fn test_symbol_property_not_found() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
 
     // Test accessing non-existent property on symbol type
     let types = TypeInterner::new();
@@ -11603,7 +11603,7 @@ type B = A;
 
 #[test]
 fn test_index_signature_at_solver_level() {
-    use tsz_solver::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+    use tsz_solver::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
     use tsz_solver::{IndexSignature, ObjectFlags, ObjectShape};
 
     // Test that index signature resolution is tracked at solver level

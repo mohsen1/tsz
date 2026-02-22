@@ -504,7 +504,7 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(ref prop_name_str) = property_name {
-            use tsz_solver::operations_property::PropertyAccessResult;
+            use tsz_solver::operations::property::PropertyAccessResult;
             let prop_access_result =
                 self.resolve_property_access_with_env(parent_type, prop_name_str);
             match prop_access_result {

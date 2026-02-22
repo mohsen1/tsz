@@ -724,7 +724,7 @@ impl<'a> CheckerState<'a> {
         object_type: TypeId,
         keys: &[tsz_common::interner::Atom],
     ) -> Option<TypeId> {
-        use tsz_solver::operations_property::PropertyAccessResult;
+        use tsz_solver::operations::property::PropertyAccessResult;
 
         if keys.is_empty() {
             return None;

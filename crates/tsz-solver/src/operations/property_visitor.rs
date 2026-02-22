@@ -3,7 +3,7 @@
 //! Contains the visitor dispatch that resolves property access for each
 //! type kind, plus impl helper methods for complex cases (objects, unions, etc.).
 
-use crate::operations_property::{PropertyAccessEvaluator, PropertyAccessResult};
+use super::property::{PropertyAccessEvaluator, PropertyAccessResult};
 use crate::types::{IntrinsicKind, LiteralValue, ObjectShapeId, TupleListId, TypeId, TypeListId};
 use crate::visitor::TypeVisitor;
 use tsz_common::interner::Atom;

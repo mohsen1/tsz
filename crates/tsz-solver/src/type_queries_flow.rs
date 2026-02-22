@@ -456,7 +456,7 @@ pub fn get_return_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId>
 // Promise and Iterable Type Queries
 // =============================================================================
 
-use crate::operations_property::PropertyAccessEvaluator;
+use crate::operations::property::PropertyAccessEvaluator;
 
 /// Check if a type is "promise-like" (has a callable 'then' method).
 ///
