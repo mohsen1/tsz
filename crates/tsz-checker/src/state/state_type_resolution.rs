@@ -127,7 +127,18 @@ impl<'a> CheckerState<'a> {
                     let name = self
                         .entity_name_text(type_name_idx)
                         .unwrap_or_else(|| "<unknown>".to_string());
-                    self.error_generic_type_requires_type_arguments_at(&name, required_count, idx);
+                    // tsc displays type name with param names: Foo<T, U>
+                    let type_params = self.get_type_params_for_symbol(sym_id);
+                    let display_name = Self::format_generic_display_name_with_interner(
+                        &name,
+                        &type_params,
+                        self.ctx.types,
+                    );
+                    self.error_generic_type_requires_type_arguments_at(
+                        &display_name,
+                        required_count,
+                        idx,
+                    );
                 }
 
                 // TSZ-4: Use type_reference_symbol_type to preserve nominal identity
@@ -489,7 +500,9 @@ impl<'a> CheckerState<'a> {
                 // TS2314: array-like built-ins require a type argument
                 // Skip in heritage clauses: `class C extends Array {}` is valid
                 if !self.is_direct_heritage_type_reference(idx) {
-                    self.error_generic_type_requires_type_arguments_at(name, 1, idx);
+                    // tsc displays the type name with its type parameters: Array<T>
+                    let display_name = format!("{name}<T>");
+                    self.error_generic_type_requires_type_arguments_at(&display_name, 1, idx);
                     // Return ERROR to prevent cascading assignment errors (TS2322)
                     // when using Array without type arguments
                     return TypeId::ERROR;
@@ -642,8 +655,14 @@ impl<'a> CheckerState<'a> {
                     let type_params = self.get_type_params_for_symbol(sym_id);
                     let required_count = type_params.iter().filter(|p| p.default.is_none()).count();
                     if required_count > 0 {
-                        self.error_generic_type_requires_type_arguments_at(
+                        // tsc displays type name with param names: Foo<T, U>
+                        let display_name = Self::format_generic_display_name_with_interner(
                             name,
+                            &type_params,
+                            self.ctx.types,
+                        );
+                        self.error_generic_type_requires_type_arguments_at(
+                            &display_name,
                             required_count,
                             idx,
                         );
@@ -1461,5 +1480,22 @@ impl<'a> CheckerState<'a> {
         let body_type = self.get_type_of_symbol(sym_id);
         let type_params = self.get_type_params_for_symbol(sym_id);
         (body_type, type_params)
+    }
+
+    /// Format a generic type name with its type parameter names for TS2314 messages.
+    /// e.g., "Foo" + [T, U] → "Foo<T, U>"
+    pub(crate) fn format_generic_display_name_with_interner(
+        name: &str,
+        type_params: &[tsz_solver::TypeParamInfo],
+        types: &dyn tsz_solver::QueryDatabase,
+    ) -> String {
+        if type_params.is_empty() {
+            return name.to_string();
+        }
+        let param_names: Vec<String> = type_params
+            .iter()
+            .map(|p| types.resolve_atom(p.name))
+            .collect();
+        format!("{}<{}>", name, param_names.join(", "))
     }
 }

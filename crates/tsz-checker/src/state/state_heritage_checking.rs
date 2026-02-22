@@ -178,8 +178,14 @@ impl<'a> CheckerState<'a> {
                             if type_args.nodes.len() < required_count
                                 && let Some(name) = self.heritage_name_text(expr_idx)
                             {
-                                self.error_generic_type_requires_type_arguments_at(
+                                let type_params = self.get_type_params_for_symbol(heritage_sym);
+                                let display_name = Self::format_generic_display_name_with_interner(
                                     &name,
+                                    &type_params,
+                                    self.ctx.types,
+                                );
+                                self.error_generic_type_requires_type_arguments_at(
+                                    &display_name,
                                     required_count,
                                     type_idx,
                                 );
@@ -194,8 +200,14 @@ impl<'a> CheckerState<'a> {
                         && !(is_class_declaration && is_extends_clause)
                         && let Some(name) = self.heritage_name_text(expr_idx)
                     {
-                        self.error_generic_type_requires_type_arguments_at(
+                        let type_params = self.get_type_params_for_symbol(heritage_sym);
+                        let display_name = Self::format_generic_display_name_with_interner(
                             &name,
+                            &type_params,
+                            self.ctx.types,
+                        );
+                        self.error_generic_type_requires_type_arguments_at(
+                            &display_name,
                             required_count,
                             type_idx,
                         );
