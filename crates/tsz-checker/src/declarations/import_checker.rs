@@ -1185,12 +1185,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        mods.nodes.iter().any(|&mod_idx| {
-            self.ctx
-                .arena
-                .get(mod_idx)
-                .is_some_and(|mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
-        })
+        self.ctx
+            .arena
+            .has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
     }
 
     /// Check whether a node is nested inside a namespace declaration.

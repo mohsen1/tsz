@@ -680,7 +680,8 @@ impl<'a> Printer<'a> {
 
     /// Check if modifiers include the `declare` keyword
     pub(super) fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::DeclareKeyword as u16)
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     /// Check if a top-level statement is erased in JS emit (type-only, ambient, etc.).
@@ -867,12 +868,14 @@ impl<'a> Printer<'a> {
 
     /// Check if modifiers include the `export` keyword
     pub(super) fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
     }
 
     /// Check if modifiers include the `default` keyword
     pub(super) fn has_default_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::DefaultKeyword as u16)
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::DefaultKeyword)
     }
 
     /// Scan forward from `pos` past whitespace and comments to find the actual

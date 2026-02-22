@@ -132,16 +132,7 @@ impl<'a> CheckerState<'a> {
         modifiers: &Option<tsz_parser::parser::NodeList>,
         kind: SyntaxKind,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == kind as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.ctx.arena.has_modifier(modifiers, kind)
     }
 
     // =========================================================================

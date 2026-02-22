@@ -416,7 +416,10 @@ impl<'a> ES5ClassTransformer<'a> {
         let class_data = self.arena.get_class(class_node)?;
 
         // Skip ambient/declare classes
-        if has_declare_modifier(self.arena, &class_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return None;
         }
 
@@ -543,11 +546,17 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
                 let prop_data = self.arena.get_property_decl(member_node)?;
                 // Skip static properties
-                if has_static_modifier(self.arena, &prop_data.modifiers) {
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                {
                     return None;
                 }
                 // Skip abstract properties (they don't exist at runtime)
-                if has_abstract_modifier(self.arena, &prop_data.modifiers) {
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                {
                     return None;
                 }
                 // Skip private fields (they use WeakMap pattern)
@@ -555,11 +564,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     return None;
                 }
                 // Skip accessor fields (emitted as getter/setter pair + backing storage)
-                if has_modifier(
-                    self.arena,
-                    &prop_data.modifiers,
-                    SyntaxKind::AccessorKeyword as u16,
-                ) {
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                {
                     return None;
                 }
                 // Include if has initializer
@@ -1393,7 +1401,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
 
                 // Skip static methods
-                if has_static_modifier(self.arena, &method_data.modifiers) {
+                if self
+                    .arena
+                    .has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword)
+                {
                     continue;
                 }
 
@@ -1406,7 +1417,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 let params = self.extract_parameters(&method_data.parameters);
 
                 // Check if async method (not generator)
-                let is_async = has_async_modifier(self.arena, &method_data.modifiers)
+                let is_async = self
+                    .arena
+                    .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
                     && !method_data.asterisk_token;
 
                 // Capture body source range for single-line detection
@@ -1462,8 +1475,12 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Handle accessor (getter/setter) - combine pairs
                 if let Some(accessor_data) = self.arena.get_accessor(member_node) {
                     // Skip static/abstract/private (already filtered in first pass)
-                    if has_static_modifier(self.arena, &accessor_data.modifiers)
-                        || has_abstract_modifier(self.arena, &accessor_data.modifiers)
+                    if self
+                        .arena
+                        .has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword)
+                        || self
+                            .arena
+                            .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword)
                         || is_private_identifier(self.arena, accessor_data.name)
                     {
                         continue;
@@ -1548,8 +1565,12 @@ impl<'a> ES5ClassTransformer<'a> {
                 let Some(prop_data) = self.arena.get_property_decl(member_node) else {
                     continue;
                 };
-                if has_static_modifier(self.arena, &prop_data.modifiers)
-                    || has_abstract_modifier(self.arena, &prop_data.modifiers)
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
                     || is_private_identifier(self.arena, prop_data.name)
                 {
                     continue;
@@ -1709,22 +1730,28 @@ impl<'a> ES5ClassTransformer<'a> {
             };
             if m_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
                 if let Some(prop_data) = self.arena.get_property_decl(m_node) {
-                    return has_static_modifier(self.arena, &prop_data.modifiers)
-                        && !has_abstract_modifier(self.arena, &prop_data.modifiers)
+                    return self
+                        .arena
+                        .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
                         && !is_private_identifier(self.arena, prop_data.name)
-                        && !has_modifier(
-                            self.arena,
-                            &prop_data.modifiers,
-                            SyntaxKind::AccessorKeyword as u16,
-                        )
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
                         && prop_data.initializer.is_some();
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
                 || m_node.kind == syntax_kind_ext::SET_ACCESSOR)
                 && let Some(acc_data) = self.arena.get_accessor(m_node)
             {
-                return has_static_modifier(self.arena, &acc_data.modifiers)
-                    && !has_abstract_modifier(self.arena, &acc_data.modifiers)
+                return self
+                    .arena
+                    .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
+                    && !self
+                        .arena
+                        .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
                     && !is_private_identifier(self.arena, acc_data.name);
             }
             false
@@ -1750,7 +1777,10 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
 
                 // Only static methods
-                if !has_static_modifier(self.arena, &method_data.modifiers) {
+                if !self
+                    .arena
+                    .has_modifier(&method_data.modifiers, SyntaxKind::StaticKeyword)
+                {
                     continue;
                 }
 
@@ -1763,7 +1793,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 let params = self.extract_parameters(&method_data.parameters);
 
                 // Check if async method (not generator)
-                let is_async = has_async_modifier(self.arena, &method_data.modifiers)
+                let is_async = self
+                    .arena
+                    .has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword)
                     && !method_data.asterisk_token;
 
                 let method_body = if is_async {
@@ -1812,12 +1844,18 @@ impl<'a> ES5ClassTransformer<'a> {
                 };
 
                 // Only static properties
-                if !has_static_modifier(self.arena, &prop_data.modifiers) {
+                if !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                {
                     continue;
                 }
 
                 // Skip abstract properties (they don't exist at runtime)
-                if has_abstract_modifier(self.arena, &prop_data.modifiers) {
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                {
                     continue;
                 }
 
@@ -1826,11 +1864,10 @@ impl<'a> ES5ClassTransformer<'a> {
                     continue;
                 }
                 // Skip accessor fields - currently emitted via auto-accessor lowering
-                if has_modifier(
-                    self.arena,
-                    &prop_data.modifiers,
-                    SyntaxKind::AccessorKeyword as u16,
-                ) {
+                if self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                {
                     continue;
                 }
 
@@ -1886,10 +1923,14 @@ impl<'a> ES5ClassTransformer<'a> {
             {
                 // Handle static accessor - combine pairs
                 if let Some(accessor_data) = self.arena.get_accessor(member_node)
-                    && has_static_modifier(self.arena, &accessor_data.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword)
                 {
                     // Skip abstract/private
-                    if has_abstract_modifier(self.arena, &accessor_data.modifiers)
+                    if self
+                        .arena
+                        .has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword)
                         || is_private_identifier(self.arena, accessor_data.name)
                     {
                         continue;
@@ -2005,35 +2046,6 @@ fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     }
 }
 
-fn has_modifier(arena: &NodeArena, modifiers: &Option<NodeList>, kind: u16) -> bool {
-    if let Some(mods) = modifiers {
-        for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx)
-                && mod_node.kind == kind
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn has_declare_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::DeclareKeyword as u16)
-}
-
-fn has_static_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::StaticKeyword as u16)
-}
-
-fn has_abstract_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::AbstractKeyword as u16)
-}
-
-fn has_async_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::AsyncKeyword as u16)
-}
-
 /// Collect accessor pairs (getter/setter) from class members.
 /// When `collect_static` is true, collects static accessors; otherwise collects instance accessors.
 fn collect_accessor_pairs(
@@ -2054,12 +2066,12 @@ fn collect_accessor_pairs(
             && let Some(accessor_data) = arena.get_accessor(member_node)
         {
             // Check static modifier matches what we're collecting
-            let is_static = has_static_modifier(arena, &accessor_data.modifiers);
+            let is_static = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
             if is_static != collect_static {
                 continue;
             }
             // Skip abstract
-            if has_abstract_modifier(arena, &accessor_data.modifiers) {
+            if arena.has_modifier(&accessor_data.modifiers, SyntaxKind::AbstractKeyword) {
                 continue;
             }
             // Skip private
@@ -2105,20 +2117,16 @@ fn collect_auto_accessor_fields(
         let Some(prop_data) = arena.get_property_decl(member_node) else {
             continue;
         };
-        if has_abstract_modifier(arena, &prop_data.modifiers) {
+        if arena.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword) {
             continue;
         }
         if is_private_identifier(arena, prop_data.name) {
             continue;
         }
-        if has_static_modifier(arena, &prop_data.modifiers) {
+        if arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword) {
             continue;
         }
-        let has_accessor = has_modifier(
-            arena,
-            &prop_data.modifiers,
-            SyntaxKind::AccessorKeyword as u16,
-        );
+        let has_accessor = arena.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword);
         if !has_accessor {
             continue;
         }
@@ -2150,23 +2158,10 @@ fn collect_auto_accessor_fields(
 }
 
 fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    if let Some(mods) = modifiers {
-        for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx) {
-                match mod_node.kind {
-                    k if k == SyntaxKind::PublicKeyword as u16
-                        || k == SyntaxKind::PrivateKeyword as u16
-                        || k == SyntaxKind::ProtectedKeyword as u16
-                        || k == SyntaxKind::ReadonlyKeyword as u16 =>
-                    {
-                        return true;
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-    false
+    arena.has_modifier(modifiers, SyntaxKind::PublicKeyword)
+        || arena.has_modifier(modifiers, SyntaxKind::PrivateKeyword)
+        || arena.has_modifier(modifiers, SyntaxKind::ProtectedKeyword)
+        || arena.has_modifier(modifiers, SyntaxKind::ReadonlyKeyword)
 }
 
 // =============================================================================

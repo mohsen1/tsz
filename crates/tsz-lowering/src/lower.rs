@@ -1702,18 +1702,8 @@ impl<'a> TypeLowering<'a> {
 
     /// Check if a modifiers list contains a readonly keyword
     fn has_readonly_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.arena
+            .has_modifier(modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword)
     }
 
     /// Get visibility from modifiers list
@@ -1739,17 +1729,7 @@ impl<'a> TypeLowering<'a> {
 
     /// Check if a modifiers list contains a const keyword (for const type parameters)
     fn has_const_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ConstKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.arena
+            .has_modifier(modifiers, tsz_scanner::SyntaxKind::ConstKeyword)
     }
 }

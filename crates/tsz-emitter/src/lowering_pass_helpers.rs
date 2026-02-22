@@ -35,54 +35,25 @@ impl<'a> LoweringPass<'a> {
 
     /// Check if a modifier list contains the 'declare' keyword
     pub(super) fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        let Some(mods) = modifiers else {
-            return false;
-        };
-
-        mods.nodes.iter().any(|&mod_idx| {
-            self.arena
-                .get(mod_idx)
-                .is_some_and(|n| n.kind == SyntaxKind::DeclareKeyword as u16)
-        })
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     /// Check if a modifier list contains the 'const' keyword
     pub(super) fn has_const_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        let Some(mods) = modifiers else {
-            return false;
-        };
-
-        mods.nodes.iter().any(|&mod_idx| {
-            self.arena
-                .get(mod_idx)
-                .is_some_and(|n| n.kind == SyntaxKind::ConstKeyword as u16)
-        })
+        self.arena.has_modifier(modifiers, SyntaxKind::ConstKeyword)
     }
 
     /// Check if a modifier list contains the 'export' keyword
     pub(super) fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        let Some(mods) = modifiers else {
-            return false;
-        };
-
-        mods.nodes.iter().any(|&mod_idx| {
-            self.arena
-                .get(mod_idx)
-                .is_some_and(|n| n.kind == SyntaxKind::ExportKeyword as u16)
-        })
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
     }
 
     /// Check if a modifier list contains the 'default' keyword
     pub(super) fn has_default_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        let Some(mods) = modifiers else {
-            return false;
-        };
-
-        mods.nodes.iter().any(|&mod_idx| {
-            self.arena
-                .get(mod_idx)
-                .is_some_and(|n| n.kind == SyntaxKind::DefaultKeyword as u16)
-        })
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::DefaultKeyword)
     }
 
     /// Check if a class member (method, property, accessor) is static

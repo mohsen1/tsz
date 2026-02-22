@@ -1316,17 +1316,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
     /// Check if a modifier list contains the readonly modifier.
     fn has_readonly_modifier(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
-        use tsz_scanner::SyntaxKind;
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ReadonlyKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.ctx
+            .arena
+            .has_modifier(modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword)
     }
 
     /// Get the context reference (for read-only access).
