@@ -67,8 +67,11 @@ impl ParserState {
             if self.look_ahead_is_import_equals() {
                 return self.parse_export_import_equals(start_pos);
             }
-            // ES6 import with export modifier — emit TS1191 and parse as import
-            self.parse_error_at_current_token(
+            // ES6 import with export modifier — emit TS1191 at the `export` keyword
+            // (tsc points the error at the modifier, not the `import` keyword)
+            self.parse_error_at(
+                start_pos,
+                6, // length of "export"
                 "An import declaration cannot have modifiers.",
                 diagnostic_codes::AN_IMPORT_DECLARATION_CANNOT_HAVE_MODIFIERS,
             );
