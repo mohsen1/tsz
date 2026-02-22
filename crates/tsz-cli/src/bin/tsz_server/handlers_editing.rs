@@ -822,7 +822,6 @@ impl Server {
                 // Only strip if the paren wraps the entire expression
                 if let Some(cp) = close_pos {
                     let after_close: String = chars[cp + 1..].iter().collect();
-                    let _after_trimmed = after_close.trim();
                     // Check if paren wraps the expression:
                     // what follows should be end-of-statement or another closing paren
                     let after_on_line = after_close.split('\n').next().unwrap_or("").trim();
@@ -1089,7 +1088,6 @@ impl Server {
             let scan_end = target_line_idx.min(lines.len());
             let mut depth: i32 = 0;
             let mut in_block_comment = false;
-            let _in_single_line_string = false;
 
             for line_text in lines.iter().take(scan_end) {
                 let bytes = line_text.as_bytes();
@@ -1378,7 +1376,6 @@ impl Server {
 
             // Check if selection contains only comments and whitespace
             let only_comments_and_ws = if !overlapping.is_empty() && sel_start != sel_end {
-                let _sel_bytes = source_text.get(sel_start..sel_end).map(str::as_bytes);
                 let mut all_covered = true;
                 let mut pos = sel_start;
                 for &(cs, ce) in &overlapping {

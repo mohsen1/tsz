@@ -268,7 +268,6 @@ impl ChangeTracker {
         current_files: &[PathBuf],
     ) -> Result<()> {
         let current_set: FxHashSet<_> = current_files.iter().collect();
-        let _previous_set: FxHashSet<_> = build_info.file_infos.keys().map(PathBuf::from).collect();
 
         // Find new files
         for file in current_files {
@@ -348,7 +347,6 @@ impl ChangeTracker {
 
         // Compute changes using relative paths, but store absolute paths in results
         let current_set: FxHashSet<_> = current_files_relative.iter().collect();
-        let _previous_set: FxHashSet<_> = build_info.file_infos.keys().map(PathBuf::from).collect();
 
         // Find new files
         for (i, file_rel) in current_files_relative.iter().enumerate() {

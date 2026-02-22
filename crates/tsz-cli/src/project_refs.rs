@@ -569,8 +569,6 @@ pub fn resolve_cross_project_import(
     from_project: ProjectId,
     import_specifier: &str,
 ) -> Option<PathBuf> {
-    let _project = graph.get_project(from_project)?;
-
     // Check each referenced project
     for &ref_id in graph.get_references(from_project) {
         let ref_project = graph.get_project(ref_id)?;
