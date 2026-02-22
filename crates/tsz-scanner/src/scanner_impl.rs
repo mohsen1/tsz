@@ -2040,9 +2040,12 @@ impl ScannerState {
 
     /// Re-scan the current token as a JSX token.
     /// Used when the parser enters JSX context and needs to rescan.
+    /// Must reset to `full_start_pos` (before trivia), not `token_start` (after trivia),
+    /// so that JSX text nodes include leading whitespace/newlines.
+    /// Matches tsc: `pos = tokenStart = fullStartPos;`
     #[wasm_bindgen(js_name = reScanJsxToken)]
     pub fn re_scan_jsx_token(&mut self, allow_multiline_jsx_text: bool) -> SyntaxKind {
-        self.pos = self.token_start;
+        self.pos = self.full_start_pos;
         self.scan_jsx_token(allow_multiline_jsx_text)
     }
 
@@ -2050,6 +2053,9 @@ impl ScannerState {
     fn scan_jsx_token(&mut self, allow_multiline_jsx_text: bool) -> SyntaxKind {
         self.full_start_pos = self.pos;
         self.token_start = self.pos;
+        // Clear stale atom from any prior identifier scan so get_token_value_ref()
+        // returns the freshly scanned JSX text, not the old interned identifier.
+        self.token_atom = Atom::NONE;
 
         if self.pos >= self.end {
             self.token = SyntaxKind::EndOfFileToken;
