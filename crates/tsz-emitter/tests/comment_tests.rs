@@ -22,8 +22,7 @@ fn test_comment_between_call_arguments() {
     // The comment should be preserved before the string literal
     assert!(
         output.contains("/*comment*/"),
-        "Comment should be preserved in output: {}",
-        output
+        "Comment should be preserved in output: {output}"
     );
 }
 
