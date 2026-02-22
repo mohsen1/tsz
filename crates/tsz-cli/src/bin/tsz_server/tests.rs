@@ -322,6 +322,89 @@ fn test_completion_info_member_excludes_private_class_property() {
 }
 
 #[test]
+fn test_completion_entry_details_auto_import_omits_documentation() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export function foo() {}\n".to_string(),
+    );
+    server
+        .open_files
+        .insert("/b.ts".to_string(), "fo;\n".to_string());
+
+    let req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/b.ts",
+            "line": 1,
+            "offset": 3,
+            "entryNames": [{ "name": "foo", "source": "./a" }],
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    assert!(
+        first.get("documentation").is_none(),
+        "auto-import completion details should omit documentation to match tsserver parity"
+    );
+}
+
+#[test]
+fn test_completion_entry_details_auto_import_uses_update_description_when_import_exists() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/a.ts".to_string(),
+        "export const existing = 1;\nexport function foo() {}\n".to_string(),
+    );
+    server.open_files.insert(
+        "/b.ts".to_string(),
+        "import { existing } from \"./a\";\nfo;\n".to_string(),
+    );
+
+    let req = make_request(
+        "completionEntryDetails",
+        serde_json::json!({
+            "file": "/b.ts",
+            "line": 2,
+            "offset": 3,
+            "entryNames": [{ "name": "foo", "source": "./a" }],
+            "preferences": { "includeCompletionsForModuleExports": true }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("completionEntryDetails should return a body");
+    let details = body
+        .as_array()
+        .expect("completionEntryDetails should return an array");
+    let first = details
+        .first()
+        .expect("completionEntryDetails should include one entry");
+    let code_actions = first
+        .get("codeActions")
+        .and_then(serde_json::Value::as_array)
+        .expect("auto-import completion should include code actions");
+    let description = code_actions
+        .first()
+        .and_then(|action| action.get("description"))
+        .and_then(serde_json::Value::as_str)
+        .expect("code action should include a description");
+    assert_eq!(description, "Update import from \"./a\"");
+}
+
+#[test]
 fn test_quickinfo_uses_hover_info_structured_fields() {
     // When HoverInfo returns structured kind/kindModifiers/displayString/
     // documentation fields, they should be used in the response instead of
