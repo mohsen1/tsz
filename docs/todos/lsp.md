@@ -110,3 +110,16 @@ Investigated but punted:
   Reason: requires dedicated static-block callable/container modeling parity in call hierarchy, beyond this constructor-target fix.
 - `TypeScript/tests/cases/fourslash/callHierarchyClassStaticBlock2.ts`: still diverges from baseline call hierarchy shape/spans.
   Reason: appears tied to the same static-block modeling gap and needs a broader static-block follow-up.
+
+## 2026-02-22 (quick info contextual typing follow-up)
+
+Completed in this pass:
+- Improved `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` hover parity for:
+  - class property declaration quick info (`C1T5.foo`) now using explicit function type annotation instead of `any`.
+  - contextually typed function-expression parameter inside class property initializer (`function(i)` -> `(parameter) i: number`).
+  - namespace-exported variable quick info container formatting (`var C2T5.foo: ...`).
+- Added focused unit tests in `crates/tsz-lsp/tests/hover_tests.rs` for the above hover paths.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (remaining failure now at marker `25`).
+  Reason: remaining gap is broader contextual typing for function parameters nested in array/object literal contextual signatures; needs additional contextual-type source discovery beyond property/variable declaration and type-assertion parents.
