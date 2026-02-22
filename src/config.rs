@@ -997,7 +997,16 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
                     matches!(
                         mod_normalized.as_str(),
-                        "preserve" | "es2015" | "es6" | "es2020" | "es2022" | "esnext"
+                        "preserve"
+                            | "es2015"
+                            | "es6"
+                            | "es2020"
+                            | "es2022"
+                            | "esnext"
+                            | "node16"
+                            | "node18"
+                            | "node20"
+                            | "nodenext"
                     )
                 } else {
                     // module not set — default depends on target; ES2015+ targets
@@ -2644,6 +2653,39 @@ mod tests {
         assert!(
             !codes.contains(&5095),
             "Should NOT emit TS5095 for bundler+preserve, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_node16() {
+        let source = r#"{"compilerOptions":{"module":"node16","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+node16, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_node18() {
+        let source = r#"{"compilerOptions":{"module":"node18","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+node18, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_nodenext() {
+        let source = r#"{"compilerOptions":{"module":"nodenext","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+nodenext, got: {codes:?}"
         );
     }
 
