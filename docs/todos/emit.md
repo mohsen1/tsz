@@ -3,6 +3,17 @@
 ## Pattern Analysis (JS-only mode, baseline 9223/13623 = 67.7%)
 
 ### Fixed This Session
+- **Namespace body phantom blank line for zero-output statements** (+4 tests):
+  `emit_namespace_body_statements()` in `declarations.rs` unconditionally called
+  `write_line()` in the `else` branch for non-erased statements, even when `emit()`
+  produced no output. Type-only import-equals aliases like `import T = M1.I;` pass
+  `is_erased_statement()` (they might have runtime value), but `emit_import_equals_declaration_inner()`
+  returns early without writing anything when `import_decl_has_runtime_value()` is false.
+  Fixed by wrapping the trailing-comment + write_line logic in a `before_len` guard,
+  matching the pattern used in `emit_block()` and the EXPORT_DECLARATION branch.
+  Tests fixed: `classImplementsImportedInterface` and 3 others with similar patterns.
+
+### Previously Fixed (Prior Session)
 - **esModuleInterop gating for CJS import helpers** (architectural fix, +0 net tests):
   `__importStar`, `__importDefault`, and `__createBinding` helpers were emitted
   unconditionally for all CJS imports. Now properly gated on `esModuleInterop` flag:
@@ -100,3 +111,18 @@
 17. **Enum constant folding/inlining** (~5 tests): `foo(E.A)` should emit `foo(0 /* E.A */)`
     when `E.A` is a const-evaluable enum member. See `assignmentNonObjectTypeConstraints`,
     `blockScopedEnumVariablesUseBeforeDef*`. Requires solver integration for enum evaluation.
+
+18. **Extra blank line after class static properties** (~2 tests):
+    `amdImportNotAsPrimaryExpression` and `classInConvertedLoopES5(target=es2015)` have
+    an extra blank line after `ClassName.staticProp = value;` before the next statement.
+    This is a different code path from the namespace body fix — it occurs in the class
+    declaration's static field initializer emission (`declarations.rs:1010-1051`) where
+    `write_line()` after the last static field interacts with the `emit_source_file()`
+    loop's newline logic. The AMD variant also involves the module wrapper body path.
+    Needs careful investigation of the newline state after class emit completes.
+
+19. **Extra `"use strict"` for AMD/outFile modules** (~9 tests): AMD modules emit
+    `"use strict"` at the top level before `define()`, but it should only appear inside
+    the callback. See `amdDeclarationEmitNoExtraDeclare`. The `emit_source_file()` prologue
+    emits `"use strict"` before the AMD wrapper gets a chance to suppress it. Needs the
+    `"use strict"` emission to be aware of the wrapping module format.
