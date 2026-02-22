@@ -157,6 +157,45 @@ fn compile_and_get_diagnostics_with_lib_and_options(
 }
 
 #[test]
+fn test_deeppartial_optional_chain_mixed_property_types_remain_distinct() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type DeepPartial<T> = T extends object ? { [P in keyof T]?: DeepPartial<T[P]> } : T;
+type DeepInput<T> = DeepPartial<T>;
+
+interface RetryOptions {
+    timeout: number;
+    retries: number;
+    nested: {
+        transport: {
+            backoff: {
+                base: number;
+                max: number;
+                jitter: number;
+            };
+        };
+        flags: {
+            fast: boolean;
+            safe: boolean;
+        };
+    };
+}
+
+declare const options: DeepInput<RetryOptions> | undefined;
+
+const base: number = options?.nested?.transport?.backoff?.base ?? 10;
+const safe: boolean = options?.nested?.flags?.safe ?? false;
+const bad: number = options?.nested?.flags?.safe ?? false;
+        "#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for boolean-to-number assignment.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_constrained_type_param_no_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
