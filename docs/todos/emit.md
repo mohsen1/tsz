@@ -626,3 +626,22 @@
     Comments before closing `}` can be misplaced to after the `else` keyword instead.
     See `commentLeadingCloseBrace`. The block emission's trailing comment scanner
     attaches the comment to the wrong boundary when `}` is followed by `else`.
+
+22. **`"use strict"` for .js input files** (~31 tests): When the source is a `.js` file and
+    `alwaysStrict` is set, tsc's behavior is nuanced — it sometimes omits `"use strict"` if
+    the file already has it, and sometimes adds it based on module vs script context. A naive
+    `is_js_input` check to skip injection caused 101 regressions. Needs careful study of tsc's
+    `shouldEmitUseStrict()` logic which considers `isExternalModule`, `compilerOptions.noImplicitUseStrict`,
+    and the existing presence of `"use strict"` in the source. Not a simple flag.
+
+23. **Empty block `{ }` vs `{}` formatting** (~54 tests): tsc always emits `{ }` (with space)
+    for empty blocks in `.ts` output, even when the source uses `{}` (e.g., `() => {}`
+    becomes `() => { }`). Our emitter already uses `{ }` consistently, which is correct for
+    `.ts` files. The 54 remaining failures are caused by other differences in the same tests
+    (comments, decorators, etc.), not by empty block formatting itself. No action needed on
+    this specific pattern.
+
+24. **Import elision / `export {};`** (~66 tests): Many test diffs show our emitter producing
+    `export {};` when tsc omits it, or vice versa. This is an import elision problem that
+    requires checker integration to determine which imports are type-only and should be elided.
+    Not solvable in the emitter alone.
