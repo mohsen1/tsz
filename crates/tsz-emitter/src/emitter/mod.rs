@@ -54,6 +54,7 @@ mod helpers;
 mod jsx;
 mod literals;
 mod module_emission;
+mod module_emission_imports;
 mod module_wrapper;
 mod special_expressions;
 mod statements;
