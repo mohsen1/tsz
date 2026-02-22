@@ -4,7 +4,6 @@ use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
-use tsz_binder::symbol_flags;
 use tsz_common::interner::Atom;
 use tsz_lowering::TypeLowering;
 use tsz_parser::parser::NodeIndex;
@@ -706,32 +705,16 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // Get the base class instance type
-                // IMPORTANT: Use class_instance_type_from_symbol for class symbols to get the
-                // instance type (properties, methods), NOT the constructor type which is what
-                // get_type_of_symbol returns for classes.
-                //
-                // NOTE: We use `base_sym_id` (resolved from heritage clause via
-                // `resolve_heritage_symbol`) rather than `get_node_symbol(base_class_idx)`
-                // because `export default class` overwrites the node-symbol mapping to
-                // point at the "default" alias symbol instead of the class symbol.
-                // Using `base_sym_id` ensures we always get the actual class symbol.
-                let base_instance_type = {
-                    let base_sym = base_sym_id;
-                    if let Some(base_symbol) = self.ctx.binder.get_symbol(base_sym) {
-                        if base_symbol.flags & symbol_flags::CLASS != 0 {
-                            // Use class_instance_type_from_symbol directly to avoid redundant
-                            // constructor-type computation on hot inheritance paths.
-                            self.class_instance_type_from_symbol(base_sym)
-                                .unwrap_or(TypeId::ANY)
-                        } else {
-                            // For non-class symbols (interfaces, etc.), use get_type_of_symbol
-                            self.get_type_of_symbol(base_sym)
-                        }
-                    } else {
-                        TypeId::ANY
-                    }
-                };
+                // Get the base class instance type.
+                // We already resolved a concrete class declaration (`base_class_idx`) above, so
+                // we can read through the declaration cache directly and avoid an extra symbol
+                // resolution round trip on this hot inheritance path.
+                let base_instance_type = self
+                    .ctx
+                    .class_instance_type_cache
+                    .get(&base_class_idx)
+                    .copied()
+                    .unwrap_or_else(|| self.get_class_instance_type(base_class_idx, base_class));
                 let base_instance_type = self.resolve_lazy_type(base_instance_type);
                 let base_instance_type = if can_skip_base_instantiation(
                     base_class

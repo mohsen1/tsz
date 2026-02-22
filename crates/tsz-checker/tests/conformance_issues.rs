@@ -157,6 +157,34 @@ fn compile_and_get_diagnostics_with_lib_and_options(
 }
 
 #[test]
+fn test_class_extends_aliased_base_preserves_instance_members() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> {
+    value!: T;
+}
+
+class Derived extends Base<string> {
+    getValue() {
+        return this.value;
+    }
+}
+
+const value: string = new Derived().getValue();
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected no non-lib diagnostics for class inheritance through aliased base symbol, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_deeppartial_optional_chain_mixed_property_types_remain_distinct() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
