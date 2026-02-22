@@ -2797,8 +2797,7 @@ impl Project {
                 let Some(config_text) = config_text else {
                     continue;
                 };
-                let Ok(config_json) = serde_json::from_str::<serde_json::Value>(&config_text)
-                else {
+                let Some(config_json) = parse_typescript_config_json(&config_text) else {
                     continue;
                 };
                 let Some(compiler_options) = config_json
@@ -2957,8 +2956,7 @@ impl Project {
                 continue;
             };
 
-            let Some(tsconfig) = serde_json::from_str::<serde_json::Value>(&tsconfig_text).ok()
-            else {
+            let Some(tsconfig) = parse_typescript_config_json(&tsconfig_text) else {
                 return Vec::new();
             };
             let Some(compiler_options) = tsconfig
@@ -3009,6 +3007,10 @@ impl Project {
     fn relative_import_style(&self, from_file: &str) -> RelativeImportStyle {
         if self.import_module_specifier_ending.as_deref() == Some("js") {
             return RelativeImportStyle::Ts;
+        }
+
+        if from_file.ends_with(".mts") {
+            return RelativeImportStyle::Minimal;
         }
 
         let Some(file) = self.files.get(from_file) else {
@@ -3498,6 +3500,12 @@ fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+fn parse_typescript_config_json(text: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(text)
+        .ok()
+        .or_else(|| json5::from_str::<serde_json::Value>(text).ok())
+}
+
 fn compare_module_specifier_candidates(a: &String, b: &String) -> Ordering {
     let a_segments = a.matches('/').count();
     let b_segments = b.matches('/').count();
@@ -3902,6 +3910,50 @@ mod tests {
     }
 
     #[test]
+    fn auto_import_prefix_candidates_include_barrel_and_direct_path_variants() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "paths": {
+      "~/*": ["src/*"]
+    }
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file("/src/dirA/thing1A.ts".to_string(), "Thing".to_string());
+        project.set_file(
+            "/src/dirB/index.ts".to_string(),
+            "export * from \"./thing1B\";\nexport * from \"./thing2B\";\n".to_string(),
+        );
+        project.set_file(
+            "/src/dirB/thing1B.ts".to_string(),
+            "export class Thing1B {}".to_string(),
+        );
+        project.set_file(
+            "/src/dirB/thing2B.ts".to_string(),
+            "export class Thing2B {}".to_string(),
+        );
+
+        let mut thing2_specs: Vec<String> = project
+            .get_import_candidates_for_prefix("/src/dirA/thing1A.ts", "Thing")
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "Thing2B")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+        thing2_specs.sort();
+        thing2_specs.dedup();
+
+        assert_eq!(
+            thing2_specs,
+            vec!["~/dirB".to_string(), "~/dirB/thing2B".to_string()]
+        );
+    }
+
+    #[test]
     fn jsconfig_paths_mapping_outranks_relative_for_shortest_preference() {
         let mut project = Project::new();
         project.set_file(
@@ -3909,6 +3961,41 @@ mod tests {
             r#"{
   "compilerOptions": {
     "checkJs": true,
+    "paths": {
+      "package1/*": ["./*"],
+      "package2/*": ["../package2/*"]
+    },
+    "baseUrl": "."
+  }
+}"#
+            .to_string(),
+        );
+        project.set_file("/package1/file1.js".to_string(), "bar".to_string());
+        project.set_file(
+            "/package2/file1.js".to_string(),
+            "export const bar = 0;".to_string(),
+        );
+
+        assert_eq!(
+            project.auto_import_module_specifiers_from_files(
+                "/package1/file1.js",
+                "/package2/file1.js"
+            ),
+            vec![
+                "package2/file1".to_string(),
+                "../package2/file1.js".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn jsconfig_jsonc_unquoted_keys_are_supported_for_paths_mapping() {
+        let mut project = Project::new();
+        project.set_file(
+            "/package1/jsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    checkJs: true,
     "paths": {
       "package1/*": ["./*"],
       "package2/*": ["../package2/*"]
@@ -4099,6 +4186,22 @@ mod tests {
             specs.iter().any(|spec| spec == "./matrix.js"),
             "expected './matrix.js' auto-import candidate, got {specs:?}"
         );
+    }
+
+    #[test]
+    fn mts_auto_import_sources_stay_extensionless_even_with_js_imports() {
+        let mut project = Project::new();
+        project.set_file(
+            "/mod.ts".to_string(),
+            "export interface I {}\nexport class C {}\n".to_string(),
+        );
+        project.set_file(
+            "/a.mts".to_string(),
+            "import type { I } from \"./mod.js\";\nconst x: I = new C();\n".to_string(),
+        );
+
+        let specifiers = project.auto_import_module_specifiers_from_files("/a.mts", "/mod.ts");
+        assert_eq!(specifiers, vec!["./mod".to_string()]);
     }
 
     #[test]

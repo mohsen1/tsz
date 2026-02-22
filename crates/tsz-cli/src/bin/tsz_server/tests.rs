@@ -469,6 +469,66 @@ fn test_completion_entry_details_auto_import_uses_update_description_when_import
 }
 
 #[test]
+fn test_auto_import_description_prefers_module_specifier_from_edit_text() {
+    let edit = tsz::lsp::rename::TextEdit {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 0),
+        ),
+        new_text: "import type { I } from \"./mod.js\";\n\n".to_string(),
+    };
+    let description = Server::auto_import_code_action_description(
+        "const x: I;",
+        "/a.mts",
+        Some("./mod"),
+        &[edit],
+        "I",
+    );
+    assert_eq!(description, "Add import from \"./mod.js\"");
+}
+
+#[test]
+fn test_auto_import_description_mts_fallback_source_adds_js_extension() {
+    let edit = tsz::lsp::rename::TextEdit {
+        range: tsz::lsp::position::Range::new(
+            tsz::lsp::position::Position::new(0, 0),
+            tsz::lsp::position::Position::new(0, 0),
+        ),
+        new_text: "import type { I }".to_string(),
+    };
+    let description = Server::auto_import_code_action_description(
+        "const x: I;",
+        "/a.mts",
+        Some("./mod"),
+        &[edit],
+        "I",
+    );
+    assert_eq!(description, "Add import from \"./mod.js\"");
+}
+
+#[test]
+fn test_normalize_mts_auto_import_edit_text_uses_import_type_and_js_extension() {
+    let normalized = Server::normalize_mts_auto_import_edit_text(
+        "/a.mts",
+        tsz::lsp::completions::CompletionItemKind::Interface,
+        "",
+        "import { I } from \"./mod\";\n\n",
+    );
+    assert_eq!(normalized, "import type { I } from \"./mod.js\";\n\n");
+}
+
+#[test]
+fn test_normalize_mts_auto_import_edit_text_preserves_existing_type_only_members() {
+    let normalized = Server::normalize_mts_auto_import_edit_text(
+        "/a.mts",
+        tsz::lsp::completions::CompletionItemKind::Class,
+        "import type { I } from \"./mod.js\";\n\nconst x: I = new C",
+        "import { C, I } from \"./mod\";\n\n",
+    );
+    assert_eq!(normalized, "import { C, type I } from \"./mod.js\";\n\n");
+}
+
+#[test]
 fn test_get_code_fixes_uses_configured_auto_import_specifier_exclude_regexes() {
     let mut server = make_server();
     server.open_files.insert(
@@ -583,6 +643,104 @@ fn test_get_code_fixes_uses_configured_auto_import_specifier_exclude_regexes() {
         }))
         .is_empty()
     );
+}
+
+#[test]
+fn test_get_code_fixes_supports_jsonc_jsconfig_paths_shortest_preference() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/package1/jsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    checkJs: true,
+    "paths": {
+      "package1/*": ["./*"],
+      "package2/*": ["../package2/*"]
+    },
+    "baseUrl": "."
+  },
+  "include": [
+    ".",
+    "../package2"
+  ]
+}"#
+        .to_string(),
+    );
+    server
+        .open_files
+        .insert("/package1/file1.js".to_string(), "bar".to_string());
+    server.open_files.insert(
+        "/package2/file1.js".to_string(),
+        "export const bar = 0;".to_string(),
+    );
+
+    let configure_req = make_request(
+        "configure",
+        serde_json::json!({
+            "preferences": {
+                "includeCompletionsForModuleExports": true,
+                "importModuleSpecifierPreference": "shortest"
+            }
+        }),
+    );
+    let configure_resp = server.handle_tsserver_request(configure_req);
+    assert!(configure_resp.success);
+
+    let fixes_req = make_request(
+        "getCodeFixes",
+        serde_json::json!({
+            "file": "/package1/file1.js",
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 4,
+            "errorCodes": [2304]
+        }),
+    );
+    let fixes_resp = server.handle_tsserver_request(fixes_req);
+    assert!(fixes_resp.success);
+
+    let fixes = fixes_resp
+        .body
+        .expect("getCodeFixes should return a body")
+        .as_array()
+        .expect("getCodeFixes body should be an array")
+        .clone();
+
+    let mut specifiers = Vec::new();
+    for fix in fixes {
+        if fix.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+            continue;
+        }
+        let Some(changes) = fix.get("changes").and_then(serde_json::Value::as_array) else {
+            continue;
+        };
+        for change in changes {
+            let Some(text_changes) = change
+                .get("textChanges")
+                .and_then(serde_json::Value::as_array)
+            else {
+                continue;
+            };
+            for text_change in text_changes {
+                let Some(new_text) = text_change
+                    .get("newText")
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                if let Some(capture) = new_text
+                    .split("from ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(['"', '\'']).nth(1))
+                {
+                    specifiers.push(capture.to_string());
+                }
+            }
+        }
+    }
+
+    assert_eq!(specifiers, vec!["package2/file1".to_string()]);
 }
 
 #[test]

@@ -11,6 +11,9 @@ Completed in this pass:
 - Added focused hover unit test in `crates/tsz-lsp/tests/hover_tests.rs` for contextual parameter quick info (`(parameter) bb: number`).
 - Fixed tsserver `completionInfo` member-entry selection to prefer provider member completions over project-level fallback entries, avoiding private class member leakage (`basicClassMembers`).
 - Added focused completion regression tests in `crates/tsz-cli/src/bin/tsz_server/tests.rs` and `crates/tsz-lsp/tests/completions_tests.rs` for private constructor-parameter properties.
+- Fixed `autoImportPaths.ts` import-fix parity by accepting JSONC-style `jsconfig.json` (including unquoted keys) in module-specifier config parsing.
+- Fixed completion ordering parity for re-export/direct duplicate symbol names so barrel-style sources win when expected (`autoImportPathsAliasesAndBarrels.ts` `Thing2B`) without regressing same-directory direct imports (`Thing2A`).
+- Added focused unit tests for the above in `crates/tsz-lsp/src/project_operations.rs`, `crates/tsz-lsp/tests/project_tests.rs`, and `crates/tsz-cli/src/bin/tsz_server/tests.rs`.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: missing class member snippet completion `execActionWithCount`.
@@ -25,10 +28,6 @@ Investigated but punted:
   Reason: requires deeper tsserver-parity work on completion global tables and lib-sensitive keyword/global population beyond this targeted `getCombinedCodeFix` import-merge fix.
 - `TypeScript/tests/cases/fourslash/autoImportSpecifierExcludeRegexes3.ts`: import-fix module-specifier ordering remains reversed (`pkg/utils` before `pkg`).
   Reason: ordering appears to be finalized in a different post-processing layer than `CodeActionProvider` merge ordering and needs deeper trace through tsserver bridge code-fix result shaping.
-- `TypeScript/tests/cases/fourslash/autoImportPaths.ts`: import-fix still prefers relative `../package2/file1.js` over `paths` alias `package2/file1`.
-  Reason: module-specifier preference used by this import-fix path appears to be decided outside `path_mapping_specifiers_from_files`; likely requires tracing preference propagation from fourslash/user options into candidate selection.
-- `TypeScript/tests/cases/fourslash/autoImportPathsAliasesAndBarrels.ts`: completion for `Thing2B` still prefers `~/dirB/thing2B` instead of barrel `~/dirB`.
-  Reason: needs deeper re-export-aware completion candidate ranking that preserves existing re-export behavior (naive shortest-path dedupe caused regressions in existing re-export tests).
 - `TypeScript/tests/cases/fourslash/autoImportPathsNodeModules.ts`: import-fix module specifier mismatch persists for `@woltlab/wcf` path-mapped node_modules target.
   Reason: likely requires tracing interaction between node_modules package-specifier logic and `paths` wildcard resolution in this mixed config shape.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: missing `parent` class-member snippet completion in export-equals/default-merged class hierarchy.
@@ -37,6 +36,10 @@ Investigated but punted:
   Reason: tracked through tsserver-side import-fix shaping and added local handler experiments, but fourslash bridge path still fans out multiple import candidates; requires deeper bridge/request tracing and likely completion/code-fix pipeline alignment rather than a small isolated patch.
 - `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: still returns `Expected 'isNewIdentifierLocation' to be false, got true`.
   Reason: quick tsserver-side flag override caused regressions in other auto-import completion tests (`isNewIdentifierLocation` expected true), so the robust fix needs context-sensitive parity logic in completion source selection.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimTypeOnly1.ts`: still fails on `verifyFileContent` after completion code action application in `/a.mts`.
+  Reason: bridging parity gap between completion `source` (`./mod`) and emitted edit text (`import type` + `.js` specifier + mixed `type` named imports) requires a deeper fix in auto-import edit synthesis, not just tsserver response shaping.
+- `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: now intermittently reproduces as missing completion `ts` when run in isolation.
+  Reason: likely tied to broader completion candidate gating/ranking in type-only contexts under `verbatimModuleSyntax` + `moduleResolution: bundler`; needs end-to-end completion pipeline trace.
 - `TypeScript/tests/cases/fourslash/alignmentAfterFormattingOnMultilineExpressionAndParametersList.ts`: still returns `Marker "1" has been invalidated by unrecoverable edits to the file`.
   Reason: requires a dedicated tsserver-parity range-format edit strategy for multiline alignment/marker stability; current session focused on paste-format normalization (`autoFormattingOnPasting`) with a minimal targeted fix.
 - `TypeScript/tests/cases/fourslash/autoImportPnpm.ts`: still returns `No codefixes returned`.

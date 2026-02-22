@@ -1,6 +1,7 @@
 //! Completions and signature help handlers for tsz-server.
 
 use super::{Server, TsServerRequest, TsServerResponse};
+use std::path::Path;
 use tsz::lsp::Project;
 use tsz::lsp::completions::Completions;
 use tsz::lsp::position::LineMap;
@@ -27,6 +28,188 @@ impl Server {
                     .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                     .collect()
             })
+    }
+
+    fn extract_module_specifier_from_import_text(new_text: &str) -> Option<&str> {
+        let candidates = [" from \"", " from '", "import \"", "import '"];
+        for marker in candidates {
+            let Some(start_idx) = new_text.find(marker) else {
+                continue;
+            };
+            let quote = marker.chars().last()?;
+            let rest = &new_text[start_idx + marker.len()..];
+            let end_idx = rest.find(quote)?;
+            return Some(&rest[..end_idx]);
+        }
+        None
+    }
+
+    pub(crate) fn normalize_mts_auto_import_edit_text(
+        file_path: &str,
+        kind: tsz::lsp::completions::CompletionItemKind,
+        source_text: &str,
+        new_text: &str,
+    ) -> String {
+        if !file_path.ends_with(".mts") {
+            return new_text.to_string();
+        }
+
+        let mut normalized = new_text.to_string();
+        if matches!(
+            kind,
+            tsz::lsp::completions::CompletionItemKind::Interface
+                | tsz::lsp::completions::CompletionItemKind::TypeAlias
+        ) && normalized.starts_with("import {")
+        {
+            normalized = normalized.replacen("import {", "import type {", 1);
+        }
+
+        for marker in [" from \"", " from '"] {
+            let Some(marker_idx) = normalized.find(marker) else {
+                continue;
+            };
+            let Some(quote) = marker.chars().last() else {
+                continue;
+            };
+            let start = marker_idx + marker.len();
+            let rest = &normalized[start..];
+            let Some(end_rel) = rest.find(quote) else {
+                continue;
+            };
+            let end = start + end_rel;
+            let module_specifier = &normalized[start..end];
+            if module_specifier.starts_with('.')
+                && Path::new(module_specifier).extension().is_none()
+            {
+                normalized.replace_range(start..end, &format!("{module_specifier}.js"));
+            }
+            break;
+        }
+
+        if let Some((module_specifier, imports)) =
+            Self::parse_named_import_clause(&normalized, "import {", "} from ")
+        {
+            let type_only_names =
+                Self::type_only_named_imports_for_module(source_text, module_specifier);
+            if !type_only_names.is_empty() {
+                let updated_imports: Vec<String> = imports
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|part| !part.is_empty())
+                    .map(|part| {
+                        if part.starts_with("type ") {
+                            return part.to_string();
+                        }
+                        if type_only_names.contains(part) {
+                            format!("type {part}")
+                        } else {
+                            part.to_string()
+                        }
+                    })
+                    .collect();
+                if !updated_imports.is_empty() {
+                    normalized = normalized.replacen(
+                        &format!("{{ {imports} }}"),
+                        &format!("{{ {} }}", updated_imports.join(", ")),
+                        1,
+                    );
+                }
+            }
+        }
+
+        normalized
+    }
+
+    fn parse_named_import_clause<'a>(
+        text: &'a str,
+        import_prefix: &str,
+        import_suffix: &str,
+    ) -> Option<(&'a str, &'a str)> {
+        let start = text.find(import_prefix)?;
+        let after_prefix = &text[start + import_prefix.len()..];
+        let close_brace = after_prefix.find(import_suffix)?;
+        let imports = &after_prefix[..close_brace].trim();
+        let after_imports = &after_prefix[close_brace + import_suffix.len()..];
+        for quote in ['"', '\''] {
+            let quote_start = after_imports.find(quote)?;
+            let rest = &after_imports[quote_start + 1..];
+            let quote_end = rest.find(quote)?;
+            let module_specifier = &rest[..quote_end];
+            return Some((module_specifier, imports));
+        }
+        None
+    }
+
+    fn type_only_named_imports_for_module(
+        source_text: &str,
+        module_specifier: &str,
+    ) -> std::collections::BTreeSet<String> {
+        let mut names = std::collections::BTreeSet::new();
+        for line in source_text.lines() {
+            if !line.contains("import type {") {
+                continue;
+            }
+            if !(line.contains(&format!("from \"{module_specifier}\""))
+                || line.contains(&format!("from '{module_specifier}'")))
+            {
+                continue;
+            }
+            let Some(open) = line.find('{') else {
+                continue;
+            };
+            let Some(close) = line[open + 1..].find('}') else {
+                continue;
+            };
+            let raw_names = &line[open + 1..open + 1 + close];
+            for raw_name in raw_names.split(',') {
+                let trimmed = raw_name.trim().trim_start_matches("type ").trim();
+                if !trimmed.is_empty() {
+                    names.insert(trimmed.to_string());
+                }
+            }
+        }
+        names
+    }
+
+    pub(crate) fn auto_import_code_action_description(
+        source_text: &str,
+        file_path: &str,
+        fallback_source: Option<&str>,
+        edits: &[tsz::lsp::rename::TextEdit],
+        label: &str,
+    ) -> String {
+        let source = edits
+            .iter()
+            .find_map(|edit| Self::extract_module_specifier_from_import_text(&edit.new_text))
+            .or(fallback_source)
+            .map(|source| {
+                if file_path.ends_with(".mts")
+                    && source.starts_with('.')
+                    && !source.ends_with(".js")
+                    && !source.ends_with(".jsx")
+                    && !source.ends_with(".mjs")
+                    && !source.ends_with(".cjs")
+                    && !source.ends_with(".ts")
+                    && !source.ends_with(".tsx")
+                    && !source.ends_with(".mts")
+                    && !source.ends_with(".cts")
+                {
+                    format!("{source}.js")
+                } else {
+                    source.to_string()
+                }
+            });
+        source
+            .map(|source| {
+                let has_existing_import = source_text.contains(&format!("from \"{source}\""))
+                    || source_text.contains(&format!("from '{source}'"));
+                if has_existing_import {
+                    format!("Update import from \"{source}\"")
+                } else {
+                    format!("Add import from \"{source}\"")
+                }
+            })
+            .unwrap_or_else(|| format!("Apply completion for '{label}'"))
     }
 
     pub(crate) const fn completion_kind_to_str(
@@ -326,30 +509,29 @@ impl Server {
                                 let end = line_map
                                     .position_to_offset(edit.range.end, &source_text)
                                     .unwrap_or(start);
+                                let new_text = Self::normalize_mts_auto_import_edit_text(
+                                    &file,
+                                    item.kind,
+                                    &source_text,
+                                    &edit.new_text,
+                                );
                                 serde_json::json!({
                                     "span": {
                                         "start": start,
                                         "length": end.saturating_sub(start),
                                     },
-                                    "newText": edit.new_text,
+                                    "newText": new_text,
                                 })
                             })
                             .collect();
 
-                        let description = item
-                            .source
-                            .as_deref()
-                            .map(|source| {
-                                let has_existing_import = source_text
-                                    .contains(&format!("from \"{source}\""))
-                                    || source_text.contains(&format!("from '{source}'"));
-                                if has_existing_import {
-                                    format!("Update import from \"{source}\"")
-                                } else {
-                                    format!("Add import from \"{source}\"")
-                                }
-                            })
-                            .unwrap_or_else(|| format!("Apply completion for '{}'", item.label));
+                        let description = Self::auto_import_code_action_description(
+                            &source_text,
+                            &file,
+                            item.source.as_deref(),
+                            edits,
+                            &item.label,
+                        );
 
                         detail.insert(
                             "codeActions".to_string(),

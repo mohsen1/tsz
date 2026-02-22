@@ -1850,6 +1850,40 @@ impl Project {
                 &mut candidates,
                 &mut seen,
             );
+            candidates.sort_by(|a, b| {
+                let a_segments = a.module_specifier.matches('/').count();
+                let b_segments = b.module_specifier.matches('/').count();
+                let candidate_rank = |candidate: &str| -> u8 {
+                    if candidate.starts_with("./") {
+                        0
+                    } else if !candidate.starts_with('.') {
+                        1
+                    } else if candidate.starts_with("../") {
+                        2
+                    } else {
+                        3
+                    }
+                };
+                let index_penalty = |candidate: &str| -> u8 {
+                    if candidate == "." || candidate == ".." || candidate.ends_with("/index") {
+                        1
+                    } else {
+                        0
+                    }
+                };
+                a.local_name
+                    .cmp(&b.local_name)
+                    .then_with(|| a_segments.cmp(&b_segments))
+                    .then_with(|| {
+                        candidate_rank(&a.module_specifier)
+                            .cmp(&candidate_rank(&b.module_specifier))
+                    })
+                    .then_with(|| {
+                        index_penalty(&a.module_specifier).cmp(&index_penalty(&b.module_specifier))
+                    })
+                    .then_with(|| a.module_specifier.len().cmp(&b.module_specifier.len()))
+                    .then_with(|| a.module_specifier.cmp(&b.module_specifier))
+            });
 
             // Create CodeActionProvider for generating import edits
             use crate::code_actions::CodeActionProvider;

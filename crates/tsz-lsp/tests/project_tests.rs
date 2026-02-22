@@ -2612,6 +2612,72 @@ fn test_auto_import_via_reexport() {
     );
 }
 
+#[test]
+fn test_auto_import_reexport_prefers_shorter_source_for_duplicate_symbol_name() {
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "paths": {
+      "~/*": ["src/*"]
+    }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file("/src/dirA/thing1A.ts".to_string(), "Thing".to_string());
+    project.set_file(
+        "/src/dirA/thing2A.ts".to_string(),
+        "export class Thing2A {}".to_string(),
+    );
+    project.set_file(
+        "/src/dirB/index.ts".to_string(),
+        "export * from \"./thing1B\";\nexport * from \"./thing2B\";\n".to_string(),
+    );
+    project.set_file(
+        "/src/dirB/thing1B.ts".to_string(),
+        "export class Thing1B {}".to_string(),
+    );
+    project.set_file(
+        "/src/dirB/thing2B.ts".to_string(),
+        "export class Thing2B {}".to_string(),
+    );
+
+    let completions = project
+        .get_completions("/src/dirA/thing1A.ts", Position::new(0, 5))
+        .expect("expected completions");
+
+    let thing2_completions: Vec<_> = completions
+        .iter()
+        .filter(|item| item.label == "Thing2B")
+        .collect();
+    let thing2a_completions: Vec<_> = completions
+        .iter()
+        .filter(|item| item.label == "Thing2A")
+        .collect();
+
+    assert!(
+        !thing2_completions.is_empty(),
+        "expected Thing2B auto-import completion entries"
+    );
+    assert!(
+        !thing2a_completions.is_empty(),
+        "expected Thing2A auto-import completion entries"
+    );
+    assert_eq!(
+        thing2_completions[0].source.as_deref(),
+        Some("~/dirB"),
+        "expected shorter barrel source to be ordered first"
+    );
+    assert_eq!(
+        thing2a_completions[0].source.as_deref(),
+        Some("./thing2A"),
+        "expected direct sibling source to outrank ./index for same-directory symbols"
+    );
+}
+
 // =============================================================================
 // Export Signature / Smart Cache Invalidation Tests
 // =============================================================================
