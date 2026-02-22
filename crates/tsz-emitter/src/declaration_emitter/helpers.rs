@@ -1195,7 +1195,7 @@ impl<'a> DeclarationEmitter<'a> {
         if members.is_empty() {
             Some("{}".to_string())
         } else {
-            Some(format!("{{ {} }}", members.join("; ")))
+            Some(format!("{{ {}; }}", members.join("; ")))
         }
     }
 
@@ -1222,8 +1222,9 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 let data = self.arena.get_accessor(member_node)?;
                 let name = self.infer_property_name_text(data.name)?;
+                // Prefer explicit return type annotation, then fall back to any
                 let type_text = self
-                    .infer_fallback_type_text(data.body)
+                    .infer_fallback_type_text(data.type_annotation)
                     .unwrap_or_else(|| "any".to_string());
                 Some(format!("readonly {name}: {type_text}"))
             }
