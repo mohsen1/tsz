@@ -821,8 +821,13 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_checking_members assignment-style checks should route through check_assignable_or_report"
     );
 
-    let type_computation_src = fs::read_to_string("src/types/type_computation.rs")
+    let mut type_computation_src = fs::read_to_string("src/types/type_computation.rs")
         .expect("failed to read src/types/type_computation.rs for architecture guard");
+    // Include split-off module that is part of the type_computation logical module
+    type_computation_src.push_str(
+        &fs::read_to_string("src/types/type_computation_binary.rs")
+            .expect("failed to read src/types/type_computation_binary.rs for architecture guard"),
+    );
     assert!(
         type_computation_src.contains("check_assignable_or_report("),
         "type_computation mismatch checks should route through check_assignable_or_report"
