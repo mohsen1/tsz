@@ -3242,6 +3242,67 @@ impl Server {
         ))
     }
 
+    fn apply_text_edits_to_source(
+        source: &str,
+        line_map: &LineMap,
+        edits: &[tsz::lsp::rename::TextEdit],
+    ) -> Option<String> {
+        let mut edits_with_offsets = Vec::with_capacity(edits.len());
+        for edit in edits {
+            let start = line_map.position_to_offset(edit.range.start, source)? as usize;
+            let end = line_map.position_to_offset(edit.range.end, source)? as usize;
+            if start > end || end > source.len() {
+                return None;
+            }
+            edits_with_offsets.push((start, end, &edit.new_text));
+        }
+
+        edits_with_offsets.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+        let mut updated = source.to_string();
+        for (start, end, new_text) in edits_with_offsets {
+            updated.replace_range(start..end, new_text);
+        }
+        Some(updated)
+    }
+
+    fn apply_missing_imports_fix_all(
+        file_path: &str,
+        content: &str,
+        import_candidates: &[ImportCandidate],
+    ) -> Option<String> {
+        if import_candidates.is_empty() {
+            return None;
+        }
+
+        let mut updated = content.to_string();
+        let mut changed = false;
+        for candidate in import_candidates {
+            let mut parser = ParserState::new(file_path.to_string(), updated.clone());
+            let root = parser.parse_source_file();
+            let arena = parser.into_arena();
+            let mut binder = tsz::binder::BinderState::new();
+            binder.bind_source_file(&arena, root);
+            let line_map = LineMap::build(&updated);
+            let provider = CodeActionProvider::new(
+                &arena,
+                &binder,
+                &line_map,
+                file_path.to_string(),
+                &updated,
+            );
+
+            if let Some(edits) = provider.build_auto_import_edit(root, candidate)
+                && let Some(next) = Self::apply_text_edits_to_source(&updated, &line_map, &edits)
+            {
+                updated = next;
+                changed = true;
+            }
+        }
+
+        changed.then_some(updated)
+    }
+
     fn collect_import_candidates(
         &self,
         current_file_path: &str,
@@ -3389,6 +3450,34 @@ impl Server {
             } else {
                 Vec::new()
             };
+
+            if fix_id == "fixMissingImport"
+                && let Some(updated_content) =
+                    Self::apply_missing_imports_fix_all(file_path, &content, &import_candidates)
+                && let Some((start_off, end_off, replacement)) =
+                    Self::compute_minimal_edit(&content, &updated_content)
+            {
+                let start_pos = line_map.offset_to_position(start_off, &content);
+                let end_pos = line_map.offset_to_position(end_off, &content);
+                return TsServerResponse {
+                    seq,
+                    msg_type: "response".to_string(),
+                    command: "getCombinedCodeFix".to_string(),
+                    request_seq: request.seq,
+                    success: true,
+                    message: None,
+                    body: Some(serde_json::json!({
+                        "changes": [{
+                            "fileName": file_path,
+                            "textChanges": [{
+                                "start": { "line": start_pos.line + 1, "offset": start_pos.character + 1 },
+                                "end": { "line": end_pos.line + 1, "offset": end_pos.character + 1 },
+                                "newText": replacement
+                            }]
+                        }]
+                    })),
+                };
+            }
 
             let context = CodeActionContext {
                 diagnostics: filtered_diagnostics,
@@ -4014,7 +4103,38 @@ fn parse_bare_identifier_expression(line: &str) -> Option<(usize, &str)> {
 
 #[cfg(test)]
 mod tests {
-    use super::Server;
+    use super::{Server, TsServerRequest};
+    use crate::{LogConfig, LogLevel, ServerMode};
+    use rustc_hash::FxHashMap;
+    use std::path::PathBuf;
+    use tsz::lsp::code_actions::ImportCandidate;
+
+    fn make_server() -> Server {
+        Server {
+            completion_import_module_specifier_ending: None,
+            import_module_specifier_preference: None,
+            organize_imports_type_order: None,
+            organize_imports_ignore_case: false,
+            auto_import_file_exclude_patterns: Vec::new(),
+            lib_dir: PathBuf::from("/nonexistent"),
+            tests_lib_dir: PathBuf::from("/nonexistent"),
+            lib_cache: FxHashMap::default(),
+            unified_lib_cache: None,
+            checks_completed: 0,
+            response_seq: 0,
+            open_files: FxHashMap::default(),
+            _server_mode: ServerMode::Semantic,
+            _log_config: LogConfig {
+                level: LogLevel::Off,
+                file: None,
+                trace_to_console: false,
+            },
+            enable_telemetry: false,
+            allow_importing_ts_extensions: false,
+            auto_imports_allowed_for_inferred_projects: true,
+            auto_import_specifier_exclude_regexes: Vec::new(),
+        }
+    }
 
     #[test]
     fn normalize_jsdoc_function_type() {
@@ -4064,5 +4184,92 @@ mod tests {
         let actual = Server::apply_simple_jsdoc_annotation_fallback(src)
             .expect("expected jsdoc fallback to apply");
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn fix_missing_imports_combines_sequential_import_merges() {
+        let src = "import { Test1, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n";
+        let candidates = vec![
+            ImportCandidate::named(
+                "./file1".to_string(),
+                "Test2".to_string(),
+                "Test2".to_string(),
+            ),
+            ImportCandidate::named(
+                "./file1".to_string(),
+                "Test3".to_string(),
+                "Test3".to_string(),
+            ),
+        ];
+
+        let updated = Server::apply_missing_imports_fix_all("file2.ts", src, &candidates)
+            .expect("expected missing import fix-all to produce an edit");
+
+        assert_eq!(
+            updated,
+            "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+        );
+    }
+
+    #[test]
+    fn handle_get_combined_code_fix_fix_missing_import_merges_all_missing_names() {
+        let mut server = make_server();
+        let file1 = "/tests/cases/fourslash/file1.ts".to_string();
+        let file2 = "/tests/cases/fourslash/file2.ts".to_string();
+        server.open_files.insert(
+            file1,
+            "export interface Test1 {}\nexport interface Test2 {}\nexport interface Test3 {}\nexport interface Test4 {}\n".to_string(),
+        );
+        let original_file2 = "import { Test1, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n";
+        server
+            .open_files
+            .insert(file2.clone(), original_file2.to_string());
+
+        let req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "getCombinedCodeFix".to_string(),
+            arguments: serde_json::json!({
+                "scope": { "type": "file", "args": { "file": file2 } },
+                "fixId": "fixMissingImport",
+                "preferences": {}
+            }),
+        };
+        let resp = server.handle_get_combined_code_fix(1, &req);
+        assert!(resp.success, "expected getCombinedCodeFix to succeed");
+
+        let changes = resp
+            .body
+            .as_ref()
+            .and_then(|body| body.get("changes"))
+            .and_then(serde_json::Value::as_array)
+            .expect("missing changes array");
+        assert_eq!(changes.len(), 1, "expected one file change");
+        let text_changes = changes[0]
+            .get("textChanges")
+            .and_then(serde_json::Value::as_array)
+            .expect("missing textChanges");
+        assert_eq!(text_changes.len(), 1, "expected one consolidated text change");
+
+        let change = &text_changes[0];
+        let start_line = change["start"]["line"].as_u64().expect("start line") as u32;
+        let start_offset = change["start"]["offset"].as_u64().expect("start offset") as u32;
+        let end_line = change["end"]["line"].as_u64().expect("end line") as u32;
+        let end_offset = change["end"]["offset"].as_u64().expect("end offset") as u32;
+        let new_text = change["newText"].as_str().expect("newText");
+
+        let updated = Server::apply_change(
+            original_file2,
+            start_line,
+            start_offset,
+            end_line,
+            end_offset,
+            new_text,
+        );
+
+        assert_eq!(
+            updated,
+            "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+        );
     }
 }
