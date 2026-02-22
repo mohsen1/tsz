@@ -20,6 +20,7 @@ pub(crate) mod type_checking_unused;
 pub(crate) mod type_checking_utilities;
 pub(crate) mod type_checking_utilities_enum;
 pub(crate) mod type_checking_utilities_jsdoc;
+pub(crate) mod type_checking_utilities_return;
 pub mod type_computation;
 pub(crate) mod type_computation_access;
 pub(crate) mod type_computation_binary;
