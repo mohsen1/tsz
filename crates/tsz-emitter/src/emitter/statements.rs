@@ -1128,7 +1128,11 @@ mod tests {
     }
 
     #[test]
-    fn test_harness_at_directive_stripped() {
+    fn test_at_directive_comments_preserved() {
+        // tsc preserves all source-level `// @` comments in JS output.
+        // The test harness strips actual test directives from the baseline
+        // source before the emitter sees them, so any `// @` comment
+        // in the source is a legitimate comment to preserve.
         let source = "// @target: esnext\nvar x = 1;\n";
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
@@ -1139,8 +1143,44 @@ mod tests {
         let output = printer.finish().code;
 
         assert!(
-            !output.contains("// @target"),
-            "Test harness // @target directive should be stripped.\nOutput:\n{output}"
+            output.contains("// @target"),
+            "// @target directive should be preserved in output (tsc preserves all source comments).\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_ts_ignore_directive_preserved() {
+        // // @ts-ignore is a runtime directive that tsc preserves.
+        let source = "// @ts-ignore\nvar x: number = 'hello';\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-ignore"),
+            "// @ts-ignore directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_ts_expect_error_directive_preserved() {
+        // // @ts-expect-error is a runtime directive that tsc preserves.
+        let source = "// @ts-expect-error\nvar x: number = 'hello';\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-expect-error"),
+            "// @ts-expect-error directive should be preserved in output.\nOutput:\n{output}"
         );
     }
 }

@@ -1612,20 +1612,14 @@ impl<'a> Printer<'a> {
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     let trimmed_comment = comment_text.trim_start();
-                    // Strip test harness `// @option` directives but preserve
-                    // runtime `// @ts-check` and `// @ts-nocheck` directives
-                    // that tsc keeps in JS output.
-                    let after_at = trimmed_comment
-                        .strip_prefix("// @")
-                        .or_else(|| trimmed_comment.strip_prefix("//@"));
-                    if let Some(rest) = after_at {
-                        let is_ts_directive =
-                            rest.starts_with("ts-check") || rest.starts_with("ts-nocheck");
-                        if !is_ts_directive {
-                            self.comment_emit_idx += 1;
-                            continue;
-                        }
-                    }
+                    // Note: `// @option` comments are NOT stripped here.
+                    // tsc preserves all source-level comments in JS output,
+                    // including ones that look like directives (e.g. `// @ts-ignore`,
+                    // `// @strict`, `// @noErrorTruncation`). The test harness
+                    // strips actual test directives from the baseline source
+                    // before it reaches the emitter, so any `// @` comment
+                    // remaining in the source is a legitimate source comment
+                    // that should be preserved.
                     if matches!(
                         self.ctx.original_module_kind,
                         Some(ModuleKind::AMD | ModuleKind::UMD)
