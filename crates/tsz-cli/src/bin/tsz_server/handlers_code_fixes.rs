@@ -4485,12 +4485,39 @@ fn prefers_package_root_specifier(a: &ImportCandidate, b: &ImportCandidate) -> b
     rest.starts_with('/')
 }
 
+fn relative_specifier_rank(specifier: &str) -> (usize, usize, usize) {
+    let depth = specifier.matches('/').count();
+    let index_penalty = usize::from(
+        specifier == "."
+            || specifier == ".."
+            || specifier.ends_with("/index")
+            || specifier.ends_with("/index.ts")
+            || specifier.ends_with("/index.js"),
+    );
+    (depth, index_penalty, specifier.len())
+}
+
+fn prefers_shallower_relative_specifier(a: &ImportCandidate, b: &ImportCandidate) -> bool {
+    if !is_same_import_candidate_symbol(a, b) {
+        return false;
+    }
+    if !a.module_specifier.starts_with('.') || !b.module_specifier.starts_with('.') {
+        return false;
+    }
+    if a.module_specifier == b.module_specifier {
+        return false;
+    }
+    relative_specifier_rank(&a.module_specifier) < relative_specifier_rank(&b.module_specifier)
+}
+
 fn reorder_import_candidates_for_package_roots(candidates: &mut [ImportCandidate]) {
     // Keep the original discovery order unless a package root/module-subpath pair
-    // targets the same symbol, in which case tsserver prefers the package root.
+    // targets the same symbol, in which case tsserver prefers the shallower path.
     for i in 0..candidates.len() {
         for j in (i + 1)..candidates.len() {
-            if prefers_package_root_specifier(&candidates[j], &candidates[i]) {
+            if prefers_package_root_specifier(&candidates[j], &candidates[i])
+                || prefers_shallower_relative_specifier(&candidates[j], &candidates[i])
+            {
                 candidates.swap(i, j);
             }
         }
@@ -4501,6 +4528,7 @@ fn reorder_import_candidates_for_package_roots(candidates: &mut [ImportCandidate
 mod tests {
     use super::{
         LineMap, Server, TsServerRequest, parse_identifier_call_expression, positions_overlap,
+        reorder_import_candidates_for_package_roots,
     };
     use crate::{LogConfig, LogLevel, ServerMode};
     use rustc_hash::FxHashMap;
@@ -4766,6 +4794,36 @@ mod tests {
         assert_eq!(
             module_specifiers,
             vec!["pkg".to_string(), "pkg/utils".to_string()]
+        );
+    }
+
+    #[test]
+    fn reorder_import_candidates_prefers_shallower_relative_specifier_for_same_symbol() {
+        let mut candidates = vec![
+            ImportCandidate::named(
+                "./lib/components/button/Button".to_string(),
+                "Button".to_string(),
+                "Button".to_string(),
+            ),
+            ImportCandidate::named(
+                "./lib/main".to_string(),
+                "Button".to_string(),
+                "Button".to_string(),
+            ),
+        ];
+
+        reorder_import_candidates_for_package_roots(&mut candidates);
+        let module_specifiers: Vec<String> = candidates
+            .iter()
+            .map(|candidate| candidate.module_specifier.clone())
+            .collect();
+
+        assert_eq!(
+            module_specifiers,
+            vec![
+                "./lib/main".to_string(),
+                "./lib/components/button/Button".to_string()
+            ]
         );
     }
 
