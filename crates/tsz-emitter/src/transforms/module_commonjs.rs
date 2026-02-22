@@ -19,6 +19,7 @@
 //! exports.default = myFunc;
 //! ```
 
+use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
@@ -597,16 +598,6 @@ fn collect_binding_names_from_element(
 
     if let Some(elem) = arena.get_binding_element(elem_node) {
         collect_binding_names(arena, elem.name, exports);
-    }
-}
-
-/// Get identifier text from a node index
-fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
-    } else {
-        None
     }
 }
 

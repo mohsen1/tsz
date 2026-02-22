@@ -20,6 +20,7 @@
 //! exports.default = myFunc;
 //! ```
 
+use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 use crate::transforms::ir::IRNode;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -414,15 +415,6 @@ impl<'a> CommonJsTransformContext<'a> {
 // =============================================================================
 // Helper Functions
 // =============================================================================
-
-fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
-    } else {
-        None
-    }
-}
 
 fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
     let node = arena.get(idx)?;
