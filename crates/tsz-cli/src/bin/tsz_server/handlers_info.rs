@@ -5,12 +5,14 @@ use tsz::binder::SymbolId;
 use tsz::lsp::definition::GoToDefinition;
 use tsz::lsp::document_symbols::DocumentSymbolProvider;
 use tsz::lsp::highlighting::DocumentHighlightProvider;
-use tsz::lsp::hover::HoverProvider;
+use tsz::lsp::hover::{HoverInfo, HoverProvider};
 use tsz::lsp::implementation::GoToImplementationProvider;
+use tsz::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
 use tsz::lsp::position::LineMap;
 use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
 use tsz::parser::node::NodeAccess;
+use tsz::parser::syntax_kind_ext;
 use tsz_solver::TypeInterner;
 
 /// Bundled context for a parsed file, reducing parameter count in helpers.
@@ -26,6 +28,89 @@ struct ParsedFileContext<'a> {
 impl Server {
     fn is_js_identifier_char(byte: u8) -> bool {
         byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'$'
+    }
+
+    fn extract_trailing_type_name(display: &str) -> Option<String> {
+        let (_, ty) = display.rsplit_once(": ")?;
+        let ty = ty.trim();
+        if ty.is_empty() {
+            return None;
+        }
+        if ty
+            .bytes()
+            .all(|b| Self::is_js_identifier_char(b) || b == b'.')
+        {
+            Some(ty.to_string())
+        } else {
+            None
+        }
+    }
+
+    fn identifier_at(source_text: &str, offset: u32) -> Option<String> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if offset >= len {
+            return None;
+        }
+        let mut start = offset;
+        while start > 0 && Self::is_js_identifier_char(bytes[(start - 1) as usize]) {
+            start -= 1;
+        }
+        let mut end = start;
+        while end < len && Self::is_js_identifier_char(bytes[end as usize]) {
+            end += 1;
+        }
+        (end > start).then(|| source_text[start as usize..end as usize].to_string())
+    }
+
+    fn clean_jsdoc_comment(raw: &str) -> String {
+        let inner = raw
+            .trim()
+            .trim_start_matches("/**")
+            .trim_end_matches("*/")
+            .trim();
+        inner
+            .lines()
+            .map(|line| line.trim().trim_start_matches('*').trim())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_string()
+    }
+
+    fn find_interface_member_signature(
+        source_text: &str,
+        interface_name: &str,
+        member_name: &str,
+    ) -> Option<(String, String)> {
+        let iface_pattern = format!("interface {interface_name}");
+        let iface_start = source_text.find(&iface_pattern)?;
+        let after_iface = &source_text[iface_start..];
+        let body_start_rel = after_iface.find('{')?;
+        let body_start = iface_start + body_start_rel + 1;
+        let body_end = source_text[body_start..].find('}')? + body_start;
+        let body = &source_text[body_start..body_end];
+
+        let member_idx = body.find(member_name)?;
+        let after_member = &body[member_idx + member_name.len()..];
+        let colon_rel = after_member.find(':')?;
+        let type_start = member_idx + member_name.len() + colon_rel + 1;
+        let type_end = body[type_start..].find(';')? + type_start;
+        let member_type = body[type_start..type_end].trim().to_string();
+
+        let prefix = &body[..member_idx];
+        let documentation = if let Some(doc_start) = prefix.rfind("/**") {
+            if let Some(doc_end_rel) = prefix[doc_start..].find("*/") {
+                let doc_end = doc_start + doc_end_rel + 2;
+                Self::clean_jsdoc_comment(&prefix[doc_start..doc_end])
+            } else {
+                String::new()
+            }
+        } else {
+            String::new()
+        };
+
+        Some((member_type, documentation))
     }
 
     fn class_keyword_quickinfo_from_source(
@@ -107,6 +192,313 @@ impl Server {
         let last_close = source_text[..idx].rfind("*/");
         matches!((last_open, last_close), (Some(open), Some(close)) if open > close)
             || matches!((last_open, last_close), (Some(_), None))
+    }
+
+    fn member_name_node_if_matches(
+        arena: &tsz::parser::node::NodeArena,
+        member_idx: tsz::parser::NodeIndex,
+        member_name: &str,
+    ) -> Option<tsz::parser::NodeIndex> {
+        let member_node = arena.get(member_idx)?;
+
+        if let Some(sig) = arena.get_signature(member_node)
+            && arena.get_identifier_text(sig.name) == Some(member_name)
+        {
+            return Some(sig.name);
+        }
+
+        if let Some(prop) = arena.get_property_decl(member_node)
+            && arena.get_identifier_text(prop.name) == Some(member_name)
+        {
+            return Some(prop.name);
+        }
+
+        if let Some(method) = arena.get_method_decl(member_node)
+            && arena.get_identifier_text(method.name) == Some(member_name)
+        {
+            return Some(method.name);
+        }
+
+        if let Some(accessor) = arena.get_accessor(member_node)
+            && arena.get_identifier_text(accessor.name) == Some(member_name)
+        {
+            return Some(accessor.name);
+        }
+
+        None
+    }
+
+    fn find_named_member_declaration(
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        container_type_name: &str,
+        member_name: &str,
+    ) -> Option<(tsz::parser::NodeIndex, tsz::parser::NodeIndex)> {
+        let mut candidate_decls = Vec::new();
+        if let Some(sym_id) = binder.file_locals.get(container_type_name)
+            && let Some(symbol) = binder.symbols.get(sym_id)
+        {
+            candidate_decls.extend(symbol.declarations.iter().copied());
+        }
+
+        if candidate_decls.is_empty() {
+            for (idx, node) in arena.nodes.iter().enumerate() {
+                if let Some(iface) = arena.get_interface(node)
+                    && arena.get_identifier_text(iface.name) == Some(container_type_name)
+                {
+                    candidate_decls.push(tsz::parser::NodeIndex(idx as u32));
+                    continue;
+                }
+                if let Some(class) = arena.get_class(node)
+                    && arena.get_identifier_text(class.name) == Some(container_type_name)
+                {
+                    candidate_decls.push(tsz::parser::NodeIndex(idx as u32));
+                }
+            }
+        }
+
+        for decl_idx in candidate_decls {
+            let Some(decl_node) = arena.get(decl_idx) else {
+                continue;
+            };
+
+            if let Some(iface) = arena.get_interface(decl_node) {
+                for &member_idx in &iface.members.nodes {
+                    if let Some(name_node) =
+                        Self::member_name_node_if_matches(arena, member_idx, member_name)
+                    {
+                        return Some((member_idx, name_node));
+                    }
+                }
+            }
+
+            if let Some(class) = arena.get_class(decl_node) {
+                for &member_idx in &class.members.nodes {
+                    if let Some(name_node) =
+                        Self::member_name_node_if_matches(arena, member_idx, member_name)
+                    {
+                        return Some((member_idx, name_node));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn quickinfo_member_access_declaration_hover(
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        line_map: &LineMap,
+        source_text: &str,
+        root: tsz::parser::NodeIndex,
+        provider: &HoverProvider<'_>,
+        type_cache: &mut Option<tsz::checker::TypeCache>,
+        interner: &TypeInterner,
+        file: &str,
+        probe_offset: u32,
+        container_type_hint: Option<&str>,
+    ) -> Option<tsz::lsp::hover::HoverInfo> {
+        let mut candidates = Vec::with_capacity(4);
+        candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
+            arena,
+            probe_offset,
+            source_text,
+        ));
+        if probe_offset > 0 {
+            candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
+                arena,
+                probe_offset - 1,
+                source_text,
+            ));
+        }
+        if let Some(sym) =
+            tsz::lsp::utils::find_symbol_query_node_at_or_before(arena, source_text, probe_offset)
+        {
+            candidates.push(sym);
+        }
+        if probe_offset > 0
+            && let Some(sym) = tsz::lsp::utils::find_symbol_query_node_at_or_before(
+                arena,
+                source_text,
+                probe_offset - 1,
+            )
+        {
+            candidates.push(sym);
+        }
+
+        let mut selected = None;
+        for node_idx in candidates {
+            if node_idx.is_none() {
+                continue;
+            }
+            let Some(node) = arena.get(node_idx) else {
+                continue;
+            };
+            if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let Some(parent_idx) = arena.get_extended(node_idx).map(|e| e.parent) else {
+                continue;
+            };
+            let Some(parent_node) = arena.get(parent_idx) else {
+                continue;
+            };
+            if parent_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+                continue;
+            }
+            let Some(access) = arena.get_access_expr(parent_node) else {
+                continue;
+            };
+            if access.name_or_argument != node_idx {
+                continue;
+            }
+            selected = Some((node_idx, access.expression));
+            break;
+        }
+        let mut receiver_expr_idx = None;
+        let member_name = if let Some((member_node_idx, receiver_idx)) = selected {
+            receiver_expr_idx = Some(receiver_idx);
+            arena.get_identifier_text(member_node_idx)?.to_string()
+        } else {
+            let hint = container_type_hint?;
+            let bytes = source_text.as_bytes();
+            let len = bytes.len() as u32;
+            if probe_offset >= len {
+                return None;
+            }
+            let mut start = probe_offset;
+            while start > 0 && Self::is_js_identifier_char(bytes[(start - 1) as usize]) {
+                start -= 1;
+            }
+            let mut end = start;
+            while end < len && Self::is_js_identifier_char(bytes[end as usize]) {
+                end += 1;
+            }
+            if end <= start {
+                return None;
+            }
+            if !hint.is_empty() {
+                source_text[start as usize..end as usize].to_string()
+            } else {
+                return None;
+            }
+        };
+
+        let mut container_type_name = None;
+        if let Some(receiver_expr_idx) = receiver_expr_idx
+            && let Some(receiver_sym) = binder.resolve_identifier(arena, receiver_expr_idx)
+            && let Some(receiver_symbol) = binder.symbols.get(receiver_sym)
+        {
+            let receiver_decl = if receiver_symbol.value_declaration.is_some() {
+                Some(receiver_symbol.value_declaration)
+            } else {
+                receiver_symbol.declarations.first().copied()
+            };
+            if let Some(receiver_decl_idx) = receiver_decl
+                && let Some(receiver_decl_node) = arena.get(receiver_decl_idx)
+                && let Some(param) = arena.get_parameter(receiver_decl_node)
+                && param.type_annotation.is_some()
+            {
+                container_type_name = arena
+                    .get_identifier_text(param.type_annotation)
+                    .map(std::string::ToString::to_string);
+
+                if container_type_name.is_none()
+                    && let Some(type_node) = arena.get(param.type_annotation)
+                {
+                    let text = source_text
+                        .get(type_node.pos as usize..type_node.end as usize)
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty());
+                    container_type_name = text.map(std::string::ToString::to_string);
+                }
+            }
+        }
+
+        let container_type_name = if let Some(name) = container_type_name {
+            name
+        } else if let Some(hint) = container_type_hint {
+            hint.to_string()
+        } else {
+            let compiler_options = tsz::checker::context::CheckerOptions::default();
+            let mut checker = if let Some(cache) = type_cache.take() {
+                tsz::checker::state::CheckerState::with_cache(
+                    arena,
+                    binder,
+                    interner,
+                    file.to_string(),
+                    cache,
+                    compiler_options,
+                )
+            } else {
+                tsz::checker::state::CheckerState::new(
+                    arena,
+                    binder,
+                    interner,
+                    file.to_string(),
+                    compiler_options,
+                )
+            };
+            let receiver_expr_idx = receiver_expr_idx?;
+            let container_ty = checker.get_type_of_node(receiver_expr_idx);
+            let name = checker.format_type(container_ty);
+            *type_cache = Some(checker.extract_cache());
+            name
+        };
+
+        let (member_decl_idx, member_decl_name_idx) =
+            Self::find_named_member_declaration(arena, binder, &container_type_name, &member_name)?;
+        let member_name_node = arena.get(member_decl_name_idx)?;
+        let decl_pos = line_map.offset_to_position(member_name_node.pos, source_text);
+        if let Some(hover) = provider.get_hover(root, decl_pos, type_cache)
+            && !hover.display_string.is_empty()
+        {
+            return Some(hover);
+        }
+
+        let compiler_options = tsz::checker::context::CheckerOptions::default();
+        let mut checker = if let Some(cache) = type_cache.take() {
+            tsz::checker::state::CheckerState::with_cache(
+                arena,
+                binder,
+                interner,
+                file.to_string(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            tsz::checker::state::CheckerState::new(
+                arena,
+                binder,
+                interner,
+                file.to_string(),
+                compiler_options,
+            )
+        };
+        let member_type_id = checker.get_type_of_node(member_decl_idx);
+        let member_type = checker.format_type(member_type_id);
+        *type_cache = Some(checker.extract_cache());
+
+        let display_string = format!(
+            "(property) {}.{}: {}",
+            container_type_name, member_name, member_type
+        );
+        let raw_doc = jsdoc_for_node(arena, root, member_decl_idx, source_text);
+        let parsed_doc = parse_jsdoc(&raw_doc);
+        let documentation = parsed_doc.summary.unwrap_or_default();
+        let start = line_map.offset_to_position(member_name_node.pos, source_text);
+        let end = line_map.offset_to_position(member_name_node.end, source_text);
+
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(tsz::lsp::position::Range::new(start, end)),
+            display_string,
+            kind: "property".to_string(),
+            kind_modifiers: String::new(),
+            documentation,
+            tags: Vec::new(),
+        })
     }
 
     fn extract_alias_module_name(display_string: &str) -> Option<String> {
@@ -366,13 +758,14 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let interner = TypeInterner::new();
             let provider =
-                HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file);
+                HoverProvider::new(&arena, &binder, &line_map, &interner, &source_text, file.clone());
             let mut type_cache = None;
             let mut info = provider.get_hover(root, position, &mut type_cache);
             let bytes = source_text.as_bytes();
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
                 let len = bytes.len() as u32;
                 // On `.`/`?.` cursor positions, tsserver quickinfo resolves the RHS member.
+                let mut rhs_member_probe = None;
                 if base_offset < len {
                     let mut rhs_probe = None;
                     let current = bytes[base_offset as usize];
@@ -389,12 +782,127 @@ impl Server {
                             probe += 1;
                         }
                         if probe < len {
+                            rhs_member_probe = Some(probe);
                             let probe_pos = line_map.offset_to_position(probe, &source_text);
                             if let Some(member_hover) =
                                 provider.get_hover(root, probe_pos, &mut type_cache)
                             {
                                 info = Some(member_hover);
                             }
+                        }
+                    }
+                }
+
+                if let Some(member_probe) = rhs_member_probe
+                    && info
+                        .as_ref()
+                        .is_none_or(|h| !h.display_string.starts_with("(property)"))
+                    && let Some(existing) = info.as_ref()
+                    && let Some(container_hint) =
+                        Self::extract_trailing_type_name(&existing.display_string)
+                    && let Some(member_name) = Self::identifier_at(&source_text, member_probe)
+                    && let Some((member_type, member_doc)) = Self::find_interface_member_signature(
+                        &source_text,
+                        &container_hint,
+                        &member_name,
+                    )
+                {
+                    let display_string = format!(
+                        "(property) {}.{}: {}",
+                        container_hint, member_name, member_type
+                    );
+                    let start = line_map.offset_to_position(member_probe, &source_text);
+                    let end =
+                        line_map.offset_to_position(member_probe + member_name.len() as u32, &source_text);
+                    info = Some(HoverInfo {
+                        contents: vec![format!("```typescript\n{display_string}\n```")],
+                        range: Some(tsz::lsp::position::Range::new(start, end)),
+                        display_string,
+                        kind: "property".to_string(),
+                        kind_modifiers: String::new(),
+                        documentation: member_doc,
+                        tags: Vec::new(),
+                    });
+                }
+
+                if let Some(member_probe) = rhs_member_probe
+                    && info
+                        .as_ref()
+                        .is_none_or(|h| !h.display_string.starts_with("(property)"))
+                    && let Some(container_hint) = info
+                        .as_ref()
+                        .and_then(|h| Self::extract_trailing_type_name(&h.display_string))
+                    && let Some(member_hover) = Self::quickinfo_member_access_declaration_hover(
+                        &arena,
+                        &binder,
+                        &line_map,
+                        &source_text,
+                        root,
+                        &provider,
+                        &mut type_cache,
+                        &interner,
+                        &file,
+                        member_probe.saturating_add(1),
+                        Some(container_hint.as_str()),
+                    )
+                {
+                    info = Some(member_hover);
+                }
+
+                if info.is_none() {
+                    // Fourslash markers can land at the first character of a member name
+                    // (`x./**/m()`), where direct symbol lookup may miss the property.
+                    // Probe one character forward so hover can backtrack from `(` to `m`.
+                    if base_offset < len {
+                        let current = bytes[base_offset as usize];
+                        if (current.is_ascii_alphanumeric() || current == b'_' || current == b'$')
+                            && base_offset > 0
+                            && bytes[(base_offset - 1) as usize] == b'.'
+                            && base_offset + 1 < len
+                        {
+                            let probe_pos =
+                                line_map.offset_to_position(base_offset + 1, &source_text);
+                            info = provider.get_hover(root, probe_pos, &mut type_cache);
+                        }
+                    }
+                }
+
+                if info.is_none() && base_offset < len {
+                    let current = bytes[base_offset as usize];
+                    if Self::is_js_identifier_char(current)
+                        && base_offset > 0
+                        && bytes[(base_offset - 1) as usize] == b'.'
+                        && let Some(member_name) = Self::identifier_at(&source_text, base_offset)
+                    {
+                        let dot_pos = line_map.offset_to_position(base_offset - 1, &source_text);
+                        if let Some(lhs_hover) = provider.get_hover(root, dot_pos, &mut type_cache)
+                            && let Some(container_hint) =
+                                Self::extract_trailing_type_name(&lhs_hover.display_string)
+                            && let Some((member_type, member_doc)) =
+                                Self::find_interface_member_signature(
+                                    &source_text,
+                                    &container_hint,
+                                    &member_name,
+                                )
+                        {
+                            let display_string = format!(
+                                "(property) {}.{}: {}",
+                                container_hint, member_name, member_type
+                            );
+                            let start = line_map.offset_to_position(base_offset, &source_text);
+                            let end = line_map.offset_to_position(
+                                base_offset + member_name.len() as u32,
+                                &source_text,
+                            );
+                            info = Some(HoverInfo {
+                                contents: vec![format!("```typescript\n{display_string}\n```")],
+                                range: Some(tsz::lsp::position::Range::new(start, end)),
+                                display_string,
+                                kind: "property".to_string(),
+                                kind_modifiers: String::new(),
+                                documentation: member_doc,
+                                tags: Vec::new(),
+                            });
                         }
                     }
                 }
@@ -435,6 +943,46 @@ impl Server {
                         if info.is_some() {
                             break;
                         }
+                    }
+                }
+
+                if info.is_none()
+                    && let Some(member_hover) = Self::quickinfo_member_access_declaration_hover(
+                        &arena,
+                        &binder,
+                        &line_map,
+                        &source_text,
+                        root,
+                        &provider,
+                        &mut type_cache,
+                        &interner,
+                        &file,
+                        base_offset.saturating_add(1),
+                        None,
+                    )
+                {
+                    info = Some(member_hover);
+                }
+
+                if info.is_none() {
+                    // Fallback: when direct hover misses (common for some member-access
+                    // usage positions), reuse definition resolution and hover the declaration.
+                    let def_provider = GoToDefinition::new(
+                        &arena,
+                        &binder,
+                        &line_map,
+                        file.clone(),
+                        &source_text,
+                    );
+                    if let Some(defs) = def_provider.get_definition_info(root, position)
+                        && let Some(first_def) = defs.first()
+                        && first_def.location.file_path == file
+                    {
+                        info = provider.get_hover(
+                            root,
+                            first_def.location.range.start,
+                            &mut type_cache,
+                        );
                     }
                 }
             }
