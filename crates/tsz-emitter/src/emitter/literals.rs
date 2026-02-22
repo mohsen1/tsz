@@ -13,6 +13,12 @@ impl<'a> Printer<'a> {
         if let Some(ident) = self.arena.get_identifier(node) {
             let original_text = &ident.escaped_text;
 
+            // tsc preserves unicode escape sequences in identifiers verbatim.
+            // When the parser detects unicode escapes (e.g., \u0041 for 'A'),
+            // it stores the original source text in `original_text`. Use it
+            // for emission to match tsc output.
+            let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
+
             // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
             if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
                 // Use write_identifier so source map name recording still works.
@@ -26,7 +32,7 @@ impl<'a> Printer<'a> {
                         self.writer.write(&renamed);
                     }
                 } else {
-                    self.write_identifier(original_text);
+                    self.write_identifier(emit_text);
                 }
             } else if self.in_namespace_iife
                 && !self.suppress_ns_qualification
@@ -40,7 +46,7 @@ impl<'a> Printer<'a> {
                 let ns_name = ns_name.clone();
                 self.write(&ns_name);
                 self.write(".");
-                self.write_identifier(original_text);
+                self.write_identifier(emit_text);
             } else if self.ctx.is_commonjs()
                 && !self.suppress_commonjs_named_import_substitution
                 && let Some(subst) = self.commonjs_named_import_substitutions.get(original_text)
@@ -48,7 +54,7 @@ impl<'a> Printer<'a> {
                 let subst = subst.clone();
                 self.write(&subst);
             } else {
-                self.write_identifier(original_text);
+                self.write_identifier(emit_text);
             }
         }
     }
@@ -620,5 +626,43 @@ mod tests {
                 "Non-octal {source} should be preserved unchanged.\nGot: {output}"
             );
         }
+    }
+
+    /// Unicode escape sequences in identifiers must be preserved in emitted JS,
+    /// matching tsc behavior. `var \u0041 = 1;` should NOT resolve to `var A = 1;`.
+    #[test]
+    fn unicode_escape_in_identifier_preserved() {
+        let source = "var \\u0041 = 1;";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains("\\u0041"),
+            "Unicode escape \\u0041 should be preserved in identifier.\nGot: {output}"
+        );
+        assert!(
+            !output.starts_with("var A ="),
+            "Unicode escape should NOT be resolved to 'A'.\nGot: {output}"
+        );
+    }
+
+    /// Unicode escape sequences in property names must be preserved.
+    /// `{ \u0061: "ss" }` should NOT resolve to `{ a: "ss" }`.
+    #[test]
+    fn unicode_escape_in_property_name_preserved() {
+        let source = "var x = { \\u0061: \"ss\" };";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+        assert!(
+            output.contains("\\u0061"),
+            "Unicode escape \\u0061 should be preserved in property name.\nGot: {output}"
+        );
     }
 }

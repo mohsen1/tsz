@@ -1888,6 +1888,25 @@ impl ParserState {
                 let atom = self.scanner.get_token_atom();
                 // Use zero-copy accessor
                 let text = self.scanner.get_token_value_ref().to_string();
+                // Preserve unicode escape sequences for emission parity with tsc
+                let original_text =
+                    if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                        let src = self.scanner.source_text();
+                        let start = self.scanner.get_token_start();
+                        let end = self.scanner.get_token_end();
+                        if start < end && end <= src.len() {
+                            let slice = &src[start..end];
+                            if slice != text {
+                                Some(slice.to_string())
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    };
                 self.next_token(); // Accept any token as property name (error recovery)
                 let end_pos = self.token_end();
 
@@ -1898,7 +1917,7 @@ impl ParserState {
                     IdentifierData {
                         atom,
                         escaped_text: text,
-                        original_text: None,
+                        original_text,
                         type_arguments: None,
                     },
                 )
