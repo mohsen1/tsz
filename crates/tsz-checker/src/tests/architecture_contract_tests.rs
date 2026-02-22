@@ -785,6 +785,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "state_class_checking should not call solver type_queries directly; use class_type query boundaries"
     );
     assert!(
+        !state_heritage_checking_src.contains("tsz_solver::type_queries::"),
+        "state_heritage_checking should not call solver type_queries directly; use class_type query boundaries"
+    );
+    assert!(
         property_access_type_src.contains("query_boundaries::property_access::"),
         "property_access_type solver queries should route through query_boundaries::property_access"
     );
