@@ -123,3 +123,16 @@ Completed in this pass:
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (remaining failure now at marker `25`).
   Reason: remaining gap is broader contextual typing for function parameters nested in array/object literal contextual signatures; needs additional contextual-type source discovery beyond property/variable declaration and type-assertion parents.
+
+## 2026-02-22 (quick info contextual typing marker follow-up)
+
+Completed in this pass:
+- Improved quick info contextual-typing recovery for function-expression parameters in typed array-literal elements by recognizing callable contextual types from array element annotations (including type-literal call signatures).
+- Added focused hover unit coverage in `crates/tsz-lsp/tests/hover_tests.rs` for contextually typed array-element function parameters.
+- Added tsserver quickinfo marker probe handling for comment-based fourslash markers (`/*n*/`) in `crates/tsz-cli/src/bin/tsz_server/handlers_info.rs`.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` for marker-comment and identifier-position quickinfo contextual parameter typing.
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` improved from marker `25` failure (`(parameter) n: any`) to later marker `28`.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/quickInfoContextualTyping.ts` (current failure at marker `28`: expected `(property) IBar.foo: IFoo`, got empty quick info).
+  Reason: remaining gap appears to be declaration-site/property quick info resolution in object-literal contextual typing (`foo` property under `IBar`) and needs a separate member/property quick-info resolver follow-up beyond this parameter-context fix.
