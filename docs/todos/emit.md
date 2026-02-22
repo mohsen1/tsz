@@ -1,6 +1,6 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 1452/2076 = 69.9% JS, 110/289 = 38.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9527/13623 = 69.9% JS, 762/1990 = 38.3% DTS)
 
 ### Fixed This Session
 - **Single-line constructor body formatting** (+4 JS tests):
@@ -22,6 +22,21 @@
   if the text after `@` starts with `ts-check` or `ts-nocheck` and preserving those.
   Tests fixed: `checkJsdocParamOnVariableDeclaredFunctionExpression`, `checkJsdocParamTag1`,
   `checkJsdocTypedefOnlySourceFile`.
+  **UPDATE**: Generalized this fix — now ALL `// @` comments are preserved (see below).
+
+- **All `// @` source comments stripped from JS output** (+5 JS tests, 9522 → 9527):
+  The previous fix was too conservative — it only preserved `@ts-check` and `@ts-nocheck`
+  while still stripping other `// @` comments like `@ts-ignore`, `@ts-expect-error`,
+  `@noErrorTruncation`, `@strict`, `@internal`, etc. But tsc preserves ALL source-level
+  comments in JS output. The test harness strips actual test directives (e.g. `@target`,
+  `@module`) from the baseline source BEFORE the emitter sees them, so any `// @` comment
+  remaining in the source is a legitimate source comment that should be preserved.
+  Fix: removed the `// @` stripping logic entirely from `emit_source_file` in `mod.rs`.
+  Added 3 unit tests in `statements.rs`: `test_at_directive_comments_preserved`,
+  `test_ts_ignore_directive_preserved`, `test_ts_expect_error_directive_preserved`.
+  Affected comment categories: `@ts-ignore` (39 occurrences across baselines),
+  `@ts-expect-error` (13), `@strict` (6), `@internal` (4), `@readonly` (4), others.
+  Tests fixed (sole-fix): 5 tests where the only mismatch was missing `// @` comments.
 
 ### Previously Fixed
 - **Duplicate leading comments in ES5 class IIFE lowering** (+5 JS, +1 DTS tests):
