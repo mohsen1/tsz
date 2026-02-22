@@ -2,7 +2,7 @@
 //!
 //! This module defines the core data types for type checking diagnostics:
 //!
-//! - **Tracer pattern** (`SubtypeTracer`, `FastTracer`, `DiagnosticTracer`): Zero-cost
+//! - **Tracer pattern** (`SubtypeTracer`, `DynSubtypeTracer`): Zero-cost
 //!   abstraction for tracing subtype check failures without logic drift.
 //! - **Failure reasons** (`SubtypeFailureReason`): Structured enum capturing all the
 //!   ways a subtype check can fail.
@@ -27,11 +27,11 @@ use tsz_common::interner::Atom;
 /// A trait for tracing subtype check failures.
 ///
 /// This trait enables the same subtype checking logic to be used for both
-/// fast boolean checks (via `FastTracer`) and detailed diagnostics (via `DiagnosticTracer`).
+/// fast boolean checks and detailed diagnostics.
 ///
 /// The key insight is that failure reasons are constructed lazily via a closure,
-/// so `FastTracer` can skip the allocation entirely while `DiagnosticTracer` collects
-/// detailed information.
+/// so fast-path implementations can skip the allocation entirely while diagnostic
+/// implementations collect detailed information.
 ///
 /// # Example
 ///
@@ -51,8 +51,8 @@ pub trait SubtypeTracer {
     /// Called when a subtype mismatch is detected.
     ///
     /// The `reason` closure is only called if the tracer needs to collect
-    /// the failure reason. This allows `FastTracer` to skip the allocation
-    /// entirely while `DiagnosticTracer` can collect detailed information.
+    /// the failure reason, allowing fast-path implementations to skip
+    /// allocation entirely.
     ///
     /// # Returns
     ///
@@ -87,103 +87,6 @@ pub trait DynSubtypeTracer {
 impl<T: SubtypeTracer> DynSubtypeTracer for T {
     fn on_mismatch_dyn(&mut self, reason: SubtypeFailureReason) -> bool {
         self.on_mismatch(|| reason)
-    }
-}
-
-#[cfg(test)]
-/// Fast tracer that returns immediately on mismatch (zero-cost abstraction).
-///
-/// This tracer is used for fast subtype checks where we only care about the
-/// boolean result. The `#[inline(always)]` attribute ensures that this compiles
-/// to the same code as a simple `return false` statement with no runtime overhead.
-///
-/// # Zero-Cost Abstraction
-///
-/// ```rust,ignore
-/// // With FastTracer, this compiles to:
-/// // if condition { return false; }
-/// if !tracer.on_mismatch(|| reason) { return false; }
-/// ```
-///
-/// The closure is never called, so no allocations occur.
-#[derive(Clone, Copy, Debug)]
-pub struct FastTracer;
-
-#[cfg(test)]
-impl SubtypeTracer for FastTracer {
-    /// Always return `false` to stop checking immediately.
-    ///
-    /// The `reason` closure is never called, so no `SubtypeFailureReason` is constructed.
-    /// This is the zero-cost path - the compiler will optimize this to a simple boolean return.
-    #[inline(always)]
-    fn on_mismatch(&mut self, _reason: impl FnOnce() -> SubtypeFailureReason) -> bool {
-        false
-    }
-}
-
-#[cfg(test)]
-/// Diagnostic tracer that collects detailed failure reasons.
-///
-/// This tracer is used when we need to generate detailed error messages.
-/// It collects the first `SubtypeFailureReason` encountered and stops checking.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// let mut tracer = DiagnosticTracer::new();
-/// check_subtype_with_tracer(source, target, &mut tracer);
-/// if let Some(reason) = tracer.take_failure() {
-///     // Generate error message from reason
-/// }
-/// ```
-#[derive(Debug)]
-pub struct DiagnosticTracer {
-    /// The first failure reason encountered (if any).
-    failure: Option<SubtypeFailureReason>,
-}
-
-#[cfg(test)]
-impl DiagnosticTracer {
-    /// Create a new diagnostic tracer.
-    pub fn new() -> Self {
-        Self { failure: None }
-    }
-
-    /// Take the collected failure reason, leaving `None` in its place.
-    pub fn take_failure(&mut self) -> Option<SubtypeFailureReason> {
-        self.failure.take()
-    }
-
-    /// Get a reference to the collected failure reason (if any).
-    /// Check if any failure was collected.
-    pub fn has_failure(&self) -> bool {
-        self.failure.is_some()
-    }
-}
-
-#[cfg(test)]
-impl Default for DiagnosticTracer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[cfg(test)]
-impl SubtypeTracer for DiagnosticTracer {
-    /// Collect the failure reason and stop checking.
-    ///
-    /// The `reason` closure is called to construct the detailed failure reason,
-    /// which is stored for later use in error message generation.
-    ///
-    /// Returns `false` to stop checking after collecting the first failure.
-    /// This matches the semantics of `FastTracer` while collecting diagnostics.
-    #[inline]
-    fn on_mismatch(&mut self, reason: impl FnOnce() -> SubtypeFailureReason) -> bool {
-        // Only collect the first failure (subsequent failures are nested details)
-        if self.failure.is_none() {
-            self.failure = Some(reason());
-        }
-        false
     }
 }
 
