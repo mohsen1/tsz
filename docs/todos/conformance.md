@@ -193,3 +193,40 @@ the generated tsconfig because the pretty-printed JSON has different offsets.
 variables with type annotations aren't triggering the check. Root cause likely in flow graph
 construction or `is_definitely_assigned_at()` returning true incorrectly. Needs flow analysis
 debugging — deferred for a focused session.
+
+## TS7005 — False implicit-any for block-scoped declarations (Fixed)
+
+**Status**: Fixed. +8 tests passing (3874→3882 in first 6000 slice, 64.7%).
+**Error code:** TS7005 ("Variable 'x' implicitly has an 'any' type.")
+**Root cause**: `state_variable_checking.rs` added ALL non-ambient declarations without
+initializers to `pending_implicit_any_vars`, including `let`/`const`/`using`. tsc only emits
+TS7005/TS7034 for function-scoped (`var`) declarations — block-scoped declarations get their
+implicit `any` silently without a diagnostic.
+**Fix**: Check parent `VariableDeclarationList` flags for `LET`/`CONST`/`USING` before
+inserting into `pending_implicit_any_vars`. Only `var` declarations are now tracked.
+**Tests affected**: 9 `nestedBlockScopedBindings*` tests that all had `let x;` patterns.
+
+### Config.rs strict defaults (also fixed, same commit)
+When `strict` is not explicitly set in tsconfig, TypeScript defaults all strict-family options
+to `false`. Our `resolve_checker_options` was only defaulting `noImplicitAny = true` (inheriting
+from `CheckerOptions::default()`). Fixed to explicitly set all strict-family options to `false`
+when `strict` is not specified. Harmless for conformance (runner injects `strict: true`).
+
+## Deferred issues from TS7005 investigation session
+
+- **TS18003 (runner-level)**: Conformance runner fingerprint mismatch for `include` patterns
+  and config file path. Not a compiler bug — runner writes tsconfig with different include
+  patterns than what the cache expects. Deferred.
+- **TS2300 (fingerprint only)**: 13 failing tests already emit at least one TS2300 — fixes
+  would only improve fingerprint accuracy (diagnostic count/position), not flip pass/fail at
+  error-code level. 6 categories: accessor duplicates, interface string-literal duplicates,
+  class+namespace merge, cross-file declare global, numeric literal names. Deferred.
+- **TS1038 (diminishing returns)**: 5/6 pure tests already pass. Only 1 new flip possible
+  (`importDeclWithDeclareModifierInAmbientContext.ts`). Deferred.
+- **TS1206 (complex parser fix)**: Only 7 actual false-positive tests (not 38 as analysis
+  suggested). 5 different parser root causes. Deferred.
+- **TS5102 (already implemented)**: All remaining failures are due to OTHER unimplemented
+  error codes in the same tests, not TS5102 itself. Deferred.
+- **TS2882 (stale cache)**: Our `noUncheckedSideEffectImports` implementation matches TSC 6.0
+  behavior (defaults to `true`). The cache was generated with TSC 5.9.3 where the default was
+  `false`. Not a compiler bug — cache staleness issue. Deferred.
