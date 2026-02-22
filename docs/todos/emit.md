@@ -1,8 +1,24 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9542/13623 = 70.0% JS, 777/1990 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current 5036/7163 = 70.3% JS, 416/1036 = 40.2% DTS)
 
 ### Fixed This Session
+- **Private fields (#name) with initializers dropped at ES2022+ when useDefineForClassFields=false** (+8 JS, +1 DTS):
+  Private class fields use native syntax at ES2022+ and are unaffected by
+  `useDefineForClassFields` (which only controls public field semantics). The class field
+  lowering skip logic (line ~761 in `declarations.rs`) unconditionally skipped all property
+  declarations with initializers when `needs_class_field_lowering` was true. For private fields,
+  the collection phase (lines 620-653) failed to collect them because `identifier_text()`
+  returns empty for `PrivateIdentifier` nodes, so they were silently dropped — neither collected
+  for post-class lowered emission NOR emitted in the class body. Fix: add a guard to the skip
+  condition that preserves private fields when the target natively supports them (>= ES2022).
+  Two unit tests added.
+  Tests fixed: `privateNameStaticFieldInitializer(es2022/esnext)`,
+  `privateNameStaticFieldDestructuredBinding(es2022/esnext)`,
+  `privateNameStaticAndStaticInitializer(es2022/esnext)`, and others.
+  JS: 5028 → 5036, DTS: 415 → 416, zero regressions.
+
+### Previously Fixed
 - **Missing parentheses in `extends` clause for lowered optional chains** (+1 JS, +1 DTS):
   When `class C extends A?.B {}` is emitted with target < ES2020, the optional chain is lowered
   to `A === null || A === void 0 ? void 0 : A.B`. This conditional expression needs parens in
