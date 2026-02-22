@@ -1365,7 +1365,9 @@ impl<'a> CheckerState<'a> {
                                 .binder
                                 .get_symbol_with_libs(resolved_id, &self.get_lib_binders())
                         {
-                            let mut has_value = (resolved_sym.flags & symbol_flags::VALUE) != 0;
+                            let mut has_value = (resolved_sym.flags
+                                & (symbol_flags::VALUE | symbol_flags::EXPORT_VALUE))
+                                != 0;
                             if has_value
                                 && (resolved_sym.flags & symbol_flags::VALUE_MODULE) != 0
                                 && (resolved_sym.flags
@@ -1413,17 +1415,8 @@ impl<'a> CheckerState<'a> {
                             {
                                 return false;
                             }
-                            let is_current_file_decl = self
-                                .ctx
-                                .arena
-                                .get(decl_idx)
-                                .and_then(|decl_node| self.ctx.arena.get_source_file(decl_node))
-                                .is_some_and(|source_file| {
-                                    let file_name = source_file.file_name.as_str();
-                                    file_name == self.ctx.file_name
-                                        || file_name.ends_with(self.ctx.file_name.as_str())
-                                        || self.ctx.file_name.ends_with(file_name)
-                                });
+                            let is_current_file_decl =
+                                self.ctx.binder.node_symbols.contains_key(&decl_idx.0);
                             if !is_current_file_decl {
                                 return false;
                             }
@@ -1441,7 +1434,7 @@ impl<'a> CheckerState<'a> {
                             }
 
                             if let Some(decl_node) = self.ctx.arena.get(decl_idx) {
-                                !matches!(
+                                if matches!(
                                     decl_node.kind,
                                     syntax_kind_ext::IMPORT_CLAUSE
                                         | syntax_kind_ext::NAMESPACE_IMPORT
@@ -1449,7 +1442,17 @@ impl<'a> CheckerState<'a> {
                                         | syntax_kind_ext::NAMED_IMPORTS
                                         | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                                         | syntax_kind_ext::IMPORT_DECLARATION
-                                )
+                                ) {
+                                    return false;
+                                }
+                                // Check if the local declaration has value semantics
+                                if let Some(flags) =
+                                    self.declaration_symbol_flags(self.ctx.arena, decl_idx)
+                                {
+                                    (flags & symbol_flags::VALUE) != 0
+                                } else {
+                                    true
+                                }
                             } else {
                                 false
                             }
