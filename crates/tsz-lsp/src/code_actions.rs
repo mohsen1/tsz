@@ -4,6 +4,7 @@
 
 mod code_action_extract;
 mod code_action_fixes;
+mod code_action_imports;
 mod code_action_provider;
 
 pub use code_action_fixes::{
