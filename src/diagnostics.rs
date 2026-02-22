@@ -110,6 +110,33 @@ impl DiagnosticRelatedInfo {
 // Diagnostic
 // =============================================================================
 
+/// The domain or origin of a diagnostic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[derive(Default)]
+pub enum DiagnosticDomain {
+    /// Standard TypeScript diagnostic (`TSxxxx`)
+    #[default]
+    TypeScript,
+    /// Sound Mode diagnostic (`TSZxxxx`)
+    Sound,
+}
+
+impl DiagnosticDomain {
+    /// Get the prefix for the diagnostic code.
+    pub const fn prefix(&self) -> &'static str {
+        match self {
+            Self::TypeScript => "TS",
+            Self::Sound => "TSZ",
+        }
+    }
+
+    /// Check if this is the default TypeScript domain.
+    pub const fn is_typescript(&self) -> bool {
+        matches!(self, Self::TypeScript)
+    }
+}
+
 /// A diagnostic message with location, severity, and error code.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Diagnostic {
@@ -123,6 +150,9 @@ pub struct Diagnostic {
     pub severity: DiagnosticSeverity,
     /// The diagnostic code (e.g., TS2304)
     pub code: u32,
+    /// The domain of the diagnostic (e.g., standard TS vs Sound Mode)
+    #[serde(skip_serializing_if = "DiagnosticDomain::is_typescript", default)]
+    pub domain: DiagnosticDomain,
     /// Optional related information
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub related: Vec<DiagnosticRelatedInfo>,
@@ -146,9 +176,19 @@ impl Diagnostic {
             message: message.into(),
             severity,
             code,
+            domain: DiagnosticDomain::TypeScript,
             related: Vec::new(),
             source: Some("typescript".to_string()),
         }
+    }
+
+    /// Set the origin domain of this diagnostic.
+    pub fn with_domain(mut self, domain: DiagnosticDomain) -> Self {
+        self.domain = domain;
+        if matches!(domain, DiagnosticDomain::Sound) {
+            self.source = Some("tsz-sound".to_string());
+        }
+        self
     }
 
     /// Create an error diagnostic.
@@ -234,14 +274,13 @@ impl Diagnostic {
     /// Returns a string like: "file.ts(1,5): error TS2304: Cannot find name 'foo'."
     pub fn format(&self, source_file: &mut SourceFile) -> String {
         let pos = source_file.offset_to_position(self.span.start);
-        let prefix = if self.code >= 9000 { "TSZ" } else { "TS" };
         format!(
             "{}({},{}): {} {}{}: {}",
             self.file_name,
             pos.line + 1,
             pos.character + 1,
             self.severity,
-            prefix,
+            self.domain.prefix(),
             self.code,
             self.message
         )
@@ -251,10 +290,12 @@ impl Diagnostic {
     ///
     /// Returns a string like: "error[TS2304]: Cannot find name 'foo'"
     pub fn format_simple(&self) -> String {
-        let prefix = if self.code >= 9000 { "TSZ" } else { "TS" };
         format!(
             "{}[{}{}]: {}",
-            self.severity, prefix, self.code, self.message
+            self.severity,
+            self.domain.prefix(),
+            self.code,
+            self.message
         )
     }
 
@@ -337,6 +378,14 @@ impl DiagnosticBag {
         self.add(Diagnostic::error(&self.default_file, span, message, code));
     }
 
+    /// Add a Sound Mode error diagnostic.
+    pub fn sound_error(&mut self, span: Span, message: impl Into<String>, code: u32) {
+        self.add(
+            Diagnostic::error(&self.default_file, span, message, code)
+                .with_domain(DiagnosticDomain::Sound),
+        );
+    }
+
     /// Add an error diagnostic with explicit file.
     pub fn error_in(
         &mut self,
@@ -346,6 +395,19 @@ impl DiagnosticBag {
         code: u32,
     ) {
         self.add(Diagnostic::error(file_name, span, message, code));
+    }
+
+    /// Add a Sound Mode error diagnostic with explicit file.
+    pub fn sound_error_in(
+        &mut self,
+        file_name: impl Into<String>,
+        span: Span,
+        message: impl Into<String>,
+        code: u32,
+    ) {
+        self.add(
+            Diagnostic::error(file_name, span, message, code).with_domain(DiagnosticDomain::Sound),
+        );
     }
 
     /// Add a warning diagnostic.
