@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9402/13623 = 69.0% JS, 762/2173 = 35.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9435/13623 = 69.3% JS, 762/2173 = 35.1% DTS)
 
 ### Fixed This Session
+- **JS input file compilation (allowJs parity)** (+33 JS tests):
+  Two bugs prevented `.js`/`.jsx`/`.mjs`/`.cjs` input files from being emitted:
+  1. `js_extension_for()` in `driver_resolution.rs` returned `None` for JS input extensions,
+     so no output file was produced. Added `.js→.js`, `.jsx→.jsx`, `.mjs→.mjs`, `.cjs→.cjs`
+     mappings to match tsc behavior where allowJs files are emitted.
+  2. `discover_ts_files()` in `fs.rs` required `allow_js` to be true even for explicitly
+     listed files (CLI positional args, tsconfig `"files"` array). tsc always compiles
+     explicitly listed files regardless of `allowJs`; the setting only controls
+     pattern-matched discovery (`include`/`exclude`). Removed the `allow_js` guard for
+     the explicit file loop.
+  Both fixes were required together — either alone had no effect. The 33 tests fixed
+  are `.js` files that tsc emits with `"use strict"` (via `alwaysStrict`) but tsz
+  previously skipped entirely.
+
+### Previously Fixed
 - **CLI-transpiler spurious "use strict" injection for AMD/UMD/Preserve** (+30 JS tests):
   The `cli-transpiler.ts` post-processing hack injected `"use strict"` at the top of output
   for AMD (module=2), UMD (module=3), and Preserve (module=200) module kinds. This was wrong:

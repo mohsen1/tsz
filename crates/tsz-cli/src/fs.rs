@@ -50,7 +50,11 @@ pub fn discover_ts_files(options: &FileDiscoveryOptions) -> Result<Vec<PathBuf>>
     for file in &options.files {
         let path = resolve_file_path(&options.base_dir, file);
         ensure_file_exists(&path)?;
-        if is_ts_file(&path) || (options.allow_js && is_js_file(&path)) {
+        // Explicitly listed files (from CLI positional args or tsconfig "files" array)
+        // are always compiled, including .js/.jsx/.mjs/.cjs files, regardless of
+        // the allowJs setting. This matches tsc behavior where allowJs only controls
+        // pattern-matched file discovery (include/exclude), not explicit file lists.
+        if is_ts_file(&path) || is_js_file(&path) {
             files.insert(path);
         }
     }
@@ -312,4 +316,95 @@ fn path_to_pattern(base_dir: &Path, path: &Path) -> Option<String> {
     };
     let value = rel.to_string_lossy().replace('\\', "/");
     if value.is_empty() { None } else { Some(value) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn test_discover_explicitly_listed_js_file_without_allow_js() {
+        // Explicitly listed .js files should be included even when allow_js is false.
+        // This matches tsc behavior where CLI positional args and tsconfig "files"
+        // entries are always compiled regardless of the allowJs setting.
+        let dir = std::env::temp_dir().join("tsz_fs_test_explicit_js");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("app.ts"), "const x = 1;").unwrap();
+        fs::write(dir.join("lib.js"), "var y = 2;").unwrap();
+
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![PathBuf::from("app.ts"), PathBuf::from("lib.js")],
+            include: None,
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false, // NOT set, but .js should still be included
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("app.ts")),
+            "explicitly listed .ts file should be included"
+        );
+        assert!(
+            result.iter().any(|p| p.ends_with("lib.js")),
+            "explicitly listed .js file should be included even without allowJs"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_discover_pattern_matched_js_file_requires_allow_js() {
+        // Pattern-matched .js files (from include/exclude) should NOT be included
+        // when allow_js is false. This is the correct tsc behavior.
+        let dir = std::env::temp_dir().join("tsz_fs_test_pattern_js");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/app.ts"), "const x = 1;").unwrap();
+        fs::write(dir.join("src/lib.js"), "var y = 2;").unwrap();
+
+        // Without allowJs, pattern-matched .js files are excluded
+        let options = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            include: Some(vec!["src".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: false,
+        };
+
+        let result = discover_ts_files(&options).unwrap();
+        assert!(
+            result.iter().any(|p| p.ends_with("app.ts")),
+            ".ts file should be included from pattern"
+        );
+        assert!(
+            !result.iter().any(|p| p.ends_with("lib.js")),
+            ".js file should NOT be included from pattern without allowJs"
+        );
+
+        // With allowJs, pattern-matched .js files are included
+        let options_with_js = FileDiscoveryOptions {
+            base_dir: dir.clone(),
+            files: vec![],
+            include: Some(vec!["src".to_string()]),
+            exclude: None,
+            out_dir: None,
+            follow_links: false,
+            allow_js: true,
+        };
+
+        let result_with_js = discover_ts_files(&options_with_js).unwrap();
+        assert!(
+            result_with_js.iter().any(|p| p.ends_with("lib.js")),
+            ".js file should be included from pattern with allowJs"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

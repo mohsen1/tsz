@@ -2296,6 +2296,14 @@ fn js_extension_for(path: &Path, jsx: Option<JsxEmit>) -> Option<&'static str> {
             | Some(JsxEmit::ReactNative)
             | None => Some("js"),
         },
+        // JS input files (.js, .jsx, .mjs, .cjs) are valid inputs that go through
+        // the emit pipeline (adding "use strict" for alwaysStrict, module transforms,
+        // etc.) and produce output with the same extension. This matches tsc behavior
+        // where `allowJs` files are emitted alongside .ts files.
+        Some("js") => Some("js"),
+        Some("jsx") => Some("jsx"),
+        Some("mjs") => Some("mjs"),
+        Some("cjs") => Some("cjs"),
         _ => None,
     }
 }
