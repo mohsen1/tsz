@@ -265,6 +265,20 @@ type PropertyType<T extends object, K extends keyof T> = T[K];
 }
 
 #[test]
+fn test_indexed_access_constrained_type_param_no_false_ts2304() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+type PropertyType<T extends object, K extends keyof T> = T[K];
+        ",
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2304),
+        "Should not emit TS2304 for in-scope type parameters in indexed access.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_indexed_access_unconstrained_type_param_emits_ts2536() {
     let diagnostics = compile_and_get_diagnostics(
         r"
