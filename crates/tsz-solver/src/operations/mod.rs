@@ -31,11 +31,15 @@
 //! - `property`: Property access resolution (includes helpers for mapped, primitive, array, etc.)
 //! - `property_readonly`: Readonly property checks
 //! - `property_visitor`: `TypeVisitor` impl for `PropertyAccessEvaluator`
+//! - `compound_assignment`: Compound assignment operator classification and fallback types
+//! - `expression_ops`: Expression type computation (conditional, template, best common type)
 
 pub mod binary_ops;
 mod call_args;
+pub mod compound_assignment;
 mod constraints;
 mod constructors;
+pub mod expression_ops;
 mod generic_call;
 pub mod generics;
 pub mod iterators;
@@ -45,6 +49,8 @@ mod property_visitor;
 
 // Re-exports from submodules
 pub use binary_ops::{BinaryOpEvaluator, BinaryOpResult, PrimitiveClass};
+pub use compound_assignment::*;
+pub use expression_ops::*;
 
 use crate::diagnostics::PendingDiagnostic;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};

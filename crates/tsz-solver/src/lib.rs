@@ -15,12 +15,10 @@ mod application;
 mod caches;
 pub mod canonicalize;
 pub mod classes;
-pub mod compound_assignment;
 mod contextual;
 pub mod def;
 mod diagnostics;
 pub mod evaluation;
-pub mod expression_ops;
 #[cfg(test)]
 mod flow_analysis;
 mod format;
@@ -73,7 +71,6 @@ pub use caches::query_cache::{QueryCache, RelationCacheProbe, RelationCacheStats
 pub use canonicalize::*;
 pub use classes::class_hierarchy::*;
 pub use classes::inheritance::*;
-pub use compound_assignment::*;
 pub use contextual::{ContextualTypeContext, apply_contextual_type};
 pub use def::*;
 pub use diagnostics::SubtypeFailureReason;
@@ -92,6 +89,10 @@ pub use instantiation::instantiate::{
 };
 pub use narrowing::*;
 pub use objects::*;
+pub use operations::compound_assignment;
+pub use operations::compound_assignment::*;
+pub use operations::expression_ops;
+pub use operations::expression_ops::*;
 pub use operations::{
     AssignabilityChecker, BinaryOpEvaluator, BinaryOpResult, CallEvaluator, CallResult,
     MAX_CONSTRAINT_RECURSION_DEPTH, PrimitiveClass, get_contextual_signature_with_compat_checker,
@@ -185,9 +186,7 @@ mod async_promise_comprehensive_tests;
 #[cfg(test)]
 #[path = "../tests/class_comprehensive_tests.rs"]
 mod class_comprehensive_tests;
-#[cfg(test)]
-#[path = "../tests/compound_assignment_tests.rs"]
-mod compound_assignment_tests;
+// compound_assignment_tests: loaded from operations/compound_assignment.rs
 #[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
