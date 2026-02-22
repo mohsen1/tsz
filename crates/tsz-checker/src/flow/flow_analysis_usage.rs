@@ -203,15 +203,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 // Stop at function/arrow boundaries - parameters are only at the top level
-                if matches!(parent_node.kind,
-                    k if k == syntax_kind_ext::FUNCTION_DECLARATION ||
-                         k == syntax_kind_ext::FUNCTION_EXPRESSION ||
-                         k == syntax_kind_ext::ARROW_FUNCTION ||
-                         k == syntax_kind_ext::METHOD_DECLARATION ||
-                         k == syntax_kind_ext::CONSTRUCTOR ||
-                         k == syntax_kind_ext::GET_ACCESSOR ||
-                         k == syntax_kind_ext::SET_ACCESSOR
-                ) {
+                if parent_node.is_function_like() {
                     return false;
                 }
             }
@@ -437,15 +429,7 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(node) = self.ctx.arena.get(current) {
                 // Check if we're inside a function-like or source-file container scope
-                if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                    || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                    || node.kind == syntax_kind_ext::CONSTRUCTOR
-                    || node.kind == syntax_kind_ext::GET_ACCESSOR
-                    || node.kind == syntax_kind_ext::SET_ACCESSOR
-                    || node.kind == syntax_kind_ext::SOURCE_FILE
-                {
+                if node.is_function_like() || node.kind == syntax_kind_ext::SOURCE_FILE {
                     found_container_scope = true;
                     break;
                 }
@@ -473,14 +457,7 @@ impl<'a> CheckerState<'a> {
             if node.kind == syntax_kind_ext::SOURCE_FILE {
                 return true;
             }
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || node.kind == syntax_kind_ext::CONSTRUCTOR
-                || node.kind == syntax_kind_ext::GET_ACCESSOR
-                || node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
+            if node.is_function_like() {
                 return false;
             }
             let Some(next) = self.ctx.arena.node_info(current).map(|n| n.parent) else {
@@ -504,14 +481,7 @@ impl<'a> CheckerState<'a> {
             let Some(node) = self.ctx.arena.get(current) else {
                 return false;
             };
-            if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || node.kind == syntax_kind_ext::ARROW_FUNCTION
-                || node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || node.kind == syntax_kind_ext::CONSTRUCTOR
-                || node.kind == syntax_kind_ext::GET_ACCESSOR
-                || node.kind == syntax_kind_ext::SET_ACCESSOR
-            {
+            if node.is_function_like() {
                 return true;
             }
             if node.kind == syntax_kind_ext::SOURCE_FILE {
