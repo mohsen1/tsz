@@ -844,6 +844,7 @@ impl Server {
                 });
                 response_actions.push(action);
             }
+            Self::rewrite_jsdoc_import_fixes(&content, &mut response_actions);
             self.rewrite_commonjs_import_fixes(file_path, &content, &mut response_actions);
             self.rewrite_import_fixes_for_type_order(&content, &mut response_actions);
 
@@ -1285,17 +1286,55 @@ impl Server {
     ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
         let mut diagnostics = Vec::new();
         let mut seen_spans = std::collections::HashSet::new();
+        let jsdoc_imported_names = extract_jsdoc_imported_names(content);
         let mut offset = 0usize;
 
         for line_with_newline in content.split_inclusive('\n') {
             let line = line_with_newline.trim_end_matches(['\r', '\n']);
             let trimmed = line.trim_start();
+            let is_comment_line =
+                trimmed.starts_with("/*") || trimmed.starts_with('*') || trimmed.starts_with("//");
             let skip_scanning = trimmed.starts_with("import ")
                 || trimmed.starts_with("export ")
                 || trimmed.starts_with("interface ")
                 || trimmed.starts_with("type ")
                 || trimmed.starts_with("class ")
                 || trimmed.starts_with("function ");
+
+            if is_comment_line {
+                let is_jsdoc_type_tag = line.contains("@param")
+                    || line.contains("@type")
+                    || line.contains("@returns")
+                    || line.contains("@return");
+                if is_jsdoc_type_tag {
+                    for (name, rel_start) in extract_jsdoc_type_identifier_spans(line) {
+                        if jsdoc_imported_names.contains(name.as_str()) {
+                            continue;
+                        }
+                        if binder.file_locals.get(name.as_str()).is_some() {
+                            continue;
+                        }
+                        if !self.has_potential_auto_import_symbol(file_path, name.as_str()) {
+                            continue;
+                        }
+                        if seen_spans.insert((offset + rel_start, name.len())) {
+                            diagnostics.push(tsz::checker::diagnostics::Diagnostic {
+                                category: DiagnosticCategory::Error,
+                                code: tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME,
+                                file: file_path.to_string(),
+                                start: (offset + rel_start) as u32,
+                                length: name.len() as u32,
+                                message_text: format!("Cannot find name '{name}'."),
+                                related_information: Vec::new(),
+                            });
+                        }
+                    }
+                }
+
+                offset += line_with_newline.len();
+                continue;
+            }
+
             if let Some((column, name)) = parse_bare_identifier_expression(line)
                 && binder.file_locals.get(name).is_none()
                 && self.has_potential_auto_import_symbol(file_path, name)
@@ -3192,6 +3231,83 @@ impl Server {
         text_change["newText"] = serde_json::json!(rewritten_line);
     }
 
+    fn rewrite_jsdoc_import_fixes(content: &str, response_actions: &mut [serde_json::Value]) {
+        let Some((line_no, line_text, line_prefix, module_specifier, mut existing_specs)) =
+            find_jsdoc_import_line(content)
+        else {
+            return;
+        };
+
+        for action in response_actions {
+            if action.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                continue;
+            }
+            let Some(changes) = action
+                .get_mut("changes")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                continue;
+            };
+            if changes.len() != 1 {
+                continue;
+            }
+            let Some(file_change) = changes.get_mut(0) else {
+                continue;
+            };
+            let Some(text_changes) = file_change
+                .get_mut("textChanges")
+                .and_then(serde_json::Value::as_array_mut)
+            else {
+                continue;
+            };
+            if text_changes.len() != 1 {
+                continue;
+            }
+            let Some(text_change) = text_changes.get_mut(0) else {
+                continue;
+            };
+            let Some(new_text) = text_change
+                .get("newText")
+                .and_then(serde_json::Value::as_str)
+            else {
+                continue;
+            };
+            let Some((specs, inserted_module, _quote)) = parse_named_import_line(new_text.trim())
+            else {
+                continue;
+            };
+            if inserted_module != module_specifier {
+                continue;
+            }
+            for spec in specs {
+                if !existing_specs
+                    .iter()
+                    .any(|existing| existing.local_name == spec.local_name)
+                {
+                    existing_specs.push(spec);
+                }
+            }
+
+            let joined = existing_specs
+                .iter()
+                .map(|spec| spec.raw.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let rewritten_line =
+                format!("{line_prefix}@import {{ {joined} }} from \"{module_specifier}\"");
+            let end_offset = line_text.len() as u64 + 1;
+            text_change["start"] = serde_json::json!({
+                "line": line_no,
+                "offset": 1
+            });
+            text_change["end"] = serde_json::json!({
+                "line": line_no,
+                "offset": end_offset
+            });
+            text_change["newText"] = serde_json::json!(rewritten_line);
+        }
+    }
+
     fn inject_unknown_before_as_assertions(content: &str) -> String {
         let mut out = String::with_capacity(content.len() + 32);
         let mut i = 0usize;
@@ -4335,6 +4451,121 @@ fn parse_bare_identifier_expression(line: &str) -> Option<(usize, &str)> {
     Some((leading_ws, expr))
 }
 
+fn find_jsdoc_import_line(
+    content: &str,
+) -> Option<(u32, String, String, String, Vec<ImportSpecifierEntry>)> {
+    for (idx, line) in content.lines().enumerate() {
+        let Some(at_import) = line.find("@import") else {
+            continue;
+        };
+        let prefix = &line[..at_import];
+        let import_part = &line[at_import + "@import".len()..];
+        let open = import_part.find('{')?;
+        let close = import_part[open + 1..].find('}')?;
+        let spec_end = open + 1 + close;
+        let specs_text = import_part[open + 1..spec_end].trim();
+        let after_specs = &import_part[spec_end + 1..];
+        let Some(from_idx) = after_specs.find("from") else {
+            continue;
+        };
+        let module_text = after_specs[from_idx + "from".len()..].trim();
+        let Some(module_specifier) = extract_quoted_text(module_text) else {
+            continue;
+        };
+
+        let specs = specs_text
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| ImportSpecifierEntry {
+                raw: s.to_string(),
+                local_name: s
+                    .split_once(" as ")
+                    .map_or_else(|| s.to_string(), |(_, local)| local.trim().to_string()),
+                is_type_only: s.starts_with("type "),
+            })
+            .collect::<Vec<_>>();
+        if specs.is_empty() {
+            continue;
+        }
+        return Some((
+            idx as u32 + 1,
+            line.to_string(),
+            prefix.to_string(),
+            module_specifier.to_string(),
+            specs,
+        ));
+    }
+    None
+}
+
+fn extract_jsdoc_imported_names(content: &str) -> std::collections::HashSet<String> {
+    let mut names = std::collections::HashSet::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.contains("@import") {
+            continue;
+        }
+        let Some(open) = trimmed.find('{') else {
+            continue;
+        };
+        let Some(close_rel) = trimmed[open + 1..].find('}') else {
+            continue;
+        };
+        let close = open + 1 + close_rel;
+        for raw_spec in trimmed[open + 1..close].split(',') {
+            let imported = raw_spec
+                .trim()
+                .split_whitespace()
+                .next()
+                .unwrap_or_default();
+            if !imported.is_empty() {
+                names.insert(imported.to_string());
+            }
+        }
+    }
+    names
+}
+
+fn extract_jsdoc_type_identifier_spans(line: &str) -> Vec<(String, usize)> {
+    let mut out = Vec::new();
+    let Some(open) = line.find('{') else {
+        return out;
+    };
+    let Some(close_rel) = line[open + 1..].find('}') else {
+        return out;
+    };
+    let close = open + 1 + close_rel;
+    let type_text = &line[open + 1..close];
+    let bytes = type_text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+        if !(ch.is_ascii_alphabetic() || ch == '_' || ch == '$') {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        i += 1;
+        while i < bytes.len() {
+            let next = bytes[i] as char;
+            if next.is_ascii_alphanumeric() || next == '_' || next == '$' {
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let Some(name) = type_text.get(start..i) else {
+            continue;
+        };
+        if !name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) || !is_identifier(name) {
+            continue;
+        }
+        out.push((name.to_string(), open + 1 + start));
+    }
+    out
+}
+
 fn is_same_import_candidate_symbol(a: &ImportCandidate, b: &ImportCandidate) -> bool {
     if a.local_name != b.local_name || a.is_type_only != b.is_type_only {
         return false;
@@ -4720,6 +4951,160 @@ mod tests {
         assert_eq!(
             updated,
             "import { Test1, Test2, Test3, Test4 } from './file1';\ninterface Testing {\n    test1: Test1;\n    test2: Test2;\n    test3: Test3;\n    test4: Test4;\n}\n"
+        );
+    }
+
+    #[test]
+    fn handle_get_code_fixes_jsdoc_import_returns_single_missing_import_fix() {
+        let mut server = make_server();
+        server.open_files.insert(
+            "/foo.ts".to_string(),
+            "export const A = 1;\nexport type B = { x: number };\nexport type C = 1;\nexport class D { y: string }\n".to_string(),
+        );
+        let test_js = "/**\n * @import { A, D, C } from \"./foo\"\n */\n\n/**\n * @param { typeof A } a\n * @param { B | C } b\n * @param { C } c\n * @param { D } d\n */\nexport function f(a, b, c, d) { }\n";
+        server
+            .open_files
+            .insert("/test.js".to_string(), test_js.to_string());
+
+        let diag_req = TsServerRequest {
+            seq: 1,
+            _msg_type: "request".to_string(),
+            command: "semanticDiagnosticsSync".to_string(),
+            arguments: serde_json::json!({
+                "file": "/test.js",
+                "includeLinePosition": true
+            }),
+        };
+        let diag_resp = server.handle_semantic_diagnostics_sync(1, &diag_req);
+        assert!(
+            diag_resp.success,
+            "expected semanticDiagnosticsSync to succeed"
+        );
+        let missing_name_diags: Vec<serde_json::Value> = diag_resp
+            .body
+            .as_ref()
+            .and_then(serde_json::Value::as_array)
+            .expect("expected diagnostics array")
+            .iter()
+            .filter(|diag| {
+                diag.get("code")
+                    .and_then(serde_json::Value::as_u64)
+                    .map(|code| code as u32)
+                    == Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+            })
+            .cloned()
+            .collect();
+        assert_eq!(
+            missing_name_diags.len(),
+            1,
+            "expected one cannot-find-name diagnostic in diagnostics flow, got {missing_name_diags:?}"
+        );
+
+        let mut import_fix_texts = Vec::new();
+        for diag in &missing_name_diags {
+            let code = diag
+                .get("code")
+                .and_then(serde_json::Value::as_u64)
+                .expect("diagnostic code") as u32;
+            let (start, end) = if let (Some(start_line), Some(start_offset), Some(end_line), Some(end_offset)) = (
+                diag.get("start")
+                    .and_then(|start| start.get("line"))
+                    .and_then(serde_json::Value::as_u64),
+                diag.get("start")
+                    .and_then(|start| start.get("offset"))
+                    .and_then(serde_json::Value::as_u64),
+                diag.get("end")
+                    .and_then(|end| end.get("line"))
+                    .and_then(serde_json::Value::as_u64),
+                diag.get("end")
+                    .and_then(|end| end.get("offset"))
+                    .and_then(serde_json::Value::as_u64),
+            ) {
+                (
+                    tsz::lsp::position::Position::new(
+                        (start_line as u32).saturating_sub(1),
+                        (start_offset as u32).saturating_sub(1),
+                    ),
+                    tsz::lsp::position::Position::new(
+                        (end_line as u32).saturating_sub(1),
+                        (end_offset as u32).saturating_sub(1),
+                    ),
+                )
+            } else {
+                let start_off = diag
+                    .get("start")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("diagnostic start offset") as u32;
+                let length = diag
+                    .get("length")
+                    .and_then(serde_json::Value::as_u64)
+                    .expect("diagnostic length") as u32;
+                let line_map = super::LineMap::build(test_js);
+                (
+                    line_map.offset_to_position(start_off, test_js),
+                    line_map.offset_to_position(start_off + length, test_js),
+                )
+            };
+            let req = TsServerRequest {
+                seq: 1,
+                _msg_type: "request".to_string(),
+                command: "getCodeFixes".to_string(),
+                arguments: serde_json::json!({
+                    "file": "/test.js",
+                    "startLine": start.line + 1,
+                    "startOffset": start.character + 1,
+                    "endLine": end.line + 1,
+                    "endOffset": end.character + 1,
+                    "errorCodes": [code],
+                    "preferences": {
+                        "preferTypeOnlyAutoImports": true
+                    }
+                }),
+            };
+            let resp = server.handle_get_code_fixes(1, &req);
+            assert!(resp.success, "expected getCodeFixes to succeed");
+            let actions = resp
+                .body
+                .as_ref()
+                .and_then(serde_json::Value::as_array)
+                .expect("expected getCodeFixes actions");
+            for action in actions {
+                if action.get("fixName").and_then(serde_json::Value::as_str) != Some("import") {
+                    continue;
+                }
+                let Some(changes) = action.get("changes").and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                let Some(file_change) = changes.first() else {
+                    continue;
+                };
+                let Some(text_changes) = file_change
+                    .get("textChanges")
+                    .and_then(serde_json::Value::as_array)
+                else {
+                    continue;
+                };
+                let Some(new_text) = text_changes
+                    .first()
+                    .and_then(|change| change.get("newText"))
+                    .and_then(serde_json::Value::as_str)
+                else {
+                    continue;
+                };
+                import_fix_texts.push(new_text.to_string());
+            }
+        }
+
+        assert_eq!(
+            import_fix_texts.len(),
+            1,
+            "expected one import fix from diagnostics flow, got {import_fix_texts:?}"
+        );
+        assert!(
+            import_fix_texts[0].contains("@import { A, D, C, B } from \"./foo\""),
+            "expected JSDoc @import merge edit, got {:?}",
+            import_fix_texts[0]
         );
     }
 }
