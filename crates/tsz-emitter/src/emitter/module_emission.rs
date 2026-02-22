@@ -52,7 +52,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.write_line();
+        // Only write newline if not already at line start (class declarations
+        // with lowered static fields already end with write_line()).
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
         if is_default {
             self.write("exports.default = ");
             self.write_identifier_by_id(names[0]);
@@ -1315,7 +1319,12 @@ impl<'a> Printer<'a> {
 
                     // Emit the class declaration
                     self.emit_class_declaration(clause_node, export.export_clause);
-                    self.write_line();
+                    // Only write a newline if we're not already at line start
+                    // (class declarations with lowered static fields already end
+                    // with write_line() after the last `ClassName.field = value;`)
+                    if !self.writer.is_at_line_start() {
+                        self.write_line();
+                    }
 
                     // Get class name and emit export (unless file has export =)
                     if !self.ctx.module_state.has_export_assignment
