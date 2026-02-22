@@ -658,34 +658,32 @@ impl<'a> FlowAnalyzer<'a> {
                 || is_call; // CRITICAL: CALL nodes need antecedent for assertion functions
 
             if is_merge_point && !flow.antecedent.is_empty() {
-                // For merge points, check if all required antecedents are processed
-                // For SWITCH_CLAUSE, we check fallthrough antecedents (index 1+)
-                // For BRANCH, we check all antecedents
-                // For LOOP_LABEL, we only require the first antecedent (entry flow) to be ready
-                let antecedents_to_check: Vec<FlowNodeId> = if is_switch_fallthrough {
-                    // CRITICAL FIX: Switch fallthrough needs ALL antecedents
-                    // - index 0: switch header (for narrowing calculation)
-                    // - index 1..: previous clauses that fell through (for union)
-                    flow.antecedent.clone()
-                } else if is_loop_header {
-                    // For loops, only check the first antecedent (entry flow)
-                    flow.antecedent.first().copied().into_iter().collect()
-                } else {
-                    flow.antecedent.clone()
-                };
-
                 // Some flow graphs can contain self-antecedent edges on merge nodes.
                 // Treat self-edges as already satisfied to avoid requeueing the same
                 // node forever before it can be finalized.
-                let all_ready = antecedents_to_check.iter().all(|&ant| {
-                    ant == current_flow || visited.contains(&ant) || results.contains_key(&ant)
-                });
+                let mut all_ready = true;
+                let mut check_antecedent_ready = |ant: FlowNodeId| {
+                    if ant != current_flow && !visited.contains(&ant) && !results.contains_key(&ant)
+                    {
+                        all_ready = false;
+                    }
+                };
+                if is_loop_header {
+                    if let Some(&ant) = flow.antecedent.first() {
+                        check_antecedent_ready(ant);
+                    }
+                } else {
+                    // BRANCH/SWITCH/CALL merge points check all antecedents.
+                    for &ant in &flow.antecedent {
+                        check_antecedent_ready(ant);
+                    }
+                }
 
                 if !all_ready {
-                    // Schedule unprocessed antecedents to be processed FIRST (push_front)
-                    for &ant in &antecedents_to_check {
+                    // Schedule unprocessed antecedents to be processed FIRST (push_front).
+                    let mut schedule_antecedent = |ant: FlowNodeId| {
                         if ant == current_flow {
-                            continue;
+                            return;
                         }
                         if !visited.contains(&ant)
                             && !results.contains_key(&ant)
@@ -693,6 +691,15 @@ impl<'a> FlowAnalyzer<'a> {
                         {
                             worklist.push_front((ant, current_type));
                             in_worklist.insert(ant);
+                        }
+                    };
+                    if is_loop_header {
+                        if let Some(&ant) = flow.antecedent.first() {
+                            schedule_antecedent(ant);
+                        }
+                    } else {
+                        for &ant in &flow.antecedent {
+                            schedule_antecedent(ant);
                         }
                     }
                     // Re-add self to the END of worklist to process after antecedents
