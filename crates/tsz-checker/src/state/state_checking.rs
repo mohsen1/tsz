@@ -823,30 +823,7 @@ impl<'a> CheckerState<'a> {
         arena: &tsz_parser::parser::NodeArena,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
-        self.get_modifier_index_in_arena(
-            arena,
-            modifiers,
-            tsz_scanner::SyntaxKind::StaticKeyword as u16,
-        )
-        .is_some()
-    }
-
-    fn get_modifier_index_in_arena(
-        &self,
-        arena: &tsz_parser::parser::NodeArena,
-        modifiers: &Option<tsz_parser::parser::NodeList>,
-        kind: u16,
-    ) -> Option<NodeIndex> {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx)
-                    && mod_node.kind == kind
-                {
-                    return Some(mod_idx);
-                }
-            }
-        }
-        None
+        arena.has_modifier(modifiers, tsz_scanner::SyntaxKind::StaticKeyword)
     }
 
     pub(crate) fn declaration_symbol_flags(

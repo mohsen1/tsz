@@ -293,7 +293,9 @@ impl<'a> CommonJsTransformContext<'a> {
     fn transform_variable_statement(&mut self, var_idx: NodeIndex) -> Option<IRNode> {
         let var_data = self.arena.get_variable_at(var_idx)?;
 
-        let is_exported = has_export_modifier_from_list(self.arena, &var_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             // Need to add export assignments after the variable statement
@@ -328,7 +330,9 @@ impl<'a> CommonJsTransformContext<'a> {
     fn transform_function_statement(&mut self, func_idx: NodeIndex) -> Option<IRNode> {
         let func_data = self.arena.get_function_at(func_idx)?;
 
-        let is_exported = has_export_modifier_from_list(self.arena, &func_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&func_data.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             let func_name = get_identifier_text(self.arena, func_data.name)?;
@@ -347,7 +351,9 @@ impl<'a> CommonJsTransformContext<'a> {
     fn transform_class_statement(&mut self, class_idx: NodeIndex) -> Option<IRNode> {
         let class_data = self.arena.get_class_at(class_idx)?;
 
-        let is_exported = has_export_modifier_from_list(self.arena, &class_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&class_data.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             let class_name = get_identifier_text(self.arena, class_data.name)?;
@@ -366,7 +372,9 @@ impl<'a> CommonJsTransformContext<'a> {
     fn transform_enum_statement(&mut self, enum_idx: NodeIndex) -> Option<IRNode> {
         let enum_data = self.arena.get_enum_at(enum_idx)?;
 
-        let is_exported = has_export_modifier_from_list(self.arena, &enum_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             let enum_name = get_identifier_text(self.arena, enum_data.name)?;
@@ -385,7 +393,9 @@ impl<'a> CommonJsTransformContext<'a> {
     fn transform_namespace_statement(&mut self, ns_idx: NodeIndex) -> Option<IRNode> {
         let ns_data = self.arena.get_module_at(ns_idx)?;
 
-        let is_exported = has_export_modifier_from_list(self.arena, &ns_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
         if is_exported {
             let ns_name = get_identifier_text(self.arena, ns_data.name)?;
@@ -421,30 +431,6 @@ fn get_string_literal_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> 
     } else {
         None
     }
-}
-
-fn has_modifier(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-    kind: u16,
-) -> bool {
-    if let Some(mods) = modifiers {
-        for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx)
-                && mod_node.kind == kind
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-fn has_export_modifier_from_list(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::ExportKeyword as u16)
 }
 
 /// Sanitize module specifier for use as variable name

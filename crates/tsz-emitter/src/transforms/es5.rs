@@ -868,18 +868,8 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        let Some(mods) = modifiers else {
-            return false;
-        };
-        for &mod_idx in &mods.nodes {
-            let Some(mod_node) = self.arena.get(mod_idx) else {
-                continue;
-            };
-            if mod_node.kind == SyntaxKind::DeclareKeyword as u16 {
-                return true;
-            }
-        }
-        false
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     fn is_static(&self, modifiers: &Option<NodeList>) -> bool {

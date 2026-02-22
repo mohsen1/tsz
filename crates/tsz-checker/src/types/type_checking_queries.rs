@@ -41,16 +41,9 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     /// Find the `declare` modifier `NodeIndex` in a modifier list, if present.
@@ -59,16 +52,9 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> Option<NodeIndex> {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::DeclareKeyword as u16
-                {
-                    return Some(mod_idx);
-                }
-            }
-        }
-        None
+        self.ctx
+            .arena
+            .find_modifier(modifiers, SyntaxKind::DeclareKeyword)
     }
 
     /// Check if a node has the `async` modifier.
@@ -76,16 +62,9 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::AsyncKeyword)
     }
 
     /// Find the `async` modifier `NodeIndex` in a modifier list, if present.
@@ -93,16 +72,9 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> Option<NodeIndex> {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::AsyncKeyword as u16
-                {
-                    return Some(mod_idx);
-                }
-            }
-        }
-        None
+        self.ctx
+            .arena
+            .find_modifier(modifiers, SyntaxKind::AsyncKeyword)
     }
 
     /// Check if a node has the `abstract` modifier.
@@ -166,19 +138,21 @@ impl<'a> CheckerState<'a> {
         &self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.ctx.arena.get(mod_idx)
-                    && (mod_node.kind == SyntaxKind::PublicKeyword as u16
-                        || mod_node.kind == SyntaxKind::PrivateKeyword as u16
-                        || mod_node.kind == SyntaxKind::ProtectedKeyword as u16
-                        || mod_node.kind == SyntaxKind::ReadonlyKeyword as u16)
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.ctx
+            .arena
+            .has_modifier(modifiers, SyntaxKind::PublicKeyword)
+            || self
+                .ctx
+                .arena
+                .has_modifier(modifiers, SyntaxKind::PrivateKeyword)
+            || self
+                .ctx
+                .arena
+                .has_modifier(modifiers, SyntaxKind::ProtectedKeyword)
+            || self
+                .ctx
+                .arena
+                .has_modifier(modifiers, SyntaxKind::ReadonlyKeyword)
     }
 
     /// Check if a node is a private identifier.

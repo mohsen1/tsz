@@ -1082,16 +1082,7 @@ impl<'a> CheckerState<'a> {
         arena: &tsz_parser::parser::NodeArena,
         modifiers: &Option<tsz_parser::parser::NodeList>,
     ) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = arena.get(mod_idx)
-                    && mod_node.kind == tsz_scanner::SyntaxKind::DeclareKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        arena.has_modifier(modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
     }
 
     /// Check if a node is in a type-only context (type annotation, type query, heritage clause).

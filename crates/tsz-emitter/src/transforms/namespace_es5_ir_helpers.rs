@@ -109,25 +109,12 @@ pub(super) fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<S
     }
 }
 
-pub(super) fn has_modifier(arena: &NodeArena, modifiers: &Option<NodeList>, kind: u16) -> bool {
-    if let Some(mods) = modifiers {
-        for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx)
-                && mod_node.kind == kind
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 pub(super) fn has_declare_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::DeclareKeyword as u16)
+    arena.has_modifier(modifiers, SyntaxKind::DeclareKeyword)
 }
 
 pub(super) fn has_export_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::ExportKeyword as u16)
+    arena.has_modifier(modifiers, SyntaxKind::ExportKeyword)
 }
 
 /// Convert function parameters to IR parameters (without type annotations)

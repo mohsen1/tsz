@@ -540,7 +540,8 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
     }
 
     pub(crate) fn has_public_api_exports(

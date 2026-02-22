@@ -49,7 +49,7 @@ fn collect_export_name_from_declaration(
     match decl_node.kind {
         k if k == syntax_kind_ext::CLASS_DECLARATION => {
             if let Some(class) = arena.get_class(decl_node) {
-                if has_declare_modifier_from_list(arena, &class.modifiers) {
+                if arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
                 if let Some(name) = get_identifier_text(arena, class.name) {
@@ -59,7 +59,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
             if let Some(func) = arena.get_function(decl_node) {
-                if has_declare_modifier_from_list(arena, &func.modifiers) {
+                if arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
                 if let Some(name) = get_identifier_text(arena, func.name)
@@ -71,7 +71,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
             if let Some(var_stmt) = arena.get_variable(decl_node) {
-                if has_declare_modifier_from_list(arena, &var_stmt.modifiers) {
+                if arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
                 for &decl_idx in &var_stmt.declarations.nodes {
@@ -81,8 +81,8 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(decl_node) {
-                if has_declare_modifier_from_list(arena, &enum_decl.modifiers)
-                    || has_const_modifier_from_list(arena, &enum_decl.modifiers)
+                if arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
                 {
                     return;
                 }
@@ -93,7 +93,7 @@ fn collect_export_name_from_declaration(
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module) = arena.get_module(decl_node) {
-                if has_declare_modifier_from_list(arena, &module.modifiers) {
+                if arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword) {
                     return;
                 }
                 if !is_instantiated_module_for_exports(arena, module.body) {
@@ -170,8 +170,8 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
             // export var baz = ...
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = arena.get_variable(node)
-                    && has_export_modifier_from_list(arena, &var_stmt.modifiers)
-                    && !has_declare_modifier_from_list(arena, &var_stmt.modifiers)
+                    && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
                 {
                     for &decl_idx in &var_stmt.declarations.nodes {
                         collect_declaration_names(arena, decl_idx, &mut exports);
@@ -183,8 +183,8 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
             // with the same name; deduplicate to avoid repeated exports.
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = arena.get_function(node)
-                    && has_export_modifier_from_list(arena, &func.modifiers)
-                    && !has_declare_modifier_from_list(arena, &func.modifiers)
+                    && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                     && let Some(name) = get_identifier_text(arena, func.name)
                     && !exports.contains(&name)
                 {
@@ -194,8 +194,8 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
             // export class Foo {}
             k if k == syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = arena.get_class(node)
-                    && has_export_modifier_from_list(arena, &class.modifiers)
-                    && !has_declare_modifier_from_list(arena, &class.modifiers)
+                    && arena.has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
                     && let Some(name) = get_identifier_text(arena, class.name)
                 {
                     exports.push(name);
@@ -204,9 +204,9 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
             // export enum E {}
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = arena.get_enum(node)
-                    && has_export_modifier_from_list(arena, &enum_decl.modifiers)
-                    && !has_declare_modifier_from_list(arena, &enum_decl.modifiers)
-                    && !has_const_modifier_from_list(arena, &enum_decl.modifiers)
+                    && arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    && !arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
                     && let Some(name) = get_identifier_text(arena, enum_decl.name)
                 {
                     exports.push(name);
@@ -215,8 +215,8 @@ pub fn collect_export_names(arena: &NodeArena, statements: &[NodeIndex]) -> Vec<
             // export namespace N {}
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = arena.get_module(node)
-                    && has_export_modifier_from_list(arena, &module.modifiers)
-                    && !has_declare_modifier_from_list(arena, &module.modifiers)
+                    && arena.has_modifier(&module.modifiers, SyntaxKind::ExportKeyword)
+                    && !arena.has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                     && is_instantiated_module_for_exports(arena, module.body)
                     && let Some(name) = get_identifier_text(arena, module.name)
                 {
@@ -252,8 +252,8 @@ pub fn collect_export_names_categorized(
         // with the same name; deduplicate to emit only one `exports.X = X;`.
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
             if let Some(func) = arena.get_function(node)
-                && has_export_modifier_from_list(arena, &func.modifiers)
-                && !has_declare_modifier_from_list(arena, &func.modifiers)
+                && arena.has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
+                && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
                 && let Some(name) = get_identifier_text(arena, func.name)
                 && !func_exports.contains(&name)
             {
@@ -269,7 +269,7 @@ pub fn collect_export_names_categorized(
             && let Some(clause_node) = arena.get(export_decl.export_clause)
             && clause_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             && let Some(func) = arena.get_function(clause_node)
-            && !has_declare_modifier_from_list(arena, &func.modifiers)
+            && !arena.has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
             && let Some(name) = get_identifier_text(arena, func.name)
             && !func_exports.contains(&name)
         {
@@ -452,32 +452,6 @@ pub fn emit_reexport_property(export_name: &str, module_var: &str, import_name: 
 // Helper Functions
 // =============================================================================
 
-/// Check if modifiers contain a specific modifier kind
-fn has_modifier(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-    kind: u16,
-) -> bool {
-    if let Some(mods) = modifiers {
-        for &mod_idx in &mods.nodes {
-            if let Some(mod_node) = arena.get(mod_idx)
-                && mod_node.kind == kind
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-/// Check if a node has the `export` modifier
-fn has_export_modifier_from_list(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::ExportKeyword as u16)
-}
-
 fn is_instantiated_module_for_exports(arena: &NodeArena, module_body: NodeIndex) -> bool {
     let Some(body_node) = arena.get(module_body) else {
         return false;
@@ -537,44 +511,20 @@ fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> bool {
         }
         k if k == syntax_kind_ext::ENUM_DECLARATION => {
             if let Some(enum_decl) = arena.get_enum(node) {
-                return has_declare_modifier_from_list(arena, &enum_decl.modifiers)
-                    || has_const_modifier_from_list(arena, &enum_decl.modifiers);
+                return arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
             }
             false
         }
         k if k == syntax_kind_ext::MODULE_DECLARATION => {
             if let Some(module_decl) = arena.get_module(node) {
-                return has_declare_modifier_from_list(arena, &module_decl.modifiers)
+                return arena.has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
                     || !is_instantiated_module_for_exports(arena, module_decl.body);
             }
             true
         }
         _ => false,
     }
-}
-
-/// Check if a node has the `declare` modifier
-fn has_declare_modifier_from_list(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::DeclareKeyword as u16)
-}
-
-/// Check if a node has the `const` modifier
-fn has_const_modifier_from_list(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::ConstKeyword as u16)
-}
-
-/// Check if a node has the `default` modifier
-pub fn has_default_modifier_from_list(
-    arena: &NodeArena,
-    modifiers: &Option<tsz_parser::parser::NodeList>,
-) -> bool {
-    has_modifier(arena, modifiers, SyntaxKind::DefaultKeyword as u16)
 }
 
 /// Collect exported names from a variable declaration (identifier or binding pattern).

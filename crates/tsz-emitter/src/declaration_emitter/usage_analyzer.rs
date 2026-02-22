@@ -97,16 +97,8 @@ pub struct UsageAnalyzer<'a> {
 impl<'a> UsageAnalyzer<'a> {
     /// Check if a node has the Export modifier.
     fn has_export_modifier(&self, modifiers: &Option<tsz_parser::parser::NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == SyntaxKind::ExportKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.arena
+            .has_modifier(modifiers, SyntaxKind::ExportKeyword)
     }
 
     /// Create a new usage analyzer.
