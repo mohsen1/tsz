@@ -1701,6 +1701,10 @@ impl Project {
         output: &mut Vec<ImportCandidate>,
         seen: &mut FxHashSet<(String, String, String, bool)>,
     ) {
+        if !self.auto_imports_allowed_for_file(from_file.file_name()) {
+            return;
+        }
+
         // Try optimized path for named exports using symbol index
         let candidate_files = self.symbol_index.get_files_with_symbol(missing_name);
         let use_optimized = !candidate_files.is_empty();
@@ -1777,6 +1781,10 @@ impl Project {
         output: &mut Vec<ImportCandidate>,
         seen: &mut FxHashSet<(String, String, String, bool)>,
     ) {
+        if !self.auto_imports_allowed_for_file(from_file.file_name()) {
+            return;
+        }
+
         // Get all symbols that match the prefix using the sorted symbol index
         let matching_symbols = self.symbol_index.get_symbols_with_prefix(prefix);
 
@@ -2450,6 +2458,8 @@ impl Project {
 
         let from_path = strip_ts_extension(&normalize_path(Path::new(from_file)));
         let target_path = strip_ts_extension(&normalize_path(Path::new(target_file)));
+        let style = self.relative_import_style(from_file);
+        let mut best_spec: Option<String> = None;
 
         for from_root in &roots {
             let Ok(from_rel) = from_path.strip_prefix(from_root) else {
@@ -2471,7 +2481,7 @@ impl Project {
                 }
 
                 // Preserve existing extension style behavior for relative imports.
-                match self.relative_import_style(from_file) {
+                match style {
                     RelativeImportStyle::Minimal => {}
                     RelativeImportStyle::Ts => {
                         if let Some(ext) = ts_source_extension(target_file) {
@@ -2480,11 +2490,18 @@ impl Project {
                     }
                     RelativeImportStyle::Js => spec.push_str(".js"),
                 }
-                return Some(spec);
+
+                if let Some(current_best) = best_spec.as_ref() {
+                    if compare_module_specifier_candidates(&spec, current_best) == Ordering::Less {
+                        best_spec = Some(spec);
+                    }
+                } else {
+                    best_spec = Some(spec);
+                }
             }
         }
 
-        None
+        best_spec
     }
 
     fn nearest_compiler_options_for_file(
@@ -2519,6 +2536,61 @@ impl Project {
             }
             current = dir.parent();
         }
+        None
+    }
+
+    fn auto_imports_allowed_for_file(&self, from_file: &str) -> bool {
+        let Some((_, compiler_options)) = self.nearest_compiler_options_for_file(from_file) else {
+            if let Some(allow) = self.auto_imports_allowed_from_fourslash_directives(from_file) {
+                return allow;
+            }
+            return self.auto_imports_allowed_without_tsconfig;
+        };
+
+        let module_none = compiler_options
+            .get("module")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|module| module.eq_ignore_ascii_case("none"));
+        if !module_none {
+            return true;
+        }
+
+        compiler_options
+            .get("target")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(target_supports_import_syntax)
+    }
+
+    fn auto_imports_allowed_from_fourslash_directives(&self, from_file: &str) -> Option<bool> {
+        let file = self.files.get(from_file)?;
+        let mut saw_module = false;
+        let mut module_none = false;
+        let mut saw_target = false;
+        let mut target_supports_imports = false;
+
+        for line in file.source_text().lines().take(64) {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix("// @module:") {
+                saw_module = true;
+                module_none = rest.split(',').map(str::trim).any(|value| {
+                    value.eq_ignore_ascii_case("none") || value.parse::<i64>().ok() == Some(0)
+                });
+                continue;
+            }
+
+            if let Some(rest) = trimmed.strip_prefix("// @target:") {
+                saw_target = true;
+                target_supports_imports = rest
+                    .split(',')
+                    .map(str::trim)
+                    .any(target_supports_import_syntax);
+            }
+        }
+
+        if saw_module && module_none {
+            return Some(saw_target && target_supports_imports);
+        }
+
         None
     }
 
@@ -2751,6 +2823,13 @@ impl Project {
         let package_root = normalize_node_modules_package_specifier(&package_root);
         let package_prefix = &normalized[..marker_idx + marker.len()];
         let package_json_path = format!("{package_prefix}{package_root}/package.json");
+        let package_json = self
+            .files
+            .get(&package_json_path)
+            .map(|f| f.source_text().to_string())
+            .or_else(|| std::fs::read_to_string(&package_json_path).ok())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok());
+
         if let Some(specifier) = self.package_specifier_from_package_exports(
             &normalized,
             &package_root,
@@ -2763,31 +2842,19 @@ impl Project {
             return Some(package_root);
         }
 
-        let package_path = strip_ts_extension(Path::new(package_path));
-        let mut spec = path_to_string(&package_path).replace('\\', "/");
-        if let Some(stripped) = spec.strip_suffix("/index") {
-            spec = stripped.to_string();
+        let runtime_spec = package_runtime_specifier_from_target_path(package_path);
+        if let Some(package_json) = package_json.as_ref()
+            && let Some(specifier) = package_main_module_specifier_for_target(
+                package_json,
+                &package_root,
+                &runtime_spec,
+                target_file,
+            )
+        {
+            return Some(specifier);
         }
 
-        if let Some(stripped) = spec.strip_prefix("@types/") {
-            let mut parts = stripped.splitn(2, '/');
-            let package_name = parts.next().unwrap_or_default();
-            let rest = parts.next();
-
-            let package_name = if let Some((scope, name)) = package_name.split_once("__") {
-                format!("@{scope}/{name}")
-            } else {
-                package_name.to_string()
-            };
-
-            spec = match rest {
-                Some(rest) if !rest.is_empty() && rest != "index" => {
-                    format!("{package_name}/{rest}")
-                }
-                _ => package_name,
-            };
-        }
-
+        let spec = normalize_node_modules_package_specifier(&runtime_spec);
         if spec.is_empty() { None } else { Some(spec) }
     }
 
@@ -2957,7 +3024,14 @@ fn split_node_modules_package_path(package_path: &str) -> Option<(String, String
 }
 
 fn normalize_node_modules_package_specifier(package_specifier: &str) -> String {
-    if let Some(stripped) = package_specifier.strip_prefix("@types/") {
+    let mut normalized = package_specifier.replace('\\', "/");
+    if let Some(stripped) = normalized.strip_suffix("/index")
+        && !stripped.is_empty()
+    {
+        normalized = stripped.to_string();
+    }
+
+    if let Some(stripped) = normalized.strip_prefix("@types/") {
         let mut parts = stripped.splitn(2, '/');
         let package_name = parts.next().unwrap_or_default();
         let rest = parts.next();
@@ -2976,7 +3050,83 @@ fn normalize_node_modules_package_specifier(package_specifier: &str) -> String {
         };
     }
 
-    package_specifier.to_string()
+    normalized
+}
+
+fn package_runtime_specifier_from_target_path(package_path: &str) -> String {
+    let normalized = package_path.replace('\\', "/");
+
+    if let Some(base) = normalized.strip_suffix(".d.mts") {
+        return format!("{base}.mjs");
+    }
+    if let Some(base) = normalized.strip_suffix(".d.cts") {
+        return format!("{base}.cjs");
+    }
+    if let Some(base) = normalized.strip_suffix(".d.ts") {
+        return base.to_string();
+    }
+
+    normalized
+}
+
+fn is_declaration_source_path(path: &str) -> bool {
+    path.ends_with(".d.ts") || path.ends_with(".d.mts") || path.ends_with(".d.cts")
+}
+
+fn normalize_package_entry_for_match(path: &str) -> String {
+    let path = path.replace('\\', "/");
+    let path = path.strip_prefix("./").unwrap_or(&path);
+    let stripped = path_to_string(&strip_js_ts_extension(Path::new(path))).replace('\\', "/");
+    stripped
+        .strip_suffix("/index")
+        .unwrap_or(&stripped)
+        .to_string()
+}
+
+fn package_main_module_specifier_for_target(
+    package_json: &serde_json::Value,
+    package_root: &str,
+    runtime_package_spec: &str,
+    target_file: &str,
+) -> Option<String> {
+    // Declaration files frequently model multiple runtime entrypoints; avoid
+    // collapsing them to package root/main aliases.
+    if is_declaration_source_path(target_file) {
+        return None;
+    }
+
+    let package_prefix = format!("{package_root}/");
+    let runtime_subpath = runtime_package_spec.strip_prefix(&package_prefix)?;
+    let runtime_normalized = normalize_package_entry_for_match(runtime_subpath);
+    if runtime_normalized.is_empty() {
+        return None;
+    }
+
+    let package_type_module = package_json
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|value| value == "module");
+
+    for entry_field in ["module", "main"] {
+        let Some(entry) = package_json
+            .get(entry_field)
+            .and_then(serde_json::Value::as_str)
+        else {
+            continue;
+        };
+        let entry_normalized = normalize_package_entry_for_match(entry);
+        if entry_normalized.is_empty() || entry_normalized != runtime_normalized {
+            continue;
+        }
+
+        if package_type_module {
+            return Some(format!("{package_root}/{entry_normalized}"));
+        }
+
+        return Some(package_root.to_string());
+    }
+
+    None
 }
 
 fn has_ts_extension(module_text: &str) -> bool {
@@ -3005,6 +3155,27 @@ fn ts_source_extension(target_file: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn target_supports_import_syntax(target: &str) -> bool {
+    let target = target.trim();
+    if let Ok(numeric_target) = target.parse::<i64>() {
+        return numeric_target >= 2;
+    }
+
+    target.eq_ignore_ascii_case("es6")
+        || target.eq_ignore_ascii_case("es2015")
+        || target.eq_ignore_ascii_case("es2016")
+        || target.eq_ignore_ascii_case("es2017")
+        || target.eq_ignore_ascii_case("es2018")
+        || target.eq_ignore_ascii_case("es2019")
+        || target.eq_ignore_ascii_case("es2020")
+        || target.eq_ignore_ascii_case("es2021")
+        || target.eq_ignore_ascii_case("es2022")
+        || target.eq_ignore_ascii_case("es2023")
+        || target.eq_ignore_ascii_case("es2024")
+        || target.eq_ignore_ascii_case("esnext")
+        || target.eq_ignore_ascii_case("latest")
 }
 
 fn relative_path(from: &Path, to: &Path) -> PathBuf {
@@ -3276,4 +3447,191 @@ fn has_source_extension(path: &str) -> bool {
         || normalized.ends_with(".jsx")
         || normalized.ends_with(".mjs")
         || normalized.ends_with(".cjs")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn package_specifier_prefers_package_root_for_commonjs_main_module_entrypoint() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/pkg/package.json".to_string(),
+            r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "main": "lib",
+  "module": "lib"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/pkg/lib/index.js".to_string(),
+            "export function foo() {}".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules("/node_modules/pkg/lib/index.js"),
+            Some("pkg".to_string())
+        );
+    }
+
+    #[test]
+    fn package_specifier_uses_subpath_for_type_module_main_entrypoint() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/pkg/package.json".to_string(),
+            r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "main": "lib",
+  "type": "module"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/pkg/lib/index.js".to_string(),
+            "export function foo() {}".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules("/node_modules/pkg/lib/index.js"),
+            Some("pkg/lib".to_string())
+        );
+    }
+
+    #[test]
+    fn package_specifier_maps_dmts_to_mjs_without_collapsing_to_package_root() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/pkg/package.json".to_string(),
+            r#"{
+  "name": "pkg",
+  "version": "1.0.0",
+  "main": "lib"
+}"#
+            .to_string(),
+        );
+        project.set_file(
+            "/node_modules/pkg/lib/index.d.mts".to_string(),
+            "export declare function foo(): any;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules("/node_modules/pkg/lib/index.d.mts"),
+            Some("pkg/lib/index.mjs".to_string())
+        );
+    }
+
+    #[test]
+    fn package_specifier_maps_dcts_to_cjs_when_no_package_json_exists() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/lit/index.d.cts".to_string(),
+            "export declare function customElement(name: string): any;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules("/node_modules/lit/index.d.cts"),
+            Some("lit/index.cjs".to_string())
+        );
+    }
+
+    #[test]
+    fn package_specifier_collapses_extensionless_root_index_to_package_name() {
+        let mut project = Project::new();
+        project.set_file(
+            "/node_modules/bar/index.d.ts".to_string(),
+            "export declare const fromBar: number;".to_string(),
+        );
+
+        assert_eq!(
+            project.package_specifier_from_node_modules("/node_modules/bar/index.d.ts"),
+            Some("bar".to_string())
+        );
+    }
+
+    #[test]
+    fn root_dirs_prefers_shortest_relative_specifier_across_roots() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "rootDirs": [".", "./some/other/root"]
+  }
+}"#
+            .to_string(),
+        );
+
+        assert_eq!(
+            project
+                .root_dirs_relative_specifier_from_files("/index.ts", "/some/other/root/types.ts"),
+            Some("./types".to_string())
+        );
+
+        assert_eq!(
+            project
+                .auto_import_module_specifiers_from_files("/index.ts", "/some/other/root/types.ts"),
+            vec!["./types".to_string(), "./some/other/root/types".to_string()]
+        );
+    }
+
+    #[test]
+    fn auto_imports_disabled_for_module_none_es5() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "none",
+    "target": "es5"
+  }
+}"#
+            .to_string(),
+        );
+
+        assert!(!project.auto_imports_allowed_for_file("/index.ts"));
+    }
+
+    #[test]
+    fn auto_imports_enabled_for_module_none_es2015() {
+        let mut project = Project::new();
+        project.set_file(
+            "/tsconfig.json".to_string(),
+            r#"{
+  "compilerOptions": {
+    "module": "none",
+    "target": "es2015"
+  }
+}"#
+            .to_string(),
+        );
+
+        assert!(project.auto_imports_allowed_for_file("/index.ts"));
+    }
+
+    #[test]
+    fn auto_imports_disabled_from_fourslash_directives_for_module_none_es5() {
+        let mut project = Project::new();
+        project.set_file(
+            "/index.ts".to_string(),
+            "// @module: none\n// @target: es5\nx".to_string(),
+        );
+
+        assert!(!project.auto_imports_allowed_for_file("/index.ts"));
+    }
+
+    #[test]
+    fn auto_imports_enabled_from_fourslash_directives_for_module_none_es2015() {
+        let mut project = Project::new();
+        project.set_file(
+            "/index.ts".to_string(),
+            "// @module: none\n// @target: es2015\nx".to_string(),
+        );
+
+        assert!(project.auto_imports_allowed_for_file("/index.ts"));
+    }
 }

@@ -13,6 +13,50 @@ use tsz::lsp::semantic_tokens::SemanticTokensProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    pub(crate) fn inferred_auto_imports_allowed(options: &serde_json::Value) -> bool {
+        let module_none = options
+            .get("module")
+            .is_some_and(Self::inferred_module_option_is_none);
+        if !module_none {
+            return true;
+        }
+
+        options
+            .get("target")
+            .is_some_and(Self::inferred_target_supports_import_syntax)
+    }
+
+    fn inferred_module_option_is_none(value: &serde_json::Value) -> bool {
+        if let Some(v) = value.as_str() {
+            return v.eq_ignore_ascii_case("none") || v.parse::<i64>().ok() == Some(0);
+        }
+        value.as_i64() == Some(0)
+    }
+
+    fn inferred_target_supports_import_syntax(value: &serde_json::Value) -> bool {
+        if let Some(target) = value.as_str() {
+            if let Ok(numeric_target) = target.parse::<i64>() {
+                return numeric_target >= 2;
+            }
+
+            return target.eq_ignore_ascii_case("es6")
+                || target.eq_ignore_ascii_case("es2015")
+                || target.eq_ignore_ascii_case("es2016")
+                || target.eq_ignore_ascii_case("es2017")
+                || target.eq_ignore_ascii_case("es2018")
+                || target.eq_ignore_ascii_case("es2019")
+                || target.eq_ignore_ascii_case("es2020")
+                || target.eq_ignore_ascii_case("es2021")
+                || target.eq_ignore_ascii_case("es2022")
+                || target.eq_ignore_ascii_case("es2023")
+                || target.eq_ignore_ascii_case("es2024")
+                || target.eq_ignore_ascii_case("esnext")
+                || target.eq_ignore_ascii_case("latest");
+        }
+
+        value.as_i64().is_some_and(|target| target >= 2)
+    }
+
     pub(crate) fn handle_get_supported_code_fixes(
         &mut self,
         seq: u64,
@@ -259,12 +303,16 @@ impl Server {
         seq: u64,
         request: &TsServerRequest,
     ) -> TsServerResponse {
+        let options = request.arguments.get("options");
         self.allow_importing_ts_extensions = request
             .arguments
             .get("options")
             .and_then(|o| o.get("allowImportingTsExtensions"))
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
+        self.auto_imports_allowed_for_inferred_projects = options
+            .map(Self::inferred_auto_imports_allowed)
+            .unwrap_or(true);
         self.stub_response(seq, request, None)
     }
 

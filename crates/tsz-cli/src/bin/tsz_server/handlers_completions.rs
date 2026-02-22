@@ -68,6 +68,9 @@ impl Server {
 
         let mut project = Project::new();
         project.set_allow_importing_ts_extensions(self.allow_importing_ts_extensions);
+        project.set_auto_imports_allowed_without_tsconfig(
+            self.auto_imports_allowed_for_inferred_projects,
+        );
         project.set_import_module_specifier_ending(
             Self::string_pref(preferences, "importModuleSpecifierEnding")
                 .or_else(|| self.completion_import_module_specifier_ending.clone()),

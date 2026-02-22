@@ -22,6 +22,7 @@ fn make_server() -> Server {
         },
         enable_telemetry: false,
         allow_importing_ts_extensions: false,
+        auto_imports_allowed_for_inferred_projects: true,
         auto_import_specifier_exclude_regexes: Vec::new(),
     }
 }
@@ -93,6 +94,42 @@ fn test_handle_change_updates_file() {
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
     assert_eq!(server.open_files["/test.ts"], "const x = 2;");
+}
+
+#[test]
+fn test_inferred_auto_imports_blocked_for_module_none_es5() {
+    let options = serde_json::json!({
+        "module": "none",
+        "target": "es5"
+    });
+    assert!(!Server::inferred_auto_imports_allowed(&options));
+}
+
+#[test]
+fn test_inferred_auto_imports_allowed_for_module_none_es2015() {
+    let options = serde_json::json!({
+        "module": "none",
+        "target": "es2015"
+    });
+    assert!(Server::inferred_auto_imports_allowed(&options));
+}
+
+#[test]
+fn test_inferred_auto_imports_blocked_for_numeric_string_options() {
+    let options = serde_json::json!({
+        "module": "0",
+        "target": "1"
+    });
+    assert!(!Server::inferred_auto_imports_allowed(&options));
+}
+
+#[test]
+fn test_inferred_auto_imports_allowed_for_numeric_string_target_es2015() {
+    let options = serde_json::json!({
+        "module": "0",
+        "target": "2"
+    });
+    assert!(Server::inferred_auto_imports_allowed(&options));
 }
 
 #[test]
