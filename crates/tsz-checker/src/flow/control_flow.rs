@@ -39,8 +39,8 @@ pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>
 
 // Guard against pathological requeue loops in flow traversal.
 const FLOW_STEP_BUDGET_MIN: usize = 1_024;
-const FLOW_STEP_BUDGET_SCALE: usize = 16;
-const FLOW_STEP_BUDGET_MAX: usize = 60_000;
+const FLOW_STEP_BUDGET_SCALE: usize = 12;
+const FLOW_STEP_BUDGET_MAX: usize = 40_000;
 
 const fn flow_step_budget(flow_node_count: usize) -> usize {
     let scaled = flow_node_count.saturating_mul(FLOW_STEP_BUDGET_SCALE);
@@ -80,6 +80,12 @@ mod tests {
     fn flow_step_budget_caps_large_graphs() {
         let nodes = FLOW_STEP_BUDGET_MAX;
         assert_eq!(flow_step_budget(nodes), FLOW_STEP_BUDGET_MAX);
+    }
+
+    #[test]
+    fn flow_step_budget_caps_large_contention_graphs_earlier() {
+        // Keep pathological full-suite flow walks bounded under worker contention.
+        assert_eq!(flow_step_budget(8_000), FLOW_STEP_BUDGET_MAX);
     }
 }
 
