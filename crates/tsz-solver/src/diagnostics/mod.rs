@@ -11,7 +11,9 @@
 //! - **Diagnostic codes** (`codes`): TypeScript error code aliases.
 //! - **Data types** (`TypeDiagnostic`, `SourceSpan`, etc.): Core diagnostic structures.
 //!
-//! For eagerly-rendered diagnostic builders, see [`crate::diagnostics_builders`].
+//! For eagerly-rendered diagnostic builders, see [`builders`].
+
+pub mod builders;
 
 use crate::types::{TypeId, Visibility};
 use std::sync::Arc;
@@ -998,5 +1000,5 @@ impl PendingDiagnosticBuilder {
 use crate::types::*;
 
 #[cfg(test)]
-#[path = "../tests/diagnostics_tests.rs"]
+#[path = "../../tests/diagnostics_tests.rs"]
 mod tests;

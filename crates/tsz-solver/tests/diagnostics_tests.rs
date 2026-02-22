@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::TypeInterner;
-use crate::diagnostics_builders::{
+use crate::diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
 use crate::format::TypeFormatter;
