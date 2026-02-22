@@ -371,4 +371,15 @@ TS2506 cycle detection is handled by dedicated inheritance checks elsewhere.
 - **TS2339 (54 extra)**: Property access false positives. Ongoing.
 - **TS2345 (52 extra)**: Argument type mismatch false positives. Ongoing.
 
-## Current score: 3933/5997 (65.6%) — first 6000 tests
+## Current score: 7836/12574 (62.3%) — full suite
+
+### Session progress (7687 → 7836, +149 tests):
+- **TS5069/TS5053**: Config checks for emitDeclarationOnly/declarationMap/isolatedDeclarations without declaration, conflicting option pairs (+7)
+- **TS5070/TS5071/TS5098**: resolveJsonModule with classic/none/system/umd, resolvePackageJson* without modern moduleResolution (+9)
+- **TS5102 suppression**: Suppress TS5102 when ignoreDeprecations: "5.0" is valid (+2)
+- **skipLibCheck**: Skip .d.ts type checking when enabled (+6)
+- **TS2713**: Skip false positives for ALIAS symbols and parse error contexts (+32)
+- **TS2580 vs TS2591**: Use TS2580 (no tsconfig suggestion) when no types field (+varies)
+- **checkJs**: Removed redundant checker.check_js propagation that broke JSDoc (+11)
+- **TS2524→TS1109**: Emit TS1109 instead of TS2524 for bare await in parameter defaults (+38)
+- **TS2304 suppression**: File-level real syntax error detection replaces dead node flags (+66)
