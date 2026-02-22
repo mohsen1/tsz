@@ -68,12 +68,16 @@ fn test_no_errors(source: &str) {
 
     checker.check_source_file(root);
 
-    if !checker.ctx.diagnostics.is_empty() {
+    let semantic_errors: Vec<_> = checker
+        .ctx
+        .diagnostics
+        .iter()
+        .filter(|d| d.code != 2318)
+        .collect();
+    if !semantic_errors.is_empty() {
         panic!(
             "Expected no errors, but got:\n{}",
-            checker
-                .ctx
-                .diagnostics
+            semantic_errors
                 .iter()
                 .map(|d| format!("  {}", d.message_text))
                 .collect::<Vec<_>>()

@@ -36,8 +36,10 @@ impl<'a> CheckerState<'a> {
         const CORE_GLOBAL_TYPES: &[&str] = &[
             "Array",
             "Boolean",
+            "CallableFunction",
             "Function",
             "IArguments",
+            "NewableFunction",
             "Number",
             "Object",
             "RegExp",
@@ -55,10 +57,11 @@ impl<'a> CheckerState<'a> {
             // Check if the type is available in any loaded lib or current scope
             if !self.ctx.has_name_in_lib(type_name) {
                 // Type not available globally - emit TS2318
+                // tsc emits these with no file position (file="", line=0, column=0)
                 self.ctx
                     .push_diagnostic(lib_loader::emit_error_global_type_missing(
                         type_name,
-                        self.ctx.file_name.clone(),
+                        String::new(),
                         0,
                         0,
                     ));
@@ -283,8 +286,6 @@ impl<'a> CheckerState<'a> {
             ("IterableIterator", "ES2015"),      // For generators
             ("AsyncIterableIterator", "ES2018"), // For async generators
             ("TypedPropertyDescriptor", "ES5"),  // For decorators
-            ("CallableFunction", "ES2015"),      // For strict function types
-            ("NewableFunction", "ES2015"),       // For constructor types
             ("Disposable", "ES2022"),            // For using declarations
             ("AsyncDisposable", "ES2022"),       // For await using declarations
         ];
@@ -321,22 +322,18 @@ impl<'a> CheckerState<'a> {
                     // For simplicity, we check if any syntax that would need them exists
                     self.should_check_for_feature_type(type_name)
                 }
-                // Awaited is checked when using await type operator, async functions, or Promise-like types
+                // Awaited is checked when using await type operator or async functions
                 "Awaited" => {
-                    // TSC emits TS2318 for Awaited when Promise-like types are used, even without explicit await
-                    // Check if async/await is used OR if noLib is true (TSC checks it in that case)
-                    self.ctx.async_depth > 0 || self.ctx.no_lib()
+                    // TSC emits TS2318 for Awaited when async/await syntax is used
+                    self.ctx.async_depth > 0
                 }
                 _ => false,
             };
 
             if should_emit {
-                let diag = lib_loader::emit_error_global_type_missing(
-                    type_name,
-                    self.ctx.file_name.clone(),
-                    0,
-                    0,
-                );
+                // tsc emits these with no file position (file="", line=0, column=0)
+                let diag =
+                    lib_loader::emit_error_global_type_missing(type_name, String::new(), 0, 0);
                 // Use push_diagnostic for consistent deduplication
                 self.ctx.push_diagnostic(diag);
             }
