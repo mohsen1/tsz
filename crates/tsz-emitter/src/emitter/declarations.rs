@@ -769,6 +769,13 @@ impl<'a> Printer<'a> {
                 && !self
                     .arena
                     .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                // Private fields (#name) are emitted verbatim at ES2022+ — they
+                // use native private field syntax and are unaffected by
+                // useDefineForClassFields.  Only skip them for lowering when the
+                // target actually requires WeakMap-based lowering (< ES2022).
+                && !(self.arena.get(prop.name).is_some_and(|n| {
+                    n.kind == SyntaxKind::PrivateIdentifier as u16
+                }) && (self.ctx.options.target as u32) >= (ScriptTarget::ES2022 as u32))
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
@@ -1794,6 +1801,79 @@ mod tests {
         assert!(
             output.contains("exports.default = MyComponent;"),
             "Should emit CJS default export assignment.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: private fields (#name) with initializers must be
+    /// emitted verbatim at ES2022+ targets even when useDefineForClassFields
+    /// is false.  Private fields use native syntax at ES2022+ and are
+    /// unaffected by the useDefineForClassFields flag (which only controls
+    /// public field semantics).  Previously, the lowering skip logic dropped
+    /// them because `identifier_text()` returned empty for `PrivateIdentifier`
+    /// nodes, causing them to be neither collected for lowering NOR emitted
+    /// in the class body.
+    #[test]
+    fn private_field_with_initializer_emitted_at_es2022() {
+        let source = "class A {\n    static #field = 10;\n    static #uninitialized;\n    #instance = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        // PrintOptions defaults to use_define_for_class_fields: false via
+        // PrinterOptions::default(), which triggers the class field lowering
+        // path.  At ES2022+ the lowering should still preserve private fields
+        // verbatim.
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2022,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("static #field = 10;"),
+            "Static private field with initializer should be emitted at ES2022.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("static #uninitialized;"),
+            "Static private field without initializer should be emitted.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("#instance = 1;"),
+            "Instance private field with initializer should be emitted at ES2022.\nOutput:\n{output}"
+        );
+    }
+
+    /// Verify that private fields at targets below ES2022 are still handled
+    /// by the lowering path (not emitted verbatim with initializers).
+    #[test]
+    fn private_field_lowered_at_es2015() {
+        let source = "class A {\n    static #field = 10;\n    #instance = 1;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // At ES2015, private fields should NOT appear in the class body
+        // (they should be lowered to WeakMap-based patterns, though the
+        // lowering transform itself may not fully emit them yet).
+        assert!(
+            !output.contains("static #field = 10;"),
+            "Static private field should NOT be emitted verbatim at ES2015.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("#instance = 1;"),
+            "Instance private field should NOT be emitted verbatim at ES2015.\nOutput:\n{output}"
         );
     }
 }
