@@ -1015,7 +1015,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         _source_idx: NodeIndex,
     ) -> bool {
-        use tsz_solver::freshness;
+        use tsz_solver::relations::freshness;
         // Only fresh object literals trigger excess property checking.
         if !freshness::is_fresh_object_type(self.ctx.types, source) {
             return false;

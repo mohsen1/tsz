@@ -951,7 +951,7 @@ impl QueryDatabase for QueryCache<'_> {
         let mut variances = Vec::with_capacity(params.len());
         for param in &params {
             // Compute variance for each type parameter
-            let v = crate::variance::compute_variance(self, body, param.name);
+            let v = crate::relations::variance::compute_variance(self, body, param.name);
             variances.push(v);
         }
         let result = Arc::from(variances);

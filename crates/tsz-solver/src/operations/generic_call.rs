@@ -522,7 +522,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let constraint_ty = instantiate_type(self.interner, constraint, &final_subst);
                 // Strip freshness before constraint check: inferred types should not
                 // trigger excess property checking against type parameter constraints.
-                let ty_for_check = crate::freshness::widen_freshness(self.interner, ty);
+                let ty_for_check = crate::relations::freshness::widen_freshness(self.interner, ty);
                 if !self.checker.is_assignable_to(ty_for_check, constraint_ty) {
                     // Try to recover using un-widened literal candidates when widening
                     // caused the violation (e.g., "b" widened to string violates keyof O).

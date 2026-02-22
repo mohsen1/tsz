@@ -482,7 +482,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// # Returns
     /// `true` if no excess properties found, `false` if TS2353 should be reported
     fn check_excess_properties(&mut self, source: TypeId, target: TypeId) -> bool {
-        use crate::freshness::is_fresh_object_type;
+        use super::freshness::is_fresh_object_type;
         use crate::visitor::{ObjectTypeKind, classify_object_type};
 
         // Only check fresh object literals
@@ -539,7 +539,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// Returns `Some(property_name)` if an excess property is found, `None` otherwise.
     /// This is used by `explain_failure` to generate TS2353 diagnostics.
     fn find_excess_property(&mut self, source: TypeId, target: TypeId) -> Option<Atom> {
-        use crate::freshness::is_fresh_object_type;
+        use super::freshness::is_fresh_object_type;
         use crate::visitor::{ObjectTypeKind, classify_object_type};
 
         // Only check fresh object literals

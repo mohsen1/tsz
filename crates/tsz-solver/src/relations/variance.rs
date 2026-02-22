@@ -59,7 +59,7 @@ use tsz_common::interner::Atom;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use crate::variance::compute_variance;
+/// use crate::relations::variance::compute_variance;
 /// use crate::types::*;
 ///
 /// // For type ReadonlyArray<T> = { readonly [index: number]: T }
