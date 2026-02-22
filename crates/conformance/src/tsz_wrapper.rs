@@ -163,6 +163,11 @@ pub fn prepare_test_dir(
     if !has_tsconfig_file {
         let mut compiler_options = convert_options_to_tsconfig(options, key_order);
         if let serde_json::Value::Object(ref mut map) = compiler_options {
+            // Mirror cache generation ordering: inject strict/alwaysStrict after
+            // option conversion so insertion order matches cached tsconfig output.
+            map.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
+            map.insert("strict".to_string(), serde_json::Value::Bool(true));
+
             if check_js {
                 // checkJs implies allowJs in tsc test harness behavior, even when
                 // @allowJs:false is present.
@@ -248,8 +253,14 @@ pub fn prepare_binary_test_dir(
             ])
         };
 
+        let mut compiler_options = convert_options_to_tsconfig(options, &[]);
+        if let serde_json::Value::Object(ref mut map) = compiler_options {
+            map.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
+            map.insert("strict".to_string(), serde_json::Value::Bool(true));
+        }
+
         let tsconfig_content = serde_json::json!({
-            "compilerOptions": convert_options_to_tsconfig(options, &[]),
+            "compilerOptions": compiler_options,
             "include": include,
             "exclude": ["node_modules"]
         });
@@ -540,35 +551,15 @@ const LIST_OPTIONS: &[&str] = &[
 /// - String/enum options (target, module, etc.)
 /// - Filters out test harness-specific directives
 ///
-/// `key_order` controls JSON key ordering to match the cache generator's output.
-/// When provided, keys are emitted in this order (matching test directive order),
-/// which ensures diagnostic fingerprint line numbers match the cache.
+/// `key_order` is kept for compatibility with call sites, but conversion output
+/// is normalized to match cache generation.
 fn convert_options_to_tsconfig(
     options: &HashMap<String, String>,
-    key_order: &[String],
+    _key_order: &[String],
 ) -> serde_json::Value {
     let mut opts = serde_json::Map::new();
 
-    // Iterate in key_order first to preserve directive declaration order,
-    // then process any remaining keys not in the order list.
-    let ordered_keys: Vec<&String> = if key_order.is_empty() {
-        options.keys().collect()
-    } else {
-        let mut keys: Vec<&String> = key_order
-            .iter()
-            .filter(|k| options.contains_key(k.as_str()))
-            .collect();
-        // Add any keys present in options but missing from key_order
-        for k in options.keys() {
-            if !key_order.contains(k) {
-                keys.push(k);
-            }
-        }
-        keys
-    };
-
-    for key in ordered_keys {
-        let value = &options[key];
+    for (key, value) in options {
         // Skip test harness-specific directives
         let key_lower = key.to_lowercase();
         if HARNESS_ONLY_DIRECTIVES
@@ -615,34 +606,25 @@ fn convert_options_to_tsconfig(
         opts.insert(tsconfig_key.to_string(), json_value);
     }
 
-    // Match the cache generator's tsconfig synthesis: just set `strict` and `alwaysStrict`.
-    // Do NOT expand individual strict-family flags (noImplicitAny, strictNullChecks, etc.)
-    // because tsz's config.rs handles `strict: true` expansion internally.
-    // Expanding them here would add extra properties, shifting line numbers and causing
-    // TS5025 position mismatches vs the tsc cache.
-    //
-    // TypeScript 6.0 defaults to strict: true when not specified.
-    if !opts.contains_key("strict") {
-        opts.insert("strict".to_string(), serde_json::Value::Bool(true));
-    }
-    if !opts.contains_key("alwaysstrict") && !opts.contains_key("alwaysStrict") {
-        opts.insert("alwaysStrict".to_string(), serde_json::Value::Bool(true));
-    }
-
-    // Match tsc 6.0 default compiler behavior for tests that omit @target.
-    // tsc 6.0 defaults target to LatestStandard (ES2025), which maps to our
-    // ES2022 ScriptTarget. This is critical because ES2022+ targets default
-    // to ES module kind, affecting TS1202 and other module-related diagnostics.
-    if !opts.contains_key("target") {
-        opts.insert(
-            "target".to_string(),
-            serde_json::Value::String("es2022".to_string()),
-        );
+    // Mirror TypeScript strict-family defaulting behavior when `strict` is specified.
+    if let Some(serde_json::Value::Bool(strict)) = opts.get("strict") {
+        let strict = *strict;
+        for key in [
+            "noImplicitAny",
+            "noImplicitThis",
+            "strictNullChecks",
+            "strictFunctionTypes",
+            "strictBindCallApply",
+            "strictPropertyInitialization",
+            "useUnknownInCatchVariables",
+            "alwaysStrict",
+        ] {
+            opts.entry(key.to_string())
+                .or_insert(serde_json::Value::Bool(strict));
+        }
     }
 
     // Sort properties alphabetically for deterministic tsconfig output.
-    // This ensures consistent line numbers for TS5025 diagnostics regardless
-    // of HashMap iteration order.
     opts.sort_keys();
 
     serde_json::Value::Object(opts)
