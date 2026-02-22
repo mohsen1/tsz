@@ -1,5 +1,5 @@
 use super::{ModuleKind, Printer};
-use crate::printer::safe_slice;
+use crate::safe_slice;
 use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};

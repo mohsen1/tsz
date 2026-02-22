@@ -216,7 +216,7 @@ impl<'a> Printer<'a> {
                 let is_use_strict = if let Some(lit) = self.arena.get_literal(expr_node) {
                     lit.text == "use strict"
                 } else if let Some(text) = self.source_text {
-                    let s = crate::printer::safe_slice::slice(
+                    let s = crate::safe_slice::slice(
                         text,
                         expr_node.pos as usize,
                         expr_node.end as usize,
@@ -302,7 +302,7 @@ impl<'a> Printer<'a> {
                     }
 
                     let comment_text =
-                        crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                        crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     let trimmed_comment = comment_text.trim_start();
                     // Note: `// @option` comments are NOT stripped here.
                     // tsc preserves all source-level comments in JS output,
@@ -630,11 +630,8 @@ impl<'a> Printer<'a> {
                         // Only emit if this comment ends before the statement's first token
                         // AND hasn't been emitted by a nested expression emitter
                         if c_end <= actual_start {
-                            let comment_text = crate::printer::safe_slice::slice(
-                                text,
-                                c_pos as usize,
-                                c_end as usize,
-                            );
+                            let comment_text =
+                                crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                             self.write(comment_text);
                             if c_trailing {
                                 self.write_line();
@@ -711,8 +708,7 @@ impl<'a> Printer<'a> {
                 let c_pos = self.all_comments[self.comment_emit_idx].pos;
                 let c_end = self.all_comments[self.comment_emit_idx].end;
                 let c_trailing = self.all_comments[self.comment_emit_idx].has_trailing_new_line;
-                let comment_text =
-                    crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
+                let comment_text = crate::safe_slice::slice(text, c_pos as usize, c_end as usize);
                 self.write(comment_text);
                 if c_trailing {
                     self.write_line();

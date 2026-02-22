@@ -156,6 +156,9 @@ mod transform_api_tests;
 
 // Printer - re-exported from tsz-emitter workspace crate
 pub use tsz_emitter::printer;
+
+// Safe string slice utilities - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::safe_slice;
 #[cfg(test)]
 #[path = "../tests/printer_tests.rs"]
 mod printer_tests;

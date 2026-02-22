@@ -3,8 +3,9 @@
 use crate::parser::ParserState;
 use crate::printer::{
     PrintOptions, Printer, StreamingPrinter, lower_and_print, print_to_string,
-    print_with_source_map, safe_slice,
+    print_with_source_map,
 };
+use crate::safe_slice;
 
 // =============================================================================
 // Basic Print Tests

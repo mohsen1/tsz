@@ -17,6 +17,7 @@ pub mod lowering_pass {
     pub use crate::lowering::*;
 }
 pub mod printer;
+pub mod safe_slice;
 pub mod source_writer;
 pub mod transform_context;
 pub mod transforms;
