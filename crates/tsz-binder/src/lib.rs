@@ -16,6 +16,7 @@ pub mod lib_loader;
 pub mod module_resolution_debug;
 pub mod state;
 mod state_binding;
+mod state_binding_validation;
 mod state_flow_helpers;
 mod state_import_export;
 mod state_lib_merge;
