@@ -303,6 +303,27 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // When the default import already failed (no default export), skip named import
+        // validation to avoid cascading TS2305 errors on valid named exports.
+        // tsc does not emit TS2305 in this situation.
+        if has_default_import
+            && !has_named_default_binding
+            && !self.ctx.allow_synthetic_default_imports()
+        {
+            let no_default_export = if let Some(ref table) = exports_table {
+                !table.has("default")
+            } else {
+                self.ctx
+                    .resolved_modules
+                    .as_ref()
+                    .is_some_and(|resolved| resolved.contains(module_name))
+                    && self.ctx.resolve_import_target(module_name).is_some()
+            };
+            if no_default_export {
+                return;
+            }
+        }
+
         // Check named imports: import { X, Y } from "module"
         if has_named_imports {
             let Some(bindings_node) = bindings_node else {
