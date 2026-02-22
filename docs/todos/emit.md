@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9571/13623 = 70.3% JS, 776/1990 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current 9576/13623 = 70.3% JS, 776/1990 = 39.0% DTS)
 
 ### Fixed This Session
+- **Erased member comment over-consumption past closing brace** (+6 JS, +1 DTS):
+  `skip_comments_for_erased_node()` in `comment_helpers.rs` consumed all same-line comments up to
+  the end of the line, even when a code token like `}` separated the erased node from the comment.
+  For `class C extends E { foo: string; } // error`, erasing `foo: string;` also consumed
+  `// error` which logically belongs to the closing `}`. Root cause: `find_token_end_before_trivia`'s
+  suffix recovery scan overshot `node.end` (finding the parent `}`), making `actual_end` = 34
+  (right after `}`), so the gap between the erased node and the comment appeared to be just a space.
+  Fix: use `node.end` (not the overshot `actual_end`) as the gap-check anchor. If any non-whitespace
+  code exists between `node.end` and the comment start, the comment is not consumed.
+  Two unit tests added. JS: 9570 → 9576, DTS: 775 → 776, zero regressions.
+  Note: the initial analysis predicted 57 sole-fix tests, but most of those tests have additional
+  overlapping issues (comment placement on lowered field initializers, extra comments from other
+  paths) — the 6 net gains are tests where THIS was the only remaining mismatch.
+
+### Previously Fixed
 - **Hoisted `exports.default` for function declarations in CJS** (+14 JS):
   tsc emits `exports.default = f;` BEFORE the function declaration for
   `export default function f()` in CommonJS mode. JS function declarations are hoisted, so
@@ -422,6 +437,14 @@
 - `accessor*` and `private*` DTS test filters: remaining failures appear to require cross-module declaration helper/mapping changes, which is outside the smallest emitter-only fix scope for this pass.
 - `crates/tsz-emitter/src/declaration_emitter/tests.rs: test_variable_declaration_infers_accessor_object_type_from_initializer_when_type_cache_missing`: this failure predates this pass and is currently blocked by a broader declaration-emitter regression in the same module; skipped to keep this change focused on emitter transform comment ordering.
 - `./scripts/emit/run.sh` full run (`JS+DTs`) and `scripts/emit` broader checks: large pre-existing failure set (6,828 failures total for JS+DTS) plus 2 timeouts remain; deferred for dedicated conformance/reporter work outside this smallest parity pass.
+- **Class field initializer lowering drops trailing comments (~30-40 multi-issue tests)**: When class
+  fields like `a = z; // error` are lowered into the constructor body at targets < ES2022
+  (`this.a = z;`), the trailing comment is not carried into the constructor. The lowering path
+  in `emit_constructor_body_with_prologue` (functions.rs) collects field name and initializer but
+  does not capture or re-emit trailing comments from the original field declaration's source position.
+  This is separate from the "erased member comment over-consumption" fix above — it affects fields
+  WITH initializers that are lowered (not erased). Fixing would require scanning for trailing comments
+  after each field initializer's source position and emitting them after the lowered `this.x = value;`.
 - **Extra blank lines between JSDoc blocks in .js files (~18 tests)**: When tsz processes `.js` source files, it inserts extra blank lines between JSDoc comment blocks and following declarations. tsc does not add these. Affects `checkJsdocTypeTag1`, `checkJsdocTypeTag2`, `checkJsdocSatisfiesTag15`. Likely a newline-after-statement issue in the emission loop for files where type annotations are erased.
 - **JSDoc comments on object literal properties run together (~1 test)**: `checkJsdocTypeTagOnObjectProperty1` has `// @ts-check` preserved now (fixed this session), but JSDoc comments on object properties (`/** @type {string} */`) are emitted without the preceding newline, concatenating them with the previous property's trailing comma. Likely a comment-before-pos issue in the object literal property emission loop.
 - **Duplicate `//# sourceMappingURL` in multi-file concatenation (~10 tests, runner issue)**: When tests
