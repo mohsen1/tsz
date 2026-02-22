@@ -113,4 +113,6 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
    - ~~`operations_*.rs` (10 files, 7,863 LOC) → `operations/` subdirectory~~ ✅ Done (c3365ed0d)
    - `type_queries_*.rs` (5 files) → `type_queries/` subdirectory
    - ~~`intern_*.rs` (4 files: `intern.rs`, `intern_normalize.rs`, `intern_intersection.rs`, `intern_template.rs`) → `intern/` subdirectory~~ ✅ Done
-4. **Checker `context*.rs` files**: 4 files at checker top level (`context.rs` 1,830 LOC, `context_constructors.rs` 1,030 LOC, `context_resolver.rs` 582 LOC, `context_def_mapping.rs` 346 LOC — total 3,788 LOC) could be organized into a `context/` subdirectory.
+4. ~~**Checker `context*.rs` files**: organized into `context/` subdirectory~~ ✅ Done
+5. **Solver `type_queries/extended.rs`** (1,915 LOC): approaching 2000-line limit. Consider splitting by concern (e.g., literal classifiers, application/instance helpers, constructor helpers).
+6. **Solver `type_queries/mod.rs`** reduced from 1,947 → 1,744 LOC by extracting iterable classifications into `iterable.rs`. Still contains traversal, property lookup, evaluation, signature, and constraint sections that could be further split if growth continues.
