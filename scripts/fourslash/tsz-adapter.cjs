@@ -208,6 +208,33 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
             this._openedFiles = new Set();
         }
 
+        getFourslashInferredCompilerOptions() {
+            const inferred = {};
+            let sawDirective = false;
+            for (const fileName of this.getFilenames()) {
+                const content = this.readFile(fileName);
+                if (typeof content !== "string" || content.length === 0) continue;
+                const lines = content.split(/\r?\n/, 64);
+                for (const line of lines) {
+                    const trimmed = line.trimStart();
+                    if (trimmed.startsWith("// @module:")) {
+                        const value = trimmed.slice("// @module:".length).split(",")[0]?.trim();
+                        if (value) {
+                            inferred.module = value;
+                            sawDirective = true;
+                        }
+                    } else if (trimmed.startsWith("// @target:")) {
+                        const value = trimmed.slice("// @target:".length).split(",")[0]?.trim();
+                        if (value) {
+                            inferred.target = value;
+                            sawDirective = true;
+                        }
+                    }
+                }
+            }
+            return sawDirective ? inferred : undefined;
+        }
+
         setClient(client) {
             this._client = client;
         }
@@ -415,6 +442,15 @@ function createTszAdapterFactory(ts, Harness, SessionClient, bridge) {
                 };
             }
             this._host.setClient(this._client);
+            const directiveOptions = this._host.getFourslashInferredCompilerOptions?.();
+            const inferredOptions = directiveOptions
+                ? { ...(options || {}), ...directiveOptions }
+                : options;
+            if (inferredOptions && this._client.setCompilerOptionsForInferredProjects) {
+                this._client.setCompilerOptionsForInferredProjects(
+                    ts.optionMapToObject(ts.serializeCompilerOptions(inferredOptions))
+                );
+            }
         }
 
         getHost() {

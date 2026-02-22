@@ -4815,6 +4815,7 @@ mod tests {
             enable_telemetry: false,
             allow_importing_ts_extensions: false,
             auto_imports_allowed_for_inferred_projects: true,
+            inferred_module_is_none_for_projects: false,
             auto_import_specifier_exclude_regexes: Vec::new(),
         }
     }

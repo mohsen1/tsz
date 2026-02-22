@@ -52,7 +52,13 @@ impl Server {
         content: &str,
         category: DiagnosticCategory,
     ) -> Vec<tsz::checker::diagnostics::Diagnostic> {
-        let options = CheckOptions::default();
+        let mut options = CheckOptions::default();
+        if (self.inferred_module_is_none_for_projects
+            && !self.auto_imports_allowed_for_inferred_projects)
+            || self.fourslash_module_none_directive_blocks_import_syntax(file_path)
+        {
+            options.module = Some("none".to_string());
+        }
 
         // Use unified lib loading for proper cross-lib symbol resolution.
         // The unified binder has declaration_arenas tracking each declaration's source arena.
@@ -95,7 +101,15 @@ impl Server {
         let mut all_contexts = lib_contexts;
         all_contexts.extend(user_file_contexts);
 
-        let file_names = vec![file_path.to_string()];
+        let mut file_names: Vec<String> = self
+            .open_files
+            .keys()
+            .filter(|path| Self::is_checkable_file(path))
+            .cloned()
+            .collect();
+        if !file_names.iter().any(|path| path == file_path) {
+            file_names.push(file_path.to_string());
+        }
         let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
         let resolved_module_paths = Arc::new(resolved_module_paths);
 
@@ -150,6 +164,65 @@ impl Server {
         }
 
         diagnostics
+    }
+
+    fn fourslash_module_none_directive_blocks_import_syntax(&self, file_path: &str) -> bool {
+        self.open_files
+            .get(file_path)
+            .and_then(|text| Self::fourslash_module_none_blocking_imports_from_text(text))
+            .or_else(|| {
+                self.open_files.iter().find_map(|(path, text)| {
+                    if path == file_path {
+                        return None;
+                    }
+                    Self::fourslash_module_none_blocking_imports_from_text(text)
+                })
+            })
+            .unwrap_or(false)
+    }
+
+    fn fourslash_module_none_blocking_imports_from_text(source_text: &str) -> Option<bool> {
+        let mut saw_module = false;
+        let mut module_none = false;
+        let mut saw_target = false;
+        let mut target_supports_imports = false;
+
+        for line in source_text.lines().take(64) {
+            let trimmed = line.trim_start();
+            let directive = trimmed.trim_start_matches('/').trim_start();
+            if let Some(rest) = directive.strip_prefix("@module:") {
+                saw_module = true;
+                module_none = rest.split(',').map(str::trim).any(|value| {
+                    value.eq_ignore_ascii_case("none") || value.parse::<i64>().ok() == Some(0)
+                });
+                continue;
+            }
+
+            if let Some(rest) = directive.strip_prefix("@target:") {
+                saw_target = true;
+                target_supports_imports = rest.split(',').map(str::trim).any(|value| {
+                    value.eq_ignore_ascii_case("es6")
+                        || value.eq_ignore_ascii_case("es2015")
+                        || value.eq_ignore_ascii_case("es2016")
+                        || value.eq_ignore_ascii_case("es2017")
+                        || value.eq_ignore_ascii_case("es2018")
+                        || value.eq_ignore_ascii_case("es2019")
+                        || value.eq_ignore_ascii_case("es2020")
+                        || value.eq_ignore_ascii_case("es2021")
+                        || value.eq_ignore_ascii_case("es2022")
+                        || value.eq_ignore_ascii_case("es2023")
+                        || value.eq_ignore_ascii_case("es2024")
+                        || value.eq_ignore_ascii_case("esnext")
+                        || value.eq_ignore_ascii_case("latest")
+                        || value.parse::<i64>().ok().is_some_and(|n| n >= 2)
+                });
+            }
+        }
+
+        if saw_module && module_none {
+            return Some(!(saw_target && target_supports_imports));
+        }
+        None
     }
 
     fn should_suppress_namespace_global_ts2403(

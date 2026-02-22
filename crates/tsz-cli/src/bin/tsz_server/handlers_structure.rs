@@ -19,6 +19,9 @@ impl Server {
                 .get("allowImportingTsExtensions")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(false);
+            self.inferred_module_is_none_for_projects = options
+                .get("module")
+                .is_some_and(Self::inferred_module_option_is_none);
             self.auto_imports_allowed_for_inferred_projects =
                 Self::inferred_auto_imports_allowed(options);
         }
@@ -344,6 +347,12 @@ impl Server {
             .arguments
             .get("options")
             .filter(|value| value.is_object())
+            .or_else(|| {
+                request
+                    .arguments
+                    .get("compilerOptions")
+                    .filter(|value| value.is_object())
+            })
             .or_else(|| request.arguments.is_object().then_some(&request.arguments));
         self.apply_inferred_project_options(options);
         self.stub_response(seq, request, Some(serde_json::json!(true)))
