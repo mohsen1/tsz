@@ -443,8 +443,9 @@ function build() {
     }
   }
 
-  // Create .nojekyll for gh-pages
+  // Create .nojekyll and CNAME for gh-pages
   fs.writeFileSync(path.join(DIST, ".nojekyll"), "");
+  fs.writeFileSync(path.join(DIST, "CNAME"), "tsz.dev");
 
   console.log(`\nDone. Output: ${path.relative(ROOT, DIST)}/\n`);
 }
