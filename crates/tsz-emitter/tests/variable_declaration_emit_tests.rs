@@ -12,6 +12,6 @@ fn empty_let_declaration_has_no_space_before_semicolon() {
     printer.print(root);
     let output = printer.finish().code;
 
-    assert!(output.contains("\nlet;"), "unexpected output: {}", output);
-    assert!(!output.contains("\nlet ;"), "unexpected output: {}", output);
+    assert!(output.contains("\nlet;"), "unexpected output: {output}");
+    assert!(!output.contains("\nlet ;"), "unexpected output: {output}");
 }
