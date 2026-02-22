@@ -1045,9 +1045,18 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
+        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let can_use_cache = current_sym
+            .map(|sym_id| !self.ctx.class_constructor_resolution_set.contains(&sym_id))
+            .unwrap_or(true);
+        if can_use_cache
+            && let Some(&cached) = self.ctx.class_constructor_type_cache.get(&class_idx)
+        {
+            return cached;
+        }
+
         // Cycle detection: prevent infinite recursion on circular class hierarchies
         // (e.g. class C extends C {}, or A extends B extends A)
-        let current_sym = self.ctx.binder.get_node_symbol(class_idx);
         let did_insert = if let Some(sym_id) = current_sym {
             if self.ctx.class_constructor_resolution_set.insert(sym_id) {
                 true
@@ -1072,6 +1081,12 @@ impl<'a> CheckerState<'a> {
         // Cleanup: remove from resolution set
         if did_insert && let Some(sym_id) = current_sym {
             self.ctx.class_constructor_resolution_set.remove(&sym_id);
+        }
+
+        if can_use_cache && result != TypeId::ERROR {
+            self.ctx
+                .class_constructor_type_cache
+                .insert(class_idx, result);
         }
 
         result
