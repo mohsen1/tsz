@@ -477,6 +477,43 @@ class C2 implements M { }
 }
 
 #[test]
+fn test_symbol_resolution_class_extends_alias_inherits_instance_members() {
+    let source = r#"
+namespace N {
+    export class Base<T> {
+        value!: T;
+    }
+
+    export import BaseAlias = Base;
+
+    export class Derived extends BaseAlias<string> {
+        getValue() {
+            return this.value;
+        }
+    }
+}
+
+const x = new N.Derived();
+const y: string = x.value;
+"#;
+
+    let diagnostics = collect_diagnostics_with_libs(source);
+    let ts2339_count = diagnostics.iter().filter(|d| d.code == 2339).count();
+    let ts2506_count = diagnostics.iter().filter(|d| d.code == 2506).count();
+
+    assert_eq!(
+        ts2339_count, 0,
+        "Expected inherited member from aliased base class to resolve, got: {:?}",
+        diagnostics
+    );
+    assert_eq!(
+        ts2506_count, 0,
+        "Expected no circular base-expression diagnostics for acyclic inheritance, got: {:?}",
+        diagnostics
+    );
+}
+
+#[test]
 fn test_symbol_resolution_nested_namespace_qualified_type() {
     let source = r#"
 namespace Outer {
