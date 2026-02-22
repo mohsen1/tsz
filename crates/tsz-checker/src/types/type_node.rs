@@ -64,7 +64,19 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
 
         // Compute and cache
         let result = self.compute_type(idx);
-        self.ctx.node_types.insert(idx.0, result);
+        // Don't cache TYPE_REFERENCE results here — CheckerState's
+        // get_type_from_type_node has its own TYPE_REFERENCE handler that
+        // calls get_type_from_type_reference() which emits diagnostics
+        // (TS2314, TS2304, etc.). If we cache here, the checker's handler
+        // finds the cached result and skips the diagnostic-emitting path.
+        let is_type_ref = self
+            .ctx
+            .arena
+            .get(idx)
+            .is_some_and(|n| n.kind == tsz_parser::parser::syntax_kind_ext::TYPE_REFERENCE);
+        if !is_type_ref {
+            self.ctx.node_types.insert(idx.0, result);
+        }
 
         self.depth.leave();
         result
