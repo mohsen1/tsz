@@ -17,8 +17,6 @@
 extern crate self as tsz_checker;
 
 pub mod accessor_checker;
-pub mod assignability_checker;
-pub mod assignment_checker;
 pub mod call_checker;
 pub mod context;
 pub mod decorators;
@@ -39,9 +37,10 @@ pub mod property_checker;
 mod query_boundaries;
 pub mod signature_builder;
 pub mod statements;
-pub mod subtype_identity_checker;
 pub mod triple_slash_validator;
 
+#[path = "assignability/mod.rs"]
+mod assignability_domain;
 #[path = "classes/mod.rs"]
 mod classes_domain;
 #[path = "declarations/mod.rs"]
@@ -54,6 +53,10 @@ mod state_domain;
 mod symbols_domain;
 #[path = "types/mod.rs"]
 mod types_domain;
+
+pub use assignability_domain::{
+    assignability_checker, assignment_checker, subtype_identity_checker,
+};
 
 pub use classes_domain::{
     class_checker, class_inheritance, constructor_checker, private_checker, super_checker,

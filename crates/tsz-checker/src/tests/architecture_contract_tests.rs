@@ -352,8 +352,10 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "function_type should use solver type_param constructor API, not TypeData::TypeParameter"
     );
 
-    let assignability_checker_src = fs::read_to_string("src/assignability_checker.rs")
-        .expect("failed to read src/assignability_checker.rs for architecture guard");
+    let assignability_checker_src = fs::read_to_string(
+        "src/assignability/assignability_checker.rs",
+    )
+    .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");
     assert!(
         !assignability_checker_src.contains("TypeTraversalKind::"),
         "assignability_checker should not implement solver type-graph traversal branches directly"
@@ -476,10 +478,12 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
 
 #[test]
 fn test_assignability_checker_routes_relation_queries_through_query_boundaries() {
-    let assignability_source = fs::read_to_string("src/assignability_checker.rs")
-        .expect("failed to read src/assignability_checker.rs for architecture guard");
-    let subtype_source = fs::read_to_string("src/subtype_identity_checker.rs")
-        .expect("failed to read src/subtype_identity_checker.rs for architecture guard");
+    let assignability_source = fs::read_to_string("src/assignability/assignability_checker.rs")
+        .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");
+    let subtype_source = fs::read_to_string("src/assignability/subtype_identity_checker.rs")
+        .expect(
+            "failed to read src/assignability/subtype_identity_checker.rs for architecture guard",
+        );
 
     // Neither file should use the raw query_relation helpers
     for (name, source) in [
@@ -523,8 +527,9 @@ fn test_assignability_checker_routes_relation_queries_through_query_boundaries()
 
 #[test]
 fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
-    let source = fs::read_to_string("src/subtype_identity_checker.rs")
-        .expect("failed to read src/subtype_identity_checker.rs for architecture guard");
+    let source = fs::read_to_string("src/assignability/subtype_identity_checker.rs").expect(
+        "failed to read src/assignability/subtype_identity_checker.rs for architecture guard",
+    );
 
     let subtype_start = source
         .find("pub fn is_subtype_of(")
@@ -556,8 +561,8 @@ fn test_subtype_path_establishes_preconditions_before_subtype_cache_lookup() {
 
 #[test]
 fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers() {
-    let assignment_checker_src = fs::read_to_string("src/assignment_checker.rs")
-        .expect("failed to read src/assignment_checker.rs for architecture guard");
+    let assignment_checker_src = fs::read_to_string("src/assignability/assignment_checker.rs")
+        .expect("failed to read src/assignability/assignment_checker.rs for architecture guard");
     assert!(
         assignment_checker_src.contains("check_assignable_or_report_at("),
         "assignment compatibility should route through check_assignable_or_report_at for centralized mismatch policy"
@@ -799,8 +804,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         !property_checker_src.contains("tsz_solver::type_queries::"),
         "property_checker should not call solver type_queries directly; use property_checker query boundaries"
     );
-    let assignability_checker_src = fs::read_to_string("src/assignability_checker.rs")
-        .expect("failed to read src/assignability_checker.rs for architecture guard");
+    let assignability_checker_src = fs::read_to_string(
+        "src/assignability/assignability_checker.rs",
+    )
+    .expect("failed to read src/assignability/assignability_checker.rs for architecture guard");
     assert!(
         !assignability_checker_src.contains("self.ctx.types.is_subtype_of("),
         "assignability_checker subtype checks should route through checker/solver query gateways, not direct interner calls"
@@ -1052,7 +1059,7 @@ fn test_direct_assignability_mismatch_decision_usage_is_quarantined() {
     let mut violations = Vec::new();
     for path in files {
         let rel = path.display().to_string();
-        let allowed = rel.ends_with("src/assignability_checker.rs")
+        let allowed = rel.ends_with("src/assignability/assignability_checker.rs")
             || rel.ends_with("src/query_boundaries/class.rs")
             || rel.ends_with("src/query_boundaries/type_checking.rs")
             || rel.contains("/tests/");
