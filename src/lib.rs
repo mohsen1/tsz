@@ -212,6 +212,7 @@ pub use tsz_emitter::emit_context;
 pub use tsz_emitter::transform_context;
 
 // LoweringPass - re-exported from tsz-emitter workspace crate
+pub use tsz_emitter::lowering;
 pub use tsz_emitter::lowering_pass;
 
 // Declaration file emitter - re-exported from tsz-emitter workspace crate

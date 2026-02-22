@@ -10,7 +10,12 @@ pub mod declaration_emitter;
 pub mod emit_context;
 pub mod emitter;
 pub mod enums;
-pub mod lowering_pass;
+pub mod lowering;
+/// Re-export for backwards compatibility with external crates.
+// TODO: update external consumers to use `lowering` directly, then remove.
+pub mod lowering_pass {
+    pub use crate::lowering::*;
+}
 pub mod printer;
 pub mod source_writer;
 pub mod transform_context;

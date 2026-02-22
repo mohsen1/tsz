@@ -37,10 +37,8 @@
 //! The lowering pass creates a `TransformDirective::CommonJSExport` that
 //! chains with any other transforms (like `ES5Class`).
 
-#[path = "lowering_pass_helpers.rs"]
-mod lowering_pass_helpers;
-#[path = "lowering_pass_visit_children.rs"]
-mod lowering_pass_visit_children;
+mod helpers;
+mod visit_children;
 
 use crate::emit_context::EmitContext;
 use crate::transform_context::{IdentifierId, ModuleFormat, TransformContext, TransformDirective};
@@ -1381,5 +1379,5 @@ impl<'a> LoweringPass<'a> {
 }
 
 #[cfg(test)]
-#[path = "../tests/lowering_pass.rs"]
+#[path = "../../tests/lowering_pass.rs"]
 mod tests;

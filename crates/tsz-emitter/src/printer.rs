@@ -29,7 +29,7 @@
 
 use crate::emit_context::EmitContext;
 use crate::emitter::{ModuleKind, Printer as EmitterPrinter, PrinterOptions, ScriptTarget};
-use crate::lowering_pass::LoweringPass;
+use crate::lowering::LoweringPass;
 use crate::transform_context::TransformContext;
 use std::io::{self, Write};
 use tsz_parser::parser::NodeIndex;
