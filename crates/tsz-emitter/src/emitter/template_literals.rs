@@ -39,7 +39,9 @@ impl<'a> Printer<'a> {
             .unwrap_or_default();
         self.write("`");
         self.write(&text);
-        self.write("`");
+        if self.no_substitution_template_has_closing_backtick(node) {
+            self.write("`");
+        }
     }
 
     pub(super) fn emit_template_span(&mut self, node: &Node) {
@@ -134,7 +136,16 @@ impl<'a> Printer<'a> {
             i += 1;
         }
 
-        Some(cooked_fallback)
+        // No closing delimiter found — unterminated template literal.
+        // Use the raw source text from after the opening backtick to the end
+        // of the node range, preserving escape sequences verbatim.
+        let end = std::cmp::min(node.end as usize, text.len());
+        let content_start = start + skip_leading;
+        if content_start <= end {
+            Some(text[content_start..end].to_string())
+        } else {
+            Some(cooked_fallback)
+        }
     }
 
     /// Check whether the source text has a closing `}` for this template span.
@@ -174,6 +185,40 @@ impl<'a> Printer<'a> {
         false
     }
 
+    /// Check whether the source text has a closing backtick for a
+    /// `NoSubstitutionTemplateLiteral`. When the template is unterminated
+    /// (error recovery), the source text does not contain a closing backtick
+    /// and the emitter should omit it to match tsc behavior.
+    fn no_substitution_template_has_closing_backtick(&self, node: &Node) -> bool {
+        let Some(text) = self.source_text else {
+            return true;
+        };
+        let end = node.end as usize;
+        let start = node.pos as usize;
+        let bytes = text.as_bytes();
+
+        // The closing backtick should be at end - 1.
+        if end == 0 || end > bytes.len() || bytes[end - 1] != b'`' {
+            return false;
+        }
+
+        // Make sure it's not the OPENING backtick (single-char unterminated `).
+        if end - 1 == start {
+            return false;
+        }
+
+        // Count consecutive backslashes immediately before the backtick.
+        // An odd number means the backtick is escaped (\`), not a closing delimiter.
+        let mut backslash_count = 0usize;
+        let mut p = end - 2;
+        while p > start && bytes[p] == b'\\' {
+            backslash_count += 1;
+            p -= 1;
+        }
+
+        backslash_count.is_multiple_of(2)
+    }
+
     /// Check whether the source text has a closing backtick for a `TemplateTail`.
     ///
     /// The `TemplateTail` node spans from `}` through the closing `` ` ``. The
@@ -197,5 +242,79 @@ impl<'a> Printer<'a> {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    fn emit(source: &str) -> String {
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        printer.finish().code
+    }
+
+    /// Unterminated template literal: just an opening backtick with no closing.
+    /// tsc preserves the unterminated form verbatim — no closing backtick added.
+    /// The emitter adds `;` as an expression statement terminator.
+    #[test]
+    fn unterminated_template_no_content() {
+        let output = emit("`");
+        assert_eq!(
+            output.trim(),
+            "`;",
+            "should emit opening backtick without closing, plus statement semicolon"
+        );
+    }
+
+    /// Unterminated template with an escaped backtick (backslash + backtick).
+    /// The backslash-backtick is content, not a closing delimiter.
+    #[test]
+    fn unterminated_template_escaped_backtick() {
+        let output = emit("`\\`");
+        assert_eq!(
+            output.trim(),
+            "`\\`;",
+            "escaped backtick should not close the template"
+        );
+    }
+
+    /// Unterminated template with double backslash (`\\`).
+    /// Two backslashes are self-escaping; no closing backtick present.
+    #[test]
+    fn unterminated_template_double_backslash() {
+        let output = emit("`\\\\");
+        assert_eq!(
+            output.trim(),
+            "`\\\\;",
+            "double backslash without closing backtick"
+        );
+    }
+
+    /// Terminated template literal should still get a closing backtick.
+    #[test]
+    fn terminated_template_preserved() {
+        let output = emit("`hello`");
+        assert_eq!(
+            output.trim(),
+            "`hello`;",
+            "terminated template should have closing backtick"
+        );
+    }
+
+    /// Tagged template with unterminated no-substitution template.
+    #[test]
+    fn tagged_unterminated_template() {
+        let source = "function f(x: any) {}\nf `abc";
+        let output = emit(source);
+        assert!(
+            output.contains("f `abc;") && !output.contains("f `abc`;"),
+            "tagged unterminated template should not add closing backtick\nGot: {output}"
+        );
     }
 }
