@@ -360,24 +360,44 @@ function build() {
     path.join(DIST, "benchmarks")
   );
 
+  console.log("  Building sound mode page...");
+  processMarkdownPage(
+    path.join(WEBSITE, "content", "sound-mode.md"),
+    { ...vars, title: "Sound Mode", page_class: "sound-mode", extra_scripts: `<script src="/sound-mode-editors.js"></script>` },
+    path.join(DIST, "sound-mode")
+  );
+
   // Copy architecture.html with nav injection
   console.log("  Copying architecture deep dive...");
   const archDir = path.join(DIST, "architecture");
   ensureDir(archDir);
   let archHtml = fs.readFileSync(path.join(ROOT, "docs", "architecture.html"), "utf8");
   // Inject a small nav banner at the top of the body
-  const navBanner = `<nav class="arch-nav" style="
-    position: sticky; top: 0; z-index: 100;
-    background: var(--bg-subtle); border-bottom: 1px solid var(--border);
-    padding: 0.5rem 1.5rem; display: flex; align-items: center; gap: 1.5rem;
-    font-family: var(--font); font-size: 0.875rem;
-  ">
-    <a href="/" style="font-weight: 800; font-family: var(--mono); color: var(--text); text-decoration: none; font-size: 1.1rem;">tsz</a>
-    <a href="/playground/" style="color: var(--text-secondary); text-decoration: none;">Playground</a>
-    <a href="/benchmarks/" style="color: var(--text-secondary); text-decoration: none;">Benchmarks</a>
-    <a href="/architecture/" style="color: var(--text); font-weight: 600; text-decoration: none;">Deep Dive</a>
-    <a href="https://github.com/mohsen1/tsz" style="color: var(--text-secondary); text-decoration: none; margin-left: auto;">GitHub</a>
+  const archNavStyle = `<style>
+    .arch-nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100; height: 3rem;
+      background: var(--bg-subtle); border-bottom: 1px solid var(--border);
+      padding: 0 2rem; display: flex; align-items: center; gap: 1.5rem;
+      font-family: var(--font); font-size: 0.875rem;
+      overflow-x: auto; white-space: nowrap;
+    }
+    .arch-nav a { text-decoration: none; flex-shrink: 0; }
+    html { scroll-padding-top: 3.5rem; }
+    .sidebar { top: 3rem !important; height: calc(100vh - 3rem) !important; }
+    .content { padding-top: 5rem !important; }
+    @media (max-width: 768px) {
+      .arch-nav { padding: 0 1rem; gap: 1rem; font-size: 0.8rem; }
+    }
+  </style>`;
+  const navBanner = `<nav class="arch-nav">
+    <a href="/" style="font-weight: 800; font-family: var(--mono); color: var(--text); font-size: 1.1rem;">tsz</a>
+    <a href="/playground/" style="color: var(--text-secondary);">Playground</a>
+    <a href="/benchmarks/" style="color: var(--text-secondary);">Benchmarks</a>
+    <a href="/architecture/" style="color: var(--text); font-weight: 600;">Deep Dive</a>
+    <a href="/sound-mode/" style="color: var(--text-secondary);">Sound Mode</a>
+    <a href="https://github.com/mohsen1/tsz" style="color: var(--text-secondary); margin-left: auto;">GitHub</a>
   </nav>`;
+  archHtml = archHtml.replace("</head>", `${archNavStyle}\n</head>`);
   archHtml = archHtml.replace("<body>", `<body>\n${navBanner}`);
   fs.writeFileSync(path.join(archDir, "index.html"), archHtml);
 
@@ -397,7 +417,8 @@ function build() {
 
   // Copy WASM if available
   const wasmSources = [
-    path.join(ROOT, "npm", "tsz", "wasm", "bundler"),
+    path.join(ROOT, "pkg", "web"),
+    path.join(ROOT, "npm", "tsz", "wasm", "web"),
     path.join(ROOT, "pkg", "bundler"),
     path.join(ROOT, "pkg"),
   ];

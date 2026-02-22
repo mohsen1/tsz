@@ -17,7 +17,7 @@ tsz check --sound src/
 }
 
 # Or per-file pragma
-// @ts-sound
+// @tsz-sound
 ```
 
 ## Implemented Features

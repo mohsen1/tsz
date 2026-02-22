@@ -13,7 +13,6 @@ tsz is compiled with `--profile dist` (LTO enabled, single codegen unit). tsgo i
 
 {{benchmark_charts}}
 
----
 
 ## Running Benchmarks Locally
 
