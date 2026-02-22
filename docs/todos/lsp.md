@@ -373,3 +373,18 @@ Investigated but punted:
   Reason: still blocked on broader tsserver class-member snippet completion parity (`includeCompletionsWithClassMemberSnippets` source generation + entry/detail shaping), beyond this targeted `.mts` auto-import merge fix.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts` remains failing in this sample.
   Reason: requires deeper CommonJS `export =` auto-import completion/code-fix modeling (`import x = require(...)`/member rewrite parity), which is broader than this targeted ESM verbatim type-only merge path.
+
+## 2026-02-22 (signatureHelp callable interface incomplete-call follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/callSignatureHelp.ts` by resolving lazy callee types before signature extraction in `crates/tsz-lsp/src/signature_help.rs`, so `declare const c: C; c(` can surface interface call signatures (`c(): number`) instead of empty signature help.
+- Added focused unit coverage in `crates/tsz-lsp/tests/signature_help_tests.rs`:
+  - `test_signature_help_incomplete_callable_interface_call`
+- Verification:
+  - `cargo nextest run -p tsz-lsp test_signature_help_incomplete_callable_interface_call` passes.
+  - `./scripts/run-fourslash.sh --filter=callSignatureHelp --workers=1 --verbose` now passes.
+  - `./scripts/run-fourslash.sh --max=200` remains `189/200` passing with the same 11 known failures (no regression from this change).
+  - `cargo nextest run -p tsz-lsp` passes (`725` tests).
+
+Investigated but punted:
+- None in this pass.
