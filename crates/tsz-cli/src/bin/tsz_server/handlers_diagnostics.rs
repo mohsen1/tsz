@@ -458,6 +458,12 @@ impl Server {
             const IMPLICIT_ANY_PARAMETER_ERROR_CODE: u32 = 7006;
             const FIX_MISSING_ATTRIBUTES_FIX_ID: &str = "fixMissingAttributes";
             const MISSING_ATTRIBUTES_ERROR_CODE: u32 = 2739;
+            let organize_imports_ignore_case = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("organizeImportsIgnoreCase"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(self.organize_imports_ignore_case);
 
             let line_map = LineMap::build(&content);
             let provider = CodeActionProvider::new(
@@ -466,7 +472,8 @@ impl Server {
                 &line_map,
                 file_path.to_string(),
                 &content,
-            );
+            )
+            .with_organize_imports_ignore_case(organize_imports_ignore_case);
             let unknown_conversion_content = Self::apply_unknown_conversion_fallback(&content);
             let missing_async_content = Self::apply_missing_async_fallback(&content);
             let add_parameter_names_content =
@@ -3393,6 +3400,12 @@ impl Server {
         if let (Some(file_path), Some(fix_id)) = (file, fix_id)
             && let Some((arena, binder, root, content)) = self.parse_and_bind_file(file_path)
         {
+            let organize_imports_ignore_case = request
+                .arguments
+                .get("preferences")
+                .and_then(|p| p.get("organizeImportsIgnoreCase"))
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(self.organize_imports_ignore_case);
             let line_map = LineMap::build(&content);
             let provider = CodeActionProvider::new(
                 &arena,
@@ -3400,7 +3413,8 @@ impl Server {
                 &line_map,
                 file_path.to_string(),
                 &content,
-            );
+            )
+            .with_organize_imports_ignore_case(organize_imports_ignore_case);
 
             let diagnostics = self.get_semantic_diagnostics_full(file_path, &content);
 
