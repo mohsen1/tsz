@@ -106,5 +106,6 @@ tests passing (offset 6000 slice: 3665→3684).
 - **TS5095**: `TypeScript/tests/cases/compiler/declarationEmitBundleWithAmbientReferences.ts` — requires moduleResolution validation against module-kind constraints, which is still outside current scope.
 - **TS2322 (62 missing)**: Many tests still miss TS2322 assignability errors — ongoing solver/checker type relation work.
 - **TS2339 (52 missing)**: Property access errors not yet emitted for union-typed or intersection-typed values in some cases.
+- **TS2322/TS2339 (broad regression slice)**: `TypeScript/tests/cases/compiler/abstractClassUnionInstantiation.ts` still needs solver/checker assignability and narrowing alignment before this cycle; fixing in this pass would be a broad refactor.
 - **TS2304 (57 extra)**: Over-emission of "cannot find name" — requires broader lib resolution and module resolution improvements.
 - **TS1202 (36 extra)**: Import assignment errors emitted for non-ESM module targets — needs module-kind check before emitting.
