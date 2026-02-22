@@ -823,6 +823,19 @@ impl<'a> CheckerState<'a> {
         self.ctx.get_node_span(idx)
     }
 
+    /// Emit an error diagnostic at a specific source position.
+    pub fn emit_error_at(&mut self, start: u32, length: u32, message: &str, code: u32) {
+        self.ctx
+            .diagnostics
+            .push(crate::diagnostics::Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start,
+                length,
+                message.to_string(),
+                code,
+            ));
+    }
+
     // =========================================================================
     // Symbol Resolution
     // =========================================================================

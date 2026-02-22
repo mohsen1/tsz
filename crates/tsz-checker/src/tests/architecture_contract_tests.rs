@@ -926,17 +926,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "class member compatibility should use centralized class query-boundary mismatch helpers"
     );
 
-    let error_handler_src = fs::read_to_string("src/error_handler.rs")
-        .expect("failed to read src/error_handler.rs for architecture guard");
-    assert!(
-        error_handler_src.contains("check_assignable_or_report("),
-        "error_handler type-mismatch emission should route through centralized assignability gateway"
-    );
-    assert!(
-        !error_handler_src.contains("error_type_not_assignable_at(")
-            && !error_handler_src.contains("error_type_not_assignable_with_reason_at("),
-        "error_handler should not directly emit TS2322 diagnostics; use assignability gateway helpers"
-    );
+    // NOTE: error_handler.rs was removed — the ErrorHandler trait was dead
+    // abstraction (20+ unused trait methods, unused DiagnosticBuilder). The only
+    // used method (emit_error_at) is now an inherent method on CheckerState.
+    // The TS2322 gateway contract is enforced by the assignability module guards below.
 
     let call_checker_src = fs::read_to_string("src/checkers/call_checker.rs")
         .expect("failed to read src/checkers/call_checker.rs");
