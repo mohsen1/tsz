@@ -1,8 +1,26 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9576/13623 = 70.3% JS, 776/1990 = 39.0% DTS)
+## Pattern Analysis (JS+DTS mode, current 5049/7163 = 70.5% JS, 415/1036 = 40.1% DTS)
 
 ### Fixed This Session
+- **Unicode escape sequences in identifiers not preserved** (+10 JS):
+  tsc preserves unicode escape sequences (`\u0041`, `\u{102A7}`) verbatim in emitted identifiers,
+  but tsz resolved them to their Unicode characters (`A`, `𐊧`). Root cause: the scanner resolves
+  escapes during tokenization for semantic analysis (atom interning), but the parser never captured
+  the original source text. Fix: when the scanner sets `TokenFlags::UnicodeEscape`, capture the
+  source slice (`source_text[token_start..token_end]`) into `IdentifierData.original_text`. The
+  emitter then uses `original_text` when available instead of the resolved `escaped_text`.
+  Three parser call sites updated: `parse_identifier`, `parse_identifier_name`, and the default
+  arm of `parse_property_name` in `state_expressions_literals.rs`. Two unit tests added.
+  Tests fixed: `duplicateObjectLiteralProperty(es2015/es5)`, `scannerS7.6_A4.2_T1`,
+  `parserClassDeclaration23`, `unicodeEscapesInNames01/02(es2015)`,
+  `extendedUnicodeEscapeSequenceIdentifiers`, and others.
+  JS: 5039 → 5049, DTS unchanged, zero regressions.
+  Note: `unicodeEscapesInNames01/02(es5)` still fail because ES5 class lowering doesn't
+  carry the `original_text` through the transform IR. `enumWithUnicodeEscape1` fails because
+  the escape is in a string literal (enum member name), not an identifier — separate fix needed.
+
+### Previously Fixed
 - **Erased member comment over-consumption past closing brace** (+6 JS, +1 DTS):
   `skip_comments_for_erased_node()` in `comment_helpers.rs` consumed all same-line comments up to
   the end of the line, even when a code token like `}` separated the erased node from the comment.
@@ -420,6 +438,12 @@
 - **Const enum value folding (~33 tests)**: Const enum member property accesses (`E.A`) are not replaced with their literal values (`0 /* E.A */`). Requires solver integration. Affects `constEnumPropertyAccess*`.
 - **Node modules CJS/ESM format comment (~21 tests)**: tsz emits `// cjs format file` while tsc emits `// esm format file` for `.js` files inside `node_modules` when the containing package has `"type": "module"` in `package.json`. Module format detection is wrong for these files under `node16`/`node18`/`node20`/`nodenext` module modes. Affects `nodeModulesAllowJs*` family.
 - **Extra source comments on transformed constructs (~37 tests)**: tsz emits source-level comments (like `// error`, `// no error`, `// should not error`) that tsc strips during transformation. Broader than item #13 which only covers erased constructs — these comments are attached to parameter lists, expressions, and statement-level constructs that tsc transforms.
+- **Unicode escape in string literals / enum member names (~3 remaining tests)**: The identifier-level fix preserves
+  `\u0041` in identifiers, but unicode escapes inside string literals (e.g., `'gold \u2730'` as an enum member name)
+  are still resolved to their Unicode characters by the scanner. The scanner's string literal processing path
+  resolves all escapes into `token_value`. Fixing this would require changes to the scanner's string literal
+  handling or the emitter's string literal emission to use source slices. Affects `enumWithUnicodeEscape1`,
+  `constEnumSyntheticNodesComments`, `templateLiteralEscapeSequence`.
 - ~~**Numeric literal not downleveled for ES5 (~13 tests)**~~ — **PARTIALLY FIXED** (see "Fixed This Session"): Legacy octal conversion now works for all targets. Remaining: ES2015 octal (`0o`) with numeric separators at ES2015+ targets may need additional handling (affects `parser.numericSeparators.octal`/`octalNegative`). Enum IIFE initializer paths still use un-converted source text.
 - **Missing hoisted temp var declarations (~8 tests)**: When lowering optional chaining, nullish coalescing, or element access chains, tsc hoists temporary variable declarations (`var _a, _b`) to the top of the enclosing scope. tsz omits these declarations. Affects `elementAccessChain.2`, `nullishCoalescingOperator10/12`, `spreadUnionPropOverride`.
 - **Parenthesization mismatches (~12 tests)**: Various parenthesization differences — extra parens around cast results, missing parens in extends clauses, extra parens around yield, missing parens on async arrow params. Multiple sub-issues.
