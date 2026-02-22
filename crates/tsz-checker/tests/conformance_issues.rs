@@ -2466,3 +2466,113 @@ someGenerics6 `${ (n: number) => n }${ n => n }${ n => n }`;
         "Should NOT emit TS7006 - 'n' should be inferred as number from generic context.\nActual errors: {relevant:#?}"
     );
 }
+
+/// Test that write-only parameters are correctly flagged as unused (TS6133).
+///
+/// When a parameter is assigned to (`person2 = "dummy"`) but never read,
+/// TS6133 should still fire. Previously, `check_const_assignment` used the
+/// tracking `resolve_identifier_symbol` to look up the symbol, which added
+/// the assignment target to `referenced_symbols`. This suppressed the TS6133
+/// diagnostic because the unused-checker's early skip treated the symbol as
+/// "used".
+///
+/// Fix: `get_const_variable_name` now uses the binder-level `resolve_identifier`
+/// (no tracking side-effect) so assignment targets stay in `written_symbols`
+/// only.
+#[test]
+fn test_ts6133_write_only_parameter_still_flagged() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function greeter(person: string, person2: string) {
+    var unused = 20;
+    person2 = "dummy value";
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| {
+            // Extract name from "'X' is declared but its value is never read."
+            msg.split('\'').nth(1).unwrap_or("?")
+        })
+        .collect();
+
+    assert!(
+        ts6133_names.contains(&"person"),
+        "Should flag 'person' as unused. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"person2"),
+        "Should flag 'person2' as unused (write-only). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"unused"),
+        "Should flag 'unused' as unused. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that const assignment detection (TS2588) still works after the
+/// `resolve_identifier_symbol` → `binder.resolve_identifier` change.
+#[test]
+fn test_ts2588_const_assignment_still_detected() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+const x = 5;
+x = 10;
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2588),
+        "Should emit TS2588 for assignment to const. Got: {diagnostics:#?}"
+    );
+}
+
+/// Test that write-only parameters with multiple params all get flagged.
+#[test]
+fn test_ts6133_write_only_middle_parameter() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function greeter(person: string, person2: string, person3: string) {
+    var unused = 20;
+    person2 = "dummy value";
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        ts6133_names.contains(&"person"),
+        "Should flag 'person'. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"person2"),
+        "Should flag 'person2' (write-only). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"person3"),
+        "Should flag 'person3'. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"unused"),
+        "Should flag 'unused'. Got: {ts6133_names:?}"
+    );
+}
