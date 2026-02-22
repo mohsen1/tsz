@@ -1964,4 +1964,59 @@ mod tests {
             "JSDoc for ctor implementation should be preserved.\nOutput:\n{output}"
         );
     }
+
+    /// Regression test: when a class member is erased (e.g., a type-only property
+    /// at ES2015+ with useDefineForClassFields=false), trailing comments on the same
+    /// line as the class closing `}` must NOT be consumed by the erased member's
+    /// comment skip logic. For example:
+    ///   `class C extends E { foo: string; } // error`
+    /// The `// error` comment belongs to the `}`, not to the erased `foo: string;`.
+    #[test]
+    fn erased_member_does_not_consume_trailing_comment_after_closing_brace() {
+        // Single-line class with an erased property and a trailing comment
+        let source = "class C extends E { foo: string; } // error\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// error"),
+            "Trailing comment after closing brace should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: an erased member's OWN trailing comment (on the same
+    /// line, with only whitespace between the `;` and the comment) should still
+    /// be consumed. This ensures the fix for closing-brace comments doesn't
+    /// regress the basic erased-comment-suppression behavior.
+    #[test]
+    fn erased_interface_trailing_comment_is_suppressed() {
+        let source = "interface Foo {} // type-only\nconst x = 1;\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// type-only"),
+            "Trailing comment on erased interface should be suppressed.\nOutput:\n{output}"
+        );
+    }
 }
