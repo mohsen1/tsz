@@ -484,10 +484,10 @@ impl Project {
         &self,
         file_name: &str,
         position: Position,
-    ) -> Option<crate::type_hierarchy::TypeHierarchyItem> {
+    ) -> Option<crate::hierarchy::type_hierarchy::TypeHierarchyItem> {
         let file = self.files.get(file_name)?;
 
-        use crate::type_hierarchy::TypeHierarchyProvider;
+        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
         let provider = TypeHierarchyProvider::new(
             file.arena(),
             file.binder(),
@@ -506,13 +506,13 @@ impl Project {
         &self,
         file_name: &str,
         position: Position,
-    ) -> Vec<crate::type_hierarchy::TypeHierarchyItem> {
+    ) -> Vec<crate::hierarchy::type_hierarchy::TypeHierarchyItem> {
         let file = match self.files.get(file_name) {
             Some(f) => f,
             None => return Vec::new(),
         };
 
-        use crate::type_hierarchy::TypeHierarchyProvider;
+        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
         let provider = TypeHierarchyProvider::new(
             file.arena(),
             file.binder(),
@@ -531,13 +531,13 @@ impl Project {
         &self,
         file_name: &str,
         position: Position,
-    ) -> Vec<crate::type_hierarchy::TypeHierarchyItem> {
+    ) -> Vec<crate::hierarchy::type_hierarchy::TypeHierarchyItem> {
         let file = match self.files.get(file_name) {
             Some(f) => f,
             None => return Vec::new(),
         };
 
-        use crate::type_hierarchy::TypeHierarchyProvider;
+        use crate::hierarchy::type_hierarchy::TypeHierarchyProvider;
         let provider = TypeHierarchyProvider::new(
             file.arena(),
             file.binder(),
