@@ -1,8 +1,23 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS-only mode, current 4883/7163 = 68.2%)
+## Pattern Analysis (JS-only mode, current 9239/13623 = 67.8%)
 
 ### Fixed This Session
+- **"use strict" emission fixes + CLI Preserve mapping** (+17 JS, +1 DTS tests):
+  Three targeted fixes:
+  1. `args.rs`: `Self::Preserve` was incorrectly mapped to `ModuleKind::ESNext` instead of
+     `ModuleKind::Preserve`. This caused `--module preserve` to behave as ESNext.
+  2. `emitter/mod.rs`: AMD/UMD "use strict" condition was too broad — it fired for
+     non-module scripts (no import/export). Added `is_file_module` guard. AMD module files
+     are already handled by `emit_module_wrapper()` (line ~647) which adds "use strict"
+     inside the `define()` callback.
+  3. `emitter/mod.rs`: The `alwaysStrict` "use strict" path incorrectly excluded AMD/UMD
+     (`&& !is_amd_or_umd`). Since AMD module files never reach `emit_source_file()` (they're
+     redirected to `emit_module_wrapper()`), this exclusion was wrong for AMD non-module
+     scripts that have alwaysStrict enabled.
+  Results: JS 9222→9239, DTS 744→745 (zero regressions).
+
+### Previously Fixed
 - **Trailing comments on lowered static class fields** (+2 tests):
   When static class fields are lowered to `ClassName.field = value;` for targets < ES2022,
   trailing comments (e.g. `static intance = new C3(); // ok`) were consumed by
@@ -99,14 +114,13 @@
 10. **computed_property** (~20 tests): Computed property names in class/object
     downlevel transform.
 
-11. **"use strict" for AMD/outFile modules** (~1 test): AMD modules should emit
-    `"use strict"` inside the `define()` callback, but the test runner's outFile
-    handling interacts with the compiler's output in complex ways. Needs careful
-    investigation of `module_wrapper.rs` and `cli-transpiler.ts` interaction.
+11. **"use strict" for AMD/outFile modules** (partially fixed): AMD module "use strict"
+    inside `define()` callback now works correctly. Remaining failures are outFile-specific
+    bundling scenarios where the test runner interaction is complex.
 
-12. **"use strict" for module=preserve** (~3 tests): The test runner adds `"use strict"`
-    for JS inputs when module kind includes Preserve (code 200). This is a test
-    runner behavior (`cli-transpiler.ts` lines 422-426), not an emitter bug per se.
+12. **"use strict" for module=preserve** (partially fixed): The `Preserve` module kind
+    mapping bug in `args.rs` is now fixed. Remaining failures are in the test runner's
+    post-processing logic (`cli-transpiler.ts` lines 422-426).
 
 13. **Comment preservation on erased constructs** (~13 tests): Comments like
     `// error` and `// no error` attached to type-only declarations are emitted
@@ -138,11 +152,10 @@
     loop's newline logic. The AMD variant also involves the module wrapper body path.
     Needs careful investigation of the newline state after class emit completes.
 
-19. **Extra `"use strict"` for AMD/outFile modules** (~9 tests): AMD modules emit
-    `"use strict"` at the top level before `define()`, but it should only appear inside
-    the callback. See `amdDeclarationEmitNoExtraDeclare`. The `emit_source_file()` prologue
-    emits `"use strict"` before the AMD wrapper gets a chance to suppress it. Needs the
-    `"use strict"` emission to be aware of the wrapping module format.
+19. **Extra `"use strict"` for AMD/outFile modules** (mostly fixed): The AMD `"use strict"`
+    condition in `emit_source_file()` now correctly requires `is_file_module`, preventing
+    spurious top-level emission for non-module scripts. AMD module files are handled by
+    `emit_module_wrapper()`. Remaining failures are outFile-specific bundling edge cases.
 
 20. **Trailing comments in ES5-lowered method bodies** (~5 tests): When class methods
     are lowered to ES5 `Object.defineProperty` patterns, trailing comments on statements

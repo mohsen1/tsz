@@ -561,3 +561,72 @@ fn test_template_literal_multiple_spans_mixed_whitespace() {
         "expected template with all closing braces, got: {output}"
     );
 }
+
+#[test]
+fn test_amd_non_module_script_no_use_strict() {
+    // Non-module scripts (no import/export) under AMD should NOT get "use strict".
+    let source = "var x = 1;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        !output.contains("use strict"),
+        "AMD non-module script should not get 'use strict', got: {output}"
+    );
+}
+
+#[test]
+fn test_commonjs_module_gets_use_strict() {
+    // CJS module files (with export) should get "use strict" in the preamble.
+    let source = "export const x = 1;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        output.contains("\"use strict\""),
+        "CJS module should get 'use strict', got: {output}"
+    );
+}
+
+#[test]
+fn test_commonjs_non_module_no_use_strict() {
+    // CJS non-module scripts should NOT get "use strict".
+    let source = "var x = 1;\n";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        !output.contains("use strict"),
+        "CJS non-module script should not get 'use strict', got: {output}"
+    );
+}
