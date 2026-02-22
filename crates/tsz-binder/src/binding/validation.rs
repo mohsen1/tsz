@@ -1,6 +1,6 @@
 //! Post-binding validation, lib symbol diagnostics, and resolution statistics.
 //!
-//! Extracted from `state_binding.rs` to keep the core binding module focused on
+//! Extracted from the core binding module to keep it focused on
 //! declaration binding, accessor generation, and flow graph construction.
 
 use crate::lib_loader;

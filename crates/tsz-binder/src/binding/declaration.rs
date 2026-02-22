@@ -1,7 +1,7 @@
 //! Binder declaration binding, accessors, and flow graph construction.
 //!
 //! Validation, diagnostics reporting, and resolution statistics live in
-//! `state_binding_validation.rs`.
+//! `validation.rs`.
 
 use crate::state::FileFeatures;
 use crate::{
@@ -14,7 +14,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-use super::state::BinderState;
+use crate::state::BinderState;
 
 impl BinderState {
     // Declaration binding methods
