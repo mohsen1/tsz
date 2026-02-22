@@ -229,13 +229,6 @@ pub fn prepare_binary_test_dir(
         .is_some_and(|value| value == "false");
 
     if !has_tsconfig_file {
-        let explicit_allow_js = options.get("allowJs").or_else(|| options.get("allowjs"));
-        let check_js = options
-            .get("checkJs")
-            .or_else(|| options.get("checkjs"))
-            .is_some_and(|v| v == "true");
-        let allow_js = matches!(explicit_allow_js, Some(v) if v == "true") || check_js;
-
         // Match the cache generator's include patterns exactly.
         let include = serde_json::json!([
             "*.ts", "*.tsx", "*.js", "*.jsx", "**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"
