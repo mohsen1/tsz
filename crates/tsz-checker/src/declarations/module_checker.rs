@@ -342,6 +342,8 @@ impl<'a> CheckerState<'a> {
 
         // Get the module's canonical export surface.
         let module_exports = self.resolve_effective_module_exports(module_name);
+        // TSC includes source-level quotes in module diagnostic messages
+        let quoted_module = format!("\"{module_name}\"");
 
         let Some(module_exports) = module_exports else {
             return; // Module exports not found - TS2307 already emitted
@@ -388,7 +390,7 @@ impl<'a> CheckerState<'a> {
                     // TS2614: Symbol doesn't exist but a default export does
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                        &[module_name, &export_name],
+                        &[&quoted_module, &export_name],
                     );
                     self.error_at_node(
                         specifier_idx,
@@ -399,7 +401,7 @@ impl<'a> CheckerState<'a> {
                     // TS2305: Module has no exported member
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        &[module_name, &export_name],
+                        &[&quoted_module, &export_name],
                     );
                     self.error_at_node(
                         specifier_idx,

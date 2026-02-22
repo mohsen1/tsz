@@ -277,6 +277,9 @@ impl<'a> CheckerState<'a> {
 
         // Resolve exports table (shared between default and named import checking)
         let normalized = module_name.trim_matches('"').trim_matches('\'');
+        // TSC includes source-level quotes in module diagnostic messages:
+        // Module '"./foo"' has no exported member 'X'
+        let quoted_module = format!("\"{module_name}\"");
         let exports_table = self.resolve_effective_module_exports(module_name);
 
         // Check default import: import X from "module"
@@ -382,7 +385,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2460: Symbol exists locally and is exported under a different name
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
-                                    &[module_name, import_name, renamed_as],
+                                    &[&quoted_module, import_name, renamed_as],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -393,7 +396,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2459: Symbol exists locally but is not exported
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
-                                    &[module_name, import_name],
+                                    &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -405,7 +408,7 @@ impl<'a> CheckerState<'a> {
                             // TS2305: Symbol doesn't exist in the module at all
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                &[module_name, import_name],
+                                &[&quoted_module, import_name],
                             );
                             self.error_at_node(
                                 specifier.name,
@@ -484,7 +487,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2460: Symbol exists locally and is exported under a different name
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
-                                    &[module_name, import_name, renamed_as],
+                                    &[&quoted_module, import_name, renamed_as],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -495,7 +498,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2459: Symbol exists locally but is not exported
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
-                                    &[module_name, import_name],
+                                    &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -507,7 +510,7 @@ impl<'a> CheckerState<'a> {
                             // TS2614: Symbol doesn't exist but a default export does
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                &[module_name, import_name],
+                                &[&quoted_module, import_name],
                             );
                             self.error_at_node(
                                 specifier.name,
@@ -518,7 +521,7 @@ impl<'a> CheckerState<'a> {
                             // TS2305: Symbol doesn't exist in the module at all
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                &[module_name, import_name],
+                                &[&quoted_module, import_name],
                             );
                             self.error_at_node(
                                 specifier.name,
