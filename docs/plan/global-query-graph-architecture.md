@@ -67,54 +67,54 @@ We replace coarse `tsc` cache invalidation with **Semantic API Fingerprinting**.
 
 ---
 
-## 5. Concrete Action Items (Refactoring Path)
+## 6. Concrete Action Items (Refactoring Path)
 
 To transition the existing codebase to this architecture, the following critical refactoring steps are required:
 
-### 5.1 Refactor `Symbol` to Remove `NodeIndex` (The Memory Fix)
+### 6.1 Refactor `Symbol` to Remove `NodeIndex` (The Memory Fix)
 Currently, `Symbol` in `crates/tsz-binder/src/lib.rs` tightly couples to `NodeIndex` (e.g., `pub declarations: Vec<NodeIndex>`). This prevents dropping the AST (`NodeArena`).
 *   **Action:** Change `Symbol` to store stable logical pointers—either a `DefId` mapped to a File ID + Byte Span (`[start, end]`), or a lightweight "Skeleton IR". 
 *   **Goal:** When a worker thread needs to re-hydrate an AST to evaluate a body, it parses the file and uses the Byte Span to re-discover the correct `NodeIndex` in the new, short-lived `NodeArena`.
 
-### 5.2 Gut `MergedProgram` and Sequential Merging (The Amdahl Fix)
+### 6.2 Gut `MergedProgram` and Sequential Merging (The Amdahl Fix)
 Currently, `src/parallel.rs` parses files concurrently but then calls `merge_bind_results`, which sequentially merges every file's `SymbolArena` into a single `MergedProgram` and retains every `Arc<NodeArena>`.
 *   **Action:** Delete the sequential merge phase. `parse_and_bind_parallel` should extract the "Skeletons" (exported symbols and ambient declarations) and insert them concurrently into a lock-free `DashMap` (already available in `Cargo.toml`).
 *   **Goal:** Immediately drop the `NodeArena`s after extracting the Skeleton, keeping global memory flat and initialization time near-zero.
 
-### 5.3 Invert CLI Control Flow (The Execution Fix)
+### 6.3 Invert CLI Control Flow (The Execution Fix)
 Currently, `crates/tsz-cli/src/build.rs` (`build_solution`) orchestrates builds by topologically sorting `tsconfig.json` references and compiling projects in a sequential loop.
 *   **Action:** The CLI must stop managing the build graph. It should simply initialize the `QueryDatabase` with the workspace root and invoke a single, top-level query: `db.check_workspace()`.
 *   **Goal:** The `QueryDatabase`'s demand-driven engine takes over, spawning parallel worker threads that traverse the global import graph, hydrating ASTs on-demand, and resolving types concurrently.
 
-### 5.4 Deterministic Diagnostics Emitting (The Output Fix)
+### 6.4 Deterministic Diagnostics Emitting (The Output Fix)
 When `db.check_workspace()` executes concurrently across the entire monorepo, worker threads will generate diagnostics in a non-deterministic order based on OS thread scheduling. 
 *   **Action:** The `QueryDatabase` must buffer all generated diagnostics internally during execution rather than streaming them directly to the console.
 *   **Goal:** Before the CLI exits, it must collect the buffered diagnostics, sort them deterministically (e.g., by file path, then by line/column number), and print them sequentially. This ensures that `tsz` output remains perfectly stable and predictable across identical CI runs, matching `tsc`'s sequential emission style.
 
 ---
 
-## 6. Marketing & Adoption Strategy
+## 7. Marketing & Adoption Strategy
 
 We will explicitly advertise this feature as a reason to migrate to `tsz`:
 > *"Tired of Project Reference Hell? Delete your `references` arrays. `tsz` builds a global symbol graph in milliseconds, parallelizes your entire monorepo automatically, and even lets you keep those circular dependencies."*
 
 ---
 
-## 7. Testing & Validation Strategy
+## 8. Testing & Validation Strategy
 
 To ensure absolute `tsc` compatibility and performance regressions aren't introduced, the following validation framework must be established:
 
-### 7.1 Correctness & Compatibility
+### 8.1 Correctness & Compatibility
 *   **Conformance Test Harness Extension:** The `tests/conformance/` suite must be run with a new `--global-graph` flag that simulates dissolving multi-project `tsconfig.json` test fixtures into a single compilation context.
 *   **Cyclic Resolution Assertions:** Create synthetic test graphs in `crates/tsz-checker/src/tests/` with cross-package circular dependencies (e.g., `pkg_a` exporting a class extending an interface from `pkg_b`, which imports an enum from `pkg_a`). Assert that `tsz` correctly evaluates types without entering an infinite loop or emitting a false `TS2506` error (unless it is a structurally invalid type cycle).
 *   **Emit Fidelity Analysis:** Ensure that when `tsz --build` operates in the global graph backend, the output `.js` and `.d.ts` files perfectly align with the `outDir` structure dictated by the respective original `tsconfig.json` bounds.
 
-### 7.2 Memory Benchmarking
+### 8.2 Memory Benchmarking
 *   **Peak RSS Monitoring (`crates/tsz-cli/src/build.rs`):** We will track Peak RSS across identical builds.
 *   *Test Scenario:* Compile a simulated 500-project monorepo (1M+ lines of code) with `check_files_parallel`.
 *   *Validation:* The memory ceiling must remain flat (determined by `GlobalTypeInterner` capacity + `N * NodeArena`, where `N` is the thread count, rather than `Total_Files * NodeArena`).
 
-## 8. Gradual Implementation Strategy (The Strangler Fig)
+## 9. Gradual Implementation Strategy (The Strangler Fig)
 
 A "big bang" rewrite of the checker and binder would stall feature development and destabilize the project. Instead, we will transition to the Global Query Graph through a sequence of non-breaking, incremental phases. 
 
