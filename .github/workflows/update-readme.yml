@@ -37,12 +37,29 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT != '' && secrets.GH_PAT || github.token }}
 
+      - name: Check time since last README update
+        id: throttle
+        run: |
+          last_update=$(git log -1 --format=%ct --grep="automated README metrics update" -- README.md 2>/dev/null || echo 0)
+          now=$(date +%s)
+          elapsed=$(( now - last_update ))
+          six_hours=21600
+          if [ "$elapsed" -lt "$six_hours" ] && [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Last README update was $(( elapsed / 60 )) minutes ago — skipping (threshold: 360 min)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "Last README update was $(( elapsed / 60 )) minutes ago — proceeding"
+          fi
+
       - name: Set up Node
+        if: steps.throttle.outputs.skip != 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
       - name: Resolve source CI run
+        if: steps.throttle.outputs.skip != 'true'
         id: source_run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,6 +107,7 @@ jobs:
           echo "Using latest successful CI run id=$latest_run_id"
 
       - name: Download CI metrics artifacts
+        if: steps.throttle.outputs.skip != 'true'
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ steps.source_run.outputs.run_id }}
@@ -99,10 +117,12 @@ jobs:
           path: .ci-metrics
 
       - name: Update README metrics
+        if: steps.throttle.outputs.skip != 'true'
         run: |
           node scripts/update-readme-from-ci-metrics.mjs
 
       - name: Check README changes
+        if: steps.throttle.outputs.skip != 'true'
         id: check_readme
         run: |
           if git diff --quiet README.md; then
@@ -113,7 +133,7 @@ jobs:
           fi
 
       - name: Commit and push README update to main
-        if: steps.check_readme.outputs.changed == 'true'
+        if: steps.throttle.outputs.skip != 'true' && steps.check_readme.outputs.changed == 'true'
         run: |
           set -euo pipefail
 
