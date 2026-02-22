@@ -622,8 +622,7 @@ impl<'a> DeclarationEmitter<'a> {
         // Check for export modifier
         let is_exported = self.has_export_modifier(&func.modifiers);
 
-        // In declaration emit mode, only emit exported functions
-        if !is_exported {
+        if !self.should_emit_public_api_member(&func.modifiers) {
             return;
         }
 
@@ -654,7 +653,13 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.write_indent();
-        self.write("export declare function ");
+        if !self.inside_declare_namespace {
+            if is_exported {
+                self.write("export ");
+            }
+            self.write("declare ");
+        }
+        self.write("function ");
 
         // Function name
         self.emit_node(func.name);
