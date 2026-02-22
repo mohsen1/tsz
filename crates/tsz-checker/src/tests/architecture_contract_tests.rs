@@ -270,16 +270,16 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "jsx_checker should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
-    let mut context_src = fs::read_to_string("src/context.rs")
-        .expect("failed to read src/context.rs for architecture guard");
-    // Include split-off modules that are part of the context logical module
+    let mut context_src = fs::read_to_string("src/context/mod.rs")
+        .expect("failed to read src/context/mod.rs for architecture guard");
+    // Include sub-modules that are part of the context module
     context_src.push_str(
-        &fs::read_to_string("src/context_constructors.rs")
-            .expect("failed to read src/context_constructors.rs for architecture guard"),
+        &fs::read_to_string("src/context/constructors.rs")
+            .expect("failed to read src/context/constructors.rs for architecture guard"),
     );
     context_src.push_str(
-        &fs::read_to_string("src/context_resolver.rs")
-            .expect("failed to read src/context_resolver.rs for architecture guard"),
+        &fs::read_to_string("src/context/resolver.rs")
+            .expect("failed to read src/context/resolver.rs for architecture guard"),
     );
     assert!(
         !context_src.contains("self.types.intern(TypeData::Lazy("),
@@ -958,16 +958,16 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
 
 #[test]
 fn test_type_cache_surface_excludes_application_and_mapped_eval_caches() {
-    let context_src =
-        fs::read_to_string("src/context.rs").expect("failed to read src/context.rs for guard");
+    let context_src = fs::read_to_string("src/context/mod.rs")
+        .expect("failed to read src/context/mod.rs for guard");
 
     let type_cache_start = context_src
         .find("pub struct TypeCache")
-        .expect("missing TypeCache struct in context.rs");
+        .expect("missing TypeCache struct in context/mod.rs");
     let checker_context_start = context_src[type_cache_start..]
         .find("pub struct CheckerContext")
         .map(|offset| type_cache_start + offset)
-        .expect("missing CheckerContext struct in context.rs");
+        .expect("missing CheckerContext struct in context/mod.rs");
     let type_cache_src = &context_src[type_cache_start..checker_context_start];
 
     assert!(
