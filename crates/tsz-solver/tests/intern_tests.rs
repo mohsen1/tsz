@@ -1,6 +1,6 @@
 use super::*;
-use crate::freshness::{is_fresh_object_type, widen_freshness};
 use crate::intern::PROPERTY_MAP_THRESHOLD;
+use crate::relations::freshness::{is_fresh_object_type, widen_freshness};
 use tsz_binder::SymbolId;
 
 #[test]

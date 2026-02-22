@@ -26,7 +26,6 @@ pub mod evaluation;
 pub mod expression_ops;
 mod flow_analysis;
 mod format;
-pub mod freshness;
 mod index_signatures;
 mod inference;
 pub mod inheritance;
@@ -38,7 +37,7 @@ mod object_literal;
 pub mod objects;
 pub mod operations;
 pub mod recursion;
-mod relations;
+pub mod relations;
 pub mod sound;
 pub mod tracer;
 mod type_factory;
@@ -47,7 +46,6 @@ pub mod type_resolver;
 pub mod types;
 pub mod unsoundness_audit;
 pub mod utils;
-pub mod variance;
 pub mod visitor;
 mod visitors;
 pub mod widening;
@@ -95,7 +93,6 @@ pub use element_access::*;
 pub use evaluation::evaluate::*;
 pub use flow_analysis::*;
 pub use format::TypeFormatter;
-pub use freshness::*;
 pub use index_signatures::*;
 pub use inference::infer::*;
 pub use inheritance::*;
@@ -131,7 +128,6 @@ pub use types::{
     TemplateSpan, TupleElement, TupleListId, TypeParamInfo, TypePredicate, TypePredicateTarget,
 };
 pub use unsoundness_audit::*;
-pub use variance::*;
 pub use widening::*;
 
 // Test modules: Most are loaded by their source files via #[path = "tests/..."] declarations.

@@ -13,7 +13,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        use tsz_solver::freshness;
+        use tsz_solver::relations::freshness;
 
         // Excess property checks do not apply to type parameters (even with constraints).
         if query::is_type_parameter(self.ctx.types, target) {

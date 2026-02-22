@@ -752,7 +752,7 @@ impl<'a> CheckerState<'a> {
             // declaration. If the symbol was widened (non-fresh), the flow result should also be widened.
             // This prevents "Zombie Freshness" where CFA bypasses the widened symbol type.
             if !self.ctx.compiler_options.sound_mode {
-                use tsz_solver::freshness::{is_fresh_object_type, widen_freshness};
+                use tsz_solver::relations::freshness::{is_fresh_object_type, widen_freshness};
                 if is_fresh_object_type(self.ctx.types, result_type) {
                     return widen_freshness(self.ctx.types, result_type);
                 }

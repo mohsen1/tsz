@@ -608,7 +608,7 @@ impl<'a> CheckerState<'a> {
                 // from functions lose their freshness at the call boundary — the caller
                 // should not see excess property checks for the callee's return value.
                 let return_type = if !self.ctx.compiler_options.sound_mode {
-                    tsz_solver::freshness::widen_freshness(self.ctx.types, return_type)
+                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, return_type)
                 } else {
                     return_type
                 };

@@ -116,7 +116,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 // No type annotation - use element type (with freshness stripped)
                 let widened_element_type = if !self.ctx.compiler_options.sound_mode {
-                    tsz_solver::freshness::widen_freshness(self.ctx.types, element_type)
+                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, element_type)
                 } else {
                     element_type
                 };
@@ -1052,7 +1052,8 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.ctx.compiler_options.sound_mode {
-                final_type = tsz_solver::freshness::widen_freshness(self.ctx.types, final_type);
+                final_type =
+                    tsz_solver::relations::freshness::widen_freshness(self.ctx.types, final_type);
             }
             self.pop_symbol_dependency();
 
