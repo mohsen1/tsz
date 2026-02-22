@@ -37,6 +37,46 @@ type ReferenceSymbolCache = RefCell<FxHashMap<u32, Option<SymbolId>>>;
 /// Instantiated type predicates from generic call resolutions, keyed by call node index.
 pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>)>;
 
+// Guard against pathological requeue loops in flow traversal.
+const FLOW_STEP_BUDGET_MIN: usize = 4_096;
+const FLOW_STEP_BUDGET_SCALE: usize = 64;
+const FLOW_STEP_BUDGET_MAX: usize = 1_000_000;
+
+const fn flow_step_budget(flow_node_count: usize) -> usize {
+    let scaled = flow_node_count.saturating_mul(FLOW_STEP_BUDGET_SCALE);
+    if scaled < FLOW_STEP_BUDGET_MIN {
+        FLOW_STEP_BUDGET_MIN
+    } else if scaled > FLOW_STEP_BUDGET_MAX {
+        FLOW_STEP_BUDGET_MAX
+    } else {
+        scaled
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        FLOW_STEP_BUDGET_MAX, FLOW_STEP_BUDGET_MIN, FLOW_STEP_BUDGET_SCALE, flow_step_budget,
+    };
+
+    #[test]
+    fn flow_step_budget_has_minimum_floor() {
+        assert_eq!(flow_step_budget(0), FLOW_STEP_BUDGET_MIN);
+        assert_eq!(flow_step_budget(1), FLOW_STEP_BUDGET_MIN);
+    }
+
+    #[test]
+    fn flow_step_budget_scales_with_graph_size() {
+        let nodes = FLOW_STEP_BUDGET_MIN / FLOW_STEP_BUDGET_SCALE + 10;
+        assert_eq!(flow_step_budget(nodes), nodes * FLOW_STEP_BUDGET_SCALE);
+    }
+
+    #[test]
+    fn flow_step_budget_has_upper_cap() {
+        assert_eq!(flow_step_budget(usize::MAX), FLOW_STEP_BUDGET_MAX);
+    }
+}
+
 // =============================================================================
 // FlowGraph
 // =============================================================================
@@ -551,9 +591,16 @@ impl<'a> FlowAnalyzer<'a> {
         // Initialize worklist with the entry point
         worklist.push_back((flow_id, initial_type));
         in_worklist.insert(flow_id);
+        let step_budget = flow_step_budget(self.binder.flow_nodes.len());
+        let mut steps = 0usize;
 
         // Process worklist until empty
         while let Some((current_flow, current_type)) = worklist.pop_front() {
+            steps += 1;
+            if steps > step_budget {
+                // Bail out conservatively to avoid unbounded traversal in pathological CFGs.
+                return results.get(&flow_id).copied().unwrap_or(initial_type);
+            }
             in_worklist.remove(&current_flow);
 
             // Check global cache first to avoid redundant traversals.
