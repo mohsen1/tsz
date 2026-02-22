@@ -1,4 +1,4 @@
-//! Tests for Parser - Cache-optimized parser using NodeArena.
+//! Tests for Parser - Cache-optimized parser using `NodeArena`.
 //!
 //! This module contains tests organized into sections:
 //! - Basic parsing (expressions, statements, functions)
@@ -76,12 +76,7 @@ fn test_parser_numeric_separator_invalid_diagnostic() {
     let diag = diagnostics
         .iter()
         .find(|diag| diag.code == diagnostic_codes::NUMERIC_SEPARATORS_ARE_NOT_ALLOWED_HERE)
-        .unwrap_or_else(|| {
-            panic!(
-                "Expected numeric separator diagnostic, got: {:?}",
-                diagnostics
-            )
-        });
+        .unwrap_or_else(|| panic!("Expected numeric separator diagnostic, got: {diagnostics:?}"));
     let underscore_pos = source.find('_').expect("underscore not found") as u32;
     assert_eq!(diag.start, underscore_pos);
     assert_eq!(diag.length, 1);
@@ -100,10 +95,7 @@ fn test_parser_numeric_separator_consecutive_diagnostic() {
             diag.code == diagnostic_codes::MULTIPLE_CONSECUTIVE_NUMERIC_SEPARATORS_ARE_NOT_PERMITTED
         })
         .unwrap_or_else(|| {
-            panic!(
-                "Expected consecutive separator diagnostic, got: {:?}",
-                diagnostics
-            )
+            panic!("Expected consecutive separator diagnostic, got: {diagnostics:?}")
         });
     let underscore_pos = source.find("__").expect("double underscore not found") as u32 + 1;
     assert_eq!(diag.start, underscore_pos);
@@ -442,16 +434,14 @@ fn test_parser_heritage_clause_reports_specific_error() {
 
     assert!(
         !ts1109_errors.is_empty(),
-        "Expected TS1109 error for invalid heritage clause: {:?}",
-        diagnostics
+        "Expected TS1109 error for invalid heritage clause: {diagnostics:?}"
     );
 
     // Check that the error message is specific to heritage clauses
     let error_msg = &ts1109_errors[0].message;
     assert!(
         error_msg.contains("Class name or type expression expected"),
-        "Expected 'Class name or type expression expected', got: {}",
-        error_msg
+        "Expected 'Class name or type expression expected', got: {error_msg}"
     );
 }
 
@@ -470,16 +460,14 @@ fn test_parser_implements_clause_reports_specific_error() {
 
     assert!(
         !ts1109_errors.is_empty(),
-        "Expected TS1109 error for invalid implements clause: {:?}",
-        diagnostics
+        "Expected TS1109 error for invalid implements clause: {diagnostics:?}"
     );
 
     // Check that the error message is specific to heritage clauses
     let error_msg = &ts1109_errors[0].message;
     assert!(
         error_msg.contains("Class name or type expression expected"),
-        "Expected 'Class name or type expression expected', got: {}",
-        error_msg
+        "Expected 'Class name or type expression expected', got: {error_msg}"
     );
 }
 
@@ -675,15 +663,13 @@ fn test_parser_template_literal_property_name_no_ts1160() {
         diagnostics
             .iter()
             .any(|diag| diag.code == diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED),
-        "Expected property assignment expected diagnostic, got: {:?}",
-        diagnostics
+        "Expected property assignment expected diagnostic, got: {diagnostics:?}"
     );
     assert!(
         diagnostics
             .iter()
             .all(|diag| diag.code != diagnostic_codes::UNTERMINATED_TEMPLATE_LITERAL),
-        "Did not expect unterminated template literal diagnostic, got: {:?}",
-        diagnostics
+        "Did not expect unterminated template literal diagnostic, got: {diagnostics:?}"
     );
 }
 
@@ -699,8 +685,7 @@ fn test_parser_double_comma_emits_ts1136() {
         diagnostics
             .iter()
             .any(|diag| diag.code == diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED),
-        "Expected TS1136 property assignment expected diagnostic for double comma, got: {:?}",
-        diagnostics
+        "Expected TS1136 property assignment expected diagnostic for double comma, got: {diagnostics:?}"
     );
 }
 
@@ -1009,9 +994,9 @@ fn test_parser_memory_efficiency() {
     let node_memory = total_nodes * 16;
     let fat_memory = total_nodes * 208;
 
-    println!("Nodes: {}", total_nodes);
-    println!("Node memory: {} bytes", node_memory);
-    println!("Fat Node memory: {} bytes", fat_memory);
+    println!("Nodes: {total_nodes}");
+    println!("Node memory: {node_memory} bytes");
+    println!("Fat Node memory: {fat_memory} bytes");
     println!("Memory savings: {}x", fat_memory / node_memory.max(1));
 
     assert!(
@@ -3736,8 +3721,7 @@ fn test_parser_type_alias_missing_equals_recovers_with_object_type() {
     let diags = parser.get_diagnostics();
     assert!(
         diags.iter().any(|d| d.code == diagnostic_codes::EXPECTED),
-        "Expected TS1005 diagnostic: {:?}",
-        diags
+        "Expected TS1005 diagnostic: {diags:?}"
     );
     // Parser should successfully build the AST despite the error
     assert!(
@@ -4107,11 +4091,10 @@ fn test_reserved_word_emits_ts1359() {
     let ts1359_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 1359).collect();
     assert!(
         !ts1359_errors.is_empty(),
-        "Expected TS1359 error for 'break' reserved word, got {:?}",
-        diagnostics
+        "Expected TS1359 error for 'break' reserved word, got {diagnostics:?}"
     );
 
-    println!("TS1359 errors: {:?}", ts1359_errors);
+    println!("TS1359 errors: {ts1359_errors:?}");
 }
 
 #[test]
@@ -4123,10 +4106,9 @@ fn test_parser_export_in_block_emits_ts1184() {
 
     let diagnostics = parser.get_diagnostics();
     let codes: Vec<u32> = diagnostics.iter().map(|d| d.code).collect();
-    println!("Diagnostics: {:?}", diagnostics);
+    println!("Diagnostics: {diagnostics:?}");
     assert!(
         codes.contains(&diagnostic_codes::MODIFIERS_CANNOT_APPEAR_HERE),
-        "Expected TS1184 for export in block, got codes: {:?}",
-        codes
+        "Expected TS1184 for export in block, got codes: {codes:?}"
     );
 }

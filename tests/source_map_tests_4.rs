@@ -16368,7 +16368,7 @@ counter.reset();"#;
 }
 
 /// Test source map generation for private method calls in ES5 output.
-/// Validates that calling private methods (#method()) generates proper source mappings.
+/// Validates that calling private methods (#`method()`) generates proper source mappings.
 #[test]
 fn test_source_map_private_method_call_es5() {
     let source = r#"class Calculator {
@@ -19103,8 +19103,8 @@ console.log(newUser, formState);"#;
 // ES5 SOURCE MAP TESTS: UTILITY TYPES
 // =============================================================================
 
-/// Test source map generation for ReturnType<T> utility type in ES5 output.
-/// Validates that ReturnType extraction generates proper source mappings.
+/// Test source map generation for `ReturnType`<T> utility type in ES5 output.
+/// Validates that `ReturnType` extraction generates proper source mappings.
 #[test]
 fn test_source_map_utility_type_return_type_es5() {
     let source = r#"// Custom ReturnType implementation
@@ -19310,8 +19310,8 @@ partialSimple(123);"#;
     );
 }
 
-/// Test source map generation for ConstructorParameters<T> utility type in ES5 output.
-/// Validates that ConstructorParameters extraction generates proper source mappings.
+/// Test source map generation for `ConstructorParameters`<T> utility type in ES5 output.
+/// Validates that `ConstructorParameters` extraction generates proper source mappings.
 #[test]
 fn test_source_map_utility_type_constructor_params_es5() {
     let source = r#"// Custom ConstructorParameters implementation
@@ -19422,8 +19422,8 @@ console.log(simple, configured);"#;
     );
 }
 
-/// Test source map generation for InstanceType<T> utility type in ES5 output.
-/// Validates that InstanceType extraction generates proper source mappings.
+/// Test source map generation for `InstanceType`<T> utility type in ES5 output.
+/// Validates that `InstanceType` extraction generates proper source mappings.
 #[test]
 fn test_source_map_utility_type_instance_type_es5() {
     let source = r#"// Custom InstanceType implementation
@@ -19544,8 +19544,8 @@ console.log(users.map(u => u.greet()));"#;
     );
 }
 
-/// Test source map generation for ThisParameterType<T> utility type in ES5 output.
-/// Validates that ThisParameterType extraction generates proper source mappings.
+/// Test source map generation for `ThisParameterType`<T> utility type in ES5 output.
+/// Validates that `ThisParameterType` extraction generates proper source mappings.
 #[test]
 fn test_source_map_utility_type_this_parameter_es5() {
     let source = r#"// Custom ThisParameterType implementation
@@ -19661,7 +19661,7 @@ console.log(boundGreet(), boundCalculate(5), counter.getCount());"#;
 }
 
 /// Comprehensive test combining multiple utility type patterns.
-/// Tests ReturnType, Parameters, ConstructorParameters, InstanceType, and ThisParameterType together.
+/// Tests `ReturnType`, Parameters, `ConstructorParameters`, `InstanceType`, and `ThisParameterType` together.
 #[test]
 fn test_source_map_utility_type_es5_comprehensive() {
     let source = r#"// Comprehensive utility type patterns

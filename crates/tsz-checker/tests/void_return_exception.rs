@@ -28,10 +28,7 @@ interface Promise<T> {}
 "#;
 
 fn test_no_errors(source: &str) {
-    let source = format!(
-        "// @strictFunctionTypes: true\n{}\n{}",
-        GLOBAL_TYPE_MOCKS, source
-    );
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
 
     let ctx = TestContext::new();
 
@@ -83,10 +80,7 @@ fn test_no_errors(source: &str) {
 }
 
 fn test_expect_error(source: &str, expected_error_code: u32) {
-    let source = format!(
-        "// @strictFunctionTypes: true\n{}\n{}",
-        GLOBAL_TYPE_MOCKS, source
-    );
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source}");
 
     let ctx = TestContext::new();
 

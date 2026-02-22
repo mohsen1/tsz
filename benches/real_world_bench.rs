@@ -83,7 +83,7 @@ fn bench_large_synthetic_emit_only(c: &mut Criterion) {
     let bytes = source.len() as u64;
 
     // Pre-parse once
-    let mut parser = ParserState::new("synthetic.ts".to_string(), source.clone());
+    let mut parser = ParserState::new("synthetic.ts".to_string(), source);
     let root = parser.parse_source_file();
 
     let mut group = c.benchmark_group("real_world");

@@ -3090,15 +3090,12 @@ mod tests {
             let ext_str = ext.as_str();
             assert!(
                 !ext_str.is_empty(),
-                "{:?} should have a non-empty string representation",
-                ext
+                "{ext:?} should have a non-empty string representation"
             );
             // Verify the string starts with a dot
             assert!(
                 ext_str.starts_with('.'),
-                "{:?}.as_str() should start with '.', got: {}",
-                ext,
-                ext_str
+                "{ext:?}.as_str() should start with '.', got: {ext_str}"
             );
         }
         assert_eq!(ModuleExtension::Unknown.as_str(), "");
@@ -3151,8 +3148,7 @@ mod tests {
         for ext in &neutral {
             assert!(
                 !ext.forces_esm() && !ext.forces_cjs(),
-                "{:?} should be neutral (neither ESM nor CJS)",
-                ext
+                "{ext:?} should be neutral (neither ESM nor CJS)"
             );
         }
     }

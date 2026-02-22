@@ -103,7 +103,7 @@ pub struct MonitoredTestResult {
 }
 
 impl MonitoredTestResult {
-    /// Convert to basic TestResult
+    /// Convert to basic `TestResult`
     pub fn to_test_result(&self) -> TestResult {
         self.result.clone()
     }
@@ -116,7 +116,7 @@ impl MonitoredTestResult {
     /// Get a human-readable description of why the test was terminated
     pub fn termination_reason(&self) -> Option<String> {
         if let Some(signal) = self.termination_signal {
-            Some(format!("terminated by signal {}", signal))
+            Some(format!("terminated by signal {signal}"))
         } else if self.was_terminated {
             Some("forcefully terminated".to_string())
         } else {
@@ -151,8 +151,7 @@ where
     // Log if process isolation was requested but not available
     if config.use_process_isolation && config.verbosity > 0 {
         println!(
-            "[isolated_test_runner] Process isolation not yet implemented for '{}'. Using thread-based execution with monitoring.",
-            test_name
+            "[isolated_test_runner] Process isolation not yet implemented for '{test_name}'. Using thread-based execution with monitoring."
         );
     }
 

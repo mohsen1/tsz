@@ -29,8 +29,7 @@ const strings = numbers.map(x => x.toString());
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for arrow function parameter inference, got {}",
-        ts2322_count
+        "Expected no TS2322 error for arrow function parameter inference, got {ts2322_count}"
     );
 }
 
@@ -48,8 +47,7 @@ const h: Handler = n => n.toString();
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for arrow function with contextual type, got {}",
-        ts2322_count
+        "Expected no TS2322 error for arrow function with contextual type, got {ts2322_count}"
     );
 }
 
@@ -70,8 +68,7 @@ const p: Person = { name: "Alice", age: 30 };
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for object literal property inference, got {}",
-        ts2322_count
+        "Expected no TS2322 error for object literal property inference, got {ts2322_count}"
     );
 }
 
@@ -92,8 +89,7 @@ function getNumber(): number {
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for return statement contextual typing, got {}",
-        ts2322_count
+        "Expected no TS2322 error for return statement contextual typing, got {ts2322_count}"
     );
 }
 
@@ -111,8 +107,7 @@ x = Math.random() > 0.5 ? "hello" : "world";
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for ternary branch contextual typing, got {}",
-        ts2322_count
+        "Expected no TS2322 error for ternary branch contextual typing, got {ts2322_count}"
     );
 }
 
@@ -130,8 +125,7 @@ const { x, y }: { x: number; y: number } = obj;
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for destructuring contextual typing, got {}",
-        ts2322_count
+        "Expected no TS2322 error for destructuring contextual typing, got {ts2322_count}"
     );
 }
 
@@ -150,8 +144,7 @@ const doubled = numbers.map(x => x * 2);
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for arrow function return inference, got {}",
-        ts2322_count
+        "Expected no TS2322 error for arrow function return inference, got {ts2322_count}"
     );
 }
 
@@ -176,8 +169,7 @@ const calc: Calculator = {
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for object literal method inference, got {}",
-        ts2322_count
+        "Expected no TS2322 error for object literal method inference, got {ts2322_count}"
     );
 }
 
@@ -196,8 +188,7 @@ const arr2: string[] = ["a", "b", "c"];
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for array literal contextual typing, got {}",
-        ts2322_count
+        "Expected no TS2322 error for array literal contextual typing, got {ts2322_count}"
     );
 }
 
@@ -217,7 +208,6 @@ const result = identity("hello");
     let ts2322_count = diagnostics.iter().filter(|d| d.code == 2322).count();
     assert_eq!(
         ts2322_count, 0,
-        "Expected no TS2322 error for generic function contextual typing, got {}",
-        ts2322_count
+        "Expected no TS2322 error for generic function contextual typing, got {ts2322_count}"
     );
 }

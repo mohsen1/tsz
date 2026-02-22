@@ -64,8 +64,7 @@ fn test_missing_promise_emits_ts2583_without_lib() {
 
     assert!(
         !ts2583_errors.is_empty(),
-        "Expected TS2583 error for Promise without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2583 error for Promise without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -79,8 +78,7 @@ fn test_missing_map_emits_ts2583_without_lib() {
 
     assert!(
         !ts2583_errors.is_empty(),
-        "Expected TS2583 error for Map without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2583 error for Map without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -94,8 +92,7 @@ fn test_missing_set_emits_ts2583_without_lib() {
 
     assert!(
         !ts2583_errors.is_empty(),
-        "Expected TS2583 error for Set without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2583 error for Set without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -112,8 +109,7 @@ fn test_missing_symbol_emits_ts2585_without_lib() {
 
     assert!(
         !ts2583_errors.is_empty(),
-        "Expected TS2583 error for Symbol without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2583 error for Symbol without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -126,8 +122,7 @@ fn test_missing_date_emits_ts2304_without_lib() {
 
     assert!(
         !ts2304_errors.is_empty(),
-        "Expected TS2304 error for Date without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2304 error for Date without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -160,8 +155,7 @@ function foo(): Promise<void> {
 
     assert!(
         !ts2583_errors.is_empty(),
-        "Expected TS2583 errors for Promise without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2583 errors for Promise without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -175,8 +169,7 @@ fn test_console_emits_ts2304_without_lib() {
 
     assert!(
         !ts2584_errors.is_empty(),
-        "Expected TS2584 error for console without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2584 error for console without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -213,8 +206,7 @@ const r = new Promise<number>((resolve) => resolve(1));
     let semantic_errors: Vec<_> = diagnostics.iter().filter(|d| d.code != 2318).collect();
     assert!(
         semantic_errors.is_empty(),
-        "Expected merged Promise value-side constructor/type access to succeed, got: {:?}",
-        semantic_errors
+        "Expected merged Promise value-side constructor/type access to succeed, got: {semantic_errors:?}"
     );
 }
 
@@ -277,8 +269,7 @@ fn test_console_no_error_with_lib() {
 
     assert!(
         ts2304_errors.is_empty(),
-        "console should NOT emit TS2304 with lib.d.ts loaded, got: {:?}",
-        ts2304_errors
+        "console should NOT emit TS2304 with lib.d.ts loaded, got: {ts2304_errors:?}"
     );
 }
 
@@ -291,8 +282,7 @@ fn test_array_no_error_with_lib() {
 
     assert!(
         ts2304_errors.is_empty(),
-        "Array should NOT emit TS2304 with lib.d.ts loaded, got: {:?}",
-        ts2304_errors
+        "Array should NOT emit TS2304 with lib.d.ts loaded, got: {ts2304_errors:?}"
     );
 }
 
@@ -305,8 +295,7 @@ fn test_object_no_error_with_lib() {
 
     assert!(
         ts2304_errors.is_empty(),
-        "Object should NOT emit TS2304 with lib.d.ts loaded, got: {:?}",
-        ts2304_errors
+        "Object should NOT emit TS2304 with lib.d.ts loaded, got: {ts2304_errors:?}"
     );
 }
 
@@ -339,8 +328,7 @@ class C {
 
     assert!(
         !ts2318_errors.is_empty(),
-        "Expected TS2318 error for TypedPropertyDescriptor without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2318 error for TypedPropertyDescriptor without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -372,8 +360,7 @@ class C {
 
     assert!(
         decorator_ts2318.is_empty(),
-        "Should NOT emit TypedPropertyDescriptor TS2318 without experimentalDecorators, got: {:?}",
-        decorator_ts2318
+        "Should NOT emit TypedPropertyDescriptor TS2318 without experimentalDecorators, got: {decorator_ts2318:?}"
     );
 }
 
@@ -452,8 +439,7 @@ class C {
 
     assert!(
         !ts2318_errors.is_empty(),
-        "Expected TS2318 for TypedPropertyDescriptor even with lib_contexts, got: {:?}",
-        diagnostics
+        "Expected TS2318 for TypedPropertyDescriptor even with lib_contexts, got: {diagnostics:?}"
     );
 }
 
@@ -463,8 +449,8 @@ class C {
 /// Symbol was introduced in ES2015. These tests document the expected behavior once
 /// ES2015 libs are loaded in tests or the Symbol resolution bug is fixed.
 ///
-/// KNOWN BUG: When running with full lib files (CLI), Symbol() incorrectly resolves to
-/// RTCEncodedVideoFrameType instead of symbol primitive. See docs/conformance/bug-symbol-resolution.md
+/// KNOWN BUG: When running with full lib files (CLI), `Symbol()` incorrectly resolves to
+/// `RTCEncodedVideoFrameType` instead of symbol primitive. See docs/conformance/bug-symbol-resolution.md
 
 #[test]
 #[ignore = "Test environment only loads ES5, Symbol requires ES2015"]
@@ -477,8 +463,7 @@ fn test_symbol_constructor_returns_symbol_type() {
     assert_eq!(
         all_errors.len(),
         0,
-        "Symbol() should return symbol type with no errors, got: {:?}",
-        all_errors
+        "Symbol() should return symbol type with no errors, got: {all_errors:?}"
     );
 }
 
@@ -496,7 +481,6 @@ const x: symbol = s;
     assert_eq!(
         all_errors.len(),
         0,
-        "Symbol() inferred type should be symbol, got: {:?}",
-        all_errors
+        "Symbol() inferred type should be symbol, got: {all_errors:?}"
     );
 }

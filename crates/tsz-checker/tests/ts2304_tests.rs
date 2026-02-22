@@ -107,8 +107,7 @@ fn test_ts2304_emitted_for_undefined_name() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         !ts2304_errors.is_empty(),
-        "Expected TS2304 error for undefinedName, got: {:?}",
-        diagnostics
+        "Expected TS2304 error for undefinedName, got: {diagnostics:?}"
     );
 }
 
@@ -119,8 +118,7 @@ fn test_ts2304_not_emitted_for_lib_globals_with_lib() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for console with lib.d.ts, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for console with lib.d.ts, got: {ts2304_errors:?}"
     );
 }
 
@@ -133,8 +131,7 @@ fn test_ts2304_emitted_for_console_without_lib() {
     let ts2584_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2584).collect();
     assert!(
         !ts2584_errors.is_empty(),
-        "Expected TS2584 for console without lib.d.ts, got: {:?}",
-        diagnostics
+        "Expected TS2584 for console without lib.d.ts, got: {diagnostics:?}"
     );
 }
 
@@ -155,8 +152,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for hoisted var 'v', got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for hoisted var 'v', got: {ts2304_errors:?}"
     );
 }
 
@@ -176,8 +172,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for hoisted var 'x', got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for hoisted var 'x', got: {ts2304_errors:?}"
     );
 }
 
@@ -197,8 +192,7 @@ const foo = () => {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for hoisted var 'v' in arrow function, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for hoisted var 'v' in arrow function, got: {ts2304_errors:?}"
     );
 }
 
@@ -218,8 +212,7 @@ const foo = function() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for hoisted var 'v' in function expression, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for hoisted var 'v' in function expression, got: {ts2304_errors:?}"
     );
 }
 
@@ -244,8 +237,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         !ts2304_errors.is_empty(),
-        "Should have TS2304 for block-scoped 'x', got: {:?}",
-        diagnostics
+        "Should have TS2304 for block-scoped 'x', got: {diagnostics:?}"
     );
 }
 
@@ -264,8 +256,7 @@ function foo(arr: any[]) {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for hoisted var 'v' through for-of block, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for hoisted var 'v' through for-of block, got: {ts2304_errors:?}"
     );
 }
 
@@ -284,8 +275,7 @@ function foo(obj: any) {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for hoisted var 'v' through for-in block, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for hoisted var 'v' through for-in block, got: {ts2304_errors:?}"
     );
 }
 
@@ -306,8 +296,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for var hoisted through nested blocks, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for var hoisted through nested blocks, got: {ts2304_errors:?}"
     );
 }
 
@@ -326,8 +315,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for var in bare block, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for var in bare block, got: {ts2304_errors:?}"
     );
 }
 
@@ -348,8 +336,7 @@ function foo() {
     let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should NOT have TS2304 for vars in try/catch, got: {:?}",
-        ts2304_errors
+        "Should NOT have TS2304 for vars in try/catch, got: {ts2304_errors:?}"
     );
 }
 
@@ -373,8 +360,7 @@ function A(): (public B) => C {
     let has_c_error = ts2304_errors.iter().any(|d| d.message_text.contains("'C'"));
     assert!(
         has_c_error,
-        "Should report 'C' as undefined, errors: {:?}",
-        ts2304_errors
+        "Should report 'C' as undefined, errors: {ts2304_errors:?}"
     );
 }
 

@@ -2285,8 +2285,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5102),
-            "Expected TS5102 for removed option noImplicitUseStrict, got: {:?}",
-            codes
+            "Expected TS5102 for removed option noImplicitUseStrict, got: {codes:?}"
         );
     }
 
@@ -2298,8 +2297,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5102),
-            "Should NOT emit TS5102 for false-valued removed option, got: {:?}",
-            codes
+            "Should NOT emit TS5102 for false-valued removed option, got: {codes:?}"
         );
     }
 
@@ -2310,8 +2308,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5102),
-            "Expected TS5102 for removed option importsNotUsedAsValues, got: {:?}",
-            codes
+            "Expected TS5102 for removed option importsNotUsedAsValues, got: {codes:?}"
         );
     }
 
@@ -2322,8 +2319,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5102),
-            "Should NOT emit TS5102 for valid option 'strict', got: {:?}",
-            codes
+            "Should NOT emit TS5102 for valid option 'strict', got: {codes:?}"
         );
     }
 
@@ -2334,8 +2330,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5095),
-            "Expected TS5095 for bundler+commonjs, got: {:?}",
-            codes
+            "Expected TS5095 for bundler+commonjs, got: {codes:?}"
         );
     }
 
@@ -2346,8 +2341,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5095),
-            "Expected TS5095 for bundler+none, got: {:?}",
-            codes
+            "Expected TS5095 for bundler+none, got: {codes:?}"
         );
     }
 
@@ -2358,8 +2352,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5095),
-            "Expected TS5095 for bundler+amd, got: {:?}",
-            codes
+            "Expected TS5095 for bundler+amd, got: {codes:?}"
         );
     }
 
@@ -2370,8 +2363,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5095),
-            "Expected TS5095 for bundler+system, got: {:?}",
-            codes
+            "Expected TS5095 for bundler+system, got: {codes:?}"
         );
     }
 
@@ -2382,8 +2374,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5095),
-            "Should NOT emit TS5095 for bundler+es2015, got: {:?}",
-            codes
+            "Should NOT emit TS5095 for bundler+es2015, got: {codes:?}"
         );
     }
 
@@ -2394,8 +2385,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5095),
-            "Should NOT emit TS5095 for bundler+esnext, got: {:?}",
-            codes
+            "Should NOT emit TS5095 for bundler+esnext, got: {codes:?}"
         );
     }
 
@@ -2406,8 +2396,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5095),
-            "Should NOT emit TS5095 for bundler+preserve, got: {:?}",
-            codes
+            "Should NOT emit TS5095 for bundler+preserve, got: {codes:?}"
         );
     }
 
@@ -2418,8 +2407,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5095),
-            "Should NOT emit TS5095 for node16 resolution, got: {:?}",
-            codes
+            "Should NOT emit TS5095 for node16 resolution, got: {codes:?}"
         );
     }
 
@@ -2430,8 +2418,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5103),
-            "Expected TS5103 for ignoreDeprecations='6.0', got: {:?}",
-            codes
+            "Expected TS5103 for ignoreDeprecations='6.0', got: {codes:?}"
         );
     }
 
@@ -2442,8 +2429,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5103),
-            "Expected TS5103 for ignoreDeprecations='5.1', got: {:?}",
-            codes
+            "Expected TS5103 for ignoreDeprecations='5.1', got: {codes:?}"
         );
     }
 
@@ -2454,8 +2440,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5103),
-            "Should NOT emit TS5103 for valid ignoreDeprecations='5.0', got: {:?}",
-            codes
+            "Should NOT emit TS5103 for valid ignoreDeprecations='5.0', got: {codes:?}"
         );
     }
 
@@ -2466,8 +2451,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5103),
-            "Should NOT emit TS5103 when ignoreDeprecations is absent, got: {:?}",
-            codes
+            "Should NOT emit TS5103 when ignoreDeprecations is absent, got: {codes:?}"
         );
     }
 
@@ -2478,8 +2462,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5110),
-            "Should emit TS5110 for node16 resolution with commonjs module, got: {:?}",
-            codes
+            "Should emit TS5110 for node16 resolution with commonjs module, got: {codes:?}"
         );
     }
 
@@ -2490,8 +2473,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             codes.contains(&5110),
-            "Should emit TS5110 for nodenext resolution with es2022 module, got: {:?}",
-            codes
+            "Should emit TS5110 for nodenext resolution with es2022 module, got: {codes:?}"
         );
     }
 
@@ -2502,8 +2484,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5110),
-            "Should NOT emit TS5110 when module matches moduleResolution, got: {:?}",
-            codes
+            "Should NOT emit TS5110 when module matches moduleResolution, got: {codes:?}"
         );
     }
 
@@ -2514,8 +2495,7 @@ mod tests {
         let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
         assert!(
             !codes.contains(&5110),
-            "Should NOT emit TS5110 when module matches moduleResolution, got: {:?}",
-            codes
+            "Should NOT emit TS5110 when module matches moduleResolution, got: {codes:?}"
         );
     }
 }

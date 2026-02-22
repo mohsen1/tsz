@@ -139,31 +139,6 @@ pub fn should_skip_test(directives: &TestDirectives) -> Option<&'static str> {
     None
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_parse_ts_check_directive() {
-        let content = "// @ts-check\nconst x: any = 1;";
-        let parsed = parse_test_file(content).unwrap();
-        assert_eq!(
-            parsed.directives.options.get("checkjs"),
-            Some(&"true".to_string())
-        );
-    }
-
-    #[test]
-    fn test_parse_ts_nocheck_directive() {
-        let content = "// @ts-nocheck\nconst x = 1;";
-        let parsed = parse_test_file(content).unwrap();
-        assert_eq!(
-            parsed.directives.options.get("checkjs"),
-            Some(&"false".to_string())
-        );
-    }
-}
-
 /// Expand directives with comma-separated values into multiple option variants.
 ///
 /// Some harness directives (e.g. module, moduleResolution) represent multiple runs.
@@ -234,4 +209,29 @@ pub fn filter_incompatible_module_resolution_variants(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_ts_check_directive() {
+        let content = "// @ts-check\nconst x: any = 1;";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("checkjs"),
+            Some(&"true".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_ts_nocheck_directive() {
+        let content = "// @ts-nocheck\nconst x = 1;";
+        let parsed = parse_test_file(content).unwrap();
+        assert_eq!(
+            parsed.directives.options.get("checkjs"),
+            Some(&"false".to_string())
+        );
+    }
 }

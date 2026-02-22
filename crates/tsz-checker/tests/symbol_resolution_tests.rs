@@ -73,13 +73,11 @@ function f() {
 
     assert_eq!(
         value_as_type, 0,
-        "Expected no TS2749 for type lookup through value shadowing, got: {:?}",
-        diagnostics
+        "Expected no TS2749 for type lookup through value shadowing, got: {diagnostics:?}"
     );
     assert_eq!(
         cannot_find, 0,
-        "Expected no TS2304 for Foo in type position, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for Foo in type position, got: {diagnostics:?}"
     );
 }
 
@@ -101,8 +99,7 @@ class C {
 
     assert!(
         ts2304_count >= 1,
-        "Expected TS2304 for unqualified class member reference, got: {:?}",
-        filtered
+        "Expected TS2304 for unqualified class member reference, got: {filtered:?}"
     );
 }
 
@@ -124,13 +121,11 @@ function outer<T>() {
 
     assert_eq!(
         type_param_errors, 0,
-        "Expected no TS2749 for nested type parameters, got: {:?}",
-        diagnostics
+        "Expected no TS2749 for nested type parameters, got: {diagnostics:?}"
     );
     assert_eq!(
         cannot_find, 0,
-        "Expected no TS2304 for nested type parameters, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for nested type parameters, got: {diagnostics:?}"
     );
 }
 
@@ -144,13 +139,11 @@ fn test_symbol_resolution_global_console_with_libs() {
     // when only ES5 lib is loaded
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for console with lib files, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for console with lib files, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2584_count, 1,
-        "Expected TS2584 for console (DOM global) with ES5 lib only, got: {:?}",
-        diagnostics
+        "Expected TS2584 for console (DOM global) with ES5 lib only, got: {diagnostics:?}"
     );
 }
 
@@ -171,8 +164,7 @@ function outer(x: number) {
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for outer parameter in nested function, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for outer parameter in nested function, got: {diagnostics:?}"
     );
 }
 
@@ -192,8 +184,7 @@ x;
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for block-scoped shadowing, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for block-scoped shadowing, got: {diagnostics:?}"
     );
 }
 
@@ -214,13 +205,11 @@ let y = N.value;
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for namespace members, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for namespace members, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2749_count, 0,
-        "Expected no TS2749 for namespace type usage, got: {:?}",
-        diagnostics
+        "Expected no TS2749 for namespace type usage, got: {diagnostics:?}"
     );
 }
 
@@ -238,8 +227,7 @@ let a: A;
 
     assert_eq!(
         ts2709_count, 1,
-        "Expected TS2709 for namespace used as type, got: {:?}",
-        diagnostics
+        "Expected TS2709 for namespace used as type, got: {diagnostics:?}"
     );
 }
 
@@ -260,8 +248,7 @@ let z2: X.Y<string>;
 
     assert_eq!(
         ts2315_count, 1,
-        "Expected TS2315 for non-generic namespace interface, got: {:?}",
-        diagnostics
+        "Expected TS2315 for non-generic namespace interface, got: {diagnostics:?}"
     );
 }
 
@@ -284,13 +271,11 @@ var z2: X.Y<string>;
 
     assert_eq!(
         ts2315_count, 0,
-        "Expected no TS2315 for merged namespace/interface, got: {:?}",
-        diagnostics
+        "Expected no TS2315 for merged namespace/interface, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for merged namespace/interface, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for merged namespace/interface, got: {diagnostics:?}"
     );
 }
 
@@ -451,8 +436,7 @@ var z2 = Foo2.Bar.y;
 
     assert_eq!(
         ts2339_count, 1,
-        "Expected TS2339 for interface used as value property access, got: {:?}",
-        diagnostics
+        "Expected TS2339 for interface used as value property access, got: {diagnostics:?}"
     );
 }
 
@@ -471,8 +455,7 @@ class C2 implements M { }
 
     assert!(
         ts2708_count >= 1 && ts2709_count >= 1,
-        "Expected TS2708 and TS2709 for namespace as base type, got: {:?}",
-        diagnostics
+        "Expected TS2708 and TS2709 for namespace as base type, got: {diagnostics:?}"
     );
 }
 
@@ -503,13 +486,11 @@ const y: string = x.value;
 
     assert_eq!(
         ts2339_count, 0,
-        "Expected inherited member from aliased base class to resolve, got: {:?}",
-        diagnostics
+        "Expected inherited member from aliased base class to resolve, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2506_count, 0,
-        "Expected no circular base-expression diagnostics for acyclic inheritance, got: {:?}",
-        diagnostics
+        "Expected no circular base-expression diagnostics for acyclic inheritance, got: {diagnostics:?}"
     );
 }
 
@@ -530,13 +511,11 @@ let x: Outer.Inner.I;
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for nested namespace type, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for nested namespace type, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2749_count, 0,
-        "Expected no TS2749 for nested namespace type, got: {:?}",
-        diagnostics
+        "Expected no TS2749 for nested namespace type, got: {diagnostics:?}"
     );
 }
 
@@ -558,13 +537,11 @@ function f() {
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for block-scoped type alias, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for block-scoped type alias, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2749_count, 0,
-        "Expected no TS2749 for block-scoped type alias, got: {:?}",
-        diagnostics
+        "Expected no TS2749 for block-scoped type alias, got: {diagnostics:?}"
     );
 }
 
@@ -576,13 +553,11 @@ fn test_symbol_resolution_global_array_with_libs() {
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for Array with lib files, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for Array with lib files, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2318_count, 0,
-        "Expected no TS2318 for Array with lib files, got: {:?}",
-        diagnostics
+        "Expected no TS2318 for Array with lib files, got: {diagnostics:?}"
     );
 }
 
@@ -603,12 +578,10 @@ function outer<T>() {
 
     assert_eq!(
         ts2304_count, 0,
-        "Expected no TS2304 for shadowed type parameters, got: {:?}",
-        diagnostics
+        "Expected no TS2304 for shadowed type parameters, got: {diagnostics:?}"
     );
     assert_eq!(
         ts2749_count, 0,
-        "Expected no TS2749 for shadowed type parameters, got: {:?}",
-        diagnostics
+        "Expected no TS2749 for shadowed type parameters, got: {diagnostics:?}"
     );
 }

@@ -1,4 +1,4 @@
-//! Tests for Checker - Type checker using NodeArena and Solver
+//! Tests for Checker - Type checker using `NodeArena` and Solver
 //!
 //! This module contains comprehensive type checking tests organized into categories:
 //! - Basic type checking (creation, intrinsic types, type interning)
@@ -157,13 +157,11 @@ async function foo() {
         .count();
     assert_eq!(
         did_you_mean_count, 1,
-        "Expected TS2552 for 'await' in type position, got: {:?}",
-        codes
+        "Expected TS2552 for 'await' in type position, got: {codes:?}"
     );
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for 'await' in type position: {:?}",
-        codes
+        "Unexpected TS2304 for 'await' in type position: {codes:?}"
     );
 }
 
@@ -222,8 +220,7 @@ async enum E { Value }
         .count();
     assert_eq!(
         async_modifier_count, 2,
-        "Expected two TS1042 errors from checker for async class/enum, got: {:?}",
-        codes
+        "Expected two TS1042 errors from checker for async class/enum, got: {codes:?}"
     );
 }
 
@@ -271,8 +268,7 @@ const bad: Foo = { x: 1, y: 2 };
     let excess_count = codes.iter().filter(|&&code| code == 2353).count();
     assert_eq!(
         excess_count, 1,
-        "Expected exactly one error 2353 (Excess property), got codes: {:?}",
-        codes
+        "Expected exactly one error 2353 (Excess property), got codes: {codes:?}"
     );
 }
 
@@ -352,8 +348,7 @@ let bad: object = "hi";
     let not_assignable_count = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         not_assignable_count, 1,
-        "Expected one 2322 error for object keyword rejecting string, got: {:?}",
-        codes
+        "Expected one 2322 error for object keyword rejecting string, got: {codes:?}"
     );
 }
 
@@ -392,8 +387,7 @@ const mk = (e: number) => ({ e });
     let not_found_count = codes.iter().filter(|&&code| code == 2304).count();
     assert_eq!(
         not_found_count, 0,
-        "Expected no 2304 errors for shorthand params, got: {:?}",
-        codes
+        "Expected no 2304 errors for shorthand params, got: {codes:?}"
     );
 }
 
@@ -435,8 +429,7 @@ declare module "*!text" {
     let not_found_count = codes.iter().filter(|&&code| code == 2304).count();
     assert_eq!(
         not_found_count, 0,
-        "Expected no 2304 errors for ambient export default, got: {:?}",
-        codes
+        "Expected no 2304 errors for ambient export default, got: {codes:?}"
     );
 }
 
@@ -475,8 +468,7 @@ var v: await;
     let not_found_count = codes.iter().filter(|&&code| code == 2304).count();
     assert_eq!(
         not_found_count, 0,
-        "Expected no 2304 errors for await type reference, got: {:?}",
-        codes
+        "Expected no 2304 errors for await type reference, got: {codes:?}"
     );
 }
 
@@ -602,8 +594,7 @@ const bad: Tup = arr;
     let not_assignable_count = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         not_assignable_count, 1,
-        "Expected one 2322 error for array to tuple assignment, got: {:?}",
-        codes
+        "Expected one 2322 error for array to tuple assignment, got: {codes:?}"
     );
 }
 
@@ -647,8 +638,7 @@ const y = "hello" satisfies number;
         .count();
     assert_eq!(
         assignability_error_count, 2,
-        "Expected two assignability errors for satisfies violations, got: {:?}",
-        codes
+        "Expected two assignability errors for satisfies violations, got: {codes:?}"
     );
 }
 
@@ -733,8 +723,7 @@ const badAssign: Weak = bad;
     let no_common_count = codes.iter().filter(|&&code| code == 2559).count();
     assert_eq!(
         no_common_count, 1,
-        "Expected one 2559 error for weak type with no overlap, got: {:?}",
-        codes
+        "Expected one 2559 error for weak type with no overlap, got: {codes:?}"
     );
 }
 
@@ -899,8 +888,7 @@ takesFoo(obj);
     let excess_count = codes.iter().filter(|&&code| code == 2353).count();
     assert_eq!(
         excess_count, 1,
-        "Expected exactly one error 2353 (Excess property), got codes: {:?}",
-        codes
+        "Expected exactly one error 2353 (Excess property), got codes: {codes:?}"
     );
 }
 
@@ -1130,8 +1118,7 @@ function makeFoo(): Foo {
     let excess_count = codes.iter().filter(|&&code| code == 2353).count();
     assert_eq!(
         excess_count, 1,
-        "Expected exactly one error 2353 (Excess property), got codes: {:?}",
-        codes
+        "Expected exactly one error 2353 (Excess property), got codes: {codes:?}"
     );
 }
 
@@ -1419,8 +1406,7 @@ fn test_function_overload_missing_implementation_2391() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2391),
-        "Expected error 2391 (Function implementation is missing), got: {:?}",
-        codes
+        "Expected error 2391 (Function implementation is missing), got: {codes:?}"
     );
 }
 
@@ -1453,8 +1439,7 @@ function foo() {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2391),
-        "Should not have error 2391 when implementation exists, got: {:?}",
-        codes
+        "Should not have error 2391 when implementation exists, got: {codes:?}"
     );
 }
 
@@ -1487,8 +1472,7 @@ function bar() {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2389) || codes.contains(&2391),
-        "Expected error 2389 or 2391 for wrong implementation name, got: {:?}",
-        codes
+        "Expected error 2389 or 2391 for wrong implementation name, got: {codes:?}"
     );
 }
 
@@ -1689,8 +1673,7 @@ enum Color {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&diagnostic_codes::DUPLICATE_IDENTIFIER),
-        "Expected TS2300 for duplicate enum member 'Red', got: {:?}",
-        codes
+        "Expected TS2300 for duplicate enum member 'Red', got: {codes:?}"
     );
 }
 
@@ -1879,8 +1862,7 @@ f(true);
     // TS2769 is only reported when multiple overloads match by arity but all fail.
     assert!(
         codes.contains(&2345) || codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
-        "Expected TS2345 or TS2769 for overload call mismatch, got: {:?}",
-        codes
+        "Expected TS2345 or TS2769 for overload call mismatch, got: {codes:?}"
     );
 }
 
@@ -2224,8 +2206,7 @@ c.foo("ok");
         .count();
     assert_eq!(
         count_2769, 1,
-        "Expected exactly one overload mismatch (2769), got: {:?}",
-        codes
+        "Expected exactly one overload mismatch (2769), got: {codes:?}"
     );
 }
 
@@ -2270,7 +2251,7 @@ const f = new Foo();
     println!("=== debug Box ===");
     if let Some(box_sym) = binder.file_locals.get("Box") {
         let box_type = checker.get_type_of_symbol(box_sym);
-        println!("Box type id: {:?}", box_type);
+        println!("Box type id: {box_type:?}");
         println!("Box type key: {:?}", types.lookup(box_type));
     } else {
         println!("Box symbol missing");
@@ -2292,15 +2273,13 @@ const f = new Foo();
                 props
                     .iter()
                     .any(|p| p.name == name_atom && p.type_id == TypeId::STRING),
-                "Expected name: string in class instance properties, got: {:?}",
-                props
+                "Expected name: string in class instance properties, got: {props:?}"
             );
             assert!(
                 props
                     .iter()
                     .any(|p| p.name == count_atom && p.type_id == TypeId::NUMBER),
-                "Expected count: number in class instance properties, got: {:?}",
-                props
+                "Expected count: number in class instance properties, got: {props:?}"
             );
             let tag_prop = props
                 .iter()
@@ -2309,14 +2288,10 @@ const f = new Foo();
             assert!(tag_prop.readonly, "Expected tag to be readonly");
             assert!(
                 props.iter().any(|p| p.name == greet_atom && p.is_method),
-                "Expected greet method in class instance properties, got: {:?}",
-                props
+                "Expected greet method in class instance properties, got: {props:?}"
             );
         }
-        _ => panic!(
-            "Expected f to be Object or ObjectWithIndex type, got {:?}",
-            f_key
-        ),
+        _ => panic!("Expected f to be Object or ObjectWithIndex type, got {f_key:?}"),
     }
 }
 
@@ -2370,8 +2345,7 @@ const f = new Foo(1, "x", 2);
                 props
                     .iter()
                     .any(|p| p.name == id_atom && p.type_id == TypeId::NUMBER),
-                "Expected id: number in class instance properties, got: {:?}",
-                props
+                "Expected id: number in class instance properties, got: {props:?}"
             );
             let tag_prop = props
                 .iter()
@@ -2381,14 +2355,10 @@ const f = new Foo(1, "x", 2);
             assert!(tag_prop.readonly, "Expected tag to be readonly");
             assert!(
                 !props.iter().any(|p| p.name == count_atom),
-                "Expected count to be absent from class instance properties, got: {:?}",
-                props
+                "Expected count to be absent from class instance properties, got: {props:?}"
             );
         }
-        _ => panic!(
-            "Expected f to be Object or ObjectWithIndex type, got {:?}",
-            f_key
-        ),
+        _ => panic!("Expected f to be Object or ObjectWithIndex type, got {f_key:?}"),
     }
 }
 
@@ -2454,14 +2424,10 @@ const d = new Derived();
                 props
                     .iter()
                     .any(|p| p.name == count_atom && p.type_id == TypeId::NUMBER),
-                "Expected count: number in class instance properties, got: {:?}",
-                props
+                "Expected count: number in class instance properties, got: {props:?}"
             );
         }
-        _ => panic!(
-            "Expected d to be Object or ObjectWithIndex type, got {:?}",
-            d_key
-        ),
+        _ => panic!("Expected d to be Object or ObjectWithIndex type, got {d_key:?}"),
     }
 }
 
@@ -2517,10 +2483,7 @@ const b = new Box("hi");
                 .expect("value property should exist");
             assert_eq!(value_prop.type_id, TypeId::STRING);
         }
-        _ => panic!(
-            "Expected b to be Object or ObjectWithIndex type, got {:?}",
-            b_key
-        ),
+        _ => panic!("Expected b to be Object or ObjectWithIndex type, got {b_key:?}"),
     }
 }
 
@@ -2727,8 +2690,7 @@ new Foo(true);
     // the best-match and reports the specific type mismatch on that constructor signature.
     assert!(
         codes.contains(&2345) || codes.contains(&diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL),
-        "Expected TS2345 or TS2769 for constructor overload mismatch, got: {:?}",
-        codes
+        "Expected TS2345 or TS2769 for constructor overload mismatch, got: {codes:?}"
     );
 }
 
@@ -2838,8 +2800,7 @@ fn test_parameter_property_in_function_2369() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2369),
-        "Expected error 2369 for parameter property in function, got: {:?}",
-        codes
+        "Expected error 2369 for parameter property in function, got: {codes:?}"
     );
 }
 
@@ -2869,8 +2830,7 @@ fn test_parameter_property_in_arrow_2369() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2369),
-        "Expected error 2369 for parameter property in arrow function, got: {:?}",
-        codes
+        "Expected error 2369 for parameter property in arrow function, got: {codes:?}"
     );
 }
 
@@ -2908,8 +2868,7 @@ class C {
     let count_2369 = codes.iter().filter(|&&c| c == 2369).count();
     assert_eq!(
         count_2369, 1,
-        "Expected exactly 1 error 2369 for constructor overload, got {} from: {:?}",
-        count_2369, codes
+        "Expected exactly 1 error 2369 for constructor overload, got {count_2369} from: {codes:?}"
     );
 }
 
@@ -2944,8 +2903,7 @@ class C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2369),
-        "Should not have error 2369 in constructor implementation, got: {:?}",
-        codes
+        "Should not have error 2369 in constructor implementation, got: {codes:?}"
     );
 }
 
@@ -2976,8 +2934,7 @@ fn test_class_name_any_error_2414() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2414),
-        "Expected error 2414 (Class name cannot be 'any'), got: {:?}",
-        codes
+        "Expected error 2414 (Class name cannot be 'any'), got: {codes:?}"
     );
 }
 
@@ -3015,8 +2972,7 @@ fn test_local_variable_scope_resolution() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Should not have 'Cannot find name' error for local variable, got: {:?}",
-        codes
+        "Should not have 'Cannot find name' error for local variable, got: {codes:?}"
     );
 }
 
@@ -3054,8 +3010,7 @@ fn test_for_loop_variable_scope() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Should not have 'Cannot find name' error for loop variable, got: {:?}",
-        codes
+        "Should not have 'Cannot find name' error for loop variable, got: {codes:?}"
     );
 }
 
@@ -3092,8 +3047,7 @@ function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Should not have 'Cannot find name' error for object literal locals, got: {:?}",
-        codes
+        "Should not have 'Cannot find name' error for object literal locals, got: {codes:?}"
     );
 }
 
@@ -3129,8 +3083,7 @@ declare module "foo" {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Should not have 'Cannot find name' error in ambient export default, got: {:?}",
-        codes
+        "Should not have 'Cannot find name' error in ambient export default, got: {codes:?}"
     );
 }
 
@@ -3164,8 +3117,7 @@ let x = MissingName;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for unresolved identifier, got: {:?}",
-        codes
+        "Expected TS2304 for unresolved identifier, got: {codes:?}"
     );
 }
 
@@ -3198,8 +3150,7 @@ let x: MissingType;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for unresolved type reference, got: {:?}",
-        codes
+        "Expected TS2304 for unresolved type reference, got: {codes:?}"
     );
 }
 
@@ -3256,8 +3207,7 @@ value;
         codes.contains(
             &diagnostic_codes::INVALID_MODULE_NAME_IN_AUGMENTATION_MODULE_CANNOT_BE_FOUND
         ),
-        "Expected TS2664 for invalid module augmentation, got: {:?}",
-        codes
+        "Expected TS2664 for invalid module augmentation, got: {codes:?}"
     );
 }
 
@@ -3331,8 +3281,7 @@ import { foo } from "./non-existent-module";
     assert!(
         codes
             .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
-        "Expected TS2307 for relative import that cannot be resolved, got: {:?}",
-        codes
+        "Expected TS2307 for relative import that cannot be resolved, got: {codes:?}"
     );
 }
 
@@ -3374,12 +3323,11 @@ import { something } from "nonexistent-npm-package";
     assert!(
         codes
             .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
-        "Expected TS2307 for bare specifier that cannot be resolved, got: {:?}",
-        codes
+        "Expected TS2307 for bare specifier that cannot be resolved, got: {codes:?}"
     );
 }
 
-/// Test that declared_modules prevents TS2307 when module is declared
+/// Test that `declared_modules` prevents TS2307 when module is declared
 #[test]
 fn test_declared_module_prevents_ts2307() {
     use crate::checker::diagnostics::diagnostic_codes;
@@ -3426,12 +3374,11 @@ declare module "my-external-lib" {
     assert!(
         !codes
             .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
-        "Should not emit TS2307 when module is declared via 'declare module', got: {:?}",
-        codes
+        "Should not emit TS2307 when module is declared via 'declare module', got: {codes:?}"
     );
 }
 
-/// Test that shorthand_ambient_modules prevents TS2307 when module is declared without body
+/// Test that `shorthand_ambient_modules` prevents TS2307 when module is declared without body
 #[test]
 fn test_shorthand_ambient_module_prevents_ts2307() {
     use crate::parser::ParserState;
@@ -3515,8 +3462,7 @@ import { Component } from "@angular/core";
     assert!(
         codes
             .contains(&diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
-        "Expected TS2307 for scoped package that cannot be resolved, got: {:?}",
-        codes
+        "Expected TS2307 for scoped package that cannot be resolved, got: {codes:?}"
     );
 }
 
@@ -3567,8 +3513,7 @@ import * as pkg from "nonexistent-pkg";
 
     assert_eq!(
         ts2307_count, 3,
-        "Expected 3 TS2307 errors for 3 unresolved imports, got: {}",
-        ts2307_count
+        "Expected 3 TS2307 errors for 3 unresolved imports, got: {ts2307_count}"
     );
 }
 
@@ -3712,8 +3657,7 @@ async function loadModule(modulePath: string) {
 
     assert_eq!(
         ts2307_count, 0,
-        "Expected no TS2307 for dynamic import with variable specifier, got {} errors",
-        ts2307_count
+        "Expected no TS2307 for dynamic import with variable specifier, got {ts2307_count} errors"
     );
 }
 
@@ -3746,8 +3690,7 @@ type Fn = (value: MissingType) => void;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for unresolved type in function type, got: {:?}",
-        codes
+        "Expected TS2304 for unresolved type in function type, got: {codes:?}"
     );
 }
 
@@ -3781,13 +3724,11 @@ obj.missing;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339),
-        "Expected TS2339 for missing property access, got: {:?}",
-        codes
+        "Expected TS2339 for missing property access, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for missing property access, got: {:?}",
-        codes
+        "Unexpected TS2304 for missing property access, got: {codes:?}"
     );
 }
 
@@ -3828,8 +3769,7 @@ class C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for 'arguments' in async arrow, got: {:?}",
-        codes
+        "Unexpected TS2304 for 'arguments' in async arrow, got: {codes:?}"
     );
 }
 
@@ -3865,8 +3805,7 @@ interface BaseConstructor {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for signature type params, got: {:?}",
-        codes
+        "Unexpected TS2304 for signature type params, got: {codes:?}"
     );
 }
 
@@ -3899,8 +3838,7 @@ class C extends undefined {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for extends undefined, got: {:?}",
-        codes
+        "Unexpected TS2304 for extends undefined, got: {codes:?}"
     );
 }
 
@@ -3934,8 +3872,7 @@ class D extends (null) {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for extends null, got: {:?}",
-        codes
+        "Unexpected TS2304 for extends null, got: {codes:?}"
     );
 }
 
@@ -3983,8 +3920,7 @@ var x: number;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for invalid decorator declarations, got: {:?}",
-        codes
+        "Unexpected TS2304 for invalid decorator declarations, got: {codes:?}"
     );
 }
 
@@ -4029,7 +3965,7 @@ fn test_abstract_class_in_local_scope_2511() {
     // Also try manually checking new expression
     println!("=== Class name lookup test ===");
     if let Some(sym_id) = binder.get_symbols().find_by_name("A") {
-        println!("Found symbol A: {:?}", sym_id);
+        println!("Found symbol A: {sym_id:?}");
         if let Some(symbol) = binder.get_symbol(sym_id) {
             println!(
                 "  flags={:#x} abstract={}",
@@ -4062,24 +3998,21 @@ fn test_abstract_class_in_local_scope_2511() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2511),
-        "Expected error 2511 for abstract class instantiation in local scope, got: {:?}",
-        codes
+        "Expected error 2511 for abstract class instantiation in local scope, got: {codes:?}"
     );
 
     // Should only have one 2511 error (for A, not B)
     let count_2511 = codes.iter().filter(|&&c| c == 2511).count();
     assert_eq!(
         count_2511, 1,
-        "Expected exactly 1 error 2511 (for abstract class A only), got {} from: {:?}",
-        count_2511, codes
+        "Expected exactly 1 error 2511 (for abstract class A only), got {count_2511} from: {codes:?}"
     );
 
     // Should NOT have error 2304 (Cannot find name) - both A and B should be found
     let count_2304 = codes.iter().filter(|&&c| c == 2304).count();
     assert_eq!(
         count_2304, 0,
-        "Should NOT have 'Cannot find name' error (2304) for classes in local scope, got {} from: {:?}",
-        count_2304, codes
+        "Should NOT have 'Cannot find name' error (2304) for classes in local scope, got {count_2304} from: {codes:?}"
     );
 }
 
@@ -4124,15 +4057,13 @@ class C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2662),
-        "Expected error 2662 (Cannot find name 'foo'. Did you mean the static member 'C.foo'?), got: {:?}",
-        codes
+        "Expected error 2662 (Cannot find name 'foo'. Did you mean the static member 'C.foo'?), got: {codes:?}"
     );
 
     // Should NOT have generic "cannot find name" error 2304
     assert!(
         !codes.contains(&2304),
-        "Should not have generic error 2304, should have specific 2662 instead. Got: {:?}",
-        codes
+        "Should not have generic error 2304, should have specific 2662 instead. Got: {codes:?}"
     );
 }
 
@@ -4176,8 +4107,7 @@ let ctor: typeof A = B;
     // Both correctly indicate the assignment is rejected due to missing static member
     assert!(
         codes.contains(&2741) || codes.contains(&2322),
-        "Expected error 2741 or 2322 for missing static member on constructor type, got: {:?}",
-        codes
+        "Expected error 2741 or 2322 for missing static member on constructor type, got: {codes:?}"
     );
 }
 
@@ -4223,8 +4153,7 @@ const a: A = new B();
     // Both indicate the assignment is correctly rejected due to private member nominality
     assert!(
         codes.contains(&2741) || codes.contains(&2322),
-        "Expected error 2741 or 2322 for private member nominal mismatch, got: {:?}",
-        codes
+        "Expected error 2741 or 2322 for private member nominal mismatch, got: {codes:?}"
     );
 }
 
@@ -4269,13 +4198,11 @@ f.y;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&diagnostic_codes::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS),
-        "Expected error 2341 for private property access, got: {:?}",
-        codes
+        "Expected error 2341 for private property access, got: {codes:?}"
     );
     assert!(
         codes.contains(&diagnostic_codes::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_WITHIN_CLASS_AND_ITS_SUBCLASSES),
-        "Expected error 2445 for protected property access, got: {:?}",
-        codes
+        "Expected error 2445 for protected property access, got: {codes:?}"
     );
 }
 
@@ -4377,8 +4304,7 @@ class Derived extends Base {
         .count();
     assert_eq!(
         protected_errors, 1,
-        "Expected one error 2445 for protected access on base instance, got: {:?}",
-        codes
+        "Expected one error 2445 for protected access on base instance, got: {codes:?}"
     );
 }
 
@@ -4433,8 +4359,7 @@ class Derived extends Base {
         .count();
     assert_eq!(
         protected_errors, 0,
-        "Expected no TS2445 errors for protected static access from derived class, got: {:?}",
-        codes
+        "Expected no TS2445 errors for protected static access from derived class, got: {codes:?}"
     );
 }
 
@@ -4474,8 +4399,7 @@ abstract class AbstractClass {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2715),
-        "Expected error 2715 (Abstract property cannot be accessed in constructor), got: {:?}",
-        codes
+        "Expected error 2715 (Abstract property cannot be accessed in constructor), got: {codes:?}"
     );
 }
 
@@ -4512,8 +4436,7 @@ fn test_interface_name_cannot_be_reserved_2427() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2427),
-        "Expected error 2427 (Interface name cannot be 'string'), got: {:?}",
-        codes
+        "Expected error 2427 (Interface name cannot be 'string'), got: {codes:?}"
     );
 }
 
@@ -4550,8 +4473,7 @@ fn test_const_modifier_on_class_property_1248() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&1248),
-        "Expected error 1248 (A class member cannot have the 'const' keyword), got: {:?}",
-        codes
+        "Expected error 1248 (A class member cannot have the 'const' keyword), got: {codes:?}"
     );
 }
 
@@ -4585,8 +4507,7 @@ fn test_accessor_type_compatibility_2322() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2322),
-        "TS 5.1+ allows divergent accessor types, should NOT get 2322, got codes: {:?}",
-        codes,
+        "TS 5.1+ allows divergent accessor types, should NOT get 2322, got codes: {codes:?}",
     );
 }
 
@@ -4680,8 +4601,7 @@ class C {
     let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         count_2322, 0,
-        "Did not expect TS2322 for typeof accessor compatibility, got: {:?}",
-        codes
+        "Did not expect TS2322 for typeof accessor compatibility, got: {codes:?}"
     );
 }
 
@@ -4720,16 +4640,12 @@ new cls2();
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     if !codes.contains(&2511) {
         println!("=== Abstract Class Through Type Alias ===");
-        println!(
-            "Expected error 2511 once abstract class checking implemented, got: {:?}",
-            codes
-        );
+        println!("Expected error 2511 once abstract class checking implemented, got: {codes:?}");
     }
     // Accept 0 errors until abstract class checking is implemented
     assert!(
         codes.is_empty() || codes.contains(&2511),
-        "Expected 0 errors (not implemented) or 2511: {:?}",
-        codes
+        "Expected 0 errors (not implemented) or 2511: {codes:?}"
     );
 }
 
@@ -4772,16 +4688,12 @@ new cls1();
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     if !codes.contains(&2511) {
         println!("=== Abstract Class Union Type ===");
-        println!(
-            "Expected error 2511 once abstract class checking implemented, got: {:?}",
-            codes
-        );
+        println!("Expected error 2511 once abstract class checking implemented, got: {codes:?}");
     }
     // Accept 0 errors until abstract class checking is implemented
     assert!(
         codes.is_empty() || codes.contains(&2511),
-        "Expected 0 errors (not implemented) or 2511: {:?}",
-        codes
+        "Expected 0 errors (not implemented) or 2511: {codes:?}"
     );
 }
 
@@ -4826,8 +4738,7 @@ class NoError {
     let count_2729 = codes.iter().filter(|&&c| c == 2729).count();
     assert_eq!(
         count_2729, 1,
-        "Expected exactly 1 error 2729 for property used before initialization, got {} in: {:?}",
-        count_2729, codes
+        "Expected exactly 1 error 2729 for property used before initialization, got {count_2729} in: {codes:?}"
     );
 }
 
@@ -4891,9 +4802,7 @@ class WrongTypePropertyImpl extends WrongTypeProperty {
     let count_2416 = codes.iter().filter(|&&c| c == 2416).count();
     assert!(
         count_2416 >= 1,
-        "Expected at least 1 error 2416 for property not assignable to base, got {} in: {:?}",
-        count_2416,
-        codes
+        "Expected at least 1 error 2416 for property not assignable to base, got {count_2416} in: {codes:?}"
     );
 }
 
@@ -4931,8 +4840,7 @@ class Derived extends Base<string> {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2416),
-        "Expected error 2416 for generic base property mismatch, got: {:?}",
-        codes
+        "Expected error 2416 for generic base property mismatch, got: {codes:?}"
     );
 }
 
@@ -4981,9 +4889,7 @@ class C extends B {
     let count_2654 = codes.iter().filter(|&&c| c == 2654).count();
     assert!(
         count_2654 >= 1,
-        "Expected at least 1 error 2654 for missing abstract implementations, got {} in: {:?}",
-        count_2654,
-        codes
+        "Expected at least 1 error 2654 for missing abstract implementations, got {count_2654} in: {codes:?}"
     );
 
     // Check the message mentions the missing members
@@ -5043,9 +4949,7 @@ c.ro = "error: lhs of assignment can't be readonly";
     let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
     assert!(
         count_2540 >= 1,
-        "Expected at least 1 error 2540 for readonly property assignment, got {} in: {:?}",
-        count_2540,
-        codes
+        "Expected at least 1 error 2540 for readonly property assignment, got {count_2540} in: {codes:?}"
     );
 }
 
@@ -5087,9 +4991,7 @@ config["name"] = "error";
     let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
     assert!(
         count_2540 >= 1,
-        "Expected at least 1 error 2540 for readonly element access assignment, got {} in: {:?}",
-        count_2540,
-        codes
+        "Expected at least 1 error 2540 for readonly element access assignment, got {count_2540} in: {codes:?}"
     );
 }
 
@@ -5129,9 +5031,7 @@ xs[0] = 3;
     let count = codes.iter().filter(|&&c| c == 2542 || c == 2540).count();
     assert!(
         count >= 1,
-        "Expected at least 1 error 2540/2542 for readonly array element assignment, got {} in: {:?}",
-        count,
-        codes
+        "Expected at least 1 error 2540/2542 for readonly array element assignment, got {count} in: {codes:?}"
     );
 }
 
@@ -5173,9 +5073,7 @@ svc.run = () => {};
     let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
     assert!(
         count_2540 >= 1,
-        "Expected at least 1 error 2540 for readonly method signature assignment, got {} in: {:?}",
-        count_2540,
-        codes
+        "Expected at least 1 error 2540 for readonly method signature assignment, got {count_2540} in: {codes:?}"
     );
 }
 
@@ -5217,9 +5115,7 @@ map["a"] = 2;
     let count_2542 = codes.iter().filter(|&&c| c == 2542).count();
     assert!(
         count_2542 >= 1,
-        "Expected at least 1 error 2542 for readonly index signature assignment, got {} in: {:?}",
-        count_2542,
-        codes
+        "Expected at least 1 error 2542 for readonly index signature assignment, got {count_2542} in: {codes:?}"
     );
 }
 
@@ -5260,9 +5156,7 @@ map[key] = 2;
     let count_2542 = codes.iter().filter(|&&c| c == 2542).count();
     assert!(
         count_2542 >= 1,
-        "Expected at least 1 error 2542 for readonly index signature assignment, got {} in: {:?}",
-        count_2542,
-        codes
+        "Expected at least 1 error 2542 for readonly index signature assignment, got {count_2542} in: {codes:?}"
     );
 }
 
@@ -5311,17 +5205,14 @@ p.nonexistent = "error";
     let count_2540 = codes.iter().filter(|&&c| c == 2540).count();
     assert_eq!(
         count_2540, 0,
-        "Should NOT report TS2540 for non-existent property, got {} in: {:?}",
-        count_2540, codes
+        "Should NOT report TS2540 for non-existent property, got {count_2540} in: {codes:?}"
     );
 
     // Should have TS2339 for non-existent property
     let count_2339 = codes.iter().filter(|&&c| c == 2339).count();
     assert!(
         count_2339 >= 1,
-        "Should report TS2339 for non-existent property, got {} in: {:?}",
-        count_2339,
-        codes
+        "Should report TS2339 for non-existent property, got {count_2339} in: {codes:?}"
     );
 }
 
@@ -5557,8 +5448,7 @@ const handler: (x: string) => void = (x) => {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2322),
-        "Expected error 2322 (Type not assignable) from contextual typing, got: {:?}",
-        codes
+        "Expected error 2322 (Type not assignable) from contextual typing, got: {codes:?}"
     );
 }
 
@@ -5597,8 +5487,7 @@ register((x) => {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2322),
-        "Did not expect error 2322 for overload-by-arity contextual typing, got: {:?}",
-        codes
+        "Did not expect error 2322 for overload-by-arity contextual typing, got: {codes:?}"
     );
 }
 
@@ -5674,8 +5563,7 @@ const h: Handler = { cb: x => x.toUpperCase() };
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339),
-        "Expected error 2339 for contextual property param mismatch, got: {:?}",
-        codes
+        "Expected error 2339 for contextual property param mismatch, got: {codes:?}"
     );
 }
 
@@ -5715,8 +5603,7 @@ value.bar();
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for property access on any, got: {:?}",
-        codes
+        "Did not expect 2339 for property access on any, got: {codes:?}"
     );
 }
 
@@ -5855,8 +5742,7 @@ function read(value: A | B) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for optional property on union, got: {:?}",
-        codes
+        "Did not expect 2339 for optional property on union, got: {codes:?}"
     );
 }
 
@@ -5900,8 +5786,7 @@ Derived.foo;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for inherited static property access, got: {:?}",
-        codes
+        "Did not expect 2339 for inherited static property access, got: {codes:?}"
     );
 }
 
@@ -5945,8 +5830,7 @@ c.hasOwnProperty("x");
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for Object prototype member access, got: {:?}",
-        codes
+        "Did not expect 2339 for Object prototype member access, got: {codes:?}"
     );
 }
 
@@ -5988,8 +5872,7 @@ class C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339),
-        "Expected 2339 for missing property on this, got: {:?}",
-        codes
+        "Expected 2339 for missing property on this, got: {codes:?}"
     );
 }
 
@@ -6035,8 +5918,7 @@ c.bar;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339) || codes.contains(&2576),
-        "Expected TS2339/TS2576 for static property access on instance, got: {:?}",
-        codes
+        "Expected TS2339/TS2576 for static property access on instance, got: {codes:?}"
     );
 }
 
@@ -6079,8 +5961,7 @@ class C {
     // access is not type-checked once the illegal 'this' is detected.
     assert!(
         codes.contains(&2465),
-        "Expected 2465 for 'this' in computed name, got: {:?}",
-        codes
+        "Expected 2465 for 'this' in computed name, got: {codes:?}"
     );
 }
 
@@ -6127,8 +6008,7 @@ class C {
     let count = codes.iter().filter(|&&c| c == 2465).count();
     assert_eq!(
         count, 2,
-        "Expected two 2465 errors for class expression computed this, got: {:?}",
-        codes
+        "Expected two 2465 errors for class expression computed this, got: {codes:?}"
     );
 }
 
@@ -6174,8 +6054,7 @@ class A {
     let count = codes.iter().filter(|&&c| c == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 error for missing private name, got: {:?}",
-        codes
+        "Expected one 2339 error for missing private name, got: {codes:?}"
     );
 }
 
@@ -6221,8 +6100,7 @@ class Foo {
     let count = codes.iter().filter(|&&c| c == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 error for misspelled private name in 'in' expression, got: {:?}",
-        codes
+        "Expected one 2339 error for misspelled private name in 'in' expression, got: {codes:?}"
     );
 }
 
@@ -6270,8 +6148,7 @@ c.y;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for class/interface merge, got: {:?}",
-        codes
+        "Did not expect 2339 for class/interface merge, got: {codes:?}"
     );
 }
 
@@ -6312,7 +6189,7 @@ fn test_strict_null_checks_property_access() {
             // Cause should be null
             assert_eq!(cause, TypeId::NULL);
         }
-        _ => panic!("Expected PossiblyNullOrUndefined, got {:?}", result),
+        _ => panic!("Expected PossiblyNullOrUndefined, got {result:?}"),
     }
 }
 
@@ -6351,7 +6228,7 @@ fn test_strict_null_checks_undefined_type() {
             assert_eq!(property_type, Some(TypeId::STRING));
             assert_eq!(cause, TypeId::UNDEFINED);
         }
-        _ => panic!("Expected PossiblyNullOrUndefined, got {:?}", result),
+        _ => panic!("Expected PossiblyNullOrUndefined, got {result:?}"),
     }
 }
 
@@ -6402,7 +6279,7 @@ fn test_strict_null_checks_both_null_and_undefined() {
                 _ => panic!("Expected cause to be union of null | undefined"),
             }
         }
-        _ => panic!("Expected PossiblyNullOrUndefined, got {:?}", result),
+        _ => panic!("Expected PossiblyNullOrUndefined, got {result:?}"),
     }
 }
 
@@ -6436,7 +6313,7 @@ fn test_strict_null_checks_non_nullable_success() {
         } => {
             assert_eq!(prop_type, TypeId::NUMBER);
         }
-        _ => panic!("Expected Success, got {:?}", result),
+        _ => panic!("Expected Success, got {result:?}"),
     }
 }
 
@@ -6458,7 +6335,7 @@ fn test_strict_null_checks_null_only() {
             assert_eq!(property_type, None);
             assert_eq!(cause, TypeId::NULL);
         }
-        _ => panic!("Expected PossiblyNullOrUndefined, got {:?}", result),
+        _ => panic!("Expected PossiblyNullOrUndefined, got {result:?}"),
     }
 }
 
@@ -6541,8 +6418,7 @@ fn test_variable_redeclaration_different_type_2403() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2403),
-        "Expected error 2403 for variable redeclaration, got: {:?}",
-        codes
+        "Expected error 2403 for variable redeclaration, got: {codes:?}"
     );
 }
 
@@ -6579,8 +6455,7 @@ fn test_variable_self_reference_no_2403() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2403),
-        "Expected no error 2403 for self-referential var initializer, got: {:?}",
-        codes
+        "Expected no error 2403 for self-referential var initializer, got: {codes:?}"
     );
 }
 
@@ -6606,10 +6481,10 @@ fn test_symbol_property_access_description() {
                     assert!(members.contains(&TypeId::STRING));
                     assert!(members.contains(&TypeId::UNDEFINED));
                 }
-                _ => panic!("Expected union type for description, got: {:?}", key),
+                _ => panic!("Expected union type for description, got: {key:?}"),
             }
         }
-        _ => panic!("Expected Success for symbol.description, got: {:?}", result),
+        _ => panic!("Expected Success for symbol.description, got: {result:?}"),
     }
 }
 
@@ -6629,10 +6504,7 @@ fn test_symbol_property_access_methods() {
         } => {
             assert_eq!(prop_type, TypeId::ANY);
         }
-        _ => panic!(
-            "Expected Success for symbol.toString, got: {:?}",
-            result_to_string
-        ),
+        _ => panic!("Expected Success for symbol.toString, got: {result_to_string:?}"),
     }
 
     let result_value_of = evaluator.resolve_property_access(TypeId::SYMBOL, "valueOf");
@@ -6642,10 +6514,7 @@ fn test_symbol_property_access_methods() {
         } => {
             assert_eq!(prop_type, TypeId::ANY);
         }
-        _ => panic!(
-            "Expected Success for symbol.valueOf, got: {:?}",
-            result_value_of
-        ),
+        _ => panic!("Expected Success for symbol.valueOf, got: {result_value_of:?}"),
     }
 }
 
@@ -6667,10 +6536,7 @@ fn test_symbol_property_not_found() {
             assert_eq!(type_id, TypeId::SYMBOL);
             assert_eq!(property_name, name_atom);
         }
-        _ => panic!(
-            "Expected PropertyNotFound for unknown property, got: {:?}",
-            result
-        ),
+        _ => panic!("Expected PropertyNotFound for unknown property, got: {result:?}"),
     }
 }
 
@@ -6716,8 +6582,7 @@ const val = obj.someProperty;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&4111),
-        "Expected error 4111 for property access from index signature, got: {:?}",
-        codes
+        "Expected error 4111 for property access from index signature, got: {codes:?}"
     );
 }
 
@@ -6804,8 +6669,7 @@ const val = obj.x;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&4111),
-        "Should NOT emit 4111 when union member has explicit property 'x', got: {:?}",
-        codes
+        "Should NOT emit 4111 when union member has explicit property 'x', got: {codes:?}"
     );
 }
 
@@ -6861,7 +6725,7 @@ type Qux = { [key: string]: Foo };
                 .expect("Expected property x");
             assert_eq!(prop.type_id, TypeId::NUMBER);
         }
-        _ => panic!("Expected Foo to be Object type, got {:?}", foo_key),
+        _ => panic!("Expected Foo to be Object type, got {foo_key:?}"),
     }
 
     let bar_type = checker.get_type_of_symbol(bar_sym);
@@ -6881,12 +6745,11 @@ type Qux = { [key: string]: Foo };
                     .expect("member type should exist");
                 assert!(
                     matches!(member_key, TypeData::Lazy(_)),
-                    "Non-string member should be foo_type or a Lazy reference, got {:?}",
-                    member_key
+                    "Non-string member should be foo_type or a Lazy reference, got {member_key:?}"
                 );
             }
         }
-        _ => panic!("Expected Bar to be Union type, got {:?}", bar_key),
+        _ => panic!("Expected Bar to be Union type, got {bar_key:?}"),
     }
 
     let baz_type = checker.get_type_of_symbol(baz_sym);
@@ -6898,7 +6761,7 @@ type Qux = { [key: string]: Foo };
             assert_eq!(elements[0].type_id, TypeId::STRING);
             assert_eq!(elements[1].type_id, TypeId::NUMBER);
         }
-        _ => panic!("Expected Baz to be Tuple type, got {:?}", baz_key),
+        _ => panic!("Expected Baz to be Tuple type, got {baz_key:?}"),
     }
 
     let qux_type = checker.get_type_of_symbol(qux_sym);
@@ -6916,10 +6779,10 @@ type Qux = { [key: string]: Foo };
                 .expect("Index value type should exist");
             match value_key {
                 TypeData::Lazy(_def_id) => {} // Phase 4.2: Now uses Lazy(DefId) instead of Ref(SymbolRef)
-                _ => panic!("Expected Foo lazy type, got {:?}", value_key),
+                _ => panic!("Expected Foo lazy type, got {value_key:?}"),
             }
         }
-        _ => panic!("Expected Qux to be ObjectWithIndex type, got {:?}", qux_key),
+        _ => panic!("Expected Qux to be ObjectWithIndex type, got {qux_key:?}"),
     }
 }
 
@@ -7156,8 +7019,7 @@ interface Derived extends Base {
     // TypeScript allows `readonly x: number` to satisfy `x: number` in interface extends
     assert!(
         codes.is_empty(),
-        "Expected no errors for readonly property in interface extends, got: {:?}",
-        codes
+        "Expected no errors for readonly property in interface extends, got: {codes:?}"
     );
 }
 
@@ -7195,8 +7057,7 @@ interface Derived extends Base {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2430),
-        "Expected error 2430 for optional property mismatch, got: {:?}",
-        codes
+        "Expected error 2430 for optional property mismatch, got: {codes:?}"
     );
 }
 
@@ -7271,8 +7132,7 @@ interface Derived extends Base {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2430),
-        "Expected error 2430 for string literal property mismatch, got: {:?}",
-        codes
+        "Expected error 2430 for string literal property mismatch, got: {codes:?}"
     );
 }
 
@@ -7310,8 +7170,7 @@ interface Derived extends Base<string> {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2430),
-        "Expected error 2430 for generic argument mismatch, got: {:?}",
-        codes
+        "Expected error 2430 for generic argument mismatch, got: {codes:?}"
     );
 }
 
@@ -7392,8 +7251,7 @@ interface Derived extends NS.Base {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2430),
-        "Expected error 2430 for namespace-qualified base mismatch, got: {:?}",
-        codes
+        "Expected error 2430 for namespace-qualified base mismatch, got: {codes:?}"
     );
 }
 
@@ -7495,10 +7353,7 @@ type Alias = Outer.Inner;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -7584,8 +7439,7 @@ namespace A {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected error 2304 for nested namespace parent type, got: {:?}",
-        codes
+        "Unexpected error 2304 for nested namespace parent type, got: {codes:?}"
     );
 }
 
@@ -7624,8 +7478,7 @@ class C1 extends null {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for extends null heritage, got: {:?}",
-        codes
+        "Unexpected TS2304 for extends null heritage, got: {codes:?}"
     );
 }
 
@@ -7664,8 +7517,7 @@ exports.foo = 1;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for global exports usage, got: {:?}",
-        codes
+        "Unexpected TS2304 for global exports usage, got: {codes:?}"
     );
 }
 
@@ -7782,10 +7634,7 @@ type AliasB = Outer.B;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected AliasA to resolve to Object or Lazy type, got {:?}",
-            alias_a_key
-        ),
+        _ => panic!("Expected AliasA to resolve to Object or Lazy type, got {alias_a_key:?}"),
     }
 
     let alias_b_key = types
@@ -7805,10 +7654,7 @@ type AliasB = Outer.B;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected AliasB to resolve to Object or Lazy type, got {:?}",
-            alias_b_key
-        ),
+        _ => panic!("Expected AliasB to resolve to Object or Lazy type, got {alias_b_key:?}"),
     }
 }
 
@@ -7871,10 +7717,7 @@ type Alias = Box<string>;
             let app = types.type_application(app_id);
             assert_eq!(app.args, vec![TypeId::STRING]);
         }
-        _ => panic!(
-            "Expected Alias to be Object or Application type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to be Object or Application type, got {alias_key:?}"),
     }
 }
 
@@ -7927,10 +7770,7 @@ const f: <T>(value: T) => T = (value) => value;
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected param type to be type parameter, got {:?}",
-                    param_key
-                ),
+                _ => panic!("Expected param type to be type parameter, got {param_key:?}"),
             }
 
             let return_key = types
@@ -7940,13 +7780,10 @@ const f: <T>(value: T) => T = (value) => value;
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected return type to be type parameter, got {:?}",
-                    return_key
-                ),
+                _ => panic!("Expected return type to be type parameter, got {return_key:?}"),
             }
         }
-        _ => panic!("Expected f to be Function type, got {:?}", f_key),
+        _ => panic!("Expected f to be Function type, got {f_key:?}"),
     }
 }
 
@@ -8008,10 +7845,7 @@ interface Callable {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected param type to be type parameter, got {:?}",
-                    param_key
-                ),
+                _ => panic!("Expected param type to be type parameter, got {param_key:?}"),
             }
 
             let return_key = types
@@ -8021,16 +7855,10 @@ interface Callable {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected return type to be type parameter, got {:?}",
-                    return_key
-                ),
+                _ => panic!("Expected return type to be type parameter, got {return_key:?}"),
             }
         }
-        _ => panic!(
-            "Expected Callable to be Callable type, got {:?}",
-            callable_key
-        ),
+        _ => panic!("Expected Callable to be Callable type, got {callable_key:?}"),
     }
 }
 
@@ -8092,10 +7920,7 @@ interface Factory {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected param type to be type parameter, got {:?}",
-                    param_key
-                ),
+                _ => panic!("Expected param type to be type parameter, got {param_key:?}"),
             }
 
             let return_key = types
@@ -8105,16 +7930,10 @@ interface Factory {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected return type to be type parameter, got {:?}",
-                    return_key
-                ),
+                _ => panic!("Expected return type to be type parameter, got {return_key:?}"),
             }
         }
-        _ => panic!(
-            "Expected Factory to be Callable type, got {:?}",
-            factory_key
-        ),
+        _ => panic!("Expected Factory to be Callable type, got {factory_key:?}"),
     }
 }
 
@@ -8169,10 +7988,7 @@ function id<T>(value: T): T {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected param type to be type parameter, got {:?}",
-                    param_key
-                ),
+                _ => panic!("Expected param type to be type parameter, got {param_key:?}"),
             }
 
             let return_key = types
@@ -8182,13 +7998,10 @@ function id<T>(value: T): T {
                 TypeData::TypeParameter(info) => {
                     assert_eq!(types.resolve_atom(info.name), "T");
                 }
-                _ => panic!(
-                    "Expected return type to be type parameter, got {:?}",
-                    return_key
-                ),
+                _ => panic!("Expected return type to be type parameter, got {return_key:?}"),
             }
         }
-        _ => panic!("Expected id to be Function type, got {:?}", id_key),
+        _ => panic!("Expected id to be Function type, got {id_key:?}"),
     }
 }
 
@@ -8234,7 +8047,7 @@ function id(x: string) {
             let shape = types.function_shape(shape_id);
             assert_eq!(shape.return_type, TypeId::STRING);
         }
-        _ => panic!("Expected id to be Function type, got {:?}", id_key),
+        _ => panic!("Expected id to be Function type, got {id_key:?}"),
     }
 }
 
@@ -8290,10 +8103,10 @@ const f = (flag: boolean) => {
                     assert!(members.contains(&TypeId::NUMBER));
                     assert!(members.contains(&TypeId::STRING));
                 }
-                _ => panic!("Expected union return type, got {:?}", return_key),
+                _ => panic!("Expected union return type, got {return_key:?}"),
             }
         }
-        _ => panic!("Expected f to be Function type, got {:?}", f_key),
+        _ => panic!("Expected f to be Function type, got {f_key:?}"),
     }
 }
 
@@ -8374,26 +8187,22 @@ const anon = () => { return null; };
     assert_eq!(
         count(2355),
         1,
-        "Expected one 2355 error, got codes: {:?}",
-        codes
+        "Expected one 2355 error, got codes: {codes:?}"
     );
     assert_eq!(
         count(2366),
         1,
-        "Expected one 2366 error, got codes: {:?}",
-        codes
+        "Expected one 2366 error, got codes: {codes:?}"
     );
     assert_eq!(
         count(7006),
         1,
-        "Expected one 7006 error, got codes: {:?}",
-        codes
+        "Expected one 7006 error, got codes: {codes:?}"
     );
     assert_eq!(
         count(7011),
         0,
-        "Expected no TS7011 for `() => null` under strictNullChecks, got codes: {:?}",
-        codes
+        "Expected no TS7011 for `() => null` under strictNullChecks, got codes: {codes:?}"
     );
 }
 
@@ -8445,8 +8254,7 @@ const obj = { baz() { return undefined; } };
     assert_eq!(
         count(7010),
         3,
-        "Expected three 7010 errors, got codes: {:?}",
-        codes
+        "Expected three 7010 errors, got codes: {codes:?}"
     );
 }
 
@@ -8504,8 +8312,7 @@ class C {
 
     assert!(
         ts7010_errors.is_empty(),
-        "Expected no TS7010 errors for async functions returning Promise<void>, got: {:?}",
-        codes
+        "Expected no TS7010 errors for async functions returning Promise<void>, got: {codes:?}"
     );
 }
 
@@ -8559,14 +8366,12 @@ const arrowReturnsAny = () => anyValue;
     assert_eq!(
         count(7010),
         0,
-        "Expected no TS7010 errors for function returning inferred 'any', got codes: {:?}",
-        codes
+        "Expected no TS7010 errors for function returning inferred 'any', got codes: {codes:?}"
     );
     assert_eq!(
         count(7011),
         0,
-        "Expected no TS7011 errors for arrow function returning inferred 'any', got codes: {:?}",
-        codes
+        "Expected no TS7011 errors for arrow function returning inferred 'any', got codes: {codes:?}"
     );
 }
 
@@ -8613,8 +8418,7 @@ function returnsNullOrUndefined(flag: boolean) {
     assert_eq!(
         count(7010),
         1,
-        "Expected one TS7010 error for null | undefined return, got codes: {:?}",
-        codes
+        "Expected one TS7010 error for null | undefined return, got codes: {codes:?}"
     );
 }
 
@@ -8840,8 +8644,7 @@ function fallsThrough(): number {
     assert_eq!(
         count(2355),
         1,
-        "Expected exactly one 2355 error for fallsThrough(), got: {:?}",
-        codes
+        "Expected exactly one 2355 error for fallsThrough(), got: {codes:?}"
     );
 
     // Verify which function got the error by checking the messages
@@ -8900,8 +8703,7 @@ function loopWithBreak(): number {
     assert_eq!(
         count(2355),
         1,
-        "Expected exactly one 2355 error for loopWithBreak(), got: {:?}",
-        codes
+        "Expected exactly one 2355 error for loopWithBreak(), got: {codes:?}"
     );
 }
 
@@ -8954,8 +8756,7 @@ class C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2355),
-        "Did not expect TS2355 for async Promise<void> return types, got: {:?}",
-        codes
+        "Did not expect TS2355 for async Promise<void> return types, got: {codes:?}"
     );
 }
 
@@ -9001,8 +8802,7 @@ async function f(): Promise<number> { }
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2355),
-        "Expected TS2355 for async Promise<number> return type, got: {:?}",
-        codes
+        "Expected TS2355 for async Promise<number> return type, got: {codes:?}"
     );
 }
 
@@ -9047,12 +8847,11 @@ async function* g4(): {} { yield 1; }
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2355),
-        "Did not expect TS2355 for async generator return types, got: {:?}",
-        codes
+        "Did not expect TS2355 for async generator return types, got: {codes:?}"
     );
 }
 
-/// Test async functions with type alias return types (conformance: asyncAliasReturnType_es5.ts)
+/// Test async functions with type alias return types (conformance: `asyncAliasReturnType_es5.ts`)
 /// This replicates the scenario where Promise is not locally declared but comes from lib.
 #[test]
 fn test_async_alias_return_type_no_2355() {
@@ -9094,8 +8893,7 @@ async function f(): PromiseAlias<void> {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2355),
-        "Did not expect TS2355 for async PromiseAlias<void> return type (conformance: asyncAliasReturnType_es5.ts), got: {:?}",
-        codes
+        "Did not expect TS2355 for async PromiseAlias<void> return type (conformance: asyncAliasReturnType_es5.ts), got: {codes:?}"
     );
 }
 
@@ -9162,8 +8960,7 @@ function usesFailInList(): number {
     let actual_2355_count = count(2355);
     assert_eq!(
         actual_2355_count, 1,
-        "Expected only fallsThrough() to get TS2355, got: {:?}",
-        codes
+        "Expected only fallsThrough() to get TS2355, got: {codes:?}"
     );
 }
 
@@ -9244,11 +9041,10 @@ function tryCatchFallsThrough(): number {
 
     let count_2355 = count(2355);
     let count_2366 = count(2366);
-    assert_eq!(count_2355, 0, "Did not expect TS2355, got: {:?}", codes);
+    assert_eq!(count_2355, 0, "Did not expect TS2355, got: {codes:?}");
     assert_eq!(
         count_2366, 1,
-        "Expected only tryCatchFallsThrough() to get TS2366, got: {:?}",
-        codes
+        "Expected only tryCatchFallsThrough() to get TS2366, got: {codes:?}"
     );
 }
 
@@ -9394,8 +9190,7 @@ type PropAlias = { handler: (g) => void; };
     assert_eq!(
         count(7006),
         10,
-        "Expected ten 7006 errors, got codes: {:?}",
-        codes
+        "Expected ten 7006 errors, got codes: {codes:?}"
     );
 }
 
@@ -9451,14 +9246,12 @@ const arrow = (...items) => items;
     assert_eq!(
         codes.iter().filter(|&&c| c == 7019).count(),
         3,
-        "Expected three TS7019 (rest param implicit any[]) errors, got codes: {:?}",
-        codes
+        "Expected three TS7019 (rest param implicit any[]) errors, got codes: {codes:?}"
     );
     assert_eq!(
         codes.iter().filter(|&&c| c == 7006).count(),
         1,
-        "Expected one TS7006 (regular param implicit any) error, got codes: {:?}",
-        codes
+        "Expected one TS7006 (regular param implicit any) error, got codes: {codes:?}"
     );
 
     // Check TS7019 messages contain "Rest parameter"
@@ -9471,8 +9264,7 @@ const arrow = (...items) => items;
         .collect();
     assert!(
         rest_messages.iter().all(|m| m.contains("Rest parameter")),
-        "TS7019 messages should say 'Rest parameter', got: {:?}",
-        rest_messages
+        "TS7019 messages should say 'Rest parameter', got: {rest_messages:?}"
     );
 
     // Check TS7006 message for regular parameter
@@ -9578,7 +9370,7 @@ const arr = [{ a: "x" }, { a: "y", b: 1 }];
             }]);
             assert_eq!(elem, expected);
         }
-        _ => panic!("Expected array type, got {:?}", arr_key),
+        _ => panic!("Expected array type, got {arr_key:?}"),
     }
 }
 
@@ -9707,7 +9499,7 @@ const first = tup[0];
             assert!(members.contains(&TypeId::STRING));
             assert!(members.contains(&TypeId::UNDEFINED));
         }
-        _ => panic!("Expected union type for first, got {:?}", first_key),
+        _ => panic!("Expected union type for first, got {first_key:?}"),
     }
 }
 
@@ -9964,8 +9756,7 @@ const value = obj[key];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&7053),
-        "Expected error 7053 for missing index signature, got: {:?}",
-        codes
+        "Expected error 7053 for missing index signature, got: {codes:?}"
     );
 }
 
@@ -10011,8 +9802,7 @@ const value = obj[key];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&7053),
-        "Expected error 7053 for union string index, got: {:?}",
-        codes
+        "Expected error 7053 for union string index, got: {codes:?}"
     );
 }
 
@@ -10058,8 +9848,7 @@ const value = obj[key];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&7053),
-        "Expected error 7053 for union string/number index, got: {:?}",
-        codes
+        "Expected error 7053 for union string/number index, got: {codes:?}"
     );
 }
 
@@ -10107,7 +9896,7 @@ const value = obj[key];
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::STRING));
         }
-        _ => panic!("Expected union type for value, got {:?}", value_key),
+        _ => panic!("Expected union type for value, got {value_key:?}"),
     }
 }
 
@@ -10161,7 +9950,7 @@ const value = obj[key];
             assert!(members.contains(&lit_one));
             assert!(members.contains(&lit_two));
         }
-        other => panic!("Expected union type for value, got {:?}", other),
+        other => panic!("Expected union type for value, got {other:?}"),
     }
 }
 
@@ -10248,7 +10037,7 @@ const value = tup[idx];
             assert!(members.contains(&TypeId::BOOLEAN));
             assert_eq!(members.len(), 2);
         }
-        _ => panic!("Expected union type for value, got {:?}", value_key),
+        _ => panic!("Expected union type for value, got {value_key:?}"),
     }
 }
 
@@ -10296,7 +10085,7 @@ const value = arr[key];
             assert!(members.contains(&TypeId::NUMBER));
             assert_eq!(members.len(), 2);
         }
-        _ => panic!("Expected union type for value, got {:?}", value_key),
+        _ => panic!("Expected union type for value, got {value_key:?}"),
     }
 }
 
@@ -10338,8 +10127,7 @@ const value = obj["a"];
     // tsc emits TS18048 "'obj' is possibly 'undefined'." with strictNullChecks
     assert!(
         codes.contains(&18048),
-        "Expected error 18048 for possibly undefined object, got: {:?}",
-        codes
+        "Expected error 18048 for possibly undefined object, got: {codes:?}"
     );
 
     let value_sym = binder.file_locals.get("value").expect("value should exist");
@@ -10390,7 +10178,7 @@ const value = obj?.["a"];
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::UNDEFINED));
         }
-        _ => panic!("Expected union type for value, got {:?}", value_key),
+        _ => panic!("Expected union type for value, got {value_key:?}"),
     }
 }
 
@@ -10437,7 +10225,7 @@ const value = obj?.a;
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::UNDEFINED));
         }
-        _ => panic!("Expected union type for value, got {:?}", value_key),
+        _ => panic!("Expected union type for value, got {value_key:?}"),
     }
 }
 
@@ -10486,7 +10274,7 @@ const value = obj.a;
             assert!(members.contains(&TypeId::NUMBER));
             assert!(members.contains(&TypeId::STRING));
         }
-        _ => panic!("Expected union type for value, got {:?}", value_key),
+        _ => panic!("Expected union type for value, got {value_key:?}"),
     }
 }
 
@@ -10548,10 +10336,7 @@ type Alias = Foo.Bar;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -10616,10 +10401,7 @@ type Alias = Foo.Bar;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -10840,10 +10622,7 @@ const value: Merge.B = { y: 1 };
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -11016,10 +10795,7 @@ type Alias = Merge.Extra;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -11082,10 +10858,7 @@ type Alias = Merge.Extra;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -11256,10 +11029,7 @@ type Alias = Merge.Extra;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -11323,10 +11093,7 @@ type Alias = Merge.Extra;
             // Phase 4.3: Interface type references now use Lazy(DefId)
             // The Lazy type is correctly resolved when needed for type checking
         }
-        _ => panic!(
-            "Expected Alias to resolve to Object or Lazy type, got {:?}",
-            alias_key
-        ),
+        _ => panic!("Expected Alias to resolve to Object or Lazy type, got {alias_key:?}"),
     }
 }
 
@@ -11446,19 +11213,19 @@ interface Bar {
                 .properties
                 .iter()
                 .find(|prop| types.resolve_atom(prop.name) == "y")
-                .unwrap_or_else(|| panic!("Expected property y, got {:?}", prop_names));
+                .unwrap_or_else(|| panic!("Expected property y, got {prop_names:?}"));
 
             match types.lookup(prop_x.type_id) {
                 Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
-                other => panic!("Expected x to be typeof Foo, got {:?}", other),
+                other => panic!("Expected x to be typeof Foo, got {other:?}"),
             }
 
             match types.lookup(prop_y.type_id) {
                 Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, value_sym.0),
-                other => panic!("Expected y to be typeof Ns.value, got {:?}", other),
+                other => panic!("Expected y to be typeof Ns.value, got {other:?}"),
             }
         }
-        _ => panic!("Expected Bar to resolve to Object type, got {:?}", bar_key),
+        _ => panic!("Expected Bar to resolve to Object type, got {bar_key:?}"),
     }
 }
 
@@ -11555,10 +11322,10 @@ type Alias = typeof Foo<string>;
             assert_eq!(app.args, vec![TypeId::STRING]);
             match types.lookup(app.base) {
                 Some(TypeData::TypeQuery(SymbolRef(sym_id))) => assert_eq!(sym_id, foo_sym.0),
-                other => panic!("Expected TypeQuery base type, got {:?}", other),
+                other => panic!("Expected TypeQuery base type, got {other:?}"),
             }
         }
-        _ => panic!("Expected Alias to be Application type, got {:?}", alias_key),
+        _ => panic!("Expected Alias to be Application type, got {alias_key:?}"),
     }
 }
 
@@ -11638,7 +11405,7 @@ fn test_index_signature_at_solver_level() {
                 "Should be marked as from_index_signature"
             );
         }
-        _ => panic!("Expected Success, got: {:?}", result),
+        _ => panic!("Expected Success, got: {result:?}"),
     }
 }
 
@@ -11692,8 +11459,7 @@ declare module "." {
 
     assert_eq!(
         error_count, 3,
-        "Expected 3 errors with code 2436 for relative module names, got: {:?}",
-        codes
+        "Expected 3 errors with code 2436 for relative module names, got: {codes:?}"
     );
 }
 
@@ -11735,8 +11501,7 @@ declare module "@scoped/package" {
 
     assert_eq!(
         error_5061_count, 0,
-        "Expected no error 5061 for absolute module names, got: {:?}",
-        codes
+        "Expected no error 5061 for absolute module names, got: {codes:?}"
     );
 }
 
@@ -11781,9 +11546,7 @@ declare class AmbientClass {
     // Should report error for all 5 private identifiers
     assert!(
         error_count >= 4,
-        "Expected at least 4 errors with code 18019 for private identifiers in ambient class, got {} errors: {:?}",
-        error_count,
-        codes
+        "Expected at least 4 errors with code 18019 for private identifiers in ambient class, got {error_count} errors: {codes:?}"
     );
 }
 
@@ -11829,8 +11592,7 @@ class RegularClass {
 
     assert_eq!(
         error_2819_count, 0,
-        "Expected no error 2819 for private identifiers in non-ambient class, got: {:?}",
-        codes
+        "Expected no error 2819 for private identifiers in non-ambient class, got: {codes:?}"
     );
 }
 
@@ -11872,8 +11634,7 @@ class A {
 
     assert_eq!(
         error_2339_count, 0,
-        "Expected no TS2339 error for private static method access, got errors: {:?}",
-        codes
+        "Expected no TS2339 error for private static method access, got errors: {codes:?}"
     );
 }
 
@@ -11915,8 +11676,7 @@ let x = A.quux;
 
     assert_eq!(
         error_2339_count, 0,
-        "Expected no TS2339 error for non-private static accessor access, got errors: {:?}",
-        codes
+        "Expected no TS2339 error for non-private static accessor access, got errors: {codes:?}"
     );
 }
 
@@ -11961,8 +11721,7 @@ class A {
 
     assert_eq!(
         error_2339_count, 0,
-        "Expected no TS2339 error for private static accessor access, got errors: {:?}",
-        codes
+        "Expected no TS2339 error for private static accessor access, got errors: {codes:?}"
     );
 }
 
@@ -12013,13 +11772,11 @@ class A {
 
     assert_eq!(
         error_1068_count, 0,
-        "Expected no TS1068 (unexpected token) error for private static generator method, got errors: {:?}",
-        codes
+        "Expected no TS1068 (unexpected token) error for private static generator method, got errors: {codes:?}"
     );
     assert_eq!(
         error_2339_count, 0,
-        "Expected no TS2339 error for private static generator method access, got errors: {:?}",
-        codes
+        "Expected no TS2339 error for private static generator method access, got errors: {codes:?}"
     );
 }
 
@@ -12058,8 +11815,7 @@ namespace MyNamespace {
 
     assert_eq!(
         error_5061_count, 0,
-        "Expected no error 5061 for namespace declarations (only ambient modules should error), got: {:?}",
-        codes
+        "Expected no error 5061 for namespace declarations (only ambient modules should error), got: {codes:?}"
     );
 }
 
@@ -12096,8 +11852,7 @@ var x: number;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2403),
-        "Expected error 2403 for top-level variable redeclaration with different type, got: {:?}",
-        codes
+        "Expected error 2403 for top-level variable redeclaration with different type, got: {codes:?}"
     );
 }
 
@@ -12134,8 +11889,7 @@ var x: string;
 
     assert_eq!(
         error_2403_count, 0,
-        "Expected no error 2403 for top-level variable redeclaration with same type, got: {:?}",
-        codes
+        "Expected no error 2403 for top-level variable redeclaration with same type, got: {codes:?}"
     );
 }
 
@@ -12176,8 +11930,7 @@ var e: typeof E;
 
     assert_eq!(
         error_2403_count, 0,
-        "Expected no error 2403 for enum typeof redeclaration, got: {:?}",
-        codes
+        "Expected no error 2403 for enum typeof redeclaration, got: {codes:?}"
     );
 }
 
@@ -12226,8 +11979,7 @@ var e: typeof E1;
 
     assert_eq!(
         error_2403_count, 1,
-        "Expected 1 error 2403 for third variable declaration (matching tsc), got: {:?}",
-        codes
+        "Expected 1 error 2403 for third variable declaration (matching tsc), got: {codes:?}"
     );
 }
 
@@ -12271,8 +12023,7 @@ function f1() {
 
     assert_eq!(
         error_2403_count, 0,
-        "Expected no error 2403 for array spread redeclaration, got: {:?}",
-        codes
+        "Expected no error 2403 for array spread redeclaration, got: {codes:?}"
     );
 }
 
@@ -12310,8 +12061,7 @@ var n: number;
 
     assert_eq!(
         error_2403_count, 0,
-        "Expected no error 2403 for inferred vs annotated redeclaration, got: {:?}",
-        codes
+        "Expected no error 2403 for inferred vs annotated redeclaration, got: {codes:?}"
     );
 }
 
@@ -12350,8 +12100,7 @@ var p: foo.NotExist;
     // Should produce error 2694: Namespace 'foo' has no exported member 'NotExist'
     assert!(
         codes.contains(&2694),
-        "Expected error 2694 for namespace member not found, got: {:?}",
-        codes
+        "Expected error 2694 for namespace member not found, got: {codes:?}"
     );
 }
 
@@ -12390,8 +12139,7 @@ const badAlias = Alias.missing;
     let missing_count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         missing_count, 2,
-        "Expected two 2339 errors for missing namespace value members, got: {:?}",
-        codes
+        "Expected two 2339 errors for missing namespace value members, got: {codes:?}"
     );
 }
 
@@ -12438,8 +12186,7 @@ var y: NS.Exported;
     // Should produce no errors - both x: Alias and y: NS.Exported should resolve correctly
     assert!(
         codes.is_empty(),
-        "Expected no errors for import alias type resolution, got: {:?}",
-        codes
+        "Expected no errors for import alias type resolution, got: {codes:?}"
     );
 }
 
@@ -12481,8 +12228,7 @@ var x: Alias;
     // This error occurs when the alias is used (var x: Alias), which triggers type resolution
     assert!(
         codes.contains(&2694),
-        "Expected error 2694 for import alias of non-exported member, got: {:?}",
-        codes
+        "Expected error 2694 for import alias of non-exported member, got: {codes:?}"
     );
 }
 
@@ -12518,8 +12264,7 @@ Foo;
     let type_only_count = codes.iter().filter(|&&code| code == 1361).count();
     assert_eq!(
         type_only_count, 1,
-        "Expected error 1361 for using import type as value, got: {:?}",
-        codes
+        "Expected error 1361 for using import type as value, got: {codes:?}"
     );
 }
 
@@ -12557,8 +12302,7 @@ let b: B = a;
     let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         count_2322, 1,
-        "Expected one 2322 error for cross-enum assignment, got: {:?}",
-        codes
+        "Expected one 2322 error for cross-enum assignment, got: {codes:?}"
     );
 }
 
@@ -12592,8 +12336,7 @@ let s: S = "a";
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2322),
-        "Expected error 2322 for string enum assignment, got: {:?}",
-        codes
+        "Expected error 2322 for string enum assignment, got: {codes:?}"
     );
 }
 
@@ -12629,8 +12372,7 @@ let n: number = e;
     let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         count_2322, 0,
-        "Expected no errors for numeric enum <-> number bidirectional assignability, got: {:?}",
-        codes
+        "Expected no errors for numeric enum <-> number bidirectional assignability, got: {codes:?}"
     );
 }
 
@@ -12665,8 +12407,7 @@ let str: string = s;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2322),
-        "String enum values should be assignable to string (no TS2322), got: {:?}",
-        codes
+        "String enum values should be assignable to string (no TS2322), got: {codes:?}"
     );
 }
 
@@ -12703,8 +12444,7 @@ let e2: E2 = e1;
     let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         count_2322, 1,
-        "Expected one 2322 error for cross-enum assignment, got: {:?}",
-        codes
+        "Expected one 2322 error for cross-enum assignment, got: {codes:?}"
     );
 }
 
@@ -12741,8 +12481,7 @@ let s2: S2 = s1;
     let count_2322 = codes.iter().filter(|&&code| code == 2322).count();
     assert_eq!(
         count_2322, 1,
-        "Expected one 2322 error for cross-string-enum assignment, got: {:?}",
-        codes
+        "Expected one 2322 error for cross-string-enum assignment, got: {codes:?}"
     );
 }
 
@@ -12783,13 +12522,11 @@ let missing: Outer.Inner.Missing;
 
     assert!(
         codes.contains(&2694),
-        "Expected error 2694 for missing nested namespace member, got: {:?}",
-        codes
+        "Expected error 2694 for missing nested namespace member, got: {codes:?}"
     );
     assert!(
         codes.contains(&2322),
-        "Expected error 2322 for nested namespace generic mismatch, got: {:?}",
-        codes
+        "Expected error 2322 for nested namespace generic mismatch, got: {codes:?}"
     );
 }
 
@@ -12829,13 +12566,11 @@ let missing: Alias.Missing;
 
     assert!(
         codes.contains(&2694),
-        "Expected error 2694 for alias missing member, got: {:?}",
-        codes
+        "Expected error 2694 for alias missing member, got: {codes:?}"
     );
     assert!(
         codes.contains(&2322),
-        "Expected error 2322 for alias generic mismatch, got: {:?}",
-        codes
+        "Expected error 2322 for alias generic mismatch, got: {codes:?}"
     );
 }
 
@@ -12872,8 +12607,7 @@ const bad = NS.Foo;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for type-only namespace member used as value, got: {:?}",
-        codes
+        "Expected error 2693 for type-only namespace member used as value, got: {codes:?}"
     );
 }
 
@@ -12909,8 +12643,7 @@ const bad = NS["Foo"];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for type-only namespace member element access used as value, got: {:?}",
-        codes
+        "Expected error 2693 for type-only namespace member element access used as value, got: {codes:?}"
     );
 }
 
@@ -12950,13 +12683,11 @@ const bad = Outer.Inner.Foo;
     let count = codes.iter().filter(|&&code| code == 2693).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for nested type-only namespace member used as value, got: {:?}",
-        codes
+        "Expected one 2693 error for nested type-only namespace member used as value, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for nested type-only namespace member used as value, got: {:?}",
-        codes
+        "Did not expect 2339 for nested type-only namespace member used as value, got: {codes:?}"
     );
 }
 
@@ -12993,8 +12724,7 @@ const bad = Alias;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for type-only namespace alias used as value, got: {:?}",
-        codes
+        "Expected error 2693 for type-only namespace alias used as value, got: {codes:?}"
     );
 }
 
@@ -13033,13 +12763,11 @@ const bad = Alias.Foo;
     let count = codes.iter().filter(|&&code| code == 2693).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for type-only namespace member via alias, got: {:?}",
-        codes
+        "Expected one 2693 error for type-only namespace member via alias, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for type-only namespace member via alias, got: {:?}",
-        codes
+        "Did not expect 2339 for type-only namespace member via alias, got: {codes:?}"
     );
 }
 
@@ -13080,13 +12808,11 @@ const bad = Alias.Inner.Foo;
     let count = codes.iter().filter(|&&code| code == 2693).count();
     assert_eq!(
         count, 1,
-        "Expected one 2693 error for nested type-only namespace member via alias, got: {:?}",
-        codes
+        "Expected one 2693 error for nested type-only namespace member via alias, got: {codes:?}"
     );
     assert!(
         !codes.contains(&2339),
-        "Did not expect 2339 for nested type-only namespace member via alias, got: {:?}",
-        codes
+        "Did not expect 2339 for nested type-only namespace member via alias, got: {codes:?}"
     );
 }
 
@@ -13121,8 +12847,7 @@ const bad = Foo;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for interface used as value, got: {:?}",
-        codes
+        "Expected error 2693 for interface used as value, got: {codes:?}"
     );
 }
 
@@ -13157,8 +12882,7 @@ const bad = Foo;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for type alias used as value, got: {:?}",
-        codes
+        "Expected error 2693 for type alias used as value, got: {codes:?}"
     );
 }
 
@@ -13193,8 +12917,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for interface used in type query, got: {:?}",
-        codes
+        "Expected error 2693 for interface used in type query, got: {codes:?}"
     );
 }
 
@@ -13229,8 +12952,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2693),
-        "Expected error 2693 for type alias used in type query, got: {:?}",
-        codes
+        "Expected error 2693 for type alias used in type query, got: {codes:?}"
     );
 }
 
@@ -13264,8 +12986,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected error 2304 for unknown typeof name, got: {:?}",
-        codes
+        "Expected error 2304 for unknown typeof name, got: {codes:?}"
     );
 }
 
@@ -13299,8 +13020,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected error 2304 for unknown typeof qualified name, got: {:?}",
-        codes
+        "Expected error 2304 for unknown typeof qualified name, got: {codes:?}"
     );
 }
 
@@ -13373,8 +13093,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2749),
-        "Expected error 2749 for value symbol used as type, got: {:?}",
-        codes
+        "Expected error 2749 for value symbol used as type, got: {codes:?}"
     );
 }
 
@@ -13409,8 +13128,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2749),
-        "Expected error 2749 for function symbol used as type, got: {:?}",
-        codes
+        "Expected error 2749 for function symbol used as type, got: {codes:?}"
     );
 }
 
@@ -13448,8 +13166,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2709),
-        "Expected error 2709 for namespace used as type, got: {:?}",
-        codes
+        "Expected error 2709 for namespace used as type, got: {codes:?}"
     );
 }
 
@@ -13488,8 +13205,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2709),
-        "Expected error 2709 for namespace alias used as type, got: {:?}",
-        codes
+        "Expected error 2709 for namespace alias used as type, got: {codes:?}"
     );
 }
 
@@ -13526,8 +13242,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2749),
-        "Expected error 2749 for namespace value member used as type, got: {:?}",
-        codes
+        "Expected error 2749 for namespace value member used as type, got: {codes:?}"
     );
 }
 
@@ -13565,8 +13280,7 @@ let useIt: T;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2749),
-        "Expected error 2749 for namespace value member via alias used as type, got: {:?}",
-        codes
+        "Expected error 2749 for namespace value member via alias used as type, got: {codes:?}"
     );
 }
 
@@ -13727,8 +13441,7 @@ const bad = Alias.missing;
     let missing_count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         missing_count, 1,
-        "Expected one 2339 error for missing namespace alias member, got: {:?}",
-        codes
+        "Expected one 2339 error for missing namespace alias member, got: {codes:?}"
     );
 
     let ok_sym = binder.file_locals.get("ok").expect("ok should exist");
@@ -13773,8 +13486,7 @@ const badValue = Outer.Inner.missing;
     let missing_count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         missing_count, 1,
-        "Expected one 2339 error for missing nested namespace value member, got: {:?}",
-        codes
+        "Expected one 2339 error for missing nested namespace value member, got: {codes:?}"
     );
 
     let ok_sym = binder
@@ -13821,8 +13533,7 @@ const bad = NS.hidden;
     let missing_count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         missing_count, 1,
-        "Expected one 2339 error for non-exported namespace value member, got: {:?}",
-        codes
+        "Expected one 2339 error for non-exported namespace value member, got: {codes:?}"
     );
 
     let ok_sym = binder.file_locals.get("ok").expect("ok should exist");
@@ -14061,8 +13772,7 @@ if (typeof x === "string") {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339),
-        "Expected error 2339 for closure without narrowing, got: {:?}",
-        codes
+        "Expected error 2339 for closure without narrowing, got: {codes:?}"
     );
 }
 
@@ -14390,8 +14100,7 @@ do {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339),
-        "Expected error 2339 for do-while body without narrowing, got: {:?}",
-        codes
+        "Expected error 2339 for do-while body without narrowing, got: {codes:?}"
     );
 }
 
@@ -14751,8 +14460,7 @@ if (typeof Alias.value === "string") {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2339),
-        "Expected error 2339 after namespace member assignment clears narrowing, got: {:?}",
-        codes
+        "Expected error 2339 after namespace member assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -14791,8 +14499,7 @@ if (typeof obj.prop === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after property assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after property assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -14831,8 +14538,7 @@ if (typeof obj["prop"] === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after element assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after element assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -14868,8 +14574,7 @@ if (typeof obj["prop"] === "string") {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Expected no 2339 when element access narrows property access, got: {:?}",
-        codes
+        "Expected no 2339 when element access narrows property access, got: {codes:?}"
     );
 }
 
@@ -14905,8 +14610,7 @@ if (typeof obj.prop === "string") {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2339),
-        "Expected no 2339 when property access narrows element access, got: {:?}",
-        codes
+        "Expected no 2339 when property access narrows element access, got: {codes:?}"
     );
 }
 
@@ -14945,8 +14649,7 @@ if (typeof obj["prop"] === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after cross property assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after cross property assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -14985,8 +14688,7 @@ if (typeof obj.prop === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after cross element assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after cross element assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -15062,8 +14764,7 @@ if (typeof obj[key] === "string") {
         .union(vec![TypeId::STRING, TypeId::NUMBER]);
     assert_eq!(
         expr_type, expected,
-        "Expected computed element access to remain un-narrowed, got: {:?}",
-        expr_type
+        "Expected computed element access to remain un-narrowed, got: {expr_type:?}"
     );
 }
 
@@ -15136,8 +14837,7 @@ if (typeof obj[key] === "string") {
     assert_eq!(
         expr_type,
         TypeId::STRING,
-        "Expected computed element access with literal key to narrow to string, got: {:?}",
-        expr_type
+        "Expected computed element access with literal key to narrow to string, got: {expr_type:?}"
     );
 }
 
@@ -15177,8 +14877,7 @@ if (typeof obj[key] === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after computed element assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after computed element assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -15251,8 +14950,7 @@ if (typeof arr[idx] === "string") {
     assert_eq!(
         expr_type,
         TypeId::STRING,
-        "Expected computed element access with numeric literal key to narrow to string, got: {:?}",
-        expr_type
+        "Expected computed element access with numeric literal key to narrow to string, got: {expr_type:?}"
     );
 }
 
@@ -15292,8 +14990,7 @@ if (typeof arr[idx] === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after computed numeric element assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after computed numeric element assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -15366,8 +15063,7 @@ if (typeof obj[key] === "string") {
     assert_eq!(
         expr_type,
         TypeId::STRING,
-        "Expected computed element access with const literal key to narrow to string, got: {:?}",
-        expr_type
+        "Expected computed element access with const literal key to narrow to string, got: {expr_type:?}"
     );
 }
 
@@ -15440,8 +15136,7 @@ if (typeof arr[idx] === "string") {
     assert_eq!(
         expr_type,
         TypeId::STRING,
-        "Expected computed element access with const numeric key to narrow to string, got: {:?}",
-        expr_type
+        "Expected computed element access with const numeric key to narrow to string, got: {expr_type:?}"
     );
 }
 
@@ -15515,8 +15210,7 @@ if (obj[key] === "a") {
     assert_eq!(
         expr_type,
         TypeId::STRING,
-        "Expected computed element discriminant to narrow to string, got: {:?}",
-        expr_type
+        "Expected computed element discriminant to narrow to string, got: {expr_type:?}"
     );
 }
 
@@ -15588,8 +15282,7 @@ if (typeof obj["prop"] === "string") {
     assert_eq!(
         expr_type,
         TypeId::STRING,
-        "Expected literal element access to narrow to string, got: {:?}",
-        expr_type
+        "Expected literal element access to narrow to string, got: {expr_type:?}"
     );
 }
 
@@ -15628,8 +15321,7 @@ if (typeof obj.prop === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after property base assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after property base assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -15668,8 +15360,7 @@ if (typeof obj["prop"] === "string") {
     let count = codes.iter().filter(|&&code| code == 2339).count();
     assert_eq!(
         count, 1,
-        "Expected one 2339 after element base assignment clears narrowing, got: {:?}",
-        codes
+        "Expected one 2339 after element base assignment clears narrowing, got: {codes:?}"
     );
 }
 
@@ -15889,7 +15580,7 @@ const reducer = createReducer(0, {
 /// TS Unsoundness #41: Key Remapping with `as never`
 /// In mapped types, remapping a key to `never` removes that key from the result.
 /// This is the mechanism behind the `Omit` utility type.
-/// Note: Full instantiation of generic mapped types is tested in solver/evaluate_tests.rs.
+/// Note: Full instantiation of generic mapped types is tested in `solver/evaluate_tests.rs`.
 #[test]
 fn test_key_remapping_syntax_parsing() {
     use crate::parser::ParserState;
@@ -16015,9 +15706,9 @@ const ctor2: DefaultCtor = AnotherClass;
 }
 
 /// TS Unsoundness #40: Distributivity Disabling via [T] extends [U]
-/// Tests the is_distributive flag parsing and lowering through conditional types.
+/// Tests the `is_distributive` flag parsing and lowering through conditional types.
 /// Verifies that naked type parameters are marked distributive while tuple-wrapped are not.
-/// Note: This test verifies the lowering behavior via the solver's lower_tests.rs,
+/// Note: This test verifies the lowering behavior via the solver's `lower_tests.rs`,
 /// and checks that the thin checker properly handles conditional type declarations.
 #[test]
 fn test_distributivity_conditional_type_declarations() {
@@ -16066,7 +15757,7 @@ declare const y: NonDistributive<string>;
 
 /// TS Unsoundness #40: Conditional type parsing with concrete extends checks
 /// Tests that conditional types with concrete types parse correctly.
-/// Note: Conditional type evaluation during type alias assignment is tested in solver/evaluate_tests.rs.
+/// Note: Conditional type evaluation during type alias assignment is tested in `solver/evaluate_tests.rs`.
 #[test]
 fn test_conditional_type_concrete_extends() {
     use crate::parser::ParserState;
@@ -16117,7 +15808,7 @@ declare const t: TupleCheck;
 
 /// TS Unsoundness #40: Tuple-wrapped conditional types for non-distribution
 /// Tests the [T] extends [U] pattern used to disable distributivity.
-/// The is_distributive flag detection is verified in solver/lower_tests.rs.
+/// The `is_distributive` flag detection is verified in `solver/lower_tests.rs`.
 #[test]
 fn test_tuple_wrapped_conditional_pattern() {
     use crate::parser::ParserState;
@@ -16301,7 +15992,7 @@ const m: string = state.message;
     );
 }
 
-/// Minimal repro: DeepPartial recursive mapped type
+/// Minimal repro: `DeepPartial` recursive mapped type
 /// Pattern: `{ [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }`
 #[test]
 fn test_redux_pattern_deep_partial() {
@@ -16489,7 +16180,7 @@ declare const action: AllActions;
     );
 }
 
-/// Minimal repro: ReducersMapObject constraint with homomorphic mapped type
+/// Minimal repro: `ReducersMapObject` constraint with homomorphic mapped type
 /// Pattern: `type ReducersMapObject<S, A> = { [K in keyof S]: Reducer<S[K], A> }`
 ///
 /// NOTE: Currently ignored - complex Redux pattern type inference is not fully implemented.
@@ -16687,7 +16378,7 @@ function reject2<T extends { name: string }>(obj: { name: string }): T {
 
     if error_count != 2 {
         println!("=== Generic Constraint Rejection Diagnostics ===");
-        println!("Expected 2 errors, got {}", error_count);
+        println!("Expected 2 errors, got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -16776,7 +16467,7 @@ function chain<A extends string, B extends A, C extends B>(x: C): string {
 /// types are referenced across different "conceptual" modules.
 /// Relates to the Application expansion issue in cross-file type resolution.
 ///
-/// Property access on T where T extends SomeType should resolve properties
+/// Property access on T where T extends `SomeType` should resolve properties
 /// from the constraint during access.
 ///
 /// Cross-scope generic constraint resolution: basic constraints, alias chains, and union constraints.
@@ -16989,7 +16680,7 @@ const n: number = box.value; // ERROR: string not assignable to number
     let error_count = checker.ctx.diagnostics.len();
     if error_count != 1 {
         println!("=== Split Accessors Read Error Diagnostics ===");
-        println!("Expected 1 error, got {}", error_count);
+        println!("Expected 1 error, got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -17105,7 +16796,7 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
     let error_count = checker.ctx.diagnostics.len();
     if error_count != 1 {
         println!("=== Abstract Class Instantiation Diagnostics ===");
-        println!("Expected 1 error, got {}", error_count);
+        println!("Expected 1 error, got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -17120,8 +16811,8 @@ const animal = new Animal(); // ERROR: Cannot create instance of abstract class
 
 /// TS Unsoundness #43: Abstract constructor type assignability
 ///
-/// ConcreteConstructor <: AbstractConstructor -> True
-/// AbstractConstructor <: ConcreteConstructor -> False
+/// `ConcreteConstructor` <: `AbstractConstructor` -> True
+/// `AbstractConstructor` <: `ConcreteConstructor` -> False
 ///
 /// EXPECTED FAILURES: typeof class and constructor type assignability
 /// has issues with type resolution. Currently expects 4 errors.
@@ -17187,7 +16878,7 @@ const animal = createAnimal(Animal); // Passing abstract class as value should b
     // Concrete class constructors can be assigned to abstract class constructor types
     if error_count != 0 {
         println!("=== Abstract Constructor Assignability Diagnostics ===");
-        println!("Expected 0 errors, got {}", error_count);
+        println!("Expected 0 errors, got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -17348,10 +17039,7 @@ const shapes: Shape[] = [new Circle(1), new Square(2)]; // Should be OK
     // Class inheritance type checking now works - expect 0 errors
     if error_count != 0 {
         println!("=== Concrete Extends Abstract Diagnostics ===");
-        println!(
-            "Expected 0 errors (class inheritance fixed), got {}",
-            error_count
-        );
+        println!("Expected 0 errors (class inheritance fixed), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -17702,10 +17390,7 @@ const name = pet.name; // OK: both Dog and Cat have name
     // Class inheritance now works - expect 0 errors
     if error_count != 0 {
         println!("=== Best Common Type Class Hierarchy Diagnostics ===");
-        println!(
-            "Expected 0 errors (class inheritance fixed), got {}",
-            error_count
-        );
+        println!("Expected 0 errors (class inheritance fixed), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18187,10 +17872,7 @@ const vertical: boolean = Direction.isVertical(Direction.Up);
     // Enum member access now works! Changed from expecting 4 errors to 0 errors.
     if error_count != 0 {
         println!("=== Enum Namespace Merging Diagnostics ===");
-        println!(
-            "Expected 0 errors (enum member access working), got {}",
-            error_count
-        );
+        println!("Expected 0 errors (enum member access working), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18266,10 +17948,7 @@ const animalHandler: HandlerWithAnimal = dogHandler;
     // Once method bivariance works, change to expect 0 errors
     if error_count != 1 {
         println!("=== Method Bivariance Wider Arg Diagnostics ===");
-        println!(
-            "Expected 1 error (method bivariance not implemented), got {}",
-            error_count
-        );
+        println!("Expected 1 error (method bivariance not implemented), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18343,10 +18022,7 @@ const dogHandler: HandlerWithDog = animalHandler;
     // Once interface extends is properly handled, expect 0 errors
     if error_count != 1 {
         println!("=== Method Bivariance Narrower Arg Diagnostics ===");
-        println!(
-            "Expected 1 error (interface inheritance not resolved), got {}",
-            error_count
-        );
+        println!("Expected 1 error (interface inheritance not resolved), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18417,10 +18093,7 @@ const dogHandler: HandlerWithDogProp = animalHandler;
     // Interface extends is now properly handled - expect 0 errors
     if error_count != 0 {
         println!("=== Function Property Contravariance Diagnostics ===");
-        println!(
-            "Expected 0 errors (interface inheritance fixed), got {}",
-            error_count
-        );
+        println!("Expected 0 errors (interface inheritance fixed), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18486,7 +18159,7 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
 
     if error_count != 1 {
         println!("=== Function Property Covariant Rejection Diagnostics ===");
-        println!("Expected 1 error, got {}", error_count);
+        println!("Expected 1 error, got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18506,7 +18179,7 @@ const animalHandler: HandlerWithAnimalProp = dogHandler;
 /// must be assignable to generic event handlers.
 ///
 /// This test verifies that method bivariance is working correctly, allowing
-/// a MouseEvent handler to be passed to a function expecting an Event handler.
+/// a `MouseEvent` handler to be passed to a function expecting an Event handler.
 /// This relies on methods being bivariant (not contravariant) in TypeScript.
 #[test]
 fn test_method_bivariance_event_handler_pattern() {
@@ -18562,10 +18235,7 @@ elem.addEventListener(handleMouse);
     // a MouseEvent handler to a function expecting an Event handler.
     if error_count != 0 {
         println!("=== Event Handler Pattern Diagnostics ===");
-        println!(
-            "Expected 0 errors (method bivariance implemented), got {}",
-            error_count
-        );
+        println!("Expected 0 errors (method bivariance implemented), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -18635,10 +18305,7 @@ processor.process(dogs, handleDog);
     // Method bivariance now implemented - callback parameters benefit from bivariance
     if error_count != 0 {
         println!("=== Callback Method Parameter Diagnostics ===");
-        println!(
-            "Expected 0 errors (method bivariance implemented), got {}",
-            error_count
-        );
+        println!("Expected 0 errors (method bivariance implemented), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] {}", diag.start, diag.message_text);
         }
@@ -19446,8 +19113,7 @@ const u: U = obj;
     let codes: Vec<_> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2322),
-        "Expected TS2322 for union optional variable assignment, got: {:?}",
-        codes
+        "Expected TS2322 for union optional variable assignment, got: {codes:?}"
     );
 }
 
@@ -19504,10 +19170,7 @@ const config: Config = { ...base };
     // Once spread is implemented, change to expect 0 errors
     if error_count != 1 {
         println!("=== Freshness Spread Diagnostics ===");
-        println!(
-            "Expected 1 error (spread not implemented), got {}",
-            error_count
-        );
+        println!("Expected 1 error (spread not implemented), got {error_count}");
         for diag in &checker.ctx.diagnostics {
             println!("[{}] code={} {}", diag.start, diag.code, diag.message_text);
         }
@@ -20117,7 +19780,7 @@ function test(obj: AB) {
 
 /// TS Unsoundness #38: Correlated Unions - Index access cross-product
 ///
-/// IndexAccess(Union(ObjA, ObjB), Key) produces Union(ObjA[Key], ObjB[Key]).
+/// IndexAccess(Union(ObjA, `ObjB`), Key) produces Union(ObjA[Key], `ObjB`[Key]).
 #[test]
 fn test_correlated_unions_index_access() {
     use crate::parser::ParserState;
@@ -22067,8 +21730,7 @@ type AbstractConstructor<T> = abstract new (...args: any[]) => T;
         .collect();
     assert!(
         parse_errors.is_empty(),
-        "Should not have parse errors for abstract new syntax: {:?}",
-        parse_errors
+        "Should not have parse errors for abstract new syntax: {parse_errors:?}"
     );
 
     let mut binder = BinderState::new();
@@ -22103,8 +21765,7 @@ fn test_unterminated_template_expression_reports_parse_error() {
     let parse_codes: Vec<u32> = parser.get_diagnostics().iter().map(|d| d.code).collect();
     assert!(
         parse_codes.contains(&diagnostic_codes::EXPECTED),
-        "Expected TS1005 for unterminated template expression, got: {:?}",
-        parse_codes
+        "Expected TS1005 for unterminated template expression, got: {parse_codes:?}"
     );
 }
 
@@ -22147,8 +21808,7 @@ augmented;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for global augmentation: {:?}",
-        codes
+        "Unexpected TS2304 for global augmentation: {codes:?}"
     );
 }
 
@@ -22189,8 +21849,7 @@ const z = Utils.y;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for merged namespace export lookup: {:?}",
-        codes
+        "Unexpected TS2304 for merged namespace export lookup: {codes:?}"
     );
 }
 
@@ -22234,8 +21893,7 @@ declare module "pkg" {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for module augmentation export lookup: {:?}",
-        codes
+        "Unexpected TS2304 for module augmentation export lookup: {codes:?}"
     );
 }
 
@@ -22486,8 +22144,7 @@ function area(s: { kind: "square"; size: number } | { kind: "circle"; radius: nu
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for switch case param references, got: {:?}",
-        codes
+        "Unexpected TS2304 for switch case param references, got: {codes:?}"
     );
 }
 
@@ -22528,8 +22185,7 @@ class Wat {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for type predicate parameter types, got: {:?}",
-        codes
+        "Unexpected TS2304 for type predicate parameter types, got: {codes:?}"
     );
 }
 
@@ -22570,8 +22226,7 @@ const assertFn: (value: unknown) => asserts value = value => {};
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for type predicate returns, got: {:?}",
-        codes
+        "Unexpected TS2304 for type predicate returns, got: {codes:?}"
     );
 }
 
@@ -22617,8 +22272,7 @@ const obj = {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for `this is` return type, got: {:?}",
-        codes
+        "Unexpected TS2304 for `this is` return type, got: {codes:?}"
     );
 }
 
@@ -22656,8 +22310,7 @@ exports.foo = 1;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for exports reference, got: {:?}",
-        codes
+        "Unexpected TS2304 for exports reference, got: {codes:?}"
     );
 }
 
@@ -22693,8 +22346,7 @@ type Properties<T extends { [key: string]: Types }> = {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for mapped type parameter, got: {:?}",
-        codes
+        "Unexpected TS2304 for mapped type parameter, got: {codes:?}"
     );
 }
 
@@ -22733,8 +22385,7 @@ accessor export default V1;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for accessor modifier recovery, got: {:?}",
-        codes
+        "Unexpected TS2304 for accessor modifier recovery, got: {codes:?}"
     );
 }
 
@@ -22779,8 +22430,7 @@ namespace Utils {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for namespace sibling export, got: {:?}",
-        codes
+        "Unexpected TS2304 for namespace sibling export, got: {codes:?}"
     );
 }
 
@@ -22825,8 +22475,7 @@ namespace A {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for namespace type literal members, got: {:?}",
-        codes
+        "Unexpected TS2304 for namespace type literal members, got: {codes:?}"
     );
 }
 
@@ -22873,8 +22522,7 @@ namespace C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for namespace import alias type query, got: {:?}",
-        codes
+        "Unexpected TS2304 for namespace import alias type query, got: {codes:?}"
     );
 }
 
@@ -22920,8 +22568,7 @@ const x = globalValue;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for declare global, got: {:?}",
-        codes
+        "Unexpected TS2304 for declare global, got: {codes:?}"
     );
 }
 
@@ -22965,8 +22612,7 @@ const opts: Options = { value: 1 };
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for ambient module import, got: {:?}",
-        codes
+        "Unexpected TS2304 for ambient module import, got: {codes:?}"
     );
 }
 
@@ -23034,8 +22680,7 @@ class D3 extends getBase() <string, number> {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for extends instantiation expression, got: {:?}",
-        codes
+        "Unexpected TS2322 for extends instantiation expression, got: {codes:?}"
     );
 }
 
@@ -23081,8 +22726,7 @@ const r: Base[] = [d1, d2];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for contextual array literal, got: {:?}",
-        codes
+        "Unexpected TS2322 for contextual array literal, got: {codes:?}"
     );
 }
 
@@ -23127,8 +22771,7 @@ class C {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for indexed access property type, got: {:?}",
-        codes
+        "Unexpected TS2322 for indexed access property type, got: {codes:?}"
     );
 }
 
@@ -23172,8 +22815,7 @@ const willErrorSomeDay: typeof A = class {};
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for typeof class assignment, got: {:?}",
-        codes
+        "Unexpected TS2322 for typeof class assignment, got: {codes:?}"
     );
 }
 
@@ -23217,8 +22859,7 @@ if ((o = fn()).done) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for assignment expression narrowing, got: {:?}",
-        codes
+        "Unexpected TS2322 for assignment expression narrowing, got: {codes:?}"
     );
 }
 
@@ -23265,8 +22906,7 @@ const bb: 0 = b;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for destructuring assignment, got: {:?}",
-        codes
+        "Unexpected TS2322 for destructuring assignment, got: {codes:?}"
     );
 }
 
@@ -23311,8 +22951,7 @@ if (a in c) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for in-operator narrowing, got: {:?}",
-        codes
+        "Unexpected TS2322 for in-operator narrowing, got: {codes:?}"
     );
 }
 
@@ -23357,8 +22996,7 @@ function f<T>(x: T) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for instanceof narrowing, got: {:?}",
-        codes
+        "Unexpected TS2322 for instanceof narrowing, got: {codes:?}"
     );
 }
 
@@ -23400,8 +23038,7 @@ if (o?.x === 1) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "Unexpected TS2322 for optional-chain discriminant narrowing, got: {:?}",
-        codes
+        "Unexpected TS2322 for optional-chain discriminant narrowing, got: {codes:?}"
     );
 }
 
@@ -24378,8 +24015,7 @@ function maybeReturn(x: boolean) {
 
     assert!(
         ts7030_errors.is_empty(),
-        "Expected no TS7030 errors, got: {:?}",
-        ts7030_errors
+        "Expected no TS7030 errors, got: {ts7030_errors:?}"
     );
 }
 
@@ -25547,8 +25183,7 @@ function extract<T>(x: Extract<T, typeof identity>): T {
 
     assert!(
         ts2304_for_type_params.is_empty(),
-        "Should not report TS2304 for type parameter T in type query. Found errors: {:?}",
-        ts2304_for_type_params
+        "Should not report TS2304 for type parameter T in type query. Found errors: {ts2304_for_type_params:?}"
     );
 }
 
@@ -25591,8 +25226,7 @@ function f1<T extends string | undefined>(x: T, y: { a: T }, z: [T]): string {
 
     assert!(
         !codes.contains(&2304),
-        "Should not report TS2304 for constrained type parameter T. Found errors: {:?}",
-        ts2304_errors
+        "Should not report TS2304 for constrained type parameter T. Found errors: {ts2304_errors:?}"
     );
 }
 
@@ -25643,8 +25277,7 @@ function g1<T extends Box<T> | undefined>(x: T) {
 
     assert!(
         !codes.contains(&2304),
-        "Should not report TS2304 for self-referential type constraint T extends Box<T>. Found errors: {:?}",
-        ts2304_errors
+        "Should not report TS2304 for self-referential type constraint T extends Box<T>. Found errors: {ts2304_errors:?}"
     );
 }
 
@@ -25839,8 +25472,7 @@ var instance = MyClass();
     assert!(
         first_error_msg.contains("is not callable")
             || first_error_msg.contains("Did you mean to include 'new'"),
-        "TS2348 message should mention 'is not callable' or 'Did you mean to include new', got: {}",
-        first_error_msg
+        "TS2348 message should mention 'is not callable' or 'Did you mean to include new', got: {first_error_msg}"
     );
 }
 
@@ -26503,8 +26135,7 @@ mixed(42, 99, 100);
     let first_error_msg = &ts2554_errors[0].message_text;
     assert!(
         first_error_msg.contains("Expected") && first_error_msg.contains("arguments"),
-        "TS2554 message should mention expected arguments, got: {}",
-        first_error_msg
+        "TS2554 message should mention expected arguments, got: {first_error_msg}"
     );
 }
 
@@ -26636,13 +26267,11 @@ bar(1);
     let first_error_msg = &ts2554_errors[0].message_text;
     assert!(
         first_error_msg.contains("Expected") && first_error_msg.contains("arguments"),
-        "TS2554 message should mention expected arguments, got: {}",
-        first_error_msg
+        "TS2554 message should mention expected arguments, got: {first_error_msg}"
     );
     assert!(
         !first_error_msg.contains("at least"),
-        "TS2554 message should NOT say 'at least', got: {}",
-        first_error_msg
+        "TS2554 message should NOT say 'at least', got: {first_error_msg}"
     );
 }
 
@@ -26700,8 +26329,7 @@ baz("hello");
     let first_error_msg = &ts2345_errors[0].message_text;
     assert!(
         first_error_msg.contains("not assignable") || first_error_msg.contains("Argument"),
-        "TS2345 message should mention 'not assignable' or 'Argument', got: {}",
-        first_error_msg
+        "TS2345 message should mention 'not assignable' or 'Argument', got: {first_error_msg}"
     );
 }
 
@@ -26768,8 +26396,7 @@ const noAnnotation = () => {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         1,
-        "Expected 1 TS2366 error for arrow function missing return, got: {:?}",
-        codes
+        "Expected 1 TS2366 error for arrow function missing return, got: {codes:?}"
     );
 }
 
@@ -26831,8 +26458,7 @@ const noAnnotation = function() {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         1,
-        "Expected 1 TS2366 error for function expression missing return, got: {:?}",
-        codes
+        "Expected 1 TS2366 error for function expression missing return, got: {codes:?}"
     );
 }
 
@@ -26883,8 +26509,7 @@ function outer(): (x: number) => string {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         1,
-        "Expected 1 TS2366 error for nested arrow function missing return, got: {:?}",
-        codes
+        "Expected 1 TS2366 error for nested arrow function missing return, got: {codes:?}"
     );
 }
 
@@ -26946,8 +26571,7 @@ const switchWithDefault = (value: number): string => {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         1,
-        "Expected 1 TS2366 error for arrow function with switch missing default, got: {:?}",
-        codes
+        "Expected 1 TS2366 error for arrow function with switch missing default, got: {codes:?}"
     );
 }
 
@@ -26997,8 +26621,7 @@ const groupedSwitchReturns = (value: string | number): number => {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         0,
-        "Expected 0 TS2366 errors for grouped switch cases with full returns, got: {:?}",
-        codes
+        "Expected 0 TS2366 errors for grouped switch cases with full returns, got: {codes:?}"
     );
 }
 
@@ -27064,8 +26687,7 @@ const tryFinallyFallthrough = (): number => {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         2,
-        "Expected 2 TS2366 errors for arrow functions with try/catch fallthrough, got: {:?}",
-        codes
+        "Expected 2 TS2366 errors for arrow functions with try/catch fallthrough, got: {codes:?}"
     );
 }
 
@@ -27125,8 +26747,7 @@ function test3(): string {
     assert_eq!(
         codes.iter().filter(|&&c| c == 7027).count(),
         3,
-        "Expected 3 TS7027 errors for unreachable code after return, got: {:?}",
-        codes
+        "Expected 3 TS7027 errors for unreachable code after return, got: {codes:?}"
     );
 }
 
@@ -27178,8 +26799,7 @@ function test2(): number {
     assert_eq!(
         codes.iter().filter(|&&c| c == 7027).count(),
         2,
-        "Expected 2 TS7027 errors for unreachable code after throw, got: {:?}",
-        codes
+        "Expected 2 TS7027 errors for unreachable code after throw, got: {codes:?}"
     );
 }
 
@@ -27233,8 +26853,7 @@ function test2(): void {
     assert_eq!(
         codes.iter().filter(|&&c| c == 7027).count(),
         2,
-        "Expected 2 TS7027 errors for unreachable code after never expression, got: {:?}",
-        codes
+        "Expected 2 TS7027 errors for unreachable code after never expression, got: {codes:?}"
     );
 }
 
@@ -27299,8 +26918,7 @@ function test3(x: number): number {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         0,
-        "Expected 0 TS2366 errors when all paths return, got: {:?}",
-        codes
+        "Expected 0 TS2366 errors when all paths return, got: {codes:?}"
     );
 }
 
@@ -27353,8 +26971,7 @@ function test2(x: number): number {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         0,
-        "Expected 0 TS2366 errors with early returns, got: {:?}",
-        codes
+        "Expected 0 TS2366 errors with early returns, got: {codes:?}"
     );
 }
 
@@ -27411,8 +27028,7 @@ function test3(x: number): number {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         0,
-        "Expected 0 TS2366 errors when throw is used as exit, got: {:?}",
-        codes
+        "Expected 0 TS2366 errors when throw is used as exit, got: {codes:?}"
     );
 }
 
@@ -27462,8 +27078,7 @@ class MyClass {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2366).count(),
         0,
-        "Expected 0 TS2366 errors for function overloads, got: {:?}",
-        codes
+        "Expected 0 TS2366 errors for function overloads, got: {codes:?}"
     );
 }
 
@@ -27527,8 +27142,7 @@ const arrowPromise = async (): Promise<string> => "test";
     assert_eq!(
         codes.iter().filter(|&&c| c == 2705).count(),
         4,
-        "Expected 4 TS2705 errors for async functions with non-Promise return types, got: {:?}",
-        codes
+        "Expected 4 TS2705 errors for async functions with non-Promise return types, got: {codes:?}"
     );
 }
 
@@ -27575,8 +27189,7 @@ class DuplicateProperties {
     assert_eq!(
         codes.iter().filter(|&&c| c == 2300).count(),
         1,
-        "Expected 1 TS2300 error for duplicate class members (on second property), got: {:?}",
-        codes
+        "Expected 1 TS2300 error for duplicate class members (on second property), got: {codes:?}"
     );
 }
 
@@ -27627,8 +27240,7 @@ const obj = {
     assert_eq!(
         codes.iter().filter(|&&c| c == 1117).count(),
         1,
-        "Expected 1 TS1117 error for duplicate object literal properties, got: {:?}",
-        codes
+        "Expected 1 TS1117 error for duplicate object literal properties, got: {codes:?}"
     );
 }
 
@@ -27689,8 +27301,7 @@ const obj2 = {
     assert_eq!(
         codes.iter().filter(|&&c| c == 1117).count(),
         3,
-        "Expected 3 TS1117 errors for duplicate object literal properties, got: {:?}",
-        codes
+        "Expected 3 TS1117 errors for duplicate object literal properties, got: {codes:?}"
     );
 }
 
@@ -27803,8 +27414,7 @@ const prop = win.myCustomProperty;
     // Should not have TS2304 (Cannot find name) for Window or myCustomProperty
     assert!(
         !codes.contains(&diagnostic_codes::CANNOT_FIND_NAME),
-        "Unexpected TS2304 for global augmentation interface, got: {:?}",
-        codes
+        "Unexpected TS2304 for global augmentation interface, got: {codes:?}"
     );
 }
 
@@ -29329,7 +28939,7 @@ class Foo {
 }
 
 /// Test that strictPropertyInitialization: false suppresses TS2564 even when strict: true
-/// Regression test: apply_strict_defaults was clobbering individual overrides
+/// Regression test: `apply_strict_defaults` was clobbering individual overrides
 #[test]
 fn test_ts2564_strict_property_init_false_suppresses_error() {
     use crate::parser::ParserState;
@@ -29800,21 +29410,18 @@ function process(node: ts.Node): void {}
     // Should have exactly 1 TS2307 for the unresolved module
     assert!(
         ts2307_count == 1,
-        "Expected exactly 1 TS2307 for unresolved module 'typescript', got {} (all codes: {:?})",
-        ts2307_count,
-        codes
+        "Expected exactly 1 TS2307 for unresolved module 'typescript', got {ts2307_count} (all codes: {codes:?})"
     );
 
     // Should NOT have any TS2304 errors - uses of ts.X should be silently ANY
     // because the module is unresolved (TS2307 was already emitted)
     assert_eq!(
         ts2304_count, 0,
-        "Should not emit TS2304 for types from unresolved namespace import, got {} TS2304 errors. All codes: {:?}",
-        ts2304_count, codes
+        "Should not emit TS2304 for types from unresolved namespace import, got {ts2304_count} TS2304 errors. All codes: {codes:?}"
     );
 }
 
-/// Test APISample-like pattern with noImplicitAny - simulates compiler/APISample_Watch.ts
+/// Test APISample-like pattern with noImplicitAny - simulates `compiler/APISample_Watch.ts`
 /// Expected: 1 TS2307 (module), multiple TS7006 (implicit any params)
 /// Note: We don't include `console.log` as that would emit TS2304 since console
 /// isn't available without lib.d.ts
@@ -29889,24 +29496,21 @@ function createProgram(
     // Should have exactly 1 TS2307 for the unresolved module
     assert_eq!(
         ts2307_count, 1,
-        "Expected 1 TS2307 for unresolved module, got {}. All codes: {:?}",
-        ts2307_count, codes
+        "Expected 1 TS2307 for unresolved module, got {ts2307_count}. All codes: {codes:?}"
     );
 
     // Should NOT have any TS2304 errors from ts.X references
     // (the module is unresolved, so ts.X should silently return ANY)
     assert_eq!(
         ts2304_count, 0,
-        "Should not emit extra TS2304 for types from unresolved namespace import. All codes: {:?}",
-        codes
+        "Should not emit extra TS2304 for types from unresolved namespace import. All codes: {codes:?}"
     );
 
     // Should have TS7006 for parameters without type annotations
     // 3 parameters: callback, reportDiagnostic, reportWatchStatus
     assert_eq!(
         ts7006_count, 3,
-        "Expected 3 TS7006 for implicit any parameters. All codes: {:?}",
-        codes
+        "Expected 3 TS7006 for implicit any parameters. All codes: {codes:?}"
     );
 }
 
@@ -29955,8 +29559,7 @@ const result = str - 1;  // TS2362: left-hand side must be number/bigint/enum
 
     assert_eq!(
         ts2362_count, 1,
-        "Expected 1 TS2362 for string - number. All codes: {:?}",
-        codes
+        "Expected 1 TS2362 for string - number. All codes: {codes:?}"
     );
 }
 
@@ -30002,8 +29605,7 @@ const result = num - str;  // TS2363: right-hand side must be number/bigint/enum
 
     assert_eq!(
         ts2363_count, 1,
-        "Expected 1 TS2363 for number - string. All codes: {:?}",
-        codes
+        "Expected 1 TS2363 for number - string. All codes: {codes:?}"
     );
 }
 
@@ -30053,13 +29655,11 @@ const result = a * b;  // TS2362 and TS2363: both operands invalid
 
     assert_eq!(
         ts2362_count, 1,
-        "Expected 1 TS2362 for left string operand. All codes: {:?}",
-        codes
+        "Expected 1 TS2362 for left string operand. All codes: {codes:?}"
     );
     assert_eq!(
         ts2363_count, 1,
-        "Expected 1 TS2363 for right string operand. All codes: {:?}",
-        codes
+        "Expected 1 TS2363 for right string operand. All codes: {codes:?}"
     );
 }
 
@@ -30112,13 +29712,11 @@ const result4 = a % b;
 
     assert_eq!(
         ts2362_count, 0,
-        "Expected no TS2362 errors for valid number arithmetic. All codes: {:?}",
-        codes
+        "Expected no TS2362 errors for valid number arithmetic. All codes: {codes:?}"
     );
     assert_eq!(
         ts2363_count, 0,
-        "Expected no TS2363 errors for valid number arithmetic. All codes: {:?}",
-        codes
+        "Expected no TS2363 errors for valid number arithmetic. All codes: {codes:?}"
     );
 }
 
@@ -30169,13 +29767,11 @@ const result3 = anyVal / anyVal;
 
     assert_eq!(
         ts2362_count, 0,
-        "Expected no TS2362 errors when using 'any' type. All codes: {:?}",
-        codes
+        "Expected no TS2362 errors when using 'any' type. All codes: {codes:?}"
     );
     assert_eq!(
         ts2363_count, 0,
-        "Expected no TS2363 errors when using 'any' type. All codes: {:?}",
-        codes
+        "Expected no TS2363 errors when using 'any' type. All codes: {codes:?}"
     );
 }
 
@@ -30228,13 +29824,11 @@ const result4 = a % b;
 
     assert_eq!(
         ts2362_count, 0,
-        "Expected no TS2362 errors for valid bigint arithmetic. All codes: {:?}",
-        codes
+        "Expected no TS2362 errors for valid bigint arithmetic. All codes: {codes:?}"
     );
     assert_eq!(
         ts2363_count, 0,
-        "Expected no TS2363 errors for valid bigint arithmetic. All codes: {:?}",
-        codes
+        "Expected no TS2363 errors for valid bigint arithmetic. All codes: {codes:?}"
     );
 }
 
@@ -30297,13 +29891,11 @@ const result = a - b;
 
     assert_eq!(
         ts2362_count, 0,
-        "Expected no TS2362 errors for valid enum arithmetic. All codes: {:?}",
-        codes
+        "Expected no TS2362 errors for valid enum arithmetic. All codes: {codes:?}"
     );
     assert_eq!(
         ts2363_count, 0,
-        "Expected no TS2363 errors for valid enum arithmetic. All codes: {:?}",
-        codes
+        "Expected no TS2363 errors for valid enum arithmetic. All codes: {codes:?}"
     );
 }
 
@@ -30348,8 +29940,7 @@ const result = flag - 1;  // TS2362: boolean is not a valid arithmetic operand
 
     assert_eq!(
         ts2362_count, 1,
-        "Expected 1 TS2362 for boolean - number. All codes: {:?}",
-        codes
+        "Expected 1 TS2362 for boolean - number. All codes: {codes:?}"
     );
 }
 
@@ -30394,8 +29985,7 @@ const result = 10 / obj;  // TS2363: object is not a valid arithmetic operand
 
     assert_eq!(
         ts2363_count, 1,
-        "Expected 1 TS2363 for number / object. All codes: {:?}",
-        codes
+        "Expected 1 TS2363 for number / object. All codes: {codes:?}"
     );
 }
 
@@ -30444,8 +30034,7 @@ const r4 = str % num;  // TS2362
 
     assert_eq!(
         ts2362_count, 4,
-        "Expected 4 TS2362 errors for all arithmetic operators. All codes: {:?}",
-        codes
+        "Expected 4 TS2362 errors for all arithmetic operators. All codes: {codes:?}"
     );
 }
 
@@ -30497,8 +30086,7 @@ for (const x of num) {
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for for-of on number. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for for-of on number. All codes: {codes:?}"
     );
 }
 
@@ -30546,8 +30134,7 @@ for (const x of arr) {
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for for-of on array. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for for-of on array. All codes: {codes:?}"
     );
 }
 
@@ -30595,8 +30182,7 @@ for (const ch of str) {
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for for-of on string. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for for-of on string. All codes: {codes:?}"
     );
 }
 
@@ -30642,8 +30228,7 @@ const arr = [...num];
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for spread of number. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for spread of number. All codes: {codes:?}"
     );
 }
 
@@ -30689,8 +30274,7 @@ const arr2 = [...arr1];
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for spread of array. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for spread of array. All codes: {codes:?}"
     );
 }
 
@@ -30737,8 +30321,7 @@ foo(...obj);
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for spread of object in call. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for spread of object in call. All codes: {codes:?}"
     );
 }
 
@@ -30786,8 +30369,7 @@ for (const x of b) {
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for for-of on boolean. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for for-of on boolean. All codes: {codes:?}"
     );
 }
 
@@ -30835,8 +30417,7 @@ for (const x of tuple) {
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for for-of on tuple. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for for-of on tuple. All codes: {codes:?}"
     );
 }
 
@@ -30882,8 +30463,7 @@ const [a, b] = num;
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for array destructuring of number. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for array destructuring of number. All codes: {codes:?}"
     );
 }
 
@@ -30929,8 +30509,7 @@ const [a, b] = arr;
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for array destructuring of array. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for array destructuring of array. All codes: {codes:?}"
     );
 }
 
@@ -30980,8 +30559,7 @@ const [a, b] = num;  // TS2488: number is not iterable
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for array destructuring of number. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for array destructuring of number. All codes: {codes:?}"
     );
 }
 
@@ -31027,8 +30605,7 @@ const [x] = flag;  // TS2488: boolean is not iterable
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for array destructuring of boolean. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for array destructuring of boolean. All codes: {codes:?}"
     );
 }
 
@@ -31074,8 +30651,7 @@ const [x, y] = obj;  // TS2488: object is not iterable
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for array destructuring of object. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for array destructuring of object. All codes: {codes:?}"
     );
 }
 
@@ -31121,8 +30697,7 @@ const [a, b, c] = arr;  // OK: array is iterable
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for array destructuring of array. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for array destructuring of array. All codes: {codes:?}"
     );
 }
 
@@ -31168,8 +30743,7 @@ const [a, b, c] = str;  // OK: string is iterable
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for array destructuring of string. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for array destructuring of string. All codes: {codes:?}"
     );
 }
 
@@ -31216,8 +30790,7 @@ const [a] = val;  // TS2488: union with non-iterable member is not iterable
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for array destructuring of union with non-iterable member. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for array destructuring of union with non-iterable member. All codes: {codes:?}"
     );
 }
 
@@ -31263,8 +30836,7 @@ const [a, b] = tuple;  // OK: tuple is iterable
 
     assert_eq!(
         ts2488_count, 0,
-        "Expected 0 TS2488 errors for array destructuring of tuple. All codes: {:?}",
-        codes
+        "Expected 0 TS2488 errors for array destructuring of tuple. All codes: {codes:?}"
     );
 }
 
@@ -31310,8 +30882,7 @@ const [[a]] = [num];  // TS2488: inner array contains non-iterable number
 
     assert_eq!(
         ts2488_count, 1,
-        "Expected 1 TS2488 error for nested array destructuring of non-iterable. All codes: {:?}",
-        codes
+        "Expected 1 TS2488 error for nested array destructuring of non-iterable. All codes: {codes:?}"
     );
 }
 
@@ -31363,8 +30934,7 @@ async function test() {
 
     assert_eq!(
         ts2504_count, 1,
-        "Expected 1 TS2504 error for for-await-of on number. All codes: {:?}",
-        codes
+        "Expected 1 TS2504 error for for-await-of on number. All codes: {codes:?}"
     );
 }
 
@@ -31412,8 +30982,7 @@ async function test() {
 
     assert_eq!(
         ts2504_count, 0,
-        "Expected 0 TS2504 errors for for-await-of on array (sync iterable is accepted). All codes: {:?}",
-        codes
+        "Expected 0 TS2504 errors for for-await-of on array (sync iterable is accepted). All codes: {codes:?}"
     );
 }
 
@@ -31461,8 +31030,7 @@ async function test() {
 
     assert_eq!(
         ts2504_count, 1,
-        "Expected 1 TS2504 error for for-await-of on boolean. All codes: {:?}",
-        codes
+        "Expected 1 TS2504 error for for-await-of on boolean. All codes: {codes:?}"
     );
 }
 
@@ -31510,8 +31078,7 @@ async function test() {
 
     assert_eq!(
         ts2504_count, 1,
-        "Expected 1 TS2504 error for for-await-of on object. All codes: {:?}",
-        codes
+        "Expected 1 TS2504 error for for-await-of on object. All codes: {codes:?}"
     );
 }
 
@@ -32005,8 +31572,7 @@ const handler: Handler = ({ x, y }) => {
 
     assert!(
         type_errors.is_empty(),
-        "Expected no TS2322 errors when destructuring params get contextual types. Got: {:?}",
-        type_errors
+        "Expected no TS2322 errors when destructuring params get contextual types. Got: {type_errors:?}"
     );
 }
 
@@ -32060,8 +31626,7 @@ const handler: Handler = ([first, second]) => {
 
     assert!(
         type_errors.is_empty(),
-        "Expected no TS2322 errors when array destructuring params get contextual types. Got: {:?}",
-        type_errors
+        "Expected no TS2322 errors when array destructuring params get contextual types. Got: {type_errors:?}"
     );
 }
 
@@ -32388,8 +31953,7 @@ class Valid {
 
     assert!(
         ts2322_errors.is_empty(),
-        "Expected no TS2322 errors for valid assignments. Got: {:?}",
-        ts2322_errors
+        "Expected no TS2322 errors for valid assignments. Got: {ts2322_errors:?}"
     );
 }
 
@@ -32677,8 +32241,7 @@ foo(undeclaredArg);
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in function call, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in function call, got: {codes:?}"
     );
 }
 
@@ -32713,8 +32276,7 @@ const result = undeclaredValue + 1;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in binary expression, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in binary expression, got: {codes:?}"
     );
 }
 
@@ -32754,8 +32316,7 @@ function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for out-of-scope block variable, got: {:?}",
-        codes
+        "Expected TS2304 for out-of-scope block variable, got: {codes:?}"
     );
 }
 
@@ -32795,8 +32356,7 @@ const result = myVarible + 1;
         || codes.contains(&diagnostic_codes::CANNOT_FIND_NAME_DID_YOU_MEAN);
     assert!(
         has_cannot_find,
-        "Expected TS2304 or TS2552 for typo in variable name, got: {:?}",
-        codes
+        "Expected TS2304 or TS2552 for typo in variable name, got: {codes:?}"
     );
 }
 
@@ -32833,8 +32393,7 @@ function getValue(): number {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in return, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in return, got: {codes:?}"
     );
 }
 
@@ -32869,8 +32428,7 @@ const arr = [1, 2, ...undeclaredArray];
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in array spread, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in array spread, got: {codes:?}"
     );
 }
 
@@ -32908,8 +32466,7 @@ const obj = {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in object literal, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in object literal, got: {codes:?}"
     );
 }
 
@@ -32944,8 +32501,7 @@ const result = true ? undeclaredTrue : 0;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in conditional, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in conditional, got: {codes:?}"
     );
 }
 
@@ -32980,8 +32536,7 @@ class Child extends MissingParent {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared class in extends clause, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared class in extends clause, got: {codes:?}"
     );
 }
 
@@ -33016,8 +32571,7 @@ class MyClass implements MissingInterface {}
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared interface in implements clause, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared interface in implements clause, got: {codes:?}"
     );
 }
 
@@ -33052,8 +32606,7 @@ const msg = `Hello ${undeclaredName}!`;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in template literal, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in template literal, got: {codes:?}"
     );
 }
 
@@ -33090,8 +32643,7 @@ for (const item of undeclaredIterable) {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2304),
-        "Expected TS2304 for undeclared variable in for-of loop, got: {:?}",
-        codes
+        "Expected TS2304 for undeclared variable in for-of loop, got: {codes:?}"
     );
 }
 
@@ -33126,8 +32678,7 @@ const result = declaredVar + 1;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for declared variable, got: {:?}",
-        codes
+        "Unexpected TS2304 for declared variable, got: {codes:?}"
     );
 }
 
@@ -33166,8 +32717,7 @@ function hoistedFn() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for hoisted function, got: {:?}",
-        codes
+        "Unexpected TS2304 for hoisted function, got: {codes:?}"
     );
 }
 
@@ -33204,8 +32754,7 @@ function test() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2304),
-        "Unexpected TS2304 for var used after declaration, got: {:?}",
-        codes
+        "Unexpected TS2304 for var used after declaration, got: {codes:?}"
     );
 }
 
@@ -33247,8 +32796,7 @@ function foo(x: string | number): void {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2300),
-        "Function overloads should NOT emit TS2300, got: {:?}",
-        codes
+        "Function overloads should NOT emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33288,8 +32836,7 @@ const x: Foo = { a: "hello", b: 42 };
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2300),
-        "Interface merging should NOT emit TS2300, got: {:?}",
-        codes
+        "Interface merging should NOT emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33330,8 +32877,7 @@ function MyUtils() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2300),
-        "Namespace + function merging should NOT emit TS2300, got: {:?}",
-        codes
+        "Namespace + function merging should NOT emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33372,8 +32918,7 @@ class MyNamespace {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2300),
-        "Namespace + class merging should NOT emit TS2300, got: {:?}",
-        codes
+        "Namespace + class merging should NOT emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33414,8 +32959,7 @@ class MyInterface {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2300),
-        "Class + interface merging should NOT emit TS2300, got: {:?}",
-        codes
+        "Class + interface merging should NOT emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33450,8 +32994,7 @@ let x = 2;
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2451),
-        "Duplicate variable declarations should emit TS2451, got: {:?}",
-        codes
+        "Duplicate variable declarations should emit TS2451, got: {codes:?}"
     );
 }
 
@@ -33487,8 +33030,7 @@ var x = 2;
     // Duplicate var declarations should NOT emit TS2300 (they are merged by hoisting)
     assert!(
         !codes.contains(&2300),
-        "Duplicate var declarations should be allowed, got: {:?}",
-        codes
+        "Duplicate var declarations should be allowed, got: {codes:?}"
     );
 }
 
@@ -33527,8 +33069,7 @@ class MyClass {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2300),
-        "Duplicate class declarations should emit TS2300, got: {:?}",
-        codes
+        "Duplicate class declarations should emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33616,8 +33157,7 @@ class MyClass {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2300),
-        "Static and instance members with same name should NOT emit TS2300, got: {:?}",
-        codes
+        "Static and instance members with same name should NOT emit TS2300, got: {codes:?}"
     );
 }
 
@@ -33679,13 +33219,12 @@ const obj: Object = {};
         .collect();
     assert!(
         ts2318_errors.is_empty(),
-        "Should not emit TS2318 for Array/Object when libs are properly merged, got: {:?}",
-        ts2318_errors
+        "Should not emit TS2318 for Array/Object when libs are properly merged, got: {ts2318_errors:?}"
     );
 }
 
 /// Test that after lib symbol merge, symbol lookups return consistent data
-/// even when lib binders had colliding SymbolIds.
+/// even when lib binders had colliding `SymbolIds`.
 #[test]
 fn test_lib_merge_consistent_symbol_resolution() {
     use crate::binder::LibContext;
@@ -33762,7 +33301,7 @@ fn test_lib_merge_consistent_symbol_resolution() {
 /// Test that a type alias gets a DefId created
 ///
 /// This is the core of Phase 4.2.1: verify that type aliases
-/// have DefIds created for them.
+/// have `DefIds` created for them.
 #[test]
 fn test_selective_migration_type_alias_has_def_id() {
     let source = r#"
@@ -33895,7 +33434,7 @@ const p: Point = { x: 1, y: 2 };
 
 /// Test that a generic type alias gets a DefId created
 ///
-/// Generic type aliases should also get DefIds.
+/// Generic type aliases should also get `DefIds`.
 #[test]
 fn test_selective_migration_generic_type_alias_has_def_id() {
     let source = r#"
@@ -33942,15 +33481,15 @@ const x: Box<string> = { value: "hello" };
 /// work correctly with DefId-based resolution.
 ///
 /// Phase 4.2.1 PROGRESS:
-/// ✅ Implemented def_type_params cache in CheckerContext
-/// ✅ Implemented get_lazy_type_params() in TypeResolver
+/// ✅ Implemented `def_type_params` cache in `CheckerContext`
+/// ✅ Implemented `get_lazy_type_params()` in `TypeResolver`
 /// ✅ Type parameters are stored when resolving type aliases/interfaces/classes
-/// ✅ ApplicationEvaluator in solver correctly handles Lazy(DefId) with type params
+/// ✅ `ApplicationEvaluator` in solver correctly handles Lazy(DefId) with type params
 ///
 /// DIAGNOSTIC ISSUE:
 /// The type is displayed as "Lazy(1)<number>" in error messages instead of "List<number>".
 /// This is a DISPLAY issue, not a functional issue. The Application IS being evaluated
-/// internally (the ApplicationEvaluator works correctly), but the diagnostic shows
+/// internally (the `ApplicationEvaluator` works correctly), but the diagnostic shows
 /// the unevaluated form.
 ///
 /// The fix needed: Update diagnostic generation to display the type name instead of
@@ -34277,8 +33816,7 @@ fn test_ts2502_repro_circular_var() {
     let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
     assert!(
         diagnostics.iter().any(|d| d.code == 2502),
-        "Expected TS2502 for circular reference, got: {:?}",
-        diagnostics
+        "Expected TS2502 for circular reference, got: {diagnostics:?}"
     );
 }
 
@@ -34312,8 +33850,7 @@ fn test_ts2451_global_redeclaration() {
     let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
     assert!(
         diagnostics.iter().any(|d| d.code == 2451),
-        "Expected TS2451 for global redeclaration, got: {:?}",
-        diagnostics
+        "Expected TS2451 for global redeclaration, got: {diagnostics:?}"
     );
 }
 
@@ -34342,8 +33879,7 @@ fn test_ts2313_simple_circular_type_alias() {
     let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
     assert!(
         diagnostics.iter().any(|d| d.code == 2313 || d.code == 2456),
-        "Expected TS2313/TS2456 for simple circular type alias, got: {:?}",
-        diagnostics
+        "Expected TS2313/TS2456 for simple circular type alias, got: {diagnostics:?}"
     );
 }
 
@@ -34375,8 +33911,7 @@ fn test_ts2313_indirect_circular_type_alias() {
     let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
     assert!(
         diagnostics.iter().any(|d| d.code == 2313 || d.code == 2456),
-        "Expected TS2313/TS2456 for indirect circular type alias, got: {:?}",
-        diagnostics
+        "Expected TS2313/TS2456 for indirect circular type alias, got: {diagnostics:?}"
     );
 }
 
@@ -34408,8 +33943,7 @@ fn test_ts2310_circular_interface_inheritance() {
     let diagnostics: Vec<_> = checker.ctx.diagnostics.iter().collect();
     assert!(
         diagnostics.iter().any(|d| d.code == 2310),
-        "Expected TS2310 for circular interface inheritance, got: {:?}",
-        diagnostics
+        "Expected TS2310 for circular interface inheritance, got: {diagnostics:?}"
     );
 }
 

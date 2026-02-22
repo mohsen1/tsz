@@ -598,7 +598,7 @@ mod tests {
 
     fn create_test_path(name: &str) -> PathBuf {
         // Use a temp directory structure for testing
-        PathBuf::from(format!("/tmp/test_modules/{}", name))
+        PathBuf::from(format!("/tmp/test_modules/{name}"))
     }
 
     #[test]
@@ -690,15 +690,11 @@ mod tests {
         // b comes before a (since a depends on b)
         assert!(
             pos_c < pos_b,
-            "c (pos {}) should come before b (pos {}) since b depends on c",
-            pos_c,
-            pos_b
+            "c (pos {pos_c}) should come before b (pos {pos_b}) since b depends on c"
         );
         assert!(
             pos_b < pos_a,
-            "b (pos {}) should come before a (pos {}) since a depends on b",
-            pos_b,
-            pos_a
+            "b (pos {pos_b}) should come before a (pos {pos_a}) since a depends on b"
         );
     }
 

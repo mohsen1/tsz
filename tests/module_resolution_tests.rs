@@ -22,7 +22,7 @@ use tsz_solver::TypeInterner;
 // Test Helpers
 // =============================================================================
 
-/// Helper to parse, bind, and check a single file with module_exports pre-populated.
+/// Helper to parse, bind, and check a single file with `module_exports` pre-populated.
 /// Returns the checker diagnostics as (code, message) pairs.
 ///
 /// `module_exports` maps module specifier -> list of export names.
@@ -51,11 +51,11 @@ fn check_with_module_exports(
         // Generate a source with all the exports
         let export_source: String = exports
             .iter()
-            .map(|(name, _)| format!("export const {} = 0;", name))
+            .map(|(name, _)| format!("export const {name} = 0;"))
             .collect::<Vec<_>>()
             .join("\n");
 
-        let mut export_parser = ParserState::new(format!("{}.ts", module_name), export_source);
+        let mut export_parser = ParserState::new(format!("{module_name}.ts"), export_source);
         let export_root = export_parser.parse_source_file();
         let mut export_binder = BinderState::new();
         export_binder.bind_source_file(export_parser.get_arena(), export_root);
@@ -99,7 +99,7 @@ fn check_with_module_exports(
         .collect()
 }
 
-/// Helper similar to check_with_module_exports but allows specifying custom source
+/// Helper similar to `check_with_module_exports` but allows specifying custom source
 /// for each module. This is useful for testing with class exports, namespace patterns, etc.
 pub fn check_with_module_sources(
     source: &str,
@@ -121,7 +121,7 @@ pub fn check_with_module_sources(
     // Pre-populate module_exports by parsing the provided module sources
     for (module_name, module_source) in &module_sources {
         let mut export_parser =
-            ParserState::new(format!("{}.ts", module_name), module_source.to_string());
+            ParserState::new(format!("{module_name}.ts"), module_source.to_string());
         let export_root = export_parser.parse_source_file();
         assert!(
             export_parser.get_diagnostics().is_empty(),
@@ -166,7 +166,7 @@ pub fn check_with_module_sources(
         .collect()
 }
 
-/// Helper to parse, bind, and check a single file with resolved_modules set.
+/// Helper to parse, bind, and check a single file with `resolved_modules` set.
 /// This simulates the CLI driver having resolved certain module specifiers.
 fn check_with_resolved_modules(
     source: &str,
@@ -215,8 +215,7 @@ fn check_with_resolved_modules(
             crate::checker::context::ResolutionError {
                 code: TS2882,
                 message: format!(
-                    "Cannot find module or type declarations for side-effect import of '{}'.",
-                    module_name
+                    "Cannot find module or type declarations for side-effect import of '{module_name}'."
                 ),
             },
         );
@@ -296,8 +295,7 @@ fn test_es_named_import_resolved_module() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Should not emit TS2307 for resolved module, got: {:?}",
-        diags
+        "Should not emit TS2307 for resolved module, got: {diags:?}"
     );
 }
 
@@ -307,8 +305,7 @@ fn test_es_named_import_unresolved_module() {
     let diags = check_with_resolved_modules(source, "main.ts", vec![], vec![]);
     assert!(
         has_error_code(&diags, TS2307),
-        "Should emit TS2307 for unresolved module, got: {:?}",
-        diags
+        "Should emit TS2307 for unresolved module, got: {diags:?}"
     );
 }
 
@@ -318,8 +315,7 @@ fn test_es_default_import_resolved() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Default import should resolve, got: {:?}",
-        diags
+        "Default import should resolve, got: {diags:?}"
     );
 }
 
@@ -329,8 +325,7 @@ fn test_es_namespace_import_resolved() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Namespace import should resolve, got: {:?}",
-        diags
+        "Namespace import should resolve, got: {diags:?}"
     );
 }
 
@@ -353,8 +348,7 @@ fn test_import_equals_require_uses_export_equals_constructable_target() {
     let diags = check_with_module_sources(source, "main.ts", vec![("M", module_source)]);
     assert!(
         no_error_code(&diags, 2351),
-        "import=require should resolve to constructable export= target, got: {:?}",
-        diags
+        "import=require should resolve to constructable export= target, got: {diags:?}"
     );
 }
 
@@ -364,8 +358,7 @@ fn test_es_side_effect_import_resolved() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./polyfill"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Side-effect import should resolve, got: {:?}",
-        diags
+        "Side-effect import should resolve, got: {diags:?}"
     );
 }
 
@@ -377,8 +370,7 @@ fn test_es_side_effect_import_unresolved() {
     // (Changed from TS2307 after feat(checker): emit TS2882 for unresolvable side-effect imports)
     assert!(
         has_error_code(&diags, TS2882),
-        "Unresolved side-effect import should emit TS2882, got: {:?}",
-        diags
+        "Unresolved side-effect import should emit TS2882, got: {diags:?}"
     );
 }
 
@@ -388,8 +380,7 @@ fn test_es_type_only_import() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./types"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Type-only import should resolve, got: {:?}",
-        diags
+        "Type-only import should resolve, got: {diags:?}"
     );
 }
 
@@ -408,8 +399,7 @@ import { c } from "./mod-c";
     );
     assert!(
         no_error_code(&diags, TS2307),
-        "Multiple resolved imports should not error, got: {:?}",
-        diags
+        "Multiple resolved imports should not error, got: {diags:?}"
     );
 }
 
@@ -422,16 +412,14 @@ import { b } from "./missing";
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./exists"], vec![]);
     assert!(
         has_error_code(&diags, TS2307),
-        "Unresolved import should produce TS2307, got: {:?}",
-        diags
+        "Unresolved import should produce TS2307, got: {diags:?}"
     );
     // Verify the error is about the missing module specifically
     let ts2307_errors: Vec<_> = diags.iter().filter(|(c, _)| *c == TS2307).collect();
     assert_eq!(
         ts2307_errors.len(),
         1,
-        "Only one TS2307 should be emitted, got: {:?}",
-        ts2307_errors
+        "Only one TS2307 should be emitted, got: {ts2307_errors:?}"
     );
     assert!(
         ts2307_errors[0].1.contains("./missing"),
@@ -450,8 +438,7 @@ fn test_es_reexport_resolved() {
     let diags = check_with_resolved_modules(source, "barrel.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Re-export from resolved module should not error, got: {:?}",
-        diags
+        "Re-export from resolved module should not error, got: {diags:?}"
     );
 }
 
@@ -461,8 +448,7 @@ fn test_es_reexport_unresolved() {
     let diags = check_with_resolved_modules(source, "barrel.ts", vec![], vec![]);
     assert!(
         has_error_code(&diags, TS2307),
-        "Re-export from unresolved module should emit TS2307, got: {:?}",
-        diags
+        "Re-export from unresolved module should emit TS2307, got: {diags:?}"
     );
 }
 
@@ -472,8 +458,7 @@ fn test_es_wildcard_reexport_resolved() {
     let diags = check_with_resolved_modules(source, "barrel.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Wildcard re-export from resolved module should not error, got: {:?}",
-        diags
+        "Wildcard re-export from resolved module should not error, got: {diags:?}"
     );
 }
 
@@ -483,8 +468,7 @@ fn test_es_namespace_reexport_resolved() {
     let diags = check_with_resolved_modules(source, "barrel.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Namespace re-export from resolved module should not error, got: {:?}",
-        diags
+        "Namespace re-export from resolved module should not error, got: {diags:?}"
     );
 }
 
@@ -498,8 +482,7 @@ fn test_import_equals_require_resolved() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "import = require should resolve, got: {:?}",
-        diags
+        "import = require should resolve, got: {diags:?}"
     );
 }
 
@@ -509,8 +492,7 @@ fn test_import_equals_require_unresolved() {
     let diags = check_with_resolved_modules(source, "main.ts", vec![], vec![]);
     assert!(
         has_error_code(&diags, TS2307),
-        "Unresolved import = require should emit TS2307, got: {:?}",
-        diags
+        "Unresolved import = require should emit TS2307, got: {diags:?}"
     );
 }
 
@@ -546,8 +528,7 @@ fn test_import_equals_require_in_esm_emits_ts1202() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&TS1202),
-        "import = require in ESM should emit TS1202, got: {:?}",
-        codes
+        "import = require in ESM should emit TS1202, got: {codes:?}"
     );
 }
 
@@ -565,8 +546,7 @@ const x = Alias.value;
     // Should not have TS2503 (Cannot find namespace) since MyNamespace exists
     assert!(
         no_error_code(&diags, 2503),
-        "Namespace import should resolve, got: {:?}",
-        diags
+        "Namespace import should resolve, got: {diags:?}"
     );
 }
 
@@ -585,8 +565,7 @@ fn test_import_nonexistent_member_from_module() {
     );
     assert!(
         has_error_code(&diags, TS2305),
-        "Importing nonexistent member should emit TS2305, got: {:?}",
-        diags
+        "Importing nonexistent member should emit TS2305, got: {diags:?}"
     );
 }
 
@@ -601,13 +580,11 @@ fn test_import_existing_member_from_module() {
     );
     assert!(
         no_error_code(&diags, TS2305),
-        "Importing existing member should not emit TS2305, got: {:?}",
-        diags
+        "Importing existing member should not emit TS2305, got: {diags:?}"
     );
     assert!(
         no_error_code(&diags, TS2307),
-        "Module with exports should not emit TS2307, got: {:?}",
-        diags
+        "Module with exports should not emit TS2307, got: {diags:?}"
     );
 }
 
@@ -618,8 +595,7 @@ fn test_import_renamed_member() {
         check_with_module_exports(source, "main.ts", vec![("./utils", vec![("foo", 0)])], true);
     assert!(
         no_error_code(&diags, TS2305),
-        "Renamed import of existing member should not error, got: {:?}",
-        diags
+        "Renamed import of existing member should not error, got: {diags:?}"
     );
 }
 
@@ -630,8 +606,7 @@ fn test_import_renamed_nonexistent_member() {
         check_with_module_exports(source, "main.ts", vec![("./utils", vec![("foo", 0)])], true);
     assert!(
         has_error_code(&diags, TS2305),
-        "Renamed import of nonexistent member should emit TS2305, got: {:?}",
-        diags
+        "Renamed import of nonexistent member should emit TS2305, got: {diags:?}"
     );
 }
 
@@ -650,8 +625,7 @@ import { value } from "my-lib";
     let diags = check_single_file(source, "test.ts");
     assert!(
         no_error_code(&diags, TS2307),
-        "Declared module should prevent TS2307, got: {:?}",
-        diags
+        "Declared module should prevent TS2307, got: {diags:?}"
     );
 }
 
@@ -668,8 +642,7 @@ import { Config } from "my-lib";
     let diags = check_single_file(source, "test.ts");
     assert!(
         no_error_code(&diags, TS2307),
-        "Declared module with interface should prevent TS2307, got: {:?}",
-        diags
+        "Declared module with interface should prevent TS2307, got: {diags:?}"
     );
 }
 
@@ -1021,8 +994,7 @@ async function load() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./lazy-module"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Dynamic import of resolved module should not error, got: {:?}",
-        diags
+        "Dynamic import of resolved module should not error, got: {diags:?}"
     );
 }
 
@@ -1036,8 +1008,7 @@ async function load() {
     let diags = check_with_resolved_modules(source, "main.ts", vec![], vec![]);
     assert!(
         has_error_code(&diags, TS2307),
-        "Dynamic import of unresolved module should emit TS2307, got: {:?}",
-        diags
+        "Dynamic import of unresolved module should emit TS2307, got: {diags:?}"
     );
 }
 
@@ -1055,8 +1026,7 @@ async function load() {
     let diags = check_single_file(source, "main.ts");
     assert!(
         no_error_code(&diags, TS2307),
-        "Dynamic import of ambient module should not error, got: {:?}",
-        diags
+        "Dynamic import of ambient module should not error, got: {diags:?}"
     );
 }
 
@@ -1215,8 +1185,7 @@ export = myModule;
     let unexpected: Vec<_> = diags.iter().filter(|(c, _)| *c == TS2307).collect();
     assert!(
         unexpected.is_empty(),
-        "Export assignment should not produce TS2307, got: {:?}",
-        unexpected
+        "Export assignment should not produce TS2307, got: {unexpected:?}"
     );
 }
 
@@ -1232,8 +1201,7 @@ export = bar;
     let has_ts2309 = has_error_code(&diags, 2309);
     assert!(
         has_ts2309,
-        "export = with other exports should emit TS2309, got: {:?}",
-        diags
+        "export = with other exports should emit TS2309, got: {diags:?}"
     );
 }
 
@@ -1354,8 +1322,7 @@ fn test_import_with_no_clause() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./setup"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Side-effect import should resolve, got: {:?}",
-        diags
+        "Side-effect import should resolve, got: {diags:?}"
     );
 }
 
@@ -1371,9 +1338,7 @@ import { b } from "./missing";
     // Should only emit TS2307 once per unique specifier
     assert!(
         ts2307_count <= 2,
-        "Duplicate imports should not produce many TS2307 errors, got {} for: {:?}",
-        ts2307_count,
-        diags
+        "Duplicate imports should not produce many TS2307 errors, got {ts2307_count} for: {diags:?}"
     );
 }
 
@@ -1384,8 +1349,7 @@ fn test_import_without_unresolved_imports_flag() {
     let diags = check_with_module_exports(source, "main.ts", vec![], false);
     assert!(
         no_error_code(&diags, TS2307),
-        "Should not emit TS2307 when report_unresolved_imports is false, got: {:?}",
-        diags
+        "Should not emit TS2307 when report_unresolved_imports is false, got: {diags:?}"
     );
 }
 
@@ -1441,8 +1405,7 @@ export const b = 1;
     let diags = check_with_module_sources(source, "main.ts", vec![("./module", module_source)]);
     assert!(
         diags.is_empty(),
-        "Default import with named import from module with both exports should produce no errors, got: {:?}",
-        diags
+        "Default import with named import from module with both exports should produce no errors, got: {diags:?}"
     );
 }
 
@@ -1478,8 +1441,7 @@ fn test_commonjs_import_equals_no_error() {
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&TS1202),
-        "import = require in CommonJS should NOT emit TS1202, got: {:?}",
-        codes
+        "import = require in CommonJS should NOT emit TS1202, got: {codes:?}"
     );
 }
 
@@ -1561,8 +1523,7 @@ export { bar } from "./utils";
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Import and re-export from same module should resolve, got: {:?}",
-        diags
+        "Import and re-export from same module should resolve, got: {diags:?}"
     );
 }
 
@@ -1577,8 +1538,7 @@ fn test_import_with_js_extension() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils.js"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Import with .js extension should resolve, got: {:?}",
-        diags
+        "Import with .js extension should resolve, got: {diags:?}"
     );
 }
 
@@ -1589,8 +1549,7 @@ fn test_import_with_ts_extension() {
     let diags = check_with_resolved_modules(source, "main.ts", vec!["./utils.ts"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Import with .ts extension should resolve when in resolved set, got: {:?}",
-        diags
+        "Import with .ts extension should resolve when in resolved set, got: {diags:?}"
     );
 }
 
@@ -1617,8 +1576,7 @@ export { Form } from "./components/Form";
     );
     assert!(
         no_error_code(&diags, TS2307),
-        "Barrel file re-exports should resolve, got: {:?}",
-        diags
+        "Barrel file re-exports should resolve, got: {diags:?}"
     );
 }
 
@@ -1632,8 +1590,7 @@ export { special } from "./special";
         check_with_resolved_modules(source, "index.ts", vec!["./base", "./special"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Mixed wildcard and named re-exports should resolve, got: {:?}",
-        diags
+        "Mixed wildcard and named re-exports should resolve, got: {diags:?}"
     );
 }
 
@@ -1653,8 +1610,7 @@ import styles from "./app.css";
     let diags = check_single_file(source, "test.ts");
     assert!(
         no_error_code(&diags, TS2307),
-        "Wildcard ambient module should match .css imports, got: {:?}",
-        diags
+        "Wildcard ambient module should match .css imports, got: {diags:?}"
     );
 }
 
@@ -1670,8 +1626,7 @@ import logo from "./logo.svg";
     let diags = check_single_file(source, "test.ts");
     assert!(
         no_error_code(&diags, TS2307),
-        "Wildcard ambient module should match .svg imports, got: {:?}",
-        diags
+        "Wildcard ambient module should match .svg imports, got: {diags:?}"
     );
 }
 
@@ -1687,8 +1642,7 @@ import data from "./config.json";
     let diags = check_single_file(source, "test.ts");
     assert!(
         no_error_code(&diags, TS2307),
-        "Wildcard ambient module should match .json imports, got: {:?}",
-        diags
+        "Wildcard ambient module should match .json imports, got: {diags:?}"
     );
 }
 
@@ -1702,8 +1656,7 @@ fn test_import_default_and_named() {
     let diags = check_with_resolved_modules(source, "app.tsx", vec!["./react"], vec![]);
     assert!(
         no_error_code(&diags, TS2307),
-        "Combined default + named import should resolve, got: {:?}",
-        diags
+        "Combined default + named import should resolve, got: {diags:?}"
     );
 }
 
@@ -1842,8 +1795,7 @@ export class Model {
     let ts2304_errors: Vec<_> = diags.iter().filter(|(c, _)| *c == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should not emit TS2304 for 'extends Backbone.Model' with import = require, got: {:?}",
-        ts2304_errors
+        "Should not emit TS2304 for 'extends Backbone.Model' with import = require, got: {ts2304_errors:?}"
     );
 }
 
@@ -1863,8 +1815,7 @@ export class Model {
     let ts2304_errors: Vec<_> = diags.iter().filter(|(c, _)| *c == 2304).collect();
     assert!(
         ts2304_errors.is_empty(),
-        "Should not emit TS2304 for 'new Backbone.Model()' with import = require, got: {:?}",
-        ts2304_errors
+        "Should not emit TS2304 for 'new Backbone.Model()' with import = require, got: {ts2304_errors:?}"
     );
 }
 

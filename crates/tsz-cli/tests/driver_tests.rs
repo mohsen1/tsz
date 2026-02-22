@@ -6221,7 +6221,6 @@ fn compile_binary_file_reports_errors() {
         .collect();
     assert!(
         non_binary_errors.is_empty(),
-        "Expected only TS1490 for binary files, but got additional errors: {:?}",
-        non_binary_errors
+        "Expected only TS1490 for binary files, but got additional errors: {non_binary_errors:?}"
     );
 }

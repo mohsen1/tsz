@@ -17,7 +17,7 @@ fn test_print_to_string_basic() {
     let root = parser.parse_source_file();
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
-    assert!(output.contains("const x = 42"), "Output: {}", output);
+    assert!(output.contains("const x = 42"), "Output: {output}");
 }
 
 #[test]
@@ -27,10 +27,10 @@ fn test_print_to_string_function() {
     let root = parser.parse_source_file();
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
-    assert!(output.contains("function add"), "Output: {}", output);
-    assert!(output.contains("return a + b"), "Output: {}", output);
+    assert!(output.contains("function add"), "Output: {output}");
+    assert!(output.contains("return a + b"), "Output: {output}");
     // Type annotations should be stripped
-    assert!(!output.contains(": number"), "Output: {}", output);
+    assert!(!output.contains(": number"), "Output: {output}");
 }
 
 #[test]
@@ -40,8 +40,8 @@ fn test_print_to_string_class() {
     let root = parser.parse_source_file();
 
     let output = print_to_string(&parser.arena, root, PrintOptions::default());
-    assert!(output.contains("class Foo"), "Output: {}", output);
-    assert!(output.contains("constructor"), "Output: {}", output);
+    assert!(output.contains("class Foo"), "Output: {output}");
+    assert!(output.contains("constructor"), "Output: {output}");
 }
 
 // =============================================================================
@@ -111,8 +111,8 @@ fn test_print_with_source_map() {
     );
 
     let map = result.source_map.unwrap();
-    assert!(map.contains("\"sources\""), "Map: {}", map);
-    assert!(map.contains("\"mappings\""), "Map: {}", map);
+    assert!(map.contains("\"sources\""), "Map: {map}");
+    assert!(map.contains("\"mappings\""), "Map: {map}");
 }
 
 // =============================================================================
@@ -301,12 +301,8 @@ const calc = new Calculator();
 
     // Test ES6+ output
     let es6_output = print_to_string(&parser.arena, root, PrintOptions::default());
-    assert!(
-        es6_output.contains("class Calculator"),
-        "ES6: {}",
-        es6_output
-    );
-    assert!(es6_output.contains("add(a, b)"), "ES6: {}", es6_output);
+    assert!(es6_output.contains("class Calculator"), "ES6: {es6_output}");
+    assert!(es6_output.contains("add(a, b)"), "ES6: {es6_output}");
 
     // Test ES5 output
     let es5_result = lower_and_print(&parser.arena, root, PrintOptions::es5());
@@ -325,7 +321,7 @@ fn test_emit_produces_valid_javascript() {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
-        assert!(output.contains("let x = 1"), "Output: {}", output);
+        assert!(output.contains("let x = 1"), "Output: {output}");
     }
 
     // Function with types stripped
@@ -334,15 +330,10 @@ fn test_emit_produces_valid_javascript() {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
-        assert!(
-            output.contains("function greet(name)"),
-            "Output: {}",
-            output
-        );
+        assert!(output.contains("function greet(name)"), "Output: {output}");
         assert!(
             !output.contains(": string"),
-            "Types should be stripped: {}",
-            output
+            "Types should be stripped: {output}"
         );
     }
 
@@ -352,6 +343,6 @@ fn test_emit_produces_valid_javascript() {
         let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let output = print_to_string(&parser.arena, root, PrintOptions::default());
-        assert!(output.contains("class Foo"), "Output: {}", output);
+        assert!(output.contains("class Foo"), "Output: {output}");
     }
 }

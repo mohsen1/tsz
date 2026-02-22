@@ -38,7 +38,7 @@ pub static SHARED_LIB_FILES: Lazy<Vec<Arc<crate::lib_loader::LibFile>>> =
 
 /// Shared lib contexts for checker tests.
 ///
-/// Pre-compiled lib contexts from SHARED_LIB_FILES for fast test setup.
+/// Pre-compiled lib contexts from `SHARED_LIB_FILES` for fast test setup.
 pub static SHARED_LIB_CONTEXTS: Lazy<Vec<crate::checker::context::LibContext>> = Lazy::new(|| {
     SHARED_LIB_FILES
         .iter()
@@ -203,7 +203,7 @@ pub fn parse_tsx_source(source: &str) -> ParserState {
 }
 
 /// Macro to create a test context and checker in one line
-/// Usage: let (ctx, checker) = test_checker!();
+/// Usage: let (ctx, checker) = `test_checker`!();
 #[macro_export]
 macro_rules! test_checker {
     () => {{
@@ -250,7 +250,7 @@ pub fn merge_shared_lib_symbols(binder: &mut BinderState) {
 }
 
 /// Helper function to load lib files from disk for tests that need global types.
-/// Returns a vector of LibFile objects that can be used with bind_source_file_with_libs.
+/// Returns a vector of `LibFile` objects that can be used with `bind_source_file_with_libs`.
 ///
 /// This function loads lib.es5.d.ts which contains core global types (Array, Boolean, etc.)
 /// from TypeScript's lib directory.

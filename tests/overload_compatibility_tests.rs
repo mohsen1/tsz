@@ -32,8 +32,7 @@ class C1 {
     // TSC does not report TS2394 here.
     assert!(
         !codes.contains(&2394),
-        "Unexpected TS2394 for overload compatibility with parameter property, got: {:?}",
-        codes
+        "Unexpected TS2394 for overload compatibility with parameter property, got: {codes:?}"
     );
 }
 
@@ -62,7 +61,6 @@ function f(x) { return x; }
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2394),
-        "Unexpected TS2394 for untyped overload implementation, got: {:?}",
-        codes
+        "Unexpected TS2394 for untyped overload implementation, got: {codes:?}"
     );
 }
