@@ -52,9 +52,11 @@ pub use classifiers::{
     ExcessPropertiesKind, InterfaceMergeKind, SymbolResolutionTraversalKind,
     classify_for_assignability_eval, classify_for_augmentation, classify_for_binding_element,
     classify_for_constructor_access, classify_for_excess_properties, classify_for_interface_merge,
-    classify_for_symbol_resolution_traversal, get_conditional_type_id, get_def_id,
-    get_enum_components, get_keyof_inner, get_lazy_def_id, get_mapped_type_id, get_type_identity,
+    classify_for_symbol_resolution_traversal, get_conditional_type_id, get_enum_components,
+    get_keyof_type, get_lazy_def_id, get_mapped_type_id, get_type_identity,
 };
+// `get_def_id` is an alias for `get_lazy_def_id` (identical semantics).
+pub use classifiers::get_lazy_def_id as get_def_id;
 pub use extended::get_application_info;
 pub use extended::{
     ArrayLikeKind, CallSignaturesKind, ContextualLiteralAllowKind, ElementIndexableKind,
@@ -90,10 +92,6 @@ pub use data::*;
 pub use flow::*;
 pub use iterable::*;
 pub use traversal::*;
-
-pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    get_keyof_inner(db, type_id)
-}
 
 pub fn get_allowed_keys(db: &dyn TypeDatabase, type_id: TypeId) -> rustc_hash::FxHashSet<String> {
     let atoms = collect_property_name_atoms_for_diagnostics(db, type_id, 10);
