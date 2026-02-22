@@ -1,8 +1,20 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9305/13623 = 68.3% JS, 762/2173 = 35.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9336/13623 = 68.5% JS, 762/2173 = 35.1% DTS)
 
 ### Fixed This Session
+- **JSX text whitespace/newline preservation** (+32 JS tests):
+  JSX text nodes between opening and closing elements were losing leading whitespace
+  and newlines. For example, `<Comp>\n        hi hi hi!\n    </Comp>` was collapsed
+  to `<Comp>hi</Comp>`. Two bugs in the scanner's JSX rescan path:
+  1. `re_scan_jsx_token` reset `pos` to `token_start` (after trivia) instead of
+     `full_start_pos` (before trivia), matching tsc's `pos = tokenStart = fullStartPos`.
+  2. `scan_jsx_token` did not clear `token_atom`, so `get_token_value_ref()` returned
+     the stale interned identifier from the prior regular scan instead of the JSX text.
+  Tests fixed (sole-fix): `checkJsxChildrenProperty1`-`16`, `checkJsxChildrenCanBeProps`,
+  `checkJsxNamespaceNamesQuestionableForms`, and 14+ others with multiline JSX content.
+
+### Previously Fixed
 - **Case clause same-line non-block statement formatting** (+20 JS, +1 DTS tests):
   When a case/default clause has a single statement on the same source line as the label
   (e.g., `case true: return "true";`), tsc emits it on one line. tsz was splitting it
@@ -140,6 +152,10 @@
 - `accessor*` and `private*` DTS test filters: remaining failures appear to require cross-module declaration helper/mapping changes, which is outside the smallest emitter-only fix scope for this pass.
 - `crates/tsz-emitter/src/declaration_emitter/tests.rs: test_variable_declaration_infers_accessor_object_type_from_initializer_when_type_cache_missing`: this failure predates this pass and is currently blocked by a broader declaration-emitter regression in the same module; skipped to keep this change focused on emitter transform comment ordering.
 - `./scripts/emit/run.sh` full run (`JS+DTs`) and `scripts/emit` broader checks: large pre-existing failure set (6,828 failures total for JS+DTS) plus 2 timeouts remain; deferred for dedicated conformance/reporter work outside this smallest parity pass.
+- **Extra blank lines between JSDoc blocks in .js files (~18 tests)**: When tsz processes `.js` source files, it inserts extra blank lines between JSDoc comment blocks and following declarations. tsc does not add these. Affects `checkJsdocTypeTag1`, `checkJsdocTypeTag2`, `checkJsdocSatisfiesTag15`. Likely a newline-after-statement issue in the emission loop for files where type annotations are erased.
+- **Class expression static property comma-expression lowering (~12 tests)**: tsc emits a comma-expression pattern with a temp variable (`var _a; var v = (_a = class C {}, _a.a = 1, _a);`) for class expressions with static properties. tsz emits separate statements. Affects `classExpressionWithStaticProperties1`-`ES64`, `classBlockScoping`.
+- **`super(...arguments)` in `extends null` classes (~5 tests)**: tsz inserts `super(...arguments)` for classes that `extends null`, which tsc does not. Auto-super injection logic doesn't account for `extends null`. Affects `classExtendingNull`.
+- **JSX text whitespace collapsing in React transform mode (~remaining JSX tests)**: The `re_scan_jsx_token` fix resolves preserve-mode JSX text, but some JSX tests using React transform may have different whitespace-handling requirements where tsc strips certain whitespace-only text nodes.
 
 ### High-Impact Patterns (Not Yet Fixed)
 
