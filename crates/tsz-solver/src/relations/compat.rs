@@ -67,10 +67,8 @@ impl<'a> TypeVisitor for StringLikeVisitor<'a> {
         info.constraint.is_some_and(|c| self.visit_type(self.db, c))
     }
 
-    fn visit_ref(&mut self, symbol_ref: u32) -> Self::Output {
-        let _symbol_ref = crate::types::SymbolRef(symbol_ref);
-        // Resolve the ref and check the resolved type
-        // This is a simplified check - in practice we'd need the resolver
+    fn visit_ref(&mut self, _symbol_ref: u32) -> Self::Output {
+        // Can't resolve refs without a resolver, conservatively return false
         false
     }
 

@@ -886,13 +886,10 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.write_indent();
 
-        // Check if private/abstract
+        // Check if private
         let is_private = self
             .arena
             .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword);
-        let _is_abstract = self
-            .arena
-            .has_modifier(&method.modifiers, SyntaxKind::AbstractKeyword);
 
         // Modifiers
         self.emit_member_modifiers(&method.modifiers);

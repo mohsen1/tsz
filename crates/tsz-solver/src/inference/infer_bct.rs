@@ -251,27 +251,8 @@ impl<'a> InferenceContext<'a> {
                     self.collect_class_hierarchy(member, hierarchy);
                 }
             }
-            // Lazy types: add the type itself, then follow extends chain
-            // This enables BCT to work with classes/interfaces defined as Lazy(DefId)
-            TypeData::Lazy(_) => {
-                if let Some(base_type) = self.get_extends_clause(ty) {
-                    self.collect_class_hierarchy(base_type, hierarchy);
-                }
-            }
-            // For class/interface types, collect extends clauses
-            TypeData::Callable(shape_id) => {
-                let _shape = self.interner.callable_shape(shape_id);
-
-                // Check for base class (extends clause)
-                // In callable shapes, this is stored in the base_class property
-                if let Some(base_type) = self.get_extends_clause(ty) {
-                    self.collect_class_hierarchy(base_type, hierarchy);
-                }
-            }
-            TypeData::Object(shape_id) => {
-                let _shape = self.interner.object_shape(shape_id);
-
-                // Check for base class (extends clause)
+            // For class/interface/lazy types, follow extends chain
+            TypeData::Lazy(_) | TypeData::Callable(_) | TypeData::Object(_) => {
                 if let Some(base_type) = self.get_extends_clause(ty) {
                     self.collect_class_hierarchy(base_type, hierarchy);
                 }

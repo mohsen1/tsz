@@ -176,8 +176,6 @@ impl<'a> CheckerState<'a> {
                 );
             }
             // Still need to check arguments for definite assignment (TS2454) and other errors
-            // Create a dummy context helper that returns None for all parameter types
-            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
@@ -196,7 +194,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
             // Still need to check arguments for definite assignment (TS2454) and other errors
-            let _ctx_helper = ContextualTypeContext::new(self.ctx.types);
             let check_excess_properties = false;
             self.collect_call_argument_types_with_context(
                 args,
