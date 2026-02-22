@@ -1094,16 +1094,18 @@ impl<'a> Printer<'a> {
         match clause_node.kind {
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(clause_node)
-                    && let Some(name) = self.get_identifier_text_opt(enum_decl.name) {
-                        return self.declared_namespace_names.contains(&name);
-                    }
+                    && let Some(name) = self.get_identifier_text_opt(enum_decl.name)
+                {
+                    return self.declared_namespace_names.contains(&name);
+                }
                 false
             }
             k if k == syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module_decl) = self.arena.get_module(clause_node)
-                    && let Some(name) = self.get_module_root_name(module_decl.name) {
-                        return self.declared_namespace_names.contains(&name);
-                    }
+                    && let Some(name) = self.get_module_root_name(module_decl.name)
+                {
+                    return self.declared_namespace_names.contains(&name);
+                }
                 false
             }
             _ => false,
