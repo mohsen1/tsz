@@ -53,8 +53,42 @@ jobs:
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
           fi
 
-  build:
+  benchmark:
     needs: check
+    if: needs.check.outputs.should_deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install hyperfine
+        run: |
+          wget -q https://github.com/sharkdp/hyperfine/releases/download/v1.18.0/hyperfine_1.18.0_amd64.deb
+          sudo dpkg -i hyperfine_1.18.0_amd64.deb
+
+      - name: Run benchmarks
+        run: ./scripts/bench-vs-tsgo.sh --json
+
+      - name: Upload benchmark data
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-data
+          path: artifacts/bench-vs-tsgo-*.json
+          retention-days: 7
+
+  build:
+    needs: [check, benchmark]
     if: needs.check.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -75,6 +109,23 @@ jobs:
           merge-multiple: true
           path: .ci-metrics
         continue-on-error: true
+
+      - name: Download benchmark data
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-data
+          path: website/data
+        continue-on-error: true
+
+      # Rename to expected filename
+      - name: Prepare benchmark data
+        run: |
+          if ls website/data/bench-vs-tsgo-*.json 1>/dev/null 2>&1; then
+            mv website/data/bench-vs-tsgo-*.json website/data/benchmarks.json
+            echo "Benchmark data ready"
+          else
+            echo "No benchmark data available"
+          fi
 
       - name: Install dependencies
         run: cd website && npm install

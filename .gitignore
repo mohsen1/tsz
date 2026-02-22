@@ -125,3 +125,4 @@ editors/
 
 # Website build output
 website/dist/
+website/data/
