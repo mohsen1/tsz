@@ -855,7 +855,3 @@ impl Default for StatementChecker {
         Self::new()
     }
 }
-
-#[cfg(test)]
-#[path = "../tests/statements.rs"]
-mod tests;

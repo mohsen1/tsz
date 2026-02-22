@@ -221,9 +221,6 @@ impl<'a> CommonJsTransformContext<'a> {
 
         // Default export
         if export_data.is_default_export {
-            // export default expr;
-            let _inner_idx = export_data.export_clause;
-            // For now, emit as AST reference
             return Some(IRNode::ASTRef(export_idx));
         }
 
@@ -232,10 +229,7 @@ impl<'a> CommonJsTransformContext<'a> {
             return self.transform_re_export(export_data);
         }
 
-        // Regular export - get inner declaration
-        let _inner_node = self.arena.get(export_data.export_clause)?;
-
-        // Transform the inner declaration
+        // Regular export - transform the inner declaration
         self.transform_statement(export_data.export_clause)
     }
 
