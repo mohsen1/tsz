@@ -102,6 +102,7 @@ impl TsCompilerOptions {
             jsx_mode: tsz_common::checker_options::JsxMode::None,
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
+            module_explicitly_set: self.module.is_some(),
         }
     }
 }
