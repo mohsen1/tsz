@@ -184,25 +184,4 @@ impl<'a> CheckerContext<'a> {
                 | "IArguments"
         )
     }
-
-    /// Check if a global type is missing due to insufficient ES version support.
-    /// Returns the minimum ES version required for this type, or None if not applicable.
-    pub fn get_required_es_version_for_global(&self, name: &str) -> Option<&'static str> {
-        use tsz_binder::lib_loader;
-
-        if lib_loader::is_es2015_plus_type(name) {
-            return Some("ES2015");
-        }
-
-        // Most pre-ES2015 globals are available in ES3/ES5
-        match name {
-            "Promise" | "Map" | "Set" | "WeakMap" | "WeakSet" | "Proxy" | "Reflect" | "Symbol"
-            | "Iterator" | "Iterable" => Some("ES2015"),
-            "AsyncFunction" | "SharedArrayBuffer" | "Atomics" => Some("ES2017"),
-            "AsyncGenerator" | "AsyncGeneratorFunction" => Some("ES2018"),
-            "BigInt" | "BigInt64Array" | "BigUint64Array" => Some("ES2020"),
-            "FinalizationRegistry" | "WeakRef" => Some("ES2021"),
-            _ => None,
-        }
-    }
 }

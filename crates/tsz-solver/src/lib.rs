@@ -21,6 +21,7 @@ pub mod def;
 mod diagnostics;
 pub mod evaluation;
 pub mod expression_ops;
+#[cfg(test)]
 mod flow_analysis;
 mod format;
 mod inference;
@@ -32,7 +33,8 @@ pub mod objects;
 pub mod operations;
 pub mod recursion;
 pub mod relations;
-pub mod sound;
+#[cfg(test)]
+mod sound;
 pub mod tracer;
 mod type_factory;
 pub mod type_queries;
@@ -83,7 +85,6 @@ pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
 };
 pub use evaluation::evaluate::*;
-pub use flow_analysis::*;
 pub use format::TypeFormatter;
 pub use inference::infer::*;
 pub use instantiation::instantiate::{
@@ -104,7 +105,6 @@ pub use relations::subtype::{
     AnyPropagationMode, SubtypeChecker, SubtypeResult, TypeEnvironment, TypeResolver,
     are_types_structurally_identical, is_subtype_of,
 };
-pub use sound::*;
 pub use type_factory::*;
 pub use types::{
     CallSignature, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, ObjectShapeId,

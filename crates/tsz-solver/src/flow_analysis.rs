@@ -13,7 +13,6 @@
 use crate::narrowing::NarrowingContext;
 use crate::{QueryDatabase, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
-use tsz_common::interner::Atom;
 
 /// Flow facts that represent the state of variables at a specific program point.
 ///
@@ -156,24 +155,6 @@ impl<'a> FlowTypeEvaluator<'a> {
     pub fn narrow_by_typeof(&self, source_type: TypeId, typeof_result: &str) -> TypeId {
         self.narrowing_context
             .narrow_by_typeof(source_type, typeof_result)
-    }
-
-    /// Narrow a type based on a discriminant check.
-    ///
-    /// This is used for discriminated unions:
-    /// ```typescript
-    /// if (action.type === "add") {
-    ///     // action is narrowed to the "add" variant
-    /// }
-    /// ```
-    pub fn narrow_by_discriminant(
-        &self,
-        union_type: TypeId,
-        property_path: &[Atom],
-        literal_value: TypeId,
-    ) -> TypeId {
-        self.narrowing_context
-            .narrow_by_discriminant(union_type, property_path, literal_value)
     }
 
     /// Narrow a type by excluding a specific type.
