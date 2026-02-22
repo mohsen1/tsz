@@ -232,6 +232,39 @@ let a: A;
 }
 
 #[test]
+fn test_symbol_resolution_reuses_heritage_namespace_resolution() {
+    let source = r#"
+namespace NS {
+    export class Base {
+        value: number = 1;
+    }
+}
+
+class A extends NS.Base {}
+class B extends NS.Base {}
+class C extends NS.Base {}
+
+let a = new A();
+let b = new B();
+let c = new C();
+let total = a.value + b.value + c.value;
+"#;
+
+    let diagnostics = collect_diagnostics(source);
+    let ts2304_count = diagnostics.iter().filter(|d| d.code == 2304).count();
+    let ts2506_count = diagnostics.iter().filter(|d| d.code == 2506).count();
+
+    assert_eq!(
+        ts2304_count, 0,
+        "Expected no TS2304 for repeated heritage namespace resolution, got: {diagnostics:?}"
+    );
+    assert_eq!(
+        ts2506_count, 0,
+        "Expected no TS2506 for repeated heritage namespace resolution, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_symbol_resolution_namespace_interface_type_args_error() {
     let source = r#"
 namespace X {
