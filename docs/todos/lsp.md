@@ -14,6 +14,8 @@ Completed in this pass:
 - Fixed `autoImportPaths.ts` import-fix parity by accepting JSONC-style `jsconfig.json` (including unquoted keys) in module-specifier config parsing.
 - Fixed completion ordering parity for re-export/direct duplicate symbol names so barrel-style sources win when expected (`autoImportPathsAliasesAndBarrels.ts` `Thing2B`) without regressing same-directory direct imports (`Thing2A`).
 - Added focused unit tests for the above in `crates/tsz-lsp/src/project_operations.rs`, `crates/tsz-lsp/tests/project_tests.rs`, and `crates/tsz-cli/src/bin/tsz_server/tests.rs`.
+- Fixed `TypeScript/tests/cases/fourslash/autoImportJsDocImport1.ts` by reducing JSDoc missing-name synthetic diagnostics to unresolved type names only and rewriting matching import quick-fixes to merge into existing JSDoc `@import` tags.
+- Added focused tsserver handler unit test in `crates/tsz-cli/src/bin/tsz_server/handlers_diagnostics.rs` covering the diagnostics->codefix path for JSDoc import-fix fan-out.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: missing class member snippet completion `execActionWithCount`.
@@ -32,8 +34,6 @@ Investigated but punted:
   Reason: likely requires tracing interaction between node_modules package-specifier logic and `paths` wildcard resolution in this mixed config shape.
 - `TypeScript/tests/cases/fourslash/autoImportCompletionExportEqualsWithDefault1.ts`: missing `parent` class-member snippet completion in export-equals/default-merged class hierarchy.
   Reason: requires ClassMemberSnippet parity work (inheritance-aware snippet generation + completion details/code-action shaping) beyond this targeted auto-import metadata fix.
-- `TypeScript/tests/cases/fourslash/autoImportJsDocImport1.ts`: still returns `Expected 1 import fixes, got 8`.
-  Reason: tracked through tsserver-side import-fix shaping and added local handler experiments, but fourslash bridge path still fans out multiple import candidates; requires deeper bridge/request tracing and likely completion/code-fix pipeline alignment rather than a small isolated patch.
 - `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: still returns `Expected 'isNewIdentifierLocation' to be false, got true`.
   Reason: quick tsserver-side flag override caused regressions in other auto-import completion tests (`isNewIdentifierLocation` expected true), so the robust fix needs context-sensitive parity logic in completion source selection.
 - `TypeScript/tests/cases/fourslash/autoImportVerbatimTypeOnly1.ts`: still fails on `verifyFileContent` after completion code action application in `/a.mts`.
@@ -54,3 +54,7 @@ Investigated but punted:
   Reason: fixing this path robustly appears to require adapter-level inferred compiler option propagation for fourslash virtual files; quick bridge patches caused harness regressions and need a dedicated, isolated bridge follow-up.
 - `TypeScript/tests/cases/fourslash/autoImportTypeOnlyPreferred1.ts`: after narrowing `isNewIdentifierLocation` heuristics, failure mode shifts to missing completion `ts` in this run.
   Reason: this now appears blocked on deeper auto-import candidate surfacing/ranking in type-only + `verbatimModuleSyntax` contexts (tsserver bridge/project completion integration), beyond a safe small heuristic-only patch.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_{types,values}.ts`: still returns `Program objects are not serializable through the server protocol.`
+  Reason: requires additional SessionClient/TestState adapter coverage for Program-returning harness paths (or native parity), which is broader than this JSDoc import-fix patch.
+- `TypeScript/tests/cases/fourslash/autoImportVerbatimCJS1.ts`: still generates a new local baseline with missing auto-import completions/codefix snapshots.
+  Reason: likely needs deeper auto-import candidate surfacing for `export =` ambient modules plus CommonJS object-literal exports under `verbatimModuleSyntax`, beyond this focused diagnostics/codefix rewrite.
