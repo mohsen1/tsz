@@ -31,7 +31,7 @@
 
 use rustc_hash::FxHashMap;
 use tsz_parser::parser::node::NodeArena;
-use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 // Re-export from shared utilities to avoid duplication
@@ -201,7 +201,7 @@ pub fn collect_private_fields(
                 let field_name = get_private_field_name(arena, prop_data.name).unwrap_or_default();
                 let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
                 let weakmap_name = format!("_{class_name}_{clean_name}");
-                let is_static = has_static_modifier(arena, &prop_data.modifiers);
+                let is_static = arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword);
 
                 fields.push(PrivateFieldInfo {
                     name: clean_name.to_string(),
@@ -215,22 +215,6 @@ pub fn collect_private_fields(
     }
 
     fields
-}
-
-/// Check if modifiers contain the static keyword
-fn has_static_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    let Some(mods) = modifiers else {
-        return false;
-    };
-    for &mod_idx in &mods.nodes {
-        let Some(mod_node) = arena.get(mod_idx) else {
-            continue;
-        };
-        if mod_node.kind == SyntaxKind::StaticKeyword as u16 {
-            return true;
-        }
-    }
-    false
 }
 
 /// Collect private accessors from a class
@@ -268,7 +252,7 @@ pub fn collect_private_accessors(
 
             let field_name = get_private_field_name(arena, accessor_data.name).unwrap_or_default();
             let clean_name = field_name.strip_prefix('#').unwrap_or(&field_name);
-            let is_static = has_static_modifier(arena, &accessor_data.modifiers);
+            let is_static = arena.has_modifier(&accessor_data.modifiers, SyntaxKind::StaticKeyword);
 
             // Get or create the accessor info for this name
             let entry =

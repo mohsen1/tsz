@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::args::CliArgs;
+use crate::args::{CliArgs, ModuleDetection};
 use crate::config::{
     ResolvedCompilerOptions, TsConfig, checker_target_from_emitter, load_tsconfig,
     load_tsconfig_with_diagnostics, resolve_compiler_options, resolve_default_lib_files,
@@ -1655,12 +1655,14 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     if args.no_check {
         options.no_check = true;
     }
+    if args.skip_lib_check {
+        options.skip_lib_check = true;
+    }
     if args.allow_js {
         options.allow_js = true;
     }
     if args.check_js {
         options.check_js = true;
-        options.checker.check_js = true;
     }
     if let Some(version) = args.types_versions_compiler_version.as_ref() {
         options.types_versions_compiler_version = Some(version.clone());
@@ -1684,6 +1686,9 @@ pub fn apply_cli_overrides(options: &mut ResolvedCompilerOptions, args: &CliArgs
     }
     if args.no_emit_helpers {
         options.printer.no_emit_helpers = true;
+    }
+    if let Some(ModuleDetection::Force) = args.module_detection {
+        options.printer.module_detection_force = true;
     }
     if args.target.is_some() && options.lib_is_default && !options.checker.no_lib {
         options.lib_files = resolve_default_lib_files(options.printer.target)?;

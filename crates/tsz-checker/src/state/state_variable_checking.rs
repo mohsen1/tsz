@@ -657,9 +657,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(node) = self.ctx.arena.get(current) {
                     if node.kind == tsz_parser::parser::syntax_kind_ext::MODULE_DECLARATION {
                         if let Some(module) = self.ctx.arena.get_module(node)
-                            && self.ctx.has_modifier(
+                            && self.ctx.arena.has_modifier(
                                 &module.modifiers,
-                                tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+                                tsz_scanner::SyntaxKind::DeclareKeyword,
                             )
                         {
                             is_ambient = true;
@@ -667,9 +667,9 @@ impl<'a> CheckerState<'a> {
                         }
                     } else if node.kind == tsz_parser::parser::syntax_kind_ext::VARIABLE_STATEMENT {
                         if let Some(var_stmt) = self.ctx.arena.get_variable(node)
-                            && self.ctx.has_modifier(
+                            && self.ctx.arena.has_modifier(
                                 &var_stmt.modifiers,
-                                tsz_scanner::SyntaxKind::DeclareKeyword as u16,
+                                tsz_scanner::SyntaxKind::DeclareKeyword,
                             )
                         {
                             is_ambient = true;

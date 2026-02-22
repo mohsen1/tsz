@@ -2,7 +2,7 @@ use super::{ModuleKind, Printer};
 use crate::printer::safe_slice;
 use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
-use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -349,13 +349,7 @@ impl<'a> Printer<'a> {
 
     /// Get identifier text from a node index
     pub(super) fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        let Some(node) = self.arena.get(idx) else {
-            return String::new();
-        };
-        if let Some(ident) = self.arena.get_identifier(node) {
-            return ident.escaped_text.clone();
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     // =========================================================================
@@ -656,8 +650,17 @@ impl<'a> Printer<'a> {
         };
 
         if let Some(expr) = self.arena.get_expr_type_args(node) {
-            // Emit the expression (e.g., Base or ns.Other)
+            // ExpressionWithTypeArguments wrapper.
+            // When the inner expression is an optional chain (A?.B) and target < ES2020,
+            // the chain is lowered to a conditional expression that needs parens in extends.
+            let needs_parens = self.heritage_expr_needs_optional_chain_parens(expr.expression);
+            if needs_parens {
+                self.write("(");
+            }
             self.emit(expr.expression);
+            if needs_parens {
+                self.write(")");
+            }
             // Emit type arguments only for ES5 targets.
             // For ES6+, type arguments should be erased since JavaScript
             // doesn't support generics at runtime.
@@ -670,18 +673,38 @@ impl<'a> Printer<'a> {
                 self.write(">");
             }
         } else {
+            // Direct expression (no ExpressionWithTypeArguments wrapper).
+            let needs_parens = self.heritage_expr_needs_optional_chain_parens(idx);
+            if needs_parens {
+                self.write("(");
+            }
             self.emit(idx);
+            if needs_parens {
+                self.write(")");
+            }
         }
+    }
+
+    /// Check if a heritage expression node is an optional chain that will be lowered
+    /// and thus needs parenthesization in an `extends` clause.
+    fn heritage_expr_needs_optional_chain_parens(&self, idx: NodeIndex) -> bool {
+        if self.ctx.options.target.supports_es2020() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        // Check for PropertyAccessExpression/ElementAccessExpression with question_dot_token
+        if let Some(access) = self.arena.get_access_expr(node) {
+            return access.question_dot_token;
+        }
+        // Check for CallExpression with OPTIONAL_CHAIN flag
+        (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
     }
 
     // =========================================================================
     // Modifier Helpers
     // =========================================================================
-
-    /// Check if modifiers include the `declare` keyword
-    pub(super) fn has_declare_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::DeclareKeyword as u16)
-    }
 
     /// Check if a top-level statement is erased in JS emit (type-only, ambient, etc.).
     /// This includes interfaces, type aliases, declare function/class/enum/module/var,
@@ -698,29 +721,36 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::FUNCTION_DECLARATION => {
                 if let Some(func) = self.arena.get_function(node) {
-                    self.has_declare_modifier(&func.modifiers) || func.body.is_none()
+                    self.arena
+                        .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                        || func.body.is_none()
                 } else {
                     false
                 }
             }
             syntax_kind_ext::CLASS_DECLARATION => {
                 if let Some(class) = self.arena.get_class(node) {
-                    self.has_declare_modifier(&class.modifiers)
+                    self.arena
+                        .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
                 } else {
                     false
                 }
             }
             syntax_kind_ext::ENUM_DECLARATION => {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
-                    self.has_declare_modifier(&enum_decl.modifiers)
-                        || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+                    self.arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                        || self
+                            .arena
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
                 } else {
                     false
                 }
             }
             syntax_kind_ext::MODULE_DECLARATION => {
                 if let Some(module) = self.arena.get_module(node) {
-                    self.has_declare_modifier(&module.modifiers)
+                    self.arena
+                        .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                         || !self.is_instantiated_module(module.body)
                 } else {
                     false
@@ -728,7 +758,8 @@ impl<'a> Printer<'a> {
             }
             syntax_kind_ext::VARIABLE_STATEMENT => {
                 if let Some(var_stmt) = self.arena.get_variable(node) {
-                    self.has_declare_modifier(&var_stmt.modifiers)
+                    self.arena
+                        .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
                 } else {
                     false
                 }
@@ -786,93 +817,7 @@ impl<'a> Printer<'a> {
     /// (interfaces, type aliases, import type, etc.) or is empty.
     /// TypeScript skips emitting IIFE wrappers for non-instantiated modules.
     pub(super) fn is_instantiated_module(&self, module_body: NodeIndex) -> bool {
-        let Some(body_node) = self.arena.get(module_body) else {
-            return false;
-        };
-
-        // If body is another MODULE_DECLARATION (dotted namespace like Foo.Bar),
-        // recurse into the inner module
-        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION
-            && let Some(inner_module) = self.arena.get_module(body_node)
-        {
-            return self.is_instantiated_module(inner_module.body);
-        }
-        if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-            return false;
-        }
-
-        // MODULE_BLOCK: check if any statement is a value declaration
-        if let Some(block) = self.arena.get_module_block(body_node)
-            && let Some(ref stmts) = block.statements
-        {
-            for &stmt_idx in &stmts.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt_idx)
-                    && !self.is_type_only_declaration(stmt_node)
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if a statement is purely a type declaration (interface, type alias, import type).
-    /// Unlike `is_erased_statement`, this does NOT consider function overload signatures as
-    /// type-only, because they still instantiate their containing namespace.
-    fn is_type_only_declaration(&self, node: &Node) -> bool {
-        match node.kind {
-            syntax_kind_ext::INTERFACE_DECLARATION | syntax_kind_ext::TYPE_ALIAS_DECLARATION => {
-                true
-            }
-            syntax_kind_ext::IMPORT_DECLARATION => {
-                if let Some(import_data) = self.arena.get_import_decl(node)
-                    && let Some(clause_node) = self.arena.get(import_data.import_clause)
-                    && let Some(clause) = self.arena.get_import_clause(clause_node)
-                {
-                    return clause.is_type_only;
-                }
-                false
-            }
-            syntax_kind_ext::EXPORT_DECLARATION => {
-                if let Some(export_data) = self.arena.get_export_decl(node) {
-                    if export_data.is_type_only {
-                        return true;
-                    }
-                    if let Some(inner_node) = self.arena.get(export_data.export_clause) {
-                        return self.is_type_only_declaration(inner_node);
-                    }
-                }
-                false
-            }
-            // Const enums and declare enums are erased, so they are type-only
-            syntax_kind_ext::ENUM_DECLARATION => {
-                if let Some(enum_decl) = self.arena.get_enum(node) {
-                    self.has_declare_modifier(&enum_decl.modifiers)
-                        || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
-                } else {
-                    false
-                }
-            }
-            // A namespace containing only type-only declarations is itself type-only
-            syntax_kind_ext::MODULE_DECLARATION => {
-                if let Some(module) = self.arena.get_module(node) {
-                    return !self.is_instantiated_module(module.body);
-                }
-                true // Empty module is type-only
-            }
-            _ => false,
-        }
-    }
-
-    /// Check if modifiers include the `export` keyword
-    pub(super) fn has_export_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::ExportKeyword as u16)
-    }
-
-    /// Check if modifiers include the `default` keyword
-    pub(super) fn has_default_modifier(&self, modifiers: &Option<NodeList>) -> bool {
-        self.has_modifier(modifiers, SyntaxKind::DefaultKeyword as u16)
+        crate::transforms::emit_utils::is_instantiated_module(self.arena, module_body)
     }
 
     /// Scan forward from `pos` past whitespace and comments to find the actual
@@ -1023,20 +968,6 @@ impl<'a> Printer<'a> {
             }
         }
         None
-    }
-
-    /// Check if modifiers include a specific keyword
-    pub(super) fn has_modifier(&self, modifiers: &Option<NodeList>, kind: u16) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == kind
-                {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     /// Check if the source text has a trailing comma after the last element

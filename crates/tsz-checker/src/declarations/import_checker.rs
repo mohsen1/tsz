@@ -277,6 +277,9 @@ impl<'a> CheckerState<'a> {
 
         // Resolve exports table (shared between default and named import checking)
         let normalized = module_name.trim_matches('"').trim_matches('\'');
+        // TSC includes source-level quotes in module diagnostic messages:
+        // Module '"./foo"' has no exported member 'X'
+        let quoted_module = format!("\"{module_name}\"");
         let exports_table = self.resolve_effective_module_exports(module_name);
 
         // Check default import: import X from "module"
@@ -297,6 +300,27 @@ impl<'a> CheckerState<'a> {
             {
                 // Module resolved but no exports table found - still emit TS1192
                 self.emit_no_default_export_error(module_name, clause.name);
+            }
+        }
+
+        // When the default import already failed (no default export), skip named import
+        // validation to avoid cascading TS2305 errors on valid named exports.
+        // tsc does not emit TS2305 in this situation.
+        if has_default_import
+            && !has_named_default_binding
+            && !self.ctx.allow_synthetic_default_imports()
+        {
+            let no_default_export = if let Some(ref table) = exports_table {
+                !table.has("default")
+            } else {
+                self.ctx
+                    .resolved_modules
+                    .as_ref()
+                    .is_some_and(|resolved| resolved.contains(module_name))
+                    && self.ctx.resolve_import_target(module_name).is_some()
+            };
+            if no_default_export {
+                return;
             }
         }
 
@@ -382,7 +406,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2460: Symbol exists locally and is exported under a different name
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
-                                    &[module_name, import_name, renamed_as],
+                                    &[&quoted_module, import_name, renamed_as],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -393,7 +417,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2459: Symbol exists locally but is not exported
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
-                                    &[module_name, import_name],
+                                    &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -405,7 +429,7 @@ impl<'a> CheckerState<'a> {
                             // TS2305: Symbol doesn't exist in the module at all
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                &[module_name, import_name],
+                                &[&quoted_module, import_name],
                             );
                             self.error_at_node(
                                 specifier.name,
@@ -484,7 +508,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2460: Symbol exists locally and is exported under a different name
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_EXPORTED_AS,
-                                    &[module_name, import_name, renamed_as],
+                                    &[&quoted_module, import_name, renamed_as],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -495,7 +519,7 @@ impl<'a> CheckerState<'a> {
                                 // TS2459: Symbol exists locally but is not exported
                                 let message = format_message(
                                     diagnostic_messages::MODULE_DECLARES_LOCALLY_BUT_IT_IS_NOT_EXPORTED,
-                                    &[module_name, import_name],
+                                    &[&quoted_module, import_name],
                                 );
                                 self.error_at_node(
                                     specifier.name,
@@ -507,7 +531,7 @@ impl<'a> CheckerState<'a> {
                             // TS2614: Symbol doesn't exist but a default export does
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                                &[module_name, import_name],
+                                &[&quoted_module, import_name],
                             );
                             self.error_at_node(
                                 specifier.name,
@@ -518,7 +542,7 @@ impl<'a> CheckerState<'a> {
                             // TS2305: Symbol doesn't exist in the module at all
                             let message = format_message(
                                 diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                                &[module_name, import_name],
+                                &[&quoted_module, import_name],
                             );
                             self.error_at_node(
                                 specifier.name,
@@ -1185,12 +1209,9 @@ impl<'a> CheckerState<'a> {
             return false;
         };
 
-        mods.nodes.iter().any(|&mod_idx| {
-            self.ctx
-                .arena
-                .get(mod_idx)
-                .is_some_and(|mod_node| mod_node.kind == SyntaxKind::ExportKeyword as u16)
-        })
+        self.ctx
+            .arena
+            .has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword)
     }
 
     /// Check whether a node is nested inside a namespace declaration.

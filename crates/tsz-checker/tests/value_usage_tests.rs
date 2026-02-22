@@ -81,8 +81,10 @@ const x = new Foo();
     );
 }
 
+/// For `number[]` parse-recovery, tsc only emits TS1011 (missing element access argument),
+/// NOT TS2693. The parse error is sufficient — no need for a semantic "type used as value" error.
 #[test]
-fn test_primitive_array_type_recovery_used_as_value_emits_ts2693() {
+fn test_primitive_array_type_recovery_no_ts2693() {
     let source = r"
 var results = number[];
 ";
@@ -110,8 +112,8 @@ var results = number[];
         .filter(|d| d.code == 2693)
         .count();
     assert!(
-        ts2693_count >= 1,
-        "Expected at least 1 TS2693 error for `number[]` value recovery, got {ts2693_count}"
+        ts2693_count == 0,
+        "Should NOT emit TS2693 for `number[]` parse-recovery (TS1011 is sufficient), got {ts2693_count}"
     );
 }
 

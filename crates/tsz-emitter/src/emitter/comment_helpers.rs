@@ -304,6 +304,12 @@ impl<'a> Printer<'a> {
     /// Skip (suppress) all comments that belong to an erased declaration (interface, type alias).
     /// Advances `comment_emit_idx` past any comments whose end position falls within the node's range,
     /// including trailing same-line comments (e.g. `// ERROR` after a constructor overload).
+    ///
+    /// Crucially, this does NOT consume comments that follow other code tokens on the
+    /// same line. For example, in `class C { foo: string; } // error`, when erasing
+    /// `foo: string;`, the `// error` comment belongs to the closing `}`, not to the
+    /// erased member. We detect this by checking whether any non-whitespace code token
+    /// exists between the erased node's end and the comment start.
     pub(super) fn skip_comments_for_erased_node(&mut self, node: &Node) {
         // Find the actual end of the node's code content, excluding trailing trivia.
         let actual_end = self.find_token_end_before_trivia(node.pos, node.end);
@@ -322,9 +328,33 @@ impl<'a> Printer<'a> {
             actual_end
         };
 
+        // Use node.end as the gap-check anchor, not actual_end. The
+        // `find_token_end_before_trivia` suffix scan can overshoot past node.end
+        // (e.g., finding a parent `}` beyond the member), so node.end is the safer
+        // boundary for deciding whether intervening code separates the erased node
+        // from a trailing comment.
+        let gap_anchor = node.end;
+        let source_bytes = self.source_text.map(|t| t.as_bytes());
+
         while self.comment_emit_idx < self.all_comments.len() {
             let c = &self.all_comments[self.comment_emit_idx];
             if c.end <= line_end {
+                // For comments that start at or after the erased node's end,
+                // check if there's any non-whitespace code token between the node
+                // boundary and the comment. If so, the comment belongs to that code
+                // (e.g., a closing `}`), not to the erased node — don't consume it.
+                if c.pos >= gap_anchor
+                    && let Some(bytes) = source_bytes
+                {
+                    let gap_start = gap_anchor as usize;
+                    let gap_end = std::cmp::min(c.pos as usize, bytes.len());
+                    let has_code_between = bytes[gap_start..gap_end]
+                        .iter()
+                        .any(|&b| !matches!(b, b' ' | b'\t'));
+                    if has_code_between {
+                        break;
+                    }
+                }
                 self.comment_emit_idx += 1;
             } else {
                 break;

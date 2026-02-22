@@ -7,7 +7,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-use super::state::{BinderState, FileFeatures};
+use crate::state::{BinderState, FileFeatures};
 
 impl BinderState {
     /// Collect hoisted declarations from statements.
@@ -640,14 +640,19 @@ impl BinderState {
                         // can recover the assigned symbol directly.
                         self.file_locals.set("export=".to_string(), sym_id);
 
-                        // Copy the symbol's exports to the current module's exports
-                        // This makes export = Namespace; work correctly
+                        // Copy the symbol's exports to the current module's exports.
+                        // This makes export = Namespace; work correctly.
+                        // Only add names that don't already exist in file_locals to
+                        // avoid shadowing global/ambient declarations (e.g., DOM types
+                        // like ClipboardEvent should not be shadowed by React.ClipboardEvent
+                        // when `export = React` appears inside `declare module "react"`).
                         if let Some(symbol) = self.symbols.get(sym_id)
                             && let Some(ref exports) = symbol.exports
                         {
-                            // Add all exports from the target symbol to file_locals
                             for (export_name, &export_sym_id) in exports.iter() {
-                                self.file_locals.set(export_name.clone(), export_sym_id);
+                                if self.file_locals.get(export_name).is_none() {
+                                    self.file_locals.set(export_name.clone(), export_sym_id);
+                                }
                             }
                         }
                     }

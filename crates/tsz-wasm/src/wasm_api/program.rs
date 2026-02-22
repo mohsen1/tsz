@@ -62,6 +62,8 @@ pub struct TsCompilerOptions {
     pub check_js: Option<bool>,
     #[serde(default)]
     pub no_resolve: Option<bool>,
+    #[serde(default)]
+    pub sound_mode: Option<bool>,
 }
 
 impl TsCompilerOptions {
@@ -90,7 +92,7 @@ impl TsCompilerOptions {
             allow_synthetic_default_imports: false,
             allow_unreachable_code: None,
             no_property_access_from_index_signature: false,
-            sound_mode: false,
+            sound_mode: self.sound_mode.unwrap_or(false),
             experimental_decorators: false,
             no_unused_locals: false,
             no_unused_parameters: false,

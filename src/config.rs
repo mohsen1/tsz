@@ -170,6 +170,9 @@ pub struct CompilerOptions {
     /// Enable error reporting in type-checked JavaScript files
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub check_js: Option<bool>,
+    /// Skip type checking of declaration files (.d.ts)
+    #[serde(default, deserialize_with = "deserialize_bool_or_string")]
+    pub skip_lib_check: Option<bool>,
     /// Parse in strict mode and emit "use strict" for each source file
     #[serde(default, deserialize_with = "deserialize_bool_or_string")]
     pub always_strict: Option<bool>,
@@ -258,6 +261,9 @@ pub struct CompilerOptions {
         deserialize_with = "deserialize_bool_or_string"
     )]
     pub no_implicit_override: Option<bool>,
+    /// Control what method is used to detect module-format JS files.
+    #[serde(default)]
+    pub module_detection: Option<String>,
 }
 
 // Re-export CheckerOptions from checker::context for unified API
@@ -309,6 +315,8 @@ pub struct ResolvedCompilerOptions {
     pub allow_js: bool,
     /// Enable error reporting in type-checked JavaScript files
     pub check_js: bool,
+    /// Skip type checking of declaration files (.d.ts)
+    pub skip_lib_check: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -786,7 +794,15 @@ pub fn resolve_compiler_options(
 
     if let Some(check_js) = options.check_js {
         resolved.check_js = check_js;
-        resolved.checker.check_js = check_js;
+    }
+    if let Some(skip_lib_check) = options.skip_lib_check {
+        resolved.skip_lib_check = skip_lib_check;
+    }
+
+    if let Some(ref module_detection) = options.module_detection
+        && module_detection.eq_ignore_ascii_case("force")
+    {
+        resolved.printer.module_detection_force = true;
     }
 
     Ok(resolved)
@@ -869,30 +885,37 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
 
         // Check for removed compiler options (TS5102)
         // These options were deprecated in TS 5.0 and removed in TS 5.5/6.0.
+        // When ignoreDeprecations is set to "5.0", suppress TS5102 (tsc behavior).
+        let ignore_deprecations_valid = matches!(
+            compiler_opts.get("ignoreDeprecations"),
+            Some(serde_json::Value::String(v)) if v == "5.0"
+        );
         let mut removed_keys: Vec<String> = Vec::new();
         for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
             if removed_compiler_option(&key).is_some() {
-                let value = compiler_opts.get(&key);
-                // Only emit TS5102 if the option is actually set (non-null, non-default)
-                let is_set = match value {
-                    Some(serde_json::Value::Bool(b)) => *b,
-                    Some(serde_json::Value::String(s)) => !s.is_empty(),
-                    Some(serde_json::Value::Null) | None => false,
-                    Some(_) => true,
-                };
-                if is_set {
-                    let start = find_key_offset_in_source(&stripped, &key);
-                    let msg = format_message(
-                        diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                        &[&key],
-                    );
-                    diagnostics.push(Diagnostic::error(
-                        file_path,
-                        start,
-                        key.len() as u32 + 2, // include quotes
-                        msg,
-                        diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
-                    ));
+                if !ignore_deprecations_valid {
+                    let value = compiler_opts.get(&key);
+                    // Only emit TS5102 if the option is actually set (non-null, non-default)
+                    let is_set = match value {
+                        Some(serde_json::Value::Bool(b)) => *b,
+                        Some(serde_json::Value::String(s)) => !s.is_empty(),
+                        Some(serde_json::Value::Null) | None => false,
+                        Some(_) => true,
+                    };
+                    if is_set {
+                        let start = find_key_offset_in_source(&stripped, &key);
+                        let msg = format_message(
+                            diagnostic_messages::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                            &[&key],
+                        );
+                        diagnostics.push(Diagnostic::error(
+                            file_path,
+                            start,
+                            key.len() as u32 + 2, // include quotes
+                            msg,
+                            diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
+                        ));
+                    }
                 }
                 removed_keys.push(key);
             }
@@ -946,7 +969,7 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // Check ignoreDeprecations value (TS5103)
-        // Only "5.0" is currently accepted as a valid value.
+        // Only "5.0" is accepted as a valid value (tsc 6.0 does not accept "6.0").
         if let Some(serde_json::Value::String(id_value)) = compiler_opts.get("ignoreDeprecations")
             && id_value != "5.0"
         {
@@ -974,7 +997,16 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
                     matches!(
                         mod_normalized.as_str(),
-                        "preserve" | "es2015" | "es6" | "es2020" | "es2022" | "esnext"
+                        "preserve"
+                            | "es2015"
+                            | "es6"
+                            | "es2020"
+                            | "es2022"
+                            | "esnext"
+                            | "node16"
+                            | "node18"
+                            | "node20"
+                            | "nodenext"
                     )
                 } else {
                     // module not set — default depends on target; ES2015+ targets
@@ -1142,6 +1174,109 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                     msg,
                     diagnostic_codes::OPTION_CANNOT_BE_SPECIFIED_WITH_OPTION,
                 ));
+            }
+        }
+
+        // TS5070: Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
+        // TS5071: Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
+        if option_is_truthy(compiler_opts.get("resolveJsonModule")) {
+            // Compute effective moduleResolution from raw JSON options
+            let effective_mr = if let Some(serde_json::Value::String(mr_value)) =
+                compiler_opts.get("moduleResolution")
+            {
+                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim())
+            } else {
+                // Default moduleResolution based on module setting
+                let effective_module = if let Some(serde_json::Value::String(mod_value)) =
+                    compiler_opts.get("module")
+                {
+                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim())
+                } else {
+                    String::new() // no module set
+                };
+                match effective_module.as_str() {
+                    "none" | "amd" | "umd" | "system" | "" => "classic".to_string(),
+                    "commonjs" => "node".to_string(),
+                    "node16" => "node16".to_string(),
+                    "nodenext" => "nodenext".to_string(),
+                    _ => "bundler".to_string(),
+                }
+            };
+
+            if effective_mr == "classic" {
+                let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
+                let key_len = "resolveJsonModule".len() as u32 + 2;
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key_len,
+                    diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA.to_string(),
+                    diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA,
+                ));
+            }
+
+            // Check module setting for TS5071 (none/system/umd)
+            if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+                let mod_normalized =
+                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
+                    let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
+                    let key_len = "resolveJsonModule".len() as u32 + 2;
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O.to_string(),
+                        diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O,
+                    ));
+                }
+            }
+        }
+
+        // TS5098: Option '{0}' can only be used when 'moduleResolution' is set to 'node16', 'nodenext', or 'bundler'.
+        let requires_modern_mr: &[&str] = &[
+            "resolvePackageJsonExports",
+            "resolvePackageJsonImports",
+            "customConditions",
+        ];
+        let mr_is_modern = if let Some(serde_json::Value::String(mr_value)) =
+            compiler_opts.get("moduleResolution")
+        {
+            let mr_normalized =
+                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+            matches!(mr_normalized.as_str(), "node16" | "nodenext" | "bundler")
+        } else {
+            // When moduleResolution is not set, the default depends on module.
+            // For modern module settings (es2015+, preserve), default is bundler → OK.
+            // For classic module settings (none, amd, umd, system, commonjs), default is classic/node → NOT OK.
+            if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+                let mod_normalized =
+                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                !matches!(
+                    mod_normalized.as_str(),
+                    "none" | "amd" | "umd" | "system" | "commonjs"
+                )
+            } else {
+                false // no module set → default is classic-ish
+            }
+        };
+        if !mr_is_modern {
+            for &opt in requires_modern_mr {
+                if option_is_truthy(compiler_opts.get(opt)) {
+                    let start = find_key_offset_in_source(&stripped, opt);
+                    let key_len = opt.len() as u32 + 2;
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL,
+                        &[opt],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        msg,
+                        diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL,
+                    ));
+                }
             }
         }
     }
@@ -1608,6 +1743,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             import_helpers,
             allow_js,
             check_js,
+            skip_lib_check,
             always_strict,
             use_define_for_class_fields,
             no_implicit_any,
@@ -1625,6 +1761,7 @@ fn merge_compiler_options(base: CompilerOptions, child: CompilerOptions) -> Comp
             no_resolve,
             no_unchecked_side_effect_imports,
             no_implicit_override,
+            module_detection,
         }
     )
 }
@@ -2402,6 +2539,36 @@ mod tests {
     }
 
     #[test]
+    fn test_ts5102_suppressed_with_ignore_deprecations() {
+        // When ignoreDeprecations: "5.0" is set, tsc suppresses TS5102 for removed options
+        let source =
+            r#"{"compilerOptions":{"ignoreDeprecations":"5.0","noImplicitUseStrict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5102),
+            "Should NOT emit TS5102 when ignoreDeprecations is '5.0', got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5102_not_suppressed_with_invalid_ignore_deprecations() {
+        // Invalid ignoreDeprecations value should NOT suppress TS5102
+        let source =
+            r#"{"compilerOptions":{"ignoreDeprecations":"6.0","noImplicitUseStrict":true}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5102),
+            "Should emit TS5102 when ignoreDeprecations is invalid, got: {codes:?}"
+        );
+        assert!(
+            codes.contains(&5103),
+            "Should also emit TS5103 for invalid ignoreDeprecations, got: {codes:?}"
+        );
+    }
+
+    #[test]
     fn test_ts5102_not_emitted_for_valid_option() {
         let source = r#"{"compilerOptions":{"strict":true}}"#;
         let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
@@ -2486,6 +2653,39 @@ mod tests {
         assert!(
             !codes.contains(&5095),
             "Should NOT emit TS5095 for bundler+preserve, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_node16() {
+        let source = r#"{"compilerOptions":{"module":"node16","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+node16, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_node18() {
+        let source = r#"{"compilerOptions":{"module":"node18","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+node18, got: {codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_ts5095_not_emitted_for_bundler_with_nodenext() {
+        let source = r#"{"compilerOptions":{"module":"nodenext","moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5095),
+            "Should NOT emit TS5095 for bundler+nodenext, got: {codes:?}"
         );
     }
 
@@ -2675,6 +2875,80 @@ mod tests {
         assert!(
             codes.contains(&5053),
             "Expected TS5053 for allowJs with isolatedDeclarations, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5070_resolve_json_module_with_classic_module_resolution() {
+        let source =
+            r#"{"compilerOptions":{"resolveJsonModule":true,"moduleResolution":"classic"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5070),
+            "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5070_resolve_json_module_with_amd_module() {
+        // module=amd defaults to moduleResolution=classic
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"amd"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5070),
+            "Expected TS5070 for resolveJsonModule with module=amd (implies classic), got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5071_resolve_json_module_with_system_module() {
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"system"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5071),
+            "Expected TS5071 for resolveJsonModule with module=system, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5071_resolve_json_module_with_none_module() {
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"none"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5071),
+            "Expected TS5071 for resolveJsonModule with module=none, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5098_resolve_package_json_with_classic() {
+        let source = r#"{"compilerOptions":{"resolvePackageJsonExports":true,"moduleResolution":"classic"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5098),
+            "Expected TS5098 for resolvePackageJsonExports with classic moduleResolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5098_not_emitted_with_bundler() {
+        let source = r#"{"compilerOptions":{"resolvePackageJsonExports":true,"moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5098),
+            "Should NOT emit TS5098 with bundler moduleResolution, got: {:?}",
             codes
         );
     }

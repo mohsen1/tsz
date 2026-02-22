@@ -2200,6 +2200,43 @@ fn test_infer_generic_function_identity() {
 }
 
 #[test]
+fn test_generic_call_resets_fixed_union_member_cache() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    let mut evaluator = CallEvaluator::new(&interner, &mut checker);
+
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_param.clone());
+    let identity = interner.function(FunctionShape {
+        params: vec![ParamInfo::unnamed(t_type), ParamInfo::unnamed(t_type)],
+        this_type: None,
+        return_type: t_type,
+        type_params: vec![t_param],
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    evaluator
+        .constraint_fixed_union_members
+        .borrow_mut()
+        .insert(TypeId::STRING, rustc_hash::FxHashSet::default());
+
+    let result = evaluator.resolve_call(identity, &[TypeId::STRING, TypeId::STRING]);
+    match result {
+        CallResult::Success(ret) => assert_eq!(ret, TypeId::STRING),
+        _ => panic!("Expected successful generic inference, got {result:?}"),
+    }
+
+    assert!(evaluator.constraint_fixed_union_members.borrow().is_empty());
+}
+
+#[test]
 fn test_infer_generic_function_identity_widens_non_const_literal() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);

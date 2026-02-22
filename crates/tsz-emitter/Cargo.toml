@@ -24,5 +24,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 
+[[test]]
+name = "comment_tests"
+path = "tests/comment_tests.rs"
+
+[[test]]
+name = "variable_declaration_emit_tests"
+path = "tests/variable_declaration_emit_tests.rs"
+
 [lints]
 workspace = true

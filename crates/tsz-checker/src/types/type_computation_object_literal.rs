@@ -364,7 +364,10 @@ impl<'a> CheckerState<'a> {
                                 .next()
                                 .is_some_and(|c| !c.is_alphanumeric() && c != '_' && c != '$');
 
-                        if !is_strict_reserved && !is_obviously_invalid_name {
+                        if !is_strict_reserved
+                            && !is_obviously_invalid_name
+                            && !self.ctx.has_parse_errors
+                        {
                             // TS18004: Missing value binding for shorthand property name
                             // Example: `({ arguments })` inside arrow function where `arguments`
                             // is not in scope as a value.

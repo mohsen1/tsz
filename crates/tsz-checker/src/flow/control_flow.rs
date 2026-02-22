@@ -27,7 +27,7 @@ use tsz_binder::BinderState;
 use tsz_binder::{FlowNode, FlowNodeArena, FlowNodeId, SymbolId, flow_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::NodeArena;
-use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{NarrowingContext, ParamInfo, QueryDatabase, TypeId, TypePredicate};
 
@@ -39,8 +39,8 @@ pub(crate) type CallPredicateMap = FxHashMap<u32, (TypePredicate, Vec<ParamInfo>
 
 // Guard against pathological requeue loops in flow traversal.
 const FLOW_STEP_BUDGET_MIN: usize = 1_024;
-const FLOW_STEP_BUDGET_SCALE: usize = 16;
-const FLOW_STEP_BUDGET_MAX: usize = 100_000;
+const FLOW_STEP_BUDGET_SCALE: usize = 12;
+const FLOW_STEP_BUDGET_MAX: usize = 40_000;
 
 const fn flow_step_budget(flow_node_count: usize) -> usize {
     let scaled = flow_node_count.saturating_mul(FLOW_STEP_BUDGET_SCALE);
@@ -74,6 +74,18 @@ mod tests {
     #[test]
     fn flow_step_budget_has_upper_cap() {
         assert_eq!(flow_step_budget(usize::MAX), FLOW_STEP_BUDGET_MAX);
+    }
+
+    #[test]
+    fn flow_step_budget_caps_large_graphs() {
+        let nodes = FLOW_STEP_BUDGET_MAX;
+        assert_eq!(flow_step_budget(nodes), FLOW_STEP_BUDGET_MAX);
+    }
+
+    #[test]
+    fn flow_step_budget_caps_large_contention_graphs_earlier() {
+        // Keep pathological full-suite flow walks bounded under worker contention.
+        assert_eq!(flow_step_budget(8_000), FLOW_STEP_BUDGET_MAX);
     }
 }
 
@@ -405,8 +417,14 @@ impl<'a> FlowAnalyzer<'a> {
             return initial_type;
         }
 
-        // Resolve symbol for caching purposes
-        let symbol_id = self.binder.resolve_identifier(self.arena, reference);
+        // Resolve symbol for caching purposes.
+        // Fallback to reference_symbol for non-identifier references (e.g. some
+        // qualified/member references) so repeated flow queries can share cache
+        // entries instead of using per-node synthetic symbols.
+        let symbol_id = self
+            .binder
+            .resolve_identifier(self.arena, reference)
+            .or_else(|| self.reference_symbol(reference));
 
         self.check_flow(
             reference,
@@ -658,34 +676,32 @@ impl<'a> FlowAnalyzer<'a> {
                 || is_call; // CRITICAL: CALL nodes need antecedent for assertion functions
 
             if is_merge_point && !flow.antecedent.is_empty() {
-                // For merge points, check if all required antecedents are processed
-                // For SWITCH_CLAUSE, we check fallthrough antecedents (index 1+)
-                // For BRANCH, we check all antecedents
-                // For LOOP_LABEL, we only require the first antecedent (entry flow) to be ready
-                let antecedents_to_check: Vec<FlowNodeId> = if is_switch_fallthrough {
-                    // CRITICAL FIX: Switch fallthrough needs ALL antecedents
-                    // - index 0: switch header (for narrowing calculation)
-                    // - index 1..: previous clauses that fell through (for union)
-                    flow.antecedent.clone()
-                } else if is_loop_header {
-                    // For loops, only check the first antecedent (entry flow)
-                    flow.antecedent.first().copied().into_iter().collect()
-                } else {
-                    flow.antecedent.clone()
-                };
-
                 // Some flow graphs can contain self-antecedent edges on merge nodes.
                 // Treat self-edges as already satisfied to avoid requeueing the same
                 // node forever before it can be finalized.
-                let all_ready = antecedents_to_check.iter().all(|&ant| {
-                    ant == current_flow || visited.contains(&ant) || results.contains_key(&ant)
-                });
+                let mut all_ready = true;
+                let mut check_antecedent_ready = |ant: FlowNodeId| {
+                    if ant != current_flow && !visited.contains(&ant) && !results.contains_key(&ant)
+                    {
+                        all_ready = false;
+                    }
+                };
+                if is_loop_header {
+                    if let Some(&ant) = flow.antecedent.first() {
+                        check_antecedent_ready(ant);
+                    }
+                } else {
+                    // BRANCH/SWITCH/CALL merge points check all antecedents.
+                    for &ant in &flow.antecedent {
+                        check_antecedent_ready(ant);
+                    }
+                }
 
                 if !all_ready {
-                    // Schedule unprocessed antecedents to be processed FIRST (push_front)
-                    for &ant in &antecedents_to_check {
+                    // Schedule unprocessed antecedents to be processed FIRST (push_front).
+                    let mut schedule_antecedent = |ant: FlowNodeId| {
                         if ant == current_flow {
-                            continue;
+                            return;
                         }
                         if !visited.contains(&ant)
                             && !results.contains_key(&ant)
@@ -693,6 +709,15 @@ impl<'a> FlowAnalyzer<'a> {
                         {
                             worklist.push_front((ant, current_type));
                             in_worklist.insert(ant);
+                        }
+                    };
+                    if is_loop_header {
+                        if let Some(&ant) = flow.antecedent.first() {
+                            schedule_antecedent(ant);
+                        }
+                    } else {
+                        for &ant in &flow.antecedent {
+                            schedule_antecedent(ant);
                         }
                     }
                     // Re-add self to the END of worklist to process after antecedents
@@ -1360,375 +1385,5 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         pre_type
-    }
-
-    /// Iterative flow graph traversal for definite assignment checks.
-    ///
-    /// This replaces the recursive implementation to prevent stack overflow
-    /// on deeply nested control flow structures. Uses a worklist algorithm with
-    /// fixed-point iteration to determine if a variable is definitely assigned.
-    pub(crate) fn check_definite_assignment(
-        &self,
-        reference: NodeIndex,
-        flow_id: FlowNodeId,
-        _visited: &mut Vec<FlowNodeId>,
-        cache: &mut FxHashMap<FlowNodeId, bool>,
-    ) -> bool {
-        // Helper: Add a node to the worklist if not already present
-        let add_to_worklist =
-            |node: FlowNodeId,
-             worklist: &mut Vec<FlowNodeId>,
-             in_worklist: &mut FxHashSet<FlowNodeId>| {
-                if !in_worklist.contains(&node) {
-                    worklist.push(node);
-                    in_worklist.insert(node);
-                }
-            };
-
-        // Result cache: flow_id -> is_assigned
-        // We use a local cache that we'll merge into the provided cache
-        let mut local_cache: FxHashMap<FlowNodeId, bool> = FxHashMap::default();
-
-        // Worklist for processing nodes
-        let mut worklist: Vec<FlowNodeId> = vec![flow_id];
-        let mut in_worklist: FxHashSet<FlowNodeId> = FxHashSet::default();
-        in_worklist.insert(flow_id);
-
-        // Track nodes that are waiting for their antecedents to be computed
-        // Map: node -> set of antecedents it's waiting for
-        let mut waiting_for: FxHashMap<FlowNodeId, FxHashSet<FlowNodeId>> = FxHashMap::default();
-
-        while let Some(current_flow) = worklist.pop() {
-            in_worklist.remove(&current_flow);
-
-            // Skip if we already have a result
-            if local_cache.contains_key(&current_flow) {
-                continue;
-            }
-
-            let Some(flow) = self.binder.flow_nodes.get(current_flow) else {
-                // Flow node doesn't exist - mark as assigned
-                local_cache.insert(current_flow, true);
-                // Notify any nodes waiting for this one
-                let ready: Vec<_> = waiting_for
-                    .iter()
-                    .filter(|(_, ants)| ants.contains(&current_flow))
-                    .map(|(&node, _)| node)
-                    .collect();
-                for node in ready {
-                    waiting_for.remove(&node);
-                    add_to_worklist(node, &mut worklist, &mut in_worklist);
-                }
-                continue;
-            };
-
-            // Compute the result based on flow node type
-            let result = if flow.has_any_flags(flow_flags::UNREACHABLE) {
-                false
-            } else if flow.has_any_flags(flow_flags::ASSIGNMENT) {
-                if self.assignment_targets_reference(flow.node, reference) {
-                    true
-                } else if let Some(&ant) = flow.antecedent.first() {
-                    if let Some(&ant_result) = local_cache.get(&ant) {
-                        ant_result
-                    } else {
-                        // Add antecedent to worklist and defer
-                        add_to_worklist(ant, &mut worklist, &mut in_worklist);
-                        waiting_for.entry(current_flow).or_default().insert(ant);
-                        continue;
-                    }
-                } else {
-                    false
-                }
-            } else if flow.has_any_flags(flow_flags::BRANCH_LABEL) {
-                if flow.antecedent.is_empty() {
-                    false
-                } else {
-                    // Check if all antecedents have results
-                    let mut all_ready = true;
-                    let mut results = Vec::new();
-
-                    for &ant in &flow.antecedent {
-                        if let Some(ant_node) = self.binder.flow_nodes.get(ant)
-                            && ant_node.has_any_flags(flow_flags::UNREACHABLE)
-                        {
-                            // Unreachable branches satisfy the condition vacuously
-                            results.push(true);
-                            continue;
-                        }
-
-                        if let Some(&ant_result) = local_cache.get(&ant) {
-                            results.push(ant_result);
-                        } else {
-                            all_ready = false;
-                            add_to_worklist(ant, &mut worklist, &mut in_worklist);
-                            waiting_for.entry(current_flow).or_default().insert(ant);
-                        }
-                    }
-
-                    if !all_ready {
-                        continue;
-                    }
-
-                    // All antecedents processed - compute result (all must be true)
-                    results.iter().all(|&r| r)
-                }
-            } else if flow.has_any_flags(flow_flags::LOOP_LABEL | flow_flags::CONDITION) {
-                if let Some(&ant) = flow.antecedent.first() {
-                    if let Some(&ant_result) = local_cache.get(&ant) {
-                        ant_result
-                    } else {
-                        add_to_worklist(ant, &mut worklist, &mut in_worklist);
-                        waiting_for.entry(current_flow).or_default().insert(ant);
-                        continue;
-                    }
-                } else {
-                    false
-                }
-            } else if flow.has_any_flags(flow_flags::SWITCH_CLAUSE) {
-                if flow.antecedent.is_empty() {
-                    false
-                } else {
-                    // Similar to BRANCH_LABEL - check all antecedents
-                    let mut all_ready = true;
-                    let mut results = Vec::new();
-
-                    for &ant in &flow.antecedent {
-                        if let Some(ant_node) = self.binder.flow_nodes.get(ant)
-                            && ant_node.has_any_flags(flow_flags::UNREACHABLE)
-                        {
-                            results.push(true);
-                            continue;
-                        }
-
-                        if let Some(&ant_result) = local_cache.get(&ant) {
-                            results.push(ant_result);
-                        } else {
-                            all_ready = false;
-                            add_to_worklist(ant, &mut worklist, &mut in_worklist);
-                            waiting_for.entry(current_flow).or_default().insert(ant);
-                        }
-                    }
-
-                    if !all_ready {
-                        continue;
-                    }
-
-                    results.iter().all(|&r| r)
-                }
-            } else if flow.has_any_flags(flow_flags::START) {
-                false
-            } else if let Some(&ant) = flow.antecedent.first() {
-                if let Some(&ant_result) = local_cache.get(&ant) {
-                    ant_result
-                } else {
-                    add_to_worklist(ant, &mut worklist, &mut in_worklist);
-                    waiting_for.entry(current_flow).or_default().insert(ant);
-                    continue;
-                }
-            } else {
-                false
-            };
-
-            // Store the result
-            local_cache.insert(current_flow, result);
-
-            // Notify any nodes waiting for this one
-            let ready: Vec<_> = waiting_for
-                .iter()
-                .filter(|(_, ants)| ants.contains(&current_flow))
-                .map(|(&node, _)| node)
-                .collect();
-            for node in ready {
-                waiting_for.remove(&node);
-                add_to_worklist(node, &mut worklist, &mut in_worklist);
-            }
-        }
-
-        // Get the final result
-        let final_result = *local_cache.get(&flow_id).unwrap_or(&false);
-
-        // Merge local cache into the provided cache
-        cache.extend(local_cache);
-
-        final_result
-    }
-
-    /// Check if an assignment node is a mutable variable declaration (let/var) without a type annotation.
-    /// Used to determine when literal types should be widened to their base types.
-    pub(crate) fn is_mutable_var_decl_without_annotation(&self, node: NodeIndex) -> bool {
-        let Some(node_data) = self.arena.get(node) else {
-            return false;
-        };
-
-        // Handle VARIABLE_DECLARATION directly
-        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION {
-            let Some(decl) = self.arena.get_variable_declaration(node_data) else {
-                return false;
-            };
-            // If there's a type annotation, don't widen - the user specified the type
-            if decl.type_annotation.is_some() {
-                return false;
-            }
-            // Check if the parent declaration list is let/var (not const)
-            if let Some(ext) = self.arena.get_extended(node)
-                && ext.parent.is_some()
-                && let Some(parent_node) = self.arena.get(ext.parent)
-            {
-                let flags = parent_node.flags as u32;
-                return (flags & node_flags::CONST) == 0;
-            }
-            return false;
-        }
-
-        // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT: check flags on the list
-        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT
-        {
-            let flags = node_data.flags as u32;
-            if (flags & node_flags::CONST) != 0 {
-                return false;
-            }
-            // Check individual declarations for type annotations
-            if let Some(list) = self.arena.get_variable(node_data) {
-                for &decl_idx in &list.declarations.nodes {
-                    let Some(decl_node) = self.arena.get(decl_idx) else {
-                        continue;
-                    };
-                    if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                        && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                        && decl.type_annotation.is_none()
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Check if an assignment flow node is a variable declaration with a type annotation.
-    ///
-    /// When a variable has an explicit type annotation, the flow analysis should
-    /// use the declared type (not the initializer's structural type) for non-literal
-    /// assignments. This prevents the initializer's type from overriding the declared
-    /// type in the flow graph.
-    pub(crate) fn is_var_decl_with_type_annotation(&self, node: NodeIndex) -> bool {
-        let Some(node_data) = self.arena.get(node) else {
-            return false;
-        };
-
-        if node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION
-            && let Some(decl) = self.arena.get_variable_declaration(node_data)
-        {
-            return decl.type_annotation.is_some();
-        }
-
-        // Handle VARIABLE_DECLARATION_LIST or VARIABLE_STATEMENT
-        if (node_data.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
-            || node_data.kind == syntax_kind_ext::VARIABLE_STATEMENT)
-            && let Some(list) = self.arena.get_variable(node_data)
-        {
-            for &decl_idx in &list.declarations.nodes {
-                let Some(decl_node) = self.arena.get(decl_idx) else {
-                    continue;
-                };
-                if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                    && let Some(decl) = self.arena.get_variable_declaration(decl_node)
-                    && decl.type_annotation.is_some()
-                {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Get the declared annotation type for a variable declaration node, if available.
-    ///
-    /// Returns `Some(type_id)` when `assignment_node` is a `VARIABLE_DECLARATION` with a
-    /// type annotation whose type has already been computed and cached in `node_types`.
-    /// Returns `None` otherwise (no annotation, wrong node kind, or not cached yet).
-    ///
-    /// The type annotation node index is used as the cache key (not the declaration node),
-    /// matching how `get_type_from_type_node` caches in `node_types`.
-    pub(crate) fn annotation_type_from_var_decl_node(
-        &self,
-        assignment_node: NodeIndex,
-    ) -> Option<TypeId> {
-        let decl_data = self.arena.get(assignment_node)?;
-        if decl_data.kind != syntax_kind_ext::VARIABLE_DECLARATION {
-            return None;
-        }
-        let var_decl = self.arena.get_variable_declaration(decl_data)?;
-        if var_decl.type_annotation.is_none() {
-            return None;
-        }
-        let node_types = self.node_types?;
-        node_types.get(&var_decl.type_annotation.0).copied()
-    }
-
-    /// Check if an assignment node represents a destructuring assignment.
-    /// Destructuring assignments widen literals to primitives, unlike direct assignments.
-    fn is_destructuring_assignment(&self, node: NodeIndex) -> bool {
-        let Some(node_data) = self.arena.get(node) else {
-            return false;
-        };
-
-        match node_data.kind {
-            syntax_kind_ext::BINARY_EXPRESSION => {
-                let Some(bin) = self.arena.get_binary_expr(node_data) else {
-                    return false;
-                };
-                // Check if left side is a binding pattern OR array/object literal (for destructuring)
-                let left_is_binding = self.is_binding_pattern(bin.left);
-                let left_is_literal = self.contains_destructuring_pattern(bin.left);
-                left_is_binding || left_is_literal
-            }
-            syntax_kind_ext::VARIABLE_DECLARATION => {
-                let Some(decl) = self.arena.get_variable_declaration(node_data) else {
-                    return false;
-                };
-                // Check if name is a binding pattern (destructuring in variable declaration)
-                self.is_binding_pattern(decl.name)
-            }
-            _ => false,
-        }
-    }
-
-    /// Check if a node is a binding pattern (array or object destructuring pattern)
-    fn is_binding_pattern(&self, node: NodeIndex) -> bool {
-        if node.is_none() {
-            return false;
-        }
-        let Some(node_data) = self.arena.get(node) else {
-            return false;
-        };
-        matches!(
-            node_data.kind,
-            syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
-        )
-    }
-
-    /// Check if a node contains a destructuring pattern (array/object literal with binding elements).
-    /// This handles cases like `[x] = [1]` where the left side is an array literal containing binding patterns.
-    ///
-    /// Note: In TypeScript, if an array or object literal appears on the left side of an assignment,
-    /// it's ALWAYS a destructuring pattern, regardless of what elements it contains.
-    fn contains_destructuring_pattern(&self, node: NodeIndex) -> bool {
-        if node.is_none() {
-            return false;
-        }
-        let Some(node_data) = self.arena.get(node) else {
-            return false;
-        };
-
-        // If this is an array or object literal, it's a destructuring pattern when on the left side of an assignment
-        matches!(
-            node_data.kind,
-            syntax_kind_ext::ARRAY_LITERAL_EXPRESSION | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-        )
     }
 }

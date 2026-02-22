@@ -630,3 +630,125 @@ fn test_commonjs_non_module_no_use_strict() {
         "CJS non-module script should not get 'use strict', got: {output}"
     );
 }
+
+// =========================================================================
+// Enum var/let keyword tests
+// =========================================================================
+
+#[test]
+fn test_top_level_enum_uses_var_at_es2015() {
+    let source = "enum Color { Red, Green, Blue }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("var Color;"),
+        "Top-level enum at ES2015 should use 'var', got: {output}"
+    );
+}
+
+#[test]
+fn test_enum_in_function_uses_let_at_es2015() {
+    let source = "function foo() { enum E { A, B } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("let E;"),
+        "Enum inside function at ES2015 should use 'let', got: {output}"
+    );
+    assert!(
+        !output.contains("var E;"),
+        "Should not contain 'var E;' for block-scoped enum, got: {output}"
+    );
+}
+
+#[test]
+fn test_enum_in_function_uses_var_at_es5() {
+    let source = "function foo() { enum E { A, B } }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("var E;"),
+        "Enum inside function at ES5 should use 'var', got: {output}"
+    );
+}
+
+#[test]
+fn test_top_level_enum_uses_var_at_es5() {
+    let source = "enum E { A, B, C }";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        },
+    )
+    .code;
+    assert!(
+        output.contains("var E;"),
+        "Top-level enum at ES5 should use 'var', got: {output}"
+    );
+}
+
+#[test]
+fn test_extends_optional_chain_parenthesized_downlevel() {
+    // When target < ES2020, `A?.B` is lowered to a conditional expression.
+    // In an `extends` clause, this must be wrapped in parens because
+    // `extends` requires a LeftHandSideExpression.
+    let source = r#"namespace A {
+    export class B {}
+}
+class C1 extends A?.B {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    // The lowered optional chain must be wrapped in parens
+    assert!(
+        output.contains("extends (A === null"),
+        "Lowered optional chain in extends clause should be parenthesized, got: {output}"
+    );
+}

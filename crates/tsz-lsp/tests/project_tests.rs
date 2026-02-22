@@ -1107,6 +1107,34 @@ fn test_project_completions_auto_import_function_kind() {
 }
 
 #[test]
+fn test_project_completions_preserve_keyword_order_when_auto_imports_present() {
+    let mut project = Project::new();
+    project.set_file(
+        "/lib/main.ts".to_string(),
+        "export const Button = 1;\n".to_string(),
+    );
+    project.set_file("/index.ts".to_string(), "Button".to_string());
+
+    let items = project
+        .get_completions("/index.ts", Position::new(0, 6))
+        .expect("Expected completions");
+    let names: Vec<&str> = items.iter().map(|item| item.label.as_str()).collect();
+
+    let abstract_idx = names
+        .iter()
+        .position(|name| *name == "abstract")
+        .expect("Expected keyword 'abstract' in completions");
+    let array_idx = names
+        .iter()
+        .position(|name| *name == "Array")
+        .expect("Expected global 'Array' in completions");
+    assert!(
+        abstract_idx < array_idx,
+        "Expected keyword completions to keep tsserver-style ordering ahead of globals"
+    );
+}
+
+#[test]
 fn test_project_completions_prefix_matching() {
     let mut project = Project::new();
 
@@ -2609,6 +2637,72 @@ fn test_auto_import_via_reexport() {
     assert!(
         completion.additional_text_edits.is_some(),
         "Should have additionalTextEdits to insert import"
+    );
+}
+
+#[test]
+fn test_auto_import_reexport_prefers_shorter_source_for_duplicate_symbol_name() {
+    let mut project = Project::new();
+    project.set_file(
+        "/tsconfig.json".to_string(),
+        r#"{
+  "compilerOptions": {
+    "module": "commonjs",
+    "paths": {
+      "~/*": ["src/*"]
+    }
+  }
+}"#
+        .to_string(),
+    );
+    project.set_file("/src/dirA/thing1A.ts".to_string(), "Thing".to_string());
+    project.set_file(
+        "/src/dirA/thing2A.ts".to_string(),
+        "export class Thing2A {}".to_string(),
+    );
+    project.set_file(
+        "/src/dirB/index.ts".to_string(),
+        "export * from \"./thing1B\";\nexport * from \"./thing2B\";\n".to_string(),
+    );
+    project.set_file(
+        "/src/dirB/thing1B.ts".to_string(),
+        "export class Thing1B {}".to_string(),
+    );
+    project.set_file(
+        "/src/dirB/thing2B.ts".to_string(),
+        "export class Thing2B {}".to_string(),
+    );
+
+    let completions = project
+        .get_completions("/src/dirA/thing1A.ts", Position::new(0, 5))
+        .expect("expected completions");
+
+    let thing2_completions: Vec<_> = completions
+        .iter()
+        .filter(|item| item.label == "Thing2B")
+        .collect();
+    let thing2a_completions: Vec<_> = completions
+        .iter()
+        .filter(|item| item.label == "Thing2A")
+        .collect();
+
+    assert!(
+        !thing2_completions.is_empty(),
+        "expected Thing2B auto-import completion entries"
+    );
+    assert!(
+        !thing2a_completions.is_empty(),
+        "expected Thing2A auto-import completion entries"
+    );
+    assert_eq!(
+        thing2_completions[0].source.as_deref(),
+        Some("~/dirB"),
+        "expected shorter barrel source to be ordered first"
+    );
+    assert_eq!(
+        thing2a_completions[0].source.as_deref(),
+        Some("./thing2A"),
+        "expected direct sibling source to outrank ./index for same-directory symbols"
     );
 }
 

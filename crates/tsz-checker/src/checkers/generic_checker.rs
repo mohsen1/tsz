@@ -119,63 +119,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Collect the provided type arguments
-        let type_args: Vec<TypeId> = type_args_list
-            .nodes
-            .iter()
-            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
-            .collect();
-
-        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
-            if let Some(constraint) = param.constraint {
-                // Skip constraint checking when the type argument is an error type
-                // (avoids cascading errors from unresolved references)
-                if type_arg == TypeId::ERROR {
-                    continue;
-                }
-
-                // Skip constraint checking when the type argument contains unresolved type parameters
-                // (they'll be checked later when fully instantiated)
-                if query::contains_type_parameters(self.ctx.types, type_arg) {
-                    continue;
-                }
-
-                // Resolve the constraint in case it's a Lazy type
-                let constraint = self.resolve_lazy_type(constraint);
-
-                // Instantiate the constraint with type arguments up to and including the
-                // current parameter so self-referential constraints are validated.
-                let mut subst = tsz_solver::TypeSubstitution::new();
-                for (j, p) in type_params.iter().take(i + 1).enumerate() {
-                    if let Some(&arg) = type_args.get(j) {
-                        subst.insert(p.name, arg);
-                    }
-                }
-                let instantiated_constraint = if subst.is_empty() {
-                    constraint
-                } else {
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
-                };
-
-                // Skip if the instantiated constraint contains type parameters
-                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
-                    continue;
-                }
-
-                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
-
-                if !is_satisfied {
-                    // Report TS2344 at the specific type argument node
-                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                        self.error_type_constraint_not_satisfied(
-                            type_arg,
-                            instantiated_constraint,
-                            arg_idx,
-                        );
-                    }
-                }
-            }
-        }
+        self.validate_type_args_against_params(&type_params, type_args_list);
     }
 
     /// Validate type arguments against their constraints for type references (e.g., `A<X, Y>`).
@@ -230,7 +174,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Collect the provided type arguments
+        // Collect the provided type arguments for circular reference check
         let type_args: Vec<TypeId> = type_args_list
             .nodes
             .iter()
@@ -258,46 +202,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Validate type arguments against their constraints
-        for (i, (param, &type_arg)) in type_params.iter().zip(type_args.iter()).enumerate() {
-            if let Some(constraint) = param.constraint {
-                if type_arg == TypeId::ERROR {
-                    continue;
-                }
-
-                if query::contains_type_parameters(self.ctx.types, type_arg) {
-                    continue;
-                }
-
-                let constraint = self.resolve_lazy_type(constraint);
-
-                let mut subst = tsz_solver::TypeSubstitution::new();
-                for (j, p) in type_params.iter().take(i + 1).enumerate() {
-                    if let Some(&arg) = type_args.get(j) {
-                        subst.insert(p.name, arg);
-                    }
-                }
-
-                let instantiated_constraint = if subst.is_empty() {
-                    constraint
-                } else {
-                    tsz_solver::instantiate_type(self.ctx.types, constraint, &subst)
-                };
-
-                if query::contains_type_parameters(self.ctx.types, instantiated_constraint) {
-                    continue;
-                }
-
-                let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
-
-                if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                    self.error_type_constraint_not_satisfied(
-                        type_arg,
-                        instantiated_constraint,
-                        arg_idx,
-                    );
-                }
-            }
-        }
+        self.validate_type_args_against_params(&type_params, type_args_list);
     }
 
     /// Validate explicit type arguments against their constraints for new expressions.
@@ -372,7 +277,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        // Collect the provided type arguments
+        self.validate_type_args_against_params(&type_params, type_args_list);
+    }
+
+    /// Validate each type argument against its corresponding type parameter constraint.
+    /// Reports TS2344 when a type argument doesn't satisfy its constraint.
+    ///
+    /// Shared implementation used by call expressions, new expressions, and type references.
+    fn validate_type_args_against_params(
+        &mut self,
+        type_params: &[tsz_solver::TypeParamInfo],
+        type_args_list: &tsz_parser::parser::NodeList,
+    ) {
         let type_args: Vec<TypeId> = type_args_list
             .nodes
             .iter()
@@ -417,15 +333,12 @@ impl<'a> CheckerState<'a> {
 
                 let is_satisfied = self.is_assignable_to(type_arg, instantiated_constraint);
 
-                if !is_satisfied {
-                    // Report TS2344 at the specific type argument node
-                    if let Some(&arg_idx) = type_args_list.nodes.get(i) {
-                        self.error_type_constraint_not_satisfied(
-                            type_arg,
-                            instantiated_constraint,
-                            arg_idx,
-                        );
-                    }
+                if !is_satisfied && let Some(&arg_idx) = type_args_list.nodes.get(i) {
+                    self.error_type_constraint_not_satisfied(
+                        type_arg,
+                        instantiated_constraint,
+                        arg_idx,
+                    );
                 }
             }
         }

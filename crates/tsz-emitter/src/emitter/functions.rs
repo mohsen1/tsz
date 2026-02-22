@@ -92,7 +92,7 @@ impl<'a> Printer<'a> {
         // - If source had `(x: string) => x`, emit `(x) => x` (parens preserved)
         let source_had_parens = self.source_has_arrow_function_parens(&func.parameters.nodes);
         let is_simple = self.is_simple_single_parameter(&func.parameters.nodes);
-        let needs_parens = source_had_parens || !is_simple;
+        let needs_parens = source_had_parens || !is_simple || func.is_async;
 
         tracing::trace!(
             source_had_parens,
@@ -679,5 +679,75 @@ impl<'a> Printer<'a> {
         }
 
         self.emit(name_idx);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::printer::{PrintOptions, Printer};
+    use tsz_parser::ParserState;
+
+    /// Async arrow functions must always have parenthesized parameters,
+    /// matching tsc behavior. `async x => x` becomes `async (x) => x`.
+    #[test]
+    fn async_arrow_always_parenthesizes_params() {
+        let source = "const f = async i => i;";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("async (i) =>"),
+            "Async arrow with single param should always have parens.\nOutput:\n{output}"
+        );
+    }
+
+    /// Non-async arrow functions with a single simple param preserve source parens.
+    /// `x => x` stays as `x => x` (no forced parens).
+    #[test]
+    fn non_async_arrow_preserves_no_parens() {
+        let source = "const f = x => x;";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // Should NOT add parens for non-async single-param arrow
+        assert!(
+            !output.contains("(x) =>"),
+            "Non-async arrow without source parens should not add parens.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("x =>"),
+            "Non-async arrow should preserve no-paren form.\nOutput:\n{output}"
+        );
+    }
+
+    /// Async arrow with parens in source should keep them.
+    #[test]
+    fn async_arrow_with_source_parens_keeps_them() {
+        let source = "const f = async (x) => x;";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("async (x) =>"),
+            "Async arrow with source parens should keep them.\nOutput:\n{output}"
+        );
     }
 }

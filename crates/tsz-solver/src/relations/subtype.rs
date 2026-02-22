@@ -524,10 +524,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     }
                 }
 
-                // DEBUG LOGGING
-                // println!("source: {:?}, target member: {:?}, source_members: {:?}, i_list: {:?}, contains: {}",
-                //          self.interner.lookup(source), self.interner.lookup(member), source_members, i_list, contains_all);
-
                 if contains_all {
                     let mut rem = Vec::new();
                     for &i_m in i_list.iter() {
@@ -544,7 +540,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
             if all_contain_source && !factored_members.is_empty() {
                 let factored_target = self.interner.union(factored_members);
-                // println!("ALL CONTAIN SOURCE! checking subtype against factored target: {:?}", self.interner.lookup(factored_target));
                 if self.check_subtype(source, factored_target).is_true() {
                     return SubtypeResult::True;
                 }
@@ -1076,13 +1071,8 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             if source == TypeId::NUMBER && self.resolver.is_numeric_enum(t_def_id) {
                 return SubtypeResult::True;
             }
-            if matches!(
-                self.interner.lookup(source),
-                Some(TypeData::Literal(LiteralValue::Number(_)))
-            ) && self.resolver.is_numeric_enum(t_def_id)
-            {
-                return SubtypeResult::True;
-            }
+            // For number literals, fall through to structural check against t_members
+            // so that only actual enum member values (e.g., 0|1|2) are accepted
             return self.check_subtype(source, t_members);
         }
 

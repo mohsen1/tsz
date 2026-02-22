@@ -139,13 +139,20 @@ const x: E.A = 1;  // ERROR: number to enum member
 
 #[test]
 fn test_number_to_numeric_enum_type() {
-    // number SHOULD be assignable to numeric enum type (but not literal values)
+    // bare `number` type SHOULD be assignable to numeric enum type
+    // but arbitrary number literals that aren't member values should error
     let source = r"
 enum E { A = 0 }
-const x: E = 1;  // OK: number to enum type
+declare const n: number;
+const x: E = n;  // OK: number type to enum type
 ";
     test_enum_assignability(source, 0);
 }
+
+// Note: Tests for rejecting arbitrary number literals (e.g., 999) assigned to
+// numeric enums are validated via conformance tests, which have full lib types.
+// The unit test checker doesn't load lib types, so enum member unions may not
+// resolve correctly for rejection tests.
 
 #[test]
 fn test_number_literal_to_numeric_enum_type() {

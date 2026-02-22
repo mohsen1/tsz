@@ -6,6 +6,7 @@
 
 use super::es5_helpers::ArraySegment;
 use super::*;
+use crate::transforms::emit_utils;
 
 impl<'a> Printer<'a> {
     fn get_class_expression_name(&self, class_node: NodeIndex) -> Option<String> {
@@ -904,7 +905,9 @@ impl<'a> Printer<'a> {
         }
 
         // Check if there are any spread elements
-        let has_spread = args.iter().any(|&arg_idx| self.is_spread_element(arg_idx));
+        let has_spread = args
+            .iter()
+            .any(|&arg_idx| emit_utils::is_spread_element(self.arena, arg_idx));
 
         if !has_spread {
             // No spreads, just emit an array literal
@@ -919,7 +922,7 @@ impl<'a> Printer<'a> {
         let mut current_start = 0;
 
         for (i, &arg_idx) in args.iter().enumerate() {
-            if self.is_spread_element(arg_idx) {
+            if emit_utils::is_spread_element(self.arena, arg_idx) {
                 // Add non-spread segment before this spread
                 if current_start < i {
                     segments.push(ArraySegment::Elements(&args[current_start..i]));

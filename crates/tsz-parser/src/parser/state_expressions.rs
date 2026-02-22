@@ -15,6 +15,7 @@ use crate::parser::{
 };
 use tsz_common::interner::Atom;
 use tsz_scanner::SyntaxKind;
+use tsz_scanner::scanner_impl::TokenFlags;
 
 impl ParserState {
     // =========================================================================
@@ -998,14 +999,14 @@ impl ParserState {
                 {
                     // Parse as await expression - the checker will emit TS1308
                     // (not TS1359 from the parser) to match TSC behavior
-                } else if self.in_async_context() && self.in_parameter_default_context() {
+                } else if self.in_async_context()
+                    && self.in_parameter_default_context()
+                    && has_following_expression
+                {
                     // TS2524: 'await' expressions cannot be used in a parameter initializer
-                    // Emit TS2524 in async functions with parameter defaults, regardless of whether
-                    // there's a following expression.
-                    // Examples:
-                    //   - `async (a = await foo)` → emit TS2524
-                    //   - `async (a = await)` → emit TS2524 + TS1109 (expression expected)
-
+                    // Only emit when there IS a following expression (e.g., `async (a = await foo)`).
+                    // When there's NO following expression (e.g., `async (a = await)`), the normal
+                    // TS1109 "Expression expected" path handles it instead.
                     self.parse_error_at_current_token(
                         "'await' expressions cannot be used in a parameter initializer.",
                         diagnostic_codes::AWAIT_EXPRESSIONS_CANNOT_BE_USED_IN_A_PARAMETER_INITIALIZER,
@@ -1882,16 +1883,36 @@ impl ParserState {
         // Check if current token is an identifier or keyword that can be used as identifier
         // This allows contextual keywords (type, interface, package, etc.) to be used as identifiers
         // in appropriate contexts (e.g., type aliases, interface names)
-        let (atom, text) = if self.is_identifier_or_keyword() {
+        let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
             // Use zero-copy accessor and clone only when storing
             let text = self.scanner.get_token_value_ref().to_string();
+            // tsc preserves unicode escape sequences in emitted identifiers.
+            // Capture the original source text when the scanner detected escapes.
+            let original_text =
+                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                    let src = self.scanner.source_text();
+                    let start = self.scanner.get_token_start();
+                    let end = self.scanner.get_token_end();
+                    if start < end && end <= src.len() {
+                        let slice = &src[start..end];
+                        if slice != text {
+                            Some(slice.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
             self.next_token();
-            (atom, text)
+            (atom, text, original_text)
         } else {
             self.error_identifier_expected();
-            (Atom::NONE, String::new())
+            (Atom::NONE, String::new(), None)
         };
 
         self.arena.add_identifier(
@@ -1901,7 +1922,7 @@ impl ParserState {
             IdentifierData {
                 atom,
                 escaped_text: text,
-                original_text: None,
+                original_text,
                 type_arguments: None,
             },
         )
@@ -1914,15 +1935,34 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
-        let (atom, text) = if self.is_identifier_or_keyword() {
+        let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();
             let text = self.scanner.get_token_value_ref().to_string();
+            // Preserve unicode escape sequences for emission parity with tsc
+            let original_text =
+                if (self.scanner.get_token_flags() & TokenFlags::UnicodeEscape as u32) != 0 {
+                    let src = self.scanner.source_text();
+                    let start = self.scanner.get_token_start();
+                    let end = self.scanner.get_token_end();
+                    if start < end && end <= src.len() {
+                        let slice = &src[start..end];
+                        if slice != text {
+                            Some(slice.to_string())
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
             self.next_token();
-            (atom, text)
+            (atom, text, original_text)
         } else {
             self.error_identifier_expected();
-            (Atom::NONE, String::new())
+            (Atom::NONE, String::new(), None)
         };
 
         self.arena.add_identifier(
@@ -1932,7 +1972,7 @@ impl ParserState {
             IdentifierData {
                 atom,
                 escaped_text: text,
-                original_text: None,
+                original_text,
                 type_arguments: None,
             },
         )

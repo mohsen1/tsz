@@ -64,6 +64,33 @@ function processValue(value: string | number | null) {
   return value.toFixed(2);
 }
 `,
+  sound_mode: `// ⚠️ Sound mode is experimental.
+// Uncheck "sound" to see these errors disappear!
+
+// 1. Sticky freshness — excess properties via indirection
+//    tsc allows this because freshness is "widened away"
+interface Point2D { x: number; y: number }
+const point3d = { x: 1, y: 2, z: 3 };
+const p: Point2D = point3d; // Sound: excess 'z'
+
+// 2. Mutable array covariance
+//    Dog[] → Animal[] lets you push a Cat into a Dog array
+interface Animal { name: string }
+interface Dog extends Animal { breed: string }
+const dogs: Dog[] = [{ name: "Rex", breed: "Lab" }];
+const animals: Animal[] = dogs; // Sound: unsafe covariance
+
+// 3. any escape
+//    'any' silences real structural errors
+const data: any = "not an object";
+const num: number = data; // Sound: any bypass
+
+// 4. Excess properties in function args (via indirection)
+interface Config { host: string; port: number }
+const cfg = { host: "localhost", port: 8080, debug: true };
+function startServer(c: Config) {}
+startServer(cfg); // Sound: excess 'debug'
+`,
   errors: `// Intentional type errors — tsz should catch all of these
 
 let x: string = 42;
@@ -95,6 +122,7 @@ let checkTimeout = null;
 const statusEl = document.getElementById("playground-status");
 const exampleSelect = document.getElementById("example-select");
 const strictCheck = document.getElementById("strict-mode");
+const soundCheck = document.getElementById("sound-mode");
 const diagPanel = document.getElementById("diagnostics-panel");
 const diagBadge = document.getElementById("diag-badge");
 
@@ -232,6 +260,7 @@ function runCheck() {
 
   const code = editor.getValue();
   const strict = strictCheck.checked;
+  const soundMode = soundCheck.checked;
 
   statusEl.textContent = "checking...";
   statusEl.className = "status-checking";
@@ -240,7 +269,7 @@ function runCheck() {
 
   try {
     const program = new wasm.TsProgram();
-    program.setCompilerOptions(JSON.stringify({ strict }));
+    program.setCompilerOptions(JSON.stringify({ strict, soundMode }));
 
     for (const [name, content] of Object.entries(libFiles)) {
       program.addLibFile(name, content);
@@ -354,11 +383,21 @@ function escapeHtml(s) {
 // ── Example selector ──
 
 exampleSelect.addEventListener("change", () => {
-  const code = EXAMPLES[exampleSelect.value];
-  if (code && editor) editor.setValue(code);
+  const val = exampleSelect.value;
+  const code = EXAMPLES[val];
+  if (code && editor) {
+    // Auto-toggle sound mode checkbox for the sound_mode example
+    if (val === "sound_mode") {
+      soundCheck.checked = true;
+    } else {
+      soundCheck.checked = false;
+    }
+    editor.setValue(code);
+  }
 });
 
 strictCheck.addEventListener("change", () => scheduleCheck());
+soundCheck.addEventListener("change", () => scheduleCheck());
 
 // ── Init ──
 

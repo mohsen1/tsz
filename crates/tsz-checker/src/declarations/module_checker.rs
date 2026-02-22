@@ -342,6 +342,8 @@ impl<'a> CheckerState<'a> {
 
         // Get the module's canonical export surface.
         let module_exports = self.resolve_effective_module_exports(module_name);
+        // TSC includes source-level quotes in module diagnostic messages
+        let quoted_module = format!("\"{module_name}\"");
 
         let Some(module_exports) = module_exports else {
             return; // Module exports not found - TS2307 already emitted
@@ -388,7 +390,7 @@ impl<'a> CheckerState<'a> {
                     // TS2614: Symbol doesn't exist but a default export does
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER_DID_YOU_MEAN_TO_USE_IMPORT_FROM_INSTEAD,
-                        &[module_name, &export_name],
+                        &[&quoted_module, &export_name],
                     );
                     self.error_at_node(
                         specifier_idx,
@@ -399,7 +401,7 @@ impl<'a> CheckerState<'a> {
                     // TS2305: Module has no exported member
                     let message = format_message(
                         diagnostic_messages::MODULE_HAS_NO_EXPORTED_MEMBER,
-                        &[module_name, &export_name],
+                        &[&quoted_module, &export_name],
                     );
                     self.error_at_node(
                         specifier_idx,
@@ -616,23 +618,26 @@ impl<'a> CheckerState<'a> {
                 is_local_or_imported = true;
             }
 
+            // Also check scope resolution — symbols declared inside `declare module`
+            // scopes won't be in file_locals but ARE local to the module.
+            if !is_local_or_imported && self.resolve_identifier_symbol(name_idx).is_some() {
+                is_local_or_imported = true;
+            }
+
             if !is_local_or_imported {
-                // If it resolves to something globally but is not local, emit TS2661
-                if self.resolve_identifier_symbol(name_idx).is_some()
-                    || matches!(
-                        name_str.as_str(),
-                        "undefined"
-                            | "any"
-                            | "unknown"
-                            | "never"
-                            | "string"
-                            | "number"
-                            | "boolean"
-                            | "symbol"
-                            | "object"
-                            | "bigint"
-                    )
-                {
+                if matches!(
+                    name_str.as_str(),
+                    "undefined"
+                        | "any"
+                        | "unknown"
+                        | "never"
+                        | "string"
+                        | "number"
+                        | "boolean"
+                        | "symbol"
+                        | "object"
+                        | "bigint"
+                ) {
                     self.error_at_node_msg(
                         name_idx,
                         crate::diagnostics::diagnostic_codes::CANNOT_EXPORT_ONLY_LOCAL_DECLARATIONS_CAN_BE_EXPORTED_FROM_A_MODULE,

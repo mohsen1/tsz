@@ -403,3 +403,49 @@ fn test_numeric_method_name() {
     // Numeric literal method name should use bracket notation
     assert!(output.contains("NumericMethods.prototype[42]"));
 }
+
+#[test]
+fn test_leading_comment_not_duplicated_in_iife() {
+    // The ES5 class IIFE must NOT include a leading_comment, because the
+    // statement-level comment handler in the main emitter already emits
+    // comments that precede the class declaration. Including the comment
+    // in the IR would produce duplicate output.
+    let source = r#"// No errors
+class C {
+    foo() {}
+}"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    // The IR printer should NOT emit "// No errors" — that is the
+    // statement-level emitter's responsibility.
+    assert!(
+        !output.contains("// No errors"),
+        "ES5 class IIFE should not include leading comment (handled by statement loop).\nOutput:\n{output}"
+    );
+    // The class body should still be correct
+    assert!(output.contains("var C = /** @class */ (function ()"));
+    assert!(output.contains("C.prototype.foo = function ()"));
+}
+
+#[test]
+fn test_multiple_classes_no_comment_duplication() {
+    // Verify that leading comments before multiple classes are not included
+    // in the IR output (they're handled by the statement-level emitter).
+    let source = r#"// First class comment
+class A {
+    methodA() {}
+}"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    assert!(
+        !output.contains("// First class comment"),
+        "Leading comment should not appear in ES5 class IR output.\nOutput:\n{output}"
+    );
+    assert!(output.contains("var A = /** @class */ (function ()"));
+}

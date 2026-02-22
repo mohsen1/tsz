@@ -261,10 +261,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
 
         // TS2371: Check for parameter initializers in ambient functions
         // Ambient functions (with 'declare' modifier) cannot have default parameter values
-        let has_declare = self.ctx.has_modifier(
-            &func.modifiers,
-            tsz_scanner::SyntaxKind::DeclareKeyword as u16,
-        );
+        let has_declare = self
+            .ctx
+            .arena
+            .has_modifier(&func.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword);
 
         if has_declare && !func.parameters.nodes.is_empty() {
             for &param_idx in &func.parameters.nodes {
@@ -597,7 +597,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
         // TS1066: In ambient enum declarations, member initializer must be constant expression
         let is_ambient = self
             .ctx
-            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword as u16);
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword);
 
         if is_ambient {
             // Check each member's initializer

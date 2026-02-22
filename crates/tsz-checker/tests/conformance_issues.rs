@@ -157,6 +157,34 @@ fn compile_and_get_diagnostics_with_lib_and_options(
 }
 
 #[test]
+fn test_class_extends_aliased_base_preserves_instance_members() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+class Base<T> {
+    value!: T;
+}
+
+class Derived extends Base<string> {
+    getValue() {
+        return this.value;
+    }
+}
+
+const value: string = new Derived().getValue();
+"#,
+    );
+
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    assert!(
+        relevant.is_empty(),
+        "Expected no non-lib diagnostics for class inheritance through aliased base symbol, got: {relevant:?}"
+    );
+}
+
+#[test]
 fn test_deeppartial_optional_chain_mixed_property_types_remain_distinct() {
     let diagnostics = compile_and_get_diagnostics(
         r#"
@@ -636,6 +664,79 @@ class Derived extends Base {
 }
 
 #[test]
+fn test_class_interface_merge_preserves_callable_and_properties() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Merged {
+    value: number = 1;
+}
+
+interface Merged {
+    (x: number): string;
+    extra: boolean;
+}
+
+declare const merged: Merged;
+const okCall: string = merged(1);
+const okProp: boolean = merged.extra;
+const badCall: number = merged(1);
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for assigning merged callable string result to number.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2349),
+        "Did not expect TS2349; merged class/interface type should remain callable.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Did not expect TS2339; merged interface property should remain visible.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_multi_level_extends_resolves_base_instance_member_without_cycle_noise() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Box<T> {
+    value!: T;
+}
+
+class Mid<U> extends Box<U> {}
+
+class Final extends Mid<string> {
+    read(): string {
+        return this.value;
+    }
+}
+
+const ok: string = new Final().value;
+const bad: number = new Final().value;
+        ",
+    );
+
+    assert!(
+        has_error(&diagnostics, 2322),
+        "Expected TS2322 for assigning inherited string member to number.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2339),
+        "Did not expect TS2339 for inherited base member lookup.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect TS2506 in non-cyclic generic inheritance.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2449),
+        "Did not expect TS2449 for this linear declaration order.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_class_used_before_declaration_does_not_also_report_cycle_error() {
     let diagnostics = compile_and_get_diagnostics(
         r"
@@ -655,6 +756,31 @@ class C {}
     assert!(
         !has_ts2506,
         "Did not expect TS2506 for non-cyclic before-declaration extends. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+/// Forward-reference class relationships should not trigger TS2506.
+/// Derived extends Base, where Base is declared after Derived.
+/// The `class_instance_resolution_set` recursion guard should not be
+/// confused with a real circular inheritance cycle.
+#[test]
+fn test_complex_class_relationships_no_ts2506() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class Derived extends Base {
+    public static createEmpty(): Derived {
+        var item = new Derived();
+        return item;
+    }
+}
+class Base {
+    ownerCollection: any;
+}
+        ",
+    );
+    assert!(
+        !has_error(&diagnostics, 2506),
+        "Did not expect TS2506 for forward-reference class extends. Actual diagnostics: {diagnostics:#?}"
     );
 }
 
@@ -2156,10 +2282,11 @@ func(x);
     );
 }
 
-/// TS7034 should fire for variables captured by arrow functions.
+/// TS7034 should NOT fire for block-scoped `let` variables, even when captured by arrow functions.
+/// tsc only emits TS7034 for function-scoped `var` declarations.
 /// From: controlFlowNoImplicitAny.ts (f10)
 #[test]
-fn test_ts7034_captured_by_arrow_function() {
+fn test_ts7034_not_emitted_for_let_captured_by_arrow_function() {
     let opts = CheckerOptions {
         no_implicit_any: true,
         ..CheckerOptions::default()
@@ -2175,24 +2302,65 @@ function f10() {
         opts,
     );
     assert!(
+        !has_error(&diagnostics, 7034),
+        "Should NOT emit TS7034 for block-scoped `let` variable.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS7034 SHOULD fire for function-scoped `var` variables captured by arrow functions.
+#[test]
+fn test_ts7034_emitted_for_var_captured_by_arrow_function() {
+    let opts = CheckerOptions {
+        no_implicit_any: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r"
+function f10() {
+    var x;
+    x = 'hello';
+    const f = () => { x; };
+}
+        ",
+        opts,
+    );
+    assert!(
         has_error(&diagnostics, 7034),
-        "Should emit TS7034 for variable captured by arrow function.\nActual errors: {diagnostics:#?}"
+        "Should emit TS7034 for function-scoped `var` variable captured by arrow function.\nActual errors: {diagnostics:#?}"
     );
 }
 
 // TS2882: Cannot find module or type declarations for side-effect import
 
-/// TS2882 should fire for side-effect imports by default (tsc 6.0 default: true).
+/// TS2882 should NOT fire by default (tsc 6.0 default: noUncheckedSideEffectImports = false).
 #[test]
-fn test_ts2882_side_effect_import_default() {
-    // Default CheckerOptions has no_unchecked_side_effect_imports: true
+fn test_ts2882_side_effect_import_default_off() {
+    // Default CheckerOptions has no_unchecked_side_effect_imports: false (matching tsc)
     let diagnostics = compile_imports_and_get_diagnostics(
         r#"import 'nonexistent-module';"#,
         CheckerOptions::default(),
     );
     assert!(
+        !has_error(&diagnostics, 2882),
+        "Should NOT emit TS2882 by default (noUncheckedSideEffectImports defaults to false).\nActual errors: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2307),
+        "Should NOT emit TS2307 for side-effect import.\nActual errors: {diagnostics:#?}"
+    );
+}
+
+/// TS2882 should fire when noUncheckedSideEffectImports is explicitly true.
+#[test]
+fn test_ts2882_side_effect_import_option_true() {
+    let opts = CheckerOptions {
+        no_unchecked_side_effect_imports: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_imports_and_get_diagnostics(r#"import 'nonexistent-module';"#, opts);
+    assert!(
         has_error(&diagnostics, 2882),
-        "Should emit TS2882 for side-effect import by default.\nActual errors: {diagnostics:#?}"
+        "Should emit TS2882 when noUncheckedSideEffectImports is true.\nActual errors: {diagnostics:#?}"
     );
     assert!(
         !has_error(&diagnostics, 2307),
@@ -2441,4 +2609,289 @@ someGenerics6 `${ (n: number) => n }${ n => n }${ n => n }`;
         !has_error(&relevant, 7006),
         "Should NOT emit TS7006 - 'n' should be inferred as number from generic context.\nActual errors: {relevant:#?}"
     );
+}
+
+/// Test that write-only parameters are correctly flagged as unused (TS6133).
+///
+/// When a parameter is assigned to (`person2 = "dummy"`) but never read,
+/// TS6133 should still fire. Previously, `check_const_assignment` used the
+/// tracking `resolve_identifier_symbol` to look up the symbol, which added
+/// the assignment target to `referenced_symbols`. This suppressed the TS6133
+/// diagnostic because the unused-checker's early skip treated the symbol as
+/// "used".
+///
+/// Fix: `get_const_variable_name` now uses the binder-level `resolve_identifier`
+/// (no tracking side-effect) so assignment targets stay in `written_symbols`
+/// only.
+#[test]
+fn test_ts6133_write_only_parameter_still_flagged() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function greeter(person: string, person2: string) {
+    var unused = 20;
+    person2 = "dummy value";
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| {
+            // Extract name from "'X' is declared but its value is never read."
+            msg.split('\'').nth(1).unwrap_or("?")
+        })
+        .collect();
+
+    assert!(
+        ts6133_names.contains(&"person"),
+        "Should flag 'person' as unused. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"person2"),
+        "Should flag 'person2' as unused (write-only). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"unused"),
+        "Should flag 'unused' as unused. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that const assignment detection (TS2588) still works after the
+/// `resolve_identifier_symbol` → `binder.resolve_identifier` change.
+#[test]
+fn test_ts2588_const_assignment_still_detected() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+const x = 5;
+x = 10;
+        "#,
+    );
+    assert!(
+        has_error(&diagnostics, 2588),
+        "Should emit TS2588 for assignment to const. Got: {diagnostics:#?}"
+    );
+}
+
+/// Test that write-only parameters with multiple params all get flagged.
+#[test]
+fn test_ts6133_write_only_middle_parameter() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function greeter(person: string, person2: string, person3: string) {
+    var unused = 20;
+    person2 = "dummy value";
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        ts6133_names.contains(&"person"),
+        "Should flag 'person'. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"person2"),
+        "Should flag 'person2' (write-only). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"person3"),
+        "Should flag 'person3'. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"unused"),
+        "Should flag 'unused'. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that underscore-prefixed binding elements in destructuring are suppressed
+/// but regular underscore-prefixed declarations are NOT suppressed.
+/// TSC only suppresses `_`-prefixed names in destructuring patterns, not in
+/// regular `let`/`const`/`var` declarations.
+#[test]
+fn test_ts6133_underscore_regular_declarations_still_flagged() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    let _a = 1;
+    let _b = "hello";
+    let notUsed = 99;
+    console.log("ok");
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    // TSC flags regular `let _a = 1` declarations — underscore suppression
+    // only applies to destructuring binding elements, not regular declarations.
+    assert!(
+        ts6133_names.contains(&"_a"),
+        "Should flag '_a' (regular declaration, not destructuring). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"_b"),
+        "Should flag '_b' (regular declaration, not destructuring). Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.contains(&"notUsed"),
+        "Should flag 'notUsed'. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that underscore-prefixed binding elements in destructuring are suppressed.
+/// This is the main pattern seen in failing conformance tests like
+/// `unusedVariablesWithUnderscoreInBindingElement.ts`.
+#[test]
+fn test_ts6133_underscore_destructuring_suppressed() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    const [_a, b] = [1, 2];
+    console.log(b);
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        !ts6133_names.contains(&"_a"),
+        "Should NOT flag '_a' in array destructuring (underscore-prefixed). Got: {ts6133_names:?}"
+    );
+    // `b` is used via console.log, so it shouldn't be flagged either
+    assert!(
+        ts6133_names.is_empty(),
+        "Should have no TS6133. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test object destructuring with underscore-prefixed binding element.
+#[test]
+fn test_ts6133_underscore_object_destructuring_suppressed() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f() {
+    const obj = { a: 1, b: 2 };
+    const { a: _a, b } = obj;
+    console.log(b);
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        !ts6133_names.contains(&"_a"),
+        "Should NOT flag '_a' in object destructuring. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that underscore-prefixed parameters still work (regression guard).
+#[test]
+fn test_ts6133_underscore_params_still_suppressed() {
+    let opts = CheckerOptions {
+        no_unused_locals: true,
+        no_unused_parameters: true,
+        ..CheckerOptions::default()
+    };
+    let diagnostics = compile_and_get_diagnostics_with_options(
+        r#"
+function f(_unused: string, used: string) {
+    console.log(used);
+}
+        "#,
+        opts,
+    );
+
+    let ts6133_names: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 6133)
+        .map(|(_, msg)| msg.split('\'').nth(1).unwrap_or("?"))
+        .collect();
+
+    assert!(
+        !ts6133_names.contains(&"_unused"),
+        "Should NOT flag '_unused' parameter. Got: {ts6133_names:?}"
+    );
+    assert!(
+        ts6133_names.is_empty(),
+        "Should have no TS6133 diagnostics at all. Got: {ts6133_names:?}"
+    );
+}
+
+/// Test that TS2305 diagnostic includes quoted module name matching tsc format.
+/// TSC emits: Module '"./foo"' has no exported member 'Bar'.
+/// (outer ' from the message template, inner " from source-level quotes)
+#[test]
+fn test_ts2305_module_name_includes_quotes() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+export function foo() {}
+import { nonExistent } from "./thisModule";
+        "#,
+    );
+
+    let ts2305_msgs: Vec<&str> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2305 || *code == 2307)
+        .map(|(_, msg)| msg.as_str())
+        .collect();
+
+    // If TS2305 is emitted, verify it includes quoted module name
+    for msg in &ts2305_msgs {
+        if msg.contains("has no exported member") {
+            assert!(
+                msg.contains("\"./thisModule\""),
+                "TS2305 should include quoted module name. Got: {msg}"
+            );
+        }
+    }
 }

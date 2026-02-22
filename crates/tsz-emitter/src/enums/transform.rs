@@ -23,9 +23,9 @@
 
 use crate::enums::evaluator::{EnumEvaluator, EnumValue};
 use rustc_hash::FxHashMap;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 /// Options for enum transformation
@@ -91,7 +91,9 @@ impl<'a> EnumTransformer<'a> {
         }
 
         // Check if const
-        let is_const = self.is_const_enum(&enum_data.modifiers);
+        let is_const = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.enum_declarations.insert(name.clone(), enum_idx);
         self.const_enum_names.insert(name, is_const);
@@ -125,12 +127,18 @@ impl<'a> EnumTransformer<'a> {
         };
 
         // Check for ambient (declare enum) - always erased
-        if self.is_ambient_enum(&enum_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return true;
         }
 
         // Check for const enum
-        if self.is_const_enum(&enum_data.modifiers) {
+        if self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword)
+        {
             // Erase unless preserveConstEnums is set
             return !self.options.preserve_const_enums;
         }
@@ -230,7 +238,8 @@ impl<'a> EnumTransformer<'a> {
                 continue;
             };
 
-            let member_name = self.get_member_name(member_data.name);
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
             if member_name.is_empty() {
                 continue;
             }
@@ -381,51 +390,8 @@ impl<'a> EnumTransformer<'a> {
         }
     }
 
-    fn is_const_enum(&self, modifiers: &Option<NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::ConstKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn is_ambient_enum(&self, modifiers: &Option<NodeList>) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == SyntaxKind::DeclareKeyword as u16
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     fn get_identifier_text(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx)
-            && let Some(ident) = self.arena.get_identifier(node)
-        {
-            return ident.escaped_text.clone();
-        }
-        String::new()
-    }
-
-    fn get_member_name(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            if let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
-            if let Some(lit) = self.arena.get_literal(node) {
-                return lit.text.clone();
-            }
-        }
-        String::new()
+        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx)
     }
 
     /// Check if an identifier refers to a const enum

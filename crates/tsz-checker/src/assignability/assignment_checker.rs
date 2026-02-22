@@ -105,7 +105,17 @@ impl<'a> CheckerState<'a> {
         let ident = self.ctx.arena.get_identifier(node)?;
         let name = ident.escaped_text.clone();
 
-        let sym_id = self.resolve_identifier_symbol(ident_idx)?;
+        // Use binder-level resolution (no tracking side-effect) to avoid marking
+        // the assignment target as "read" in `referenced_symbols`. The const check
+        // is a read-only query — assignment targets should only be tracked via
+        // `resolve_identifier_symbol_for_write` in `get_type_of_assignment_target`.
+        // Using the tracking `resolve_identifier_symbol` here would suppress TS6133
+        // for write-only parameters (e.g., `person2 = "dummy value"` should still
+        // flag `person2` as unused).
+        let sym_id = self
+            .ctx
+            .binder
+            .resolve_identifier(self.ctx.arena, ident_idx)?;
 
         // Find the correct binder and arena for this symbol
         let mut target_binder = self.ctx.binder;

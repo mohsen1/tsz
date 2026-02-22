@@ -5,7 +5,8 @@
 
 use tsz_common::position::Range;
 use tsz_parser::{NodeIndex, syntax_kind_ext};
-use tsz_scanner::SyntaxKind;
+
+use crate::utils::{is_import_keyword, is_require_identifier};
 
 /// Information about an import/export that needs to be updated.
 #[derive(Debug, Clone)]
@@ -70,8 +71,8 @@ impl<'a> FileRenameProvider<'a> {
             return;
         };
 
-        let is_dynamic_import = self.is_import_keyword(call_data.expression);
-        let is_require = self.is_require_identifier(call_data.expression);
+        let is_dynamic_import = is_import_keyword(self.arena, call_data.expression);
+        let is_require = is_require_identifier(self.arena, call_data.expression);
 
         if !is_dynamic_import && !is_require {
             return;
@@ -87,34 +88,6 @@ impl<'a> FileRenameProvider<'a> {
         };
 
         self.add_import_location(first_arg, result);
-    }
-
-    /// Check if a node is the `import` keyword (for dynamic import expressions).
-    fn is_import_keyword(&self, node_idx: NodeIndex) -> bool {
-        if node_idx.is_none() {
-            return false;
-        }
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-        node.kind == SyntaxKind::ImportKeyword as u16
-    }
-
-    /// Check if a node is a `require` identifier.
-    fn is_require_identifier(&self, node_idx: NodeIndex) -> bool {
-        if node_idx.is_none() {
-            return false;
-        }
-        let Some(node) = self.arena.get(node_idx) else {
-            return false;
-        };
-        if node.kind != SyntaxKind::Identifier as u16 {
-            return false;
-        }
-        let Some(ident_data) = self.arena.get_identifier(node) else {
-            return false;
-        };
-        ident_data.escaped_text == "require"
     }
 
     /// Add an import location to the result if the specifier is a string literal.

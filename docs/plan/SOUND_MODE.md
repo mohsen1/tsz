@@ -17,7 +17,7 @@ tsz check --sound src/
 }
 
 # Or per-file pragma
-// @ts-sound
+// @tsz-sound
 ```
 
 ## Implemented Features
@@ -153,13 +153,13 @@ catch (e) {
 
 #### Ecosystem Boundaries & Strategies
 
-Sound Mode relies on **explicit boundary enforcement** via automated structural transformations of the ecosystem's definitions.
+Sound Mode's biggest blocker is ecosystem typing hygiene. It relies on **explicit boundary enforcement** via automated structural transformations of the ecosystem's definitions.
 
-**1. `SoundlyTyped`: Automated Ecosystem Soundness**
-To handle the massive ecosystem of `node_modules` and DefinitelyTyped (DT), we introduce **`SoundlyTyped`**—a fully automated infrastructure layer.
-- **Zero Hand-Coded Types:** Purely mechanical transformation pipeline.
-- **Automated Transformation:** Rewrites upstream `.d.ts` files: maps `any` to `unknown`, closes open numeric enums, patches bivariant method signatures.
-- **Evergreen Sync:** Automatically regenerates when upstream packages update.
+**1. `SoundlyTyped`: Automated Ecosystem Soundness (Boundary Overlay)**
+To handle the massive ecosystem of `node_modules` and DefinitelyTyped (DT), we introduce **`SoundlyTyped`**—a fully automated infrastructure layer acting as a boundary-aware overlay, rather than a naive token-replacement fork.
+- **Boundary-Aware Transformation:** Instead of replacing every `any` (which breaks DT's internal type-level machinery), it maps `any` to `unknown` specifically at **value flow boundaries**—return types, readable properties, and callback arguments flowing into consumer code.
+- **Pattern Rewrites over Bans:** Rewrites bivariance hacks (e.g., React patterns) and method-to-property variances to sound equivalents.
+- **Cached Overlays:** Transforms are cached by package/version/hash to keep it fast and incremental.
 
 **2. Sound Core Libraries (`*.sound.lib.d.ts`)**
 Standard libraries often return `any` for ergonomics. A true Sound Mode defaults to sound alternative core typings (e.g., `dom.sound.lib.d.ts`). For instance, `JSON.parse` and `fetch().json()` return `unknown`.
@@ -211,7 +211,9 @@ const mut: Mutable = ro;  // ✅ tsc allows dropping 'readonly'
 mut.id = 2;               // 💥 Runtime: ro.id is now 2!
 ```
 
-**Sound Mode:** A type with a `readonly` property cannot be assigned to a type where that property is mutable, enforcing `readonly` guarantees across aliases.
+**Sound Mode:** A type with a `readonly` property cannot be assigned to a type where that property is mutable, enforcing `readonly` guarantees across aliases. 
+
+*Limitation:* Because JavaScript is fundamentally mutable and `tsz` adheres to type erasure, this enforces correctness at the reference level but cannot prevent underlying mutations if a mutable reference to the same object is retained elsewhere.
 
 #### TSZ9304: Split Accessor Assignability
 
@@ -329,15 +331,18 @@ const len = tuple.length; // ✅ tsc says '2', 💥 Runtime: actual length is 3
 
 ### Group 9600: Primitives & Enums
 
-#### TSZ9601: Numeric Enum Openness
+#### TSZ9601: Strict Nominal Enums
+
+*Note: Modern TypeScript (5.0+) already fixes the classic `const s: Status = 999` bug. The `tsz` baseline matches this modern behavior.*
 
 **TypeScript allows:**
 ```typescript
 enum Status { Active = 0, Inactive = 1 }
-const s: Status = 999;  // ✅ tsc allows any number!
+const s: Status = Status.Active;
+const n: number = s; // ✅ tsc allows implicit enum-to-number conversion
 ```
 
-**Sound Mode:** Make numeric enums closed - only defined values allowed.
+**Sound Mode:** Enforce strict nominal typing for enums. Implicit conversions between enums and numbers (in either direction) are forbidden without an explicit cast, treating the enum as a fully opaque type.
 
 #### TSZ9602: Implicit Primitive Boxing
 
@@ -440,6 +445,16 @@ TypeScript already does excellent CFA for narrowing. Sound Mode wouldn't change 
 ---
 
 ## Implementation Considerations
+
+### The Caching "Correctness Tax"
+Caching is the hidden complexity of gradual soundness. Because Sound Mode is a policy switch over the same Judge solver, any feature that makes relation outcomes depend on policy (e.g., `soundArrayVariance`) must be reflected in the cache key.
+- **Policy Bitsets:** The solver's relation cache keys must include a versioned policy ID or bitset. This ensures that a `Dog[]` to `Animal[]` relation check caches as `false` in Sound Mode, but doesn't pollute the cache for a non-sound file that expects `true`.
+
+### Error Suppression (`@tsz-ignore`)
+In Sound Mode, suppression comments (`// @tsz-ignore`) are strictly **diagnostic-only (suppress-only)**. 
+- They locally mute the error output but do **not** act as a semantic escape hatch. 
+- The compiler still evaluates the AST node using strict sound semantics.
+- This is crucial for caching and performance: if suppression changed semantics, it would invalidate the cache for that specific node and cascade changes to downstream inference and overload resolution. If users need true TS-compatible semantics at a boundary, they must use explicit types or casts, not a suppression comment.
 
 ### Flag Design
 

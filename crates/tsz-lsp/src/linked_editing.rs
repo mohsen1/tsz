@@ -4,7 +4,7 @@
 //! When editing an opening JSX tag (e.g., `<div>`), the closing tag (`</div>`)
 //! automatically syncs.
 
-use crate::utils::find_node_at_offset;
+use crate::utils::{find_node_at_offset, node_range};
 use tsz_common::position::{Position, Range};
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 
@@ -128,11 +128,7 @@ impl<'a> LinkedEditingProvider<'a> {
 
     /// Convert a node's position to an LSP Range.
     fn get_range(&self, idx: NodeIndex) -> Range {
-        let node = self.arena.get(idx).unwrap();
-        Range::new(
-            self.line_map.offset_to_position(node.pos, self.source_text),
-            self.line_map.offset_to_position(node.end, self.source_text),
-        )
+        node_range(self.arena, self.line_map, self.source_text, idx)
     }
 }
 

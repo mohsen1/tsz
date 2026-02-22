@@ -151,7 +151,8 @@ impl<'a> EnumEvaluator<'a> {
             };
 
             // Get member name
-            let member_name = self.get_member_name(member_data.name);
+            let member_name =
+                crate::transforms::emit_utils::enum_member_name(self.arena, member_data.name);
             if member_name.is_empty() {
                 continue;
             }
@@ -418,19 +419,6 @@ impl<'a> EnumEvaluator<'a> {
         }
 
         EnumValue::Computed
-    }
-
-    /// Get member name from a node (identifier or string literal)
-    fn get_member_name(&self, idx: NodeIndex) -> String {
-        if let Some(node) = self.arena.get(idx) {
-            if let Some(ident) = self.arena.get_identifier(node) {
-                return ident.escaped_text.clone();
-            }
-            if let Some(lit) = self.arena.get_literal(node) {
-                return lit.text.clone();
-            }
-        }
-        String::new()
     }
 }
 

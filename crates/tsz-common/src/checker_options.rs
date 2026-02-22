@@ -58,7 +58,7 @@ pub struct CheckerOptions {
     /// - `any` escapes (TS9004)
     /// - Excess properties via sticky freshness (TS9001)
     ///
-    /// Activated via: `--sound` CLI flag or `// @ts-sound` pragma
+    /// Activated via: `--sound` CLI flag or `// @tsz-sound` pragma
     pub sound_mode: bool,
     /// When true, enables experimental support for decorators (legacy decorators).
     /// This is required for the @experimentalDecorators flag.
@@ -148,7 +148,7 @@ impl Default for CheckerOptions {
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,
-            no_unchecked_side_effect_imports: true,
+            no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),

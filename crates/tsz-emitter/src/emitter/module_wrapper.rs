@@ -3,6 +3,7 @@ use crate::emitter::ModuleKind;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     fn hoist_decorate_helper_before_wrapper(&mut self) -> bool {
@@ -84,6 +85,29 @@ impl<'a> Printer<'a> {
         last_name
     }
 
+    /// Extract `/// <reference .../>` directives from the source header.
+    /// tsc emits these before the AMD `define()` call, not inside the wrapper body.
+    fn extract_reference_directives(&self) -> Vec<String> {
+        let Some(text) = self.source_text else {
+            return Vec::new();
+        };
+        let mut refs = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with("///") {
+                if !trimmed.is_empty() && !trimmed.starts_with("//") {
+                    break;
+                }
+                continue;
+            }
+            let comment = trimmed.trim_start_matches('/').trim();
+            if comment.starts_with("<reference") {
+                refs.push(trimmed.to_string());
+            }
+        }
+        refs
+    }
+
     /// Extract `/// <amd-dependency path='...' name='...'/>` directives.
     /// Returns (path, `optional_name`, `original_line`) tuples.
     fn extract_amd_dependencies(&self) -> Vec<(String, Option<String>, String)> {
@@ -120,12 +144,19 @@ impl<'a> Printer<'a> {
         let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
         let amd_name = self.extract_amd_module_name();
         let amd_deps = self.extract_amd_dependencies();
+        let reference_directives = self.extract_reference_directives();
         let Some(source) = self.arena.get_source_file(source_node) else {
             return;
         };
         let (value_deps, side_effect_deps, dep_vars) =
             self.collect_amd_dependency_groups(dependencies, source);
 
+        // Emit `/// <reference .../>` directives before `define()` — tsc places
+        // these at file top level, outside the AMD wrapper body.
+        for directive in &reference_directives {
+            self.write(directive);
+            self.write_line();
+        }
         // Emit `/// <amd-dependency .../>` comments before `define()`.
         for (_, _, original_line) in &amd_deps {
             self.write(original_line);
@@ -205,6 +236,12 @@ impl<'a> Printer<'a> {
         source_idx: NodeIndex,
     ) {
         let restore_decorate_helper = self.hoist_decorate_helper_before_wrapper();
+        // Emit `/// <reference .../>` directives before the UMD wrapper.
+        let reference_directives = self.extract_reference_directives();
+        for directive in &reference_directives {
+            self.write(directive);
+            self.write_line();
+        }
         self.write("(function (factory) {");
         self.write_line();
         self.increase_indent();
@@ -257,6 +294,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // Emit `/// <reference .../>` directives before the System wrapper.
+        let reference_directives = self.extract_reference_directives();
+        for directive in &reference_directives {
+            self.write(directive);
+            self.write_line();
+        }
         self.write("System.register([");
         for (i, dep) in dependencies.iter().enumerate() {
             if i > 0 {
@@ -866,7 +909,10 @@ impl<'a> Printer<'a> {
             return true;
         }
 
-        let is_exported = force_exported || self.has_export_modifier(&import_decl.modifiers);
+        let is_exported = force_exported
+            || self
+                .arena
+                .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword);
         let is_external = self
             .arena
             .get(import_decl.module_specifier)
@@ -976,7 +1022,9 @@ impl<'a> Printer<'a> {
         let Some(var_stmt) = self.arena.get_variable(node) else {
             return;
         };
-        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
 
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
@@ -1017,5 +1065,115 @@ impl<'a> Printer<'a> {
                 self.write_semicolon();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::emitter::{ModuleKind, Printer, PrinterOptions};
+    use tsz_parser::ParserState;
+
+    /// `/// <reference .../>` directives should appear BEFORE the AMD `define()` call,
+    /// not inside the wrapper function body. tsc always places them at file top level.
+    #[test]
+    fn amd_reference_directive_emitted_before_define() {
+        let source = r#"/// <reference path="/.lib/react.d.ts" />
+import * as React from "react";
+export const Foo = () => null;
+"#;
+        let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        // Reference directive must come before define()
+        let ref_pos = output.find("/// <reference");
+        let define_pos = output.find("define(");
+        assert!(
+            ref_pos.is_some() && define_pos.is_some(),
+            "Output should contain both reference directive and define().\nOutput:\n{output}"
+        );
+        assert!(
+            ref_pos.unwrap() < define_pos.unwrap(),
+            "/// <reference> should appear BEFORE define(), not inside it.\nOutput:\n{output}"
+        );
+
+        // It should only appear once (not duplicated inside the body)
+        let ref_count = output.matches("/// <reference").count();
+        assert_eq!(
+            ref_count, 1,
+            "Reference directive should appear exactly once, not duplicated.\nOutput:\n{output}"
+        );
+    }
+
+    /// Multiple `/// <reference>` directives should all appear before the AMD wrapper.
+    #[test]
+    fn amd_multiple_reference_directives_before_define() {
+        let source = r#"/// <reference path="lib1.d.ts" />
+/// <reference path="lib2.d.ts" />
+import { x } from "mod";
+export const y = x;
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let define_pos = output.find("define(").expect("should have define()");
+        let ref1_pos = output.find("/// <reference path=\"lib1.d.ts\" />");
+        let ref2_pos = output.find("/// <reference path=\"lib2.d.ts\" />");
+        assert!(
+            ref1_pos.is_some() && ref1_pos.unwrap() < define_pos,
+            "First reference should appear before define().\nOutput:\n{output}"
+        );
+        assert!(
+            ref2_pos.is_some() && ref2_pos.unwrap() < define_pos,
+            "Second reference should appear before define().\nOutput:\n{output}"
+        );
+    }
+
+    /// UMD wrappers should also emit `/// <reference>` directives before the wrapper.
+    #[test]
+    fn umd_reference_directive_emitted_before_wrapper() {
+        let source = r#"/// <reference path="lib.d.ts" />
+import { x } from "mod";
+export const y = x;
+"#;
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let options = PrinterOptions {
+            module: ModuleKind::UMD,
+            ..Default::default()
+        };
+        let mut printer = Printer::with_options(&parser.arena, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let ref_pos = output.find("/// <reference");
+        let wrapper_pos = output.find("(function (factory)");
+        assert!(
+            ref_pos.is_some() && wrapper_pos.is_some(),
+            "Output should contain reference directive and UMD wrapper.\nOutput:\n{output}"
+        );
+        assert!(
+            ref_pos.unwrap() < wrapper_pos.unwrap(),
+            "/// <reference> should appear BEFORE the UMD wrapper.\nOutput:\n{output}"
+        );
     }
 }

@@ -35,6 +35,7 @@
 //! // usages are inlined
 //! ```
 
+use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 use crate::transforms::ir::{EnumMember, EnumMemberValue, IRNode};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -46,7 +47,7 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
     let enum_data = arena.get_enum_at(enum_idx)?;
 
     // Check for const enum - erase by default
-    if is_const_enum(arena, &enum_data.modifiers) {
+    if arena.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword) {
         return None;
     }
 
@@ -82,7 +83,7 @@ fn transform_enum_members(
             continue;
         };
 
-        let member_name = get_member_name(arena, member_data.name);
+        let member_name = crate::transforms::emit_utils::enum_member_name(arena, member_data.name);
         if member_name.is_empty() {
             continue;
         }
@@ -177,20 +178,6 @@ impl EnumMemberValue {
     }
 }
 
-/// Check if an enum is a const enum
-fn is_const_enum(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    if let Some(mods) = modifiers {
-        for &idx in &mods.nodes {
-            if let Some(node) = arena.get(idx)
-                && node.kind == SyntaxKind::ConstKeyword as u16
-            {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Check if a node is a string literal
 fn is_string_literal(arena: &NodeArena, idx: NodeIndex) -> bool {
     if let Some(node) = arena.get(idx) {
@@ -198,31 +185,4 @@ fn is_string_literal(arena: &NodeArena, idx: NodeIndex) -> bool {
     } else {
         false
     }
-}
-
-/// Get identifier text from a node index
-fn get_identifier_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {
-    let node = arena.get(idx)?;
-    if node.kind == SyntaxKind::Identifier as u16 {
-        arena.get_identifier(node).map(|id| id.escaped_text.clone())
-    } else {
-        None
-    }
-}
-
-/// Get member name from a node index (identifier or string literal)
-fn get_member_name(arena: &NodeArena, idx: NodeIndex) -> String {
-    let Some(node) = arena.get(idx) else {
-        return String::new();
-    };
-
-    if let Some(ident) = arena.get_identifier(node) {
-        return ident.escaped_text.clone();
-    }
-
-    if let Some(lit) = arena.get_literal(node) {
-        return lit.text.clone();
-    }
-
-    String::new()
 }

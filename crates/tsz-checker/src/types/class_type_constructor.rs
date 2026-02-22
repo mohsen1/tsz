@@ -13,6 +13,14 @@ use tsz_solver::{
     TypePredicate, TypeSubstitution, Visibility, instantiate_type, types::ParamInfo,
 };
 
+#[inline]
+const fn can_skip_base_instantiation(
+    base_type_param_count: usize,
+    explicit_type_arg_count: usize,
+) -> bool {
+    base_type_param_count == 0 && explicit_type_arg_count == 0
+}
+
 // =============================================================================
 // Class Constructor Type Resolution
 // =============================================================================
@@ -533,30 +541,44 @@ impl<'a> CheckerState<'a> {
                         type_args.push(self.get_type_from_type_node(arg_idx));
                     }
                 }
-
-                let (base_type_params, base_type_param_updates) =
-                    self.push_type_parameters(&base_class.type_parameters);
-
-                if type_args.len() < base_type_params.len() {
-                    for param in base_type_params.iter().skip(type_args.len()) {
-                        let fallback = param
-                            .default
-                            .or(param.constraint)
-                            .unwrap_or(TypeId::UNKNOWN);
-                        type_args.push(fallback);
-                    }
-                }
-                if type_args.len() > base_type_params.len() {
-                    type_args.truncate(base_type_params.len());
-                }
-
                 let base_constructor_type =
                     self.get_class_constructor_type(base_class_idx, base_class);
-                let substitution =
-                    TypeSubstitution::from_args(self.ctx.types, &base_type_params, &type_args);
-                let instantiated_base_constructor_type =
-                    instantiate_type(self.ctx.types, base_constructor_type, &substitution);
-                self.pop_type_parameters(base_type_param_updates);
+                let (instantiated_base_constructor_type, inherited_substitution) =
+                    if can_skip_base_instantiation(
+                        base_class
+                            .type_parameters
+                            .as_ref()
+                            .map_or(0, |params| params.nodes.len()),
+                        type_args.len(),
+                    ) {
+                        (base_constructor_type, None)
+                    } else {
+                        let (base_type_params, base_type_param_updates) =
+                            self.push_type_parameters(&base_class.type_parameters);
+
+                        if type_args.len() < base_type_params.len() {
+                            for param in base_type_params.iter().skip(type_args.len()) {
+                                let fallback = param
+                                    .default
+                                    .or(param.constraint)
+                                    .unwrap_or(TypeId::UNKNOWN);
+                                type_args.push(fallback);
+                            }
+                        }
+                        if type_args.len() > base_type_params.len() {
+                            type_args.truncate(base_type_params.len());
+                        }
+
+                        let substitution = TypeSubstitution::from_args(
+                            self.ctx.types,
+                            &base_type_params,
+                            &type_args,
+                        );
+                        let instantiated =
+                            instantiate_type(self.ctx.types, base_constructor_type, &substitution);
+                        self.pop_type_parameters(base_type_param_updates);
+                        (instantiated, Some(substitution))
+                    };
 
                 if let Some(base_shape) =
                     callable_shape_for_type(self.ctx.types, instantiated_base_constructor_type)
@@ -566,13 +588,22 @@ impl<'a> CheckerState<'a> {
                             .entry(base_prop.name)
                             .or_insert_with(|| base_prop.clone());
                     }
-                    inherited_construct_signatures = self
-                        .remap_inherited_construct_signatures_with_substitution(
-                            base_constructor_type,
-                            &substitution,
-                            &class_type_params,
-                            instance_type,
-                        );
+                    inherited_construct_signatures =
+                        if let Some(ref substitution) = inherited_substitution {
+                            self.remap_inherited_construct_signatures_with_substitution(
+                                base_constructor_type,
+                                substitution,
+                                &class_type_params,
+                                instance_type,
+                            )
+                        } else {
+                            self.remap_inherited_construct_signatures(
+                                base_constructor_type,
+                                &class_type_params,
+                                instance_type,
+                                None,
+                            )
+                        };
                 }
 
                 break;
@@ -787,5 +818,18 @@ impl<'a> CheckerState<'a> {
                 })
                 .collect(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::can_skip_base_instantiation;
+
+    #[test]
+    fn skip_base_instantiation_only_without_generics() {
+        assert!(can_skip_base_instantiation(0, 0));
+        assert!(!can_skip_base_instantiation(1, 0));
+        assert!(!can_skip_base_instantiation(0, 1));
+        assert!(!can_skip_base_instantiation(3, 2));
     }
 }
