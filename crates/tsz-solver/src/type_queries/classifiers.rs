@@ -167,14 +167,6 @@ pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::
 }
 
 /// Get the `DefId` from a Lazy type.
-pub fn get_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Lazy(def_id)) => Some(def_id),
-        _ => None,
-    }
-}
-
-/// Get the `DefId` from a Lazy type.
 /// Returns (Option<SymbolRef>, Option<DefId>) - `DefId` will be Some for Lazy types.
 pub fn get_type_identity(
     db: &dyn TypeDatabase,
@@ -224,7 +216,7 @@ pub fn get_conditional_type_id(
 }
 
 /// Get the keyof inner type if the type is a `KeyOf` type.
-pub fn get_keyof_inner(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     match db.lookup(type_id) {
         Some(TypeData::KeyOf(inner)) => Some(inner),
         _ => None,

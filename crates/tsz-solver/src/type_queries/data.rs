@@ -835,16 +835,6 @@ pub fn get_index_access_types(db: &dyn TypeDatabase, type_id: TypeId) -> Option<
     }
 }
 
-/// Get the keyof inner type.
-///
-/// Returns None if the type is not a `KeyOf`.
-pub fn get_keyof_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
-    match db.lookup(type_id) {
-        Some(TypeData::KeyOf(inner)) => Some(inner),
-        _ => None,
-    }
-}
-
 /// Find the private brand name for a type.
 ///
 /// Private members in TypeScript classes use a "brand" property for nominal typing.
@@ -923,16 +913,6 @@ pub fn get_type_shape_symbol(
             db.object_shape(shape_id).symbol
         }
         TypeData::Callable(shape_id) => db.callable_shape(shape_id).symbol,
-        _ => None,
-    }
-}
-
-/// Get the `DefId` from a Lazy type.
-///
-/// Returns None if the type is not a Lazy type.
-pub fn get_lazy_def_id(db: &dyn TypeDatabase, type_id: TypeId) -> Option<crate::def::DefId> {
-    match db.lookup(type_id) {
-        Some(TypeData::Lazy(def_id)) => Some(def_id),
         _ => None,
     }
 }
