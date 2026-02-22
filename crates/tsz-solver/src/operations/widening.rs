@@ -23,7 +23,7 @@ use crate::types::{TypeData, TypeId};
 /// ## Example
 ///
 /// ```rust,ignore
-/// use crate::widening::widen_type;
+/// use crate::operations::widening::widen_type;
 ///
 /// // Widen a literal string to the string primitive
 /// let widened = widen_type(db, string_literal_type);
@@ -111,7 +111,7 @@ pub fn widen_type(db: &dyn crate::TypeDatabase, type_id: TypeId) -> TypeId {
 /// # Example
 ///
 /// ```rust,ignore
-/// use crate::widening::apply_const_assertion;
+/// use crate::operations::widening::apply_const_assertion;
 ///
 /// // [1, 2] as const becomes readonly [1, 2] (tuple)
 /// let array_type = interner.array(interner.literal_number(1));
@@ -124,5 +124,5 @@ pub fn apply_const_assertion(db: &dyn crate::TypeDatabase, type_id: TypeId) -> T
 }
 
 #[cfg(test)]
-#[path = "../tests/widening_tests.rs"]
+#[path = "../../tests/widening_tests.rs"]
 mod tests;

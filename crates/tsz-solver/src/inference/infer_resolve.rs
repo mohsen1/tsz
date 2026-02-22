@@ -13,8 +13,8 @@ use crate::inference::infer::{
     MAX_CONSTRAINT_ITERATIONS, MAX_TYPE_RECURSION_DEPTH,
 };
 use crate::instantiation::instantiate::TypeSubstitution;
+use crate::operations::widening;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
-use crate::widening;
 use rustc_hash::FxHashSet;
 use tsz_common::interner::Atom;
 
