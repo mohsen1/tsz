@@ -23,18 +23,6 @@ impl<'a> Printer<'a> {
         format!("{base}_{next}")
     }
 
-    #[allow(dead_code)]
-    pub(super) fn emit_commonjs_export<F>(
-        &mut self,
-        names: &[IdentifierId],
-        is_default: bool,
-        mut emit_inner: F,
-    ) where
-        F: FnMut(&mut Self),
-    {
-        self.emit_commonjs_export_with_hoisting(names, is_default, false, &mut emit_inner);
-    }
-
     /// Emit a CommonJS export with optional hoisting of the export assignment.
     ///
     /// When `is_hoisted_declaration` is true (for function declarations), the

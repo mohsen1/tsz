@@ -1,4 +1,3 @@
-#![allow(warnings)]
 //! Tests for TS2300 emission ("Duplicate identifier")
 
 use std::path::Path;
@@ -128,7 +127,7 @@ fn verify_errors(
             // 2580: Cannot find name '...'
             // 2304: Cannot find name '...'
             // Unless we expect them?
-            let is_expected = expected.iter().any(|(l, c, m)| m.contains("Cannot find"));
+            let is_expected = expected.iter().any(|(_l, _c, m)| m.contains("Cannot find"));
             if !is_expected {
                 continue;
             }
@@ -142,16 +141,13 @@ fn verify_errors(
             line, col, msg, diag.code
         ));
 
-        let mut found = false;
         for (i, (exp_line, exp_col, exp_msg)) in expected.iter().enumerate() {
-            if *exp_line == line {
-                // Allow some slop in column matching (e.g. +/- 1) due to indexing differences
-                // or just print what we found vs expected
-                if (*exp_col as i32 - col as i32).abs() <= 1 && msg.contains(exp_msg) {
-                    matched_indices.push(i);
-                    found = true;
-                    break;
-                }
+            if *exp_line == line
+                && (*exp_col as i32 - col as i32).abs() <= 1
+                && msg.contains(exp_msg)
+            {
+                matched_indices.push(i);
+                break;
             }
         }
     }
@@ -160,7 +156,7 @@ fn verify_errors(
     let mut missing = Vec::new();
     for (i, (exp_line, exp_col, exp_msg)) in expected.iter().enumerate() {
         if !matched_indices.contains(&i) {
-            missing.push(format!("({}, {}, \"{}\")", exp_line, exp_col, exp_msg));
+            missing.push(format!("({exp_line}, {exp_col}, \"{exp_msg}\")"));
         }
     }
 
