@@ -1092,4 +1092,55 @@ mod tests {
             "Case clause with block on same line should stay on one line.\nOutput:\n{output}"
         );
     }
+
+    #[test]
+    fn ts_check_comment_preserved_in_output() {
+        let source = "// @ts-check\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-check"),
+            "// @ts-check directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn ts_nocheck_comment_preserved_in_output() {
+        let source = "// @ts-nocheck\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("// @ts-nocheck"),
+            "// @ts-nocheck directive should be preserved in output.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn test_harness_at_directive_stripped() {
+        let source = "// @target: esnext\nvar x = 1;\n";
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("// @target"),
+            "Test harness // @target directive should be stripped.\nOutput:\n{output}"
+        );
+    }
 }
