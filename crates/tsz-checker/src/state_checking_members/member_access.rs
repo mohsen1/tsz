@@ -688,7 +688,6 @@ impl<'a> CheckerState<'a> {
 
         // Get resolved index signatures from the Solver (includes inherited)
         let mut index_info = self.ctx.types.get_index_signatures(iface_type);
-        let _node_kind = self.ctx.arena.get(container_node).map(|n| n.kind);
 
         // Scan members for own index signatures and detect duplicates (TS2374)
         // Static and instance index signatures are tracked separately —

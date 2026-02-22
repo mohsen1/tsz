@@ -365,9 +365,6 @@ impl<'a> FlowGraphBuilder<'a> {
             syntax_kind_ext::RETURN_STATEMENT | syntax_kind_ext::THROW_STATEMENT => {
                 self.record_node_flow(stmt_idx);
 
-                // Check for try contexts with finally blocks that need to execute
-                let _pre_exit_flow = self.current_flow;
-
                 // Collect and execute any finally blocks on the stack
                 let mut finally_flows: Vec<NodeIndex> = Vec::new();
                 for ctx in self.flow_stack.iter().rev() {

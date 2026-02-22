@@ -1105,13 +1105,6 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             };
 
-            // Store the result
-            let _changed = if let Some(&existing) = results.get(&current_flow) {
-                existing != result_type
-            } else {
-                true
-            };
-
             // For merge points (BRANCH_LABEL, LOOP_LABEL, SWITCH with fallthrough),
             // we union with antecedent types. For SWITCH_CLAUSE, union clause_type with fallthrough.
             let final_type = if is_switch_fallthrough {

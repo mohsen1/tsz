@@ -323,8 +323,6 @@ impl<'a> CheckerState<'a> {
             class_idx
         };
 
-        let _class_namespace = self.enclosing_namespace_node(class_idx);
-
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
@@ -366,7 +364,6 @@ impl<'a> CheckerState<'a> {
                         .unwrap_or_else(|| symbol.escaped_name.clone());
 
                     let is_class = (symbol.flags & tsz_binder::symbol_flags::CLASS) != 0;
-                    let _is_interface = (symbol.flags & tsz_binder::symbol_flags::INTERFACE) != 0;
 
                     let mut interface_type_params = None;
                     let mut has_private_members = false;
@@ -644,29 +641,6 @@ impl<'a> CheckerState<'a> {
                     self.pop_type_parameters(interface_type_param_updates);
                 }
             }
-        }
-    }
-
-    fn enclosing_namespace_node(&self, decl_idx: NodeIndex) -> NodeIndex {
-        let mut current = decl_idx;
-        loop {
-            let Some(ext) = self.ctx.arena.get_extended(current) else {
-                return NodeIndex::NONE;
-            };
-            let parent = ext.parent;
-            if parent.is_none() {
-                return NodeIndex::NONE;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent) else {
-                return NodeIndex::NONE;
-            };
-            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION {
-                return parent;
-            }
-            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
-                return NodeIndex::NONE;
-            }
-            current = parent;
         }
     }
 
