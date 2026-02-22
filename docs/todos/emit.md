@@ -1,8 +1,17 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9531/13623 = 70.0% JS, 766/1990 = 38.5% DTS)
+## Pattern Analysis (JS+DTS mode, current 2793/3948 = 70.7% JS, 213/557 = 38.2% DTS)
 
 ### Fixed This Session
+- **Redundant `public` modifier in DTS class members** (+6 DTS tests):
+  `emit_member_modifiers` in `declaration_emitter/exports.rs` was emitting `public ` for
+  class properties, methods, and accessors. tsc omits `public` in `.d.ts` output because
+  it's the default accessibility — only `protected` and `private` are meaningful. The
+  parameter-property promotion path (line ~1028 in `mod.rs`) already correctly skipped
+  `public`; this aligns the general member modifier path. Unit test added.
+  DTS: 207 → 213 passed, JS unchanged at 2793.
+
+### Previously Fixed
 - **DTS double semicolons on constructor/template-literal/infer types** (+2 JS, +5 DTS tests):
   The declaration emitter's `emit_type()` method was missing handler arms for `CONSTRUCTOR_TYPE`,
   `TEMPLATE_LITERAL_TYPE`, and `INFER_TYPE`. These fell through to `emit_node()` which used
