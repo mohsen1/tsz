@@ -919,7 +919,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare function)
-        if self.has_declare_modifier(&func.modifiers) {
+        if self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+        {
             return;
         }
 

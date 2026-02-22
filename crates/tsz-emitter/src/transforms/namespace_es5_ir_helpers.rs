@@ -102,14 +102,6 @@ pub(super) fn is_namespace_like(arena: &NodeArena, node: &tsz_parser::parser::no
 
 pub(super) use crate::transforms::emit_utils::identifier_text as get_identifier_text;
 
-pub(super) fn has_declare_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    arena.has_modifier(modifiers, SyntaxKind::DeclareKeyword)
-}
-
-pub(super) fn has_export_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {
-    arena.has_modifier(modifiers, SyntaxKind::ExportKeyword)
-}
-
 /// Convert function parameters to IR parameters (without type annotations)
 pub(super) fn convert_function_parameters(arena: &NodeArena, params: &NodeList) -> Vec<IRParam> {
     params

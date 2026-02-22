@@ -620,7 +620,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Check for export modifier
-        let is_exported = self.has_export_modifier(&func.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword);
 
         if !self.should_emit_public_api_member(&func.modifiers) {
             return;
@@ -708,7 +710,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&class.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&class.modifiers) {
             return;
         }
@@ -1153,7 +1157,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&iface.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&iface.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&iface.modifiers) {
             return;
         }
@@ -1509,7 +1515,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&alias.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&alias.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&alias.modifiers)
             && !self.should_emit_public_api_dependency(alias.name)
         {
@@ -1546,7 +1554,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&enum_data.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&enum_data.modifiers) {
             return;
         }
@@ -1653,7 +1663,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&var_stmt.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_member(&var_stmt.modifiers) {
             return;
         }

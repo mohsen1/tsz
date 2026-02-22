@@ -73,7 +73,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare function)
-        if self.has_declare_modifier(&func.modifiers) {
+        if self
+            .arena
+            .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+        {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -333,7 +336,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient declarations (declare class)
-        if self.has_declare_modifier(&class.modifiers) {
+        if self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword)
+        {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -381,10 +387,14 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
                 let commonjs_exported = self.ctx.is_commonjs()
-                    && self.has_export_modifier(&class.modifiers)
+                    && self
+                        .arena
+                        .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
                     && !self.ctx.module_state.has_export_assignment;
-                let commonjs_default =
-                    commonjs_exported && self.has_default_modifier(&class.modifiers);
+                let commonjs_default = commonjs_exported
+                    && self
+                        .arena
+                        .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
                 self.emit_legacy_class_decorator_assignment(
                     &class_name,
                     &legacy_class_decorators,
@@ -412,9 +422,14 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
             let commonjs_exported = self.ctx.is_commonjs()
-                && self.has_export_modifier(&class.modifiers)
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
                 && !self.ctx.module_state.has_export_assignment;
-            let commonjs_default = commonjs_exported && self.has_default_modifier(&class.modifiers);
+            let commonjs_default = commonjs_exported
+                && self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::DefaultKeyword);
             self.emit_legacy_class_decorator_assignment(
                 &class_name,
                 &legacy_class_decorators,
@@ -1425,7 +1440,9 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient and const enums (declare/const enums are erased)
-        if self.has_declare_modifier(&enum_decl.modifiers)
+        if self
+            .arena
+            .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
             || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
         {
             self.skip_comments_for_erased_node(node);
@@ -1584,7 +1601,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip ambient module declarations (declare namespace/module)
-        if self.has_declare_modifier(&module.modifiers) {
+        if self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
+        {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -1787,7 +1807,10 @@ impl<'a> Printer<'a> {
             let decl_name = match check_node.kind {
                 k if k == syntax_kind_ext::CLASS_DECLARATION => {
                     self.arena.get_class(check_node).and_then(|c| {
-                        if self.has_declare_modifier(&c.modifiers) {
+                        if self
+                            .arena
+                            .has_modifier(&c.modifiers, SyntaxKind::DeclareKeyword)
+                        {
                             None
                         } else {
                             Some(self.get_identifier_text_idx(c.name))
@@ -1796,7 +1819,10 @@ impl<'a> Printer<'a> {
                 }
                 k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
                     self.arena.get_function(check_node).and_then(|f| {
-                        if self.has_declare_modifier(&f.modifiers) {
+                        if self
+                            .arena
+                            .has_modifier(&f.modifiers, SyntaxKind::DeclareKeyword)
+                        {
                             None
                         } else {
                             Some(self.get_identifier_text_idx(f.name))
@@ -1805,7 +1831,10 @@ impl<'a> Printer<'a> {
                 }
                 k if k == syntax_kind_ext::ENUM_DECLARATION => {
                     self.arena.get_enum(check_node).and_then(|e| {
-                        if self.has_declare_modifier(&e.modifiers) {
+                        if self
+                            .arena
+                            .has_modifier(&e.modifiers, SyntaxKind::DeclareKeyword)
+                        {
                             None
                         } else {
                             Some(self.get_identifier_text_idx(e.name))
@@ -1815,7 +1844,9 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::MODULE_DECLARATION => {
                     self.arena.get_module(check_node).and_then(|m| {
                         // Skip ambient (declare) and non-instantiated modules
-                        if self.has_declare_modifier(&m.modifiers)
+                        if self
+                            .arena
+                            .has_modifier(&m.modifiers, SyntaxKind::DeclareKeyword)
                             || !self.is_instantiated_module(m.body)
                         {
                             None
@@ -2197,7 +2228,9 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(module.name) != name {
                     return None;
                 }
-                let runtime = !self.has_declare_modifier(&module.modifiers)
+                let runtime = !self
+                    .arena
+                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                     && self.is_instantiated_module(module.body);
                 Some((runtime, if runtime { Some(module.body) } else { None }))
             }
@@ -2206,7 +2239,9 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(class.name) != name {
                     return None;
                 }
-                let runtime = !self.has_declare_modifier(&class.modifiers);
+                let runtime = !self
+                    .arena
+                    .has_modifier(&class.modifiers, SyntaxKind::DeclareKeyword);
                 Some((runtime, None))
             }
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => {
@@ -2214,7 +2249,10 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(func.name) != name {
                     return None;
                 }
-                let runtime = !self.has_declare_modifier(&func.modifiers) && func.body.is_some();
+                let runtime = !self
+                    .arena
+                    .has_modifier(&func.modifiers, SyntaxKind::DeclareKeyword)
+                    && func.body.is_some();
                 Some((runtime, None))
             }
             k if k == syntax_kind_ext::ENUM_DECLARATION => {
@@ -2222,7 +2260,9 @@ impl<'a> Printer<'a> {
                 if self.get_identifier_text_idx(enum_decl.name) != name {
                     return None;
                 }
-                let runtime = !self.has_declare_modifier(&enum_decl.modifiers)
+                let runtime = !self
+                    .arena
+                    .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                     && !self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16);
                 Some((runtime, None))
             }

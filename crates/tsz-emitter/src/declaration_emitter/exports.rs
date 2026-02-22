@@ -831,7 +831,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&module.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
         if !self.should_emit_public_api_module(is_exported) {
             return;
         }
@@ -911,7 +913,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_exported = self.has_export_modifier(&import_eq.modifiers);
+        let is_exported = self
+            .arena
+            .has_modifier(&import_eq.modifiers, SyntaxKind::ExportKeyword);
         let is_public_exported = is_exported && !already_exported;
 
         // Only write indent if not already exported (caller handles indent for exported case)
