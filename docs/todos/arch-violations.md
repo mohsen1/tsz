@@ -104,11 +104,14 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
 
 ## Recommendations
 
-1. **Split near-limit checker files**: The top 3 files at 1,994-1,995 lines will breach the 2,000-line limit on the next feature addition. Proactively split them before adding new code:
-   - `state_class_checking.rs` (1,995 lines) — consider extracting class heritage/implements checking
-   - `member_declaration_checks.rs` (1,994 lines) — consider extracting method signature validation
-   - `type_computation_call.rs` (1,994 lines) — consider extracting overload resolution logic
-2. **Monitor 8 additional near-threshold files** in the 1,803-1,972 range for growth.
+1. **Monitor near-limit checker files** for growth. Top files by line count:
+   - `type_checking_queries_lib.rs` (1,901 lines)
+   - `control_flow_narrowing.rs` (1,883 lines)
+   - `control_flow_assignment.rs` (1,837 lines)
+   - `class_type.rs` (1,818 lines)
+   - `type_checking_utilities.rs` (1,778 lines)
+   - ~~`assignability_checker.rs` (1,447 lines)~~ ✅ Split — extracted subtype/identity/compat methods (~273 LOC) into `subtype_identity_checker.rs`, reducing to 1,176 LOC
+2. **Monitor near-threshold files** in the 1,700-1,900 range for growth.
 3. **Solver top-level file sprawl**: Remaining file families to organize into subdirectories (following the pattern now established by `narrowing/`, `relations/`, `evaluation/`, `inference/`, `instantiation/`, `visitors/`, `caches/`, `operations/`):
    - ~~`operations_*.rs` (10 files, 7,863 LOC) → `operations/` subdirectory~~ ✅ Done (c3365ed0d)
    - ~~`type_queries_*.rs` (5 files) → `type_queries/` subdirectory~~ ✅ Done
