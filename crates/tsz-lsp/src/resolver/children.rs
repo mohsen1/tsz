@@ -2,12 +2,12 @@
 //!
 //! This module contains the `for_each_child` method, a large dispatch table
 //! that enumerates the direct children of every AST node kind. It is separated
-//! from the core scope-resolution logic in `resolver.rs` purely for file-size
+//! from the core scope-resolution logic in `mod.rs` purely for file-size
 //! management — the two halves share no state beyond the `ScopeWalker` struct.
 
 use tsz_parser::{NodeIndex, syntax_kind_ext};
 
-use super::resolver::ScopeWalker;
+use super::ScopeWalker;
 
 impl<'a> ScopeWalker<'a> {
     /// Iterate over direct children of a node using proper typed accessors.

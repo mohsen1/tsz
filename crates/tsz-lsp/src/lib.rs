@@ -47,7 +47,6 @@ pub mod navigation;
 pub mod project;
 pub mod rename;
 pub mod resolver;
-mod resolver_children;
 pub mod selection_range;
 pub mod semantic_tokens;
 pub mod signature_help;

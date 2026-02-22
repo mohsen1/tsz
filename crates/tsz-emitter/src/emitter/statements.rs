@@ -99,15 +99,16 @@ impl<'a> Printer<'a> {
         // Emit trailing comments on the same line as `{` before moving to the next line.
         // For example: `if (cond) { // comment` should keep `// comment` on the brace line.
         if !self.ctx.options.remove_comments
-            && let Some(text) = self.source_text {
-                let bytes = text.as_bytes();
-                let start = node.pos as usize;
-                let end = (node.end as usize).min(bytes.len());
-                if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
-                    let brace_end = (start + offset + 1) as u32;
-                    self.emit_trailing_comments(brace_end);
-                }
+            && let Some(text) = self.source_text
+        {
+            let bytes = text.as_bytes();
+            let start = node.pos as usize;
+            let end = (node.end as usize).min(bytes.len());
+            if let Some(offset) = bytes[start..end].iter().position(|&b| b == b'{') {
+                let brace_end = (start + offset + 1) as u32;
+                self.emit_trailing_comments(brace_end);
             }
+        }
         self.write_line();
         self.increase_indent();
 
