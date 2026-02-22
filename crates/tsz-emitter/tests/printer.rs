@@ -722,3 +722,33 @@ fn test_top_level_enum_uses_var_at_es5() {
         "Top-level enum at ES5 should use 'var', got: {output}"
     );
 }
+
+#[test]
+fn test_extends_optional_chain_parenthesized_downlevel() {
+    // When target < ES2020, `A?.B` is lowered to a conditional expression.
+    // In an `extends` clause, this must be wrapped in parens because
+    // `extends` requires a LeftHandSideExpression.
+    let source = r#"namespace A {
+    export class B {}
+}
+class C1 extends A?.B {}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    // The lowered optional chain must be wrapped in parens
+    assert!(
+        output.contains("extends (A === null"),
+        "Lowered optional chain in extends clause should be parenthesized, got: {output}"
+    );
+}

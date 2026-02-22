@@ -2,7 +2,7 @@ use super::{ModuleKind, Printer};
 use crate::printer::safe_slice;
 use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
-use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -650,8 +650,17 @@ impl<'a> Printer<'a> {
         };
 
         if let Some(expr) = self.arena.get_expr_type_args(node) {
-            // Emit the expression (e.g., Base or ns.Other)
+            // ExpressionWithTypeArguments wrapper.
+            // When the inner expression is an optional chain (A?.B) and target < ES2020,
+            // the chain is lowered to a conditional expression that needs parens in extends.
+            let needs_parens = self.heritage_expr_needs_optional_chain_parens(expr.expression);
+            if needs_parens {
+                self.write("(");
+            }
             self.emit(expr.expression);
+            if needs_parens {
+                self.write(")");
+            }
             // Emit type arguments only for ES5 targets.
             // For ES6+, type arguments should be erased since JavaScript
             // doesn't support generics at runtime.
@@ -664,8 +673,33 @@ impl<'a> Printer<'a> {
                 self.write(">");
             }
         } else {
+            // Direct expression (no ExpressionWithTypeArguments wrapper).
+            let needs_parens = self.heritage_expr_needs_optional_chain_parens(idx);
+            if needs_parens {
+                self.write("(");
+            }
             self.emit(idx);
+            if needs_parens {
+                self.write(")");
+            }
         }
+    }
+
+    /// Check if a heritage expression node is an optional chain that will be lowered
+    /// and thus needs parenthesization in an `extends` clause.
+    fn heritage_expr_needs_optional_chain_parens(&self, idx: NodeIndex) -> bool {
+        if self.ctx.options.target.supports_es2020() {
+            return false;
+        }
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        // Check for PropertyAccessExpression/ElementAccessExpression with question_dot_token
+        if let Some(access) = self.arena.get_access_expr(node) {
+            return access.question_dot_token;
+        }
+        // Check for CallExpression with OPTIONAL_CHAIN flag
+        (node.flags as u32) & node_flags::OPTIONAL_CHAIN != 0
     }
 
     // =========================================================================
