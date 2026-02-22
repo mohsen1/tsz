@@ -125,3 +125,45 @@ fn test_empty_named_export_has_no_extra_spacing() {
         "Expected empty export marker for type-only module exports: {output}"
     );
 }
+
+#[test]
+fn test_private_set_accessor_omits_type_and_uses_value_param_name() {
+    let source = r#"
+declare class C {
+    private set x(foo: string);
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("declare class C"),
+        "Expected declared class: {output}"
+    );
+    assert!(
+        output.contains("private set x(value);"),
+        "Expected private setter value parameter canonicalization: {output}"
+    );
+}
+
+#[test]
+fn test_public_set_accessor_preserves_source_param_name() {
+    let source = r#"
+declare class C {
+    set x(foo: string);
+}
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut emitter = DeclarationEmitter::new(&parser.arena);
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("set x(foo: string);"),
+        "Expected public setter to preserve source parameter name: {output}"
+    );
+}
