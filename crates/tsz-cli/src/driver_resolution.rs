@@ -994,7 +994,7 @@ fn node16_extension_substitution(path: &Path, extension: &str) -> Option<Vec<Pat
     )
 }
 
-fn extension_candidates_for_resolution(
+const fn extension_candidates_for_resolution(
     options: &ResolvedCompilerOptions,
     package_type: Option<PackageType>,
 ) -> &'static [&'static str] {
