@@ -1,8 +1,29 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9483/13623 = 69.6% JS, 763/1990 = 38.3% DTS)
+## Pattern Analysis (JS+DTS mode, current 1452/2076 = 69.9% JS, 110/289 = 38.1% DTS)
 
 ### Fixed This Session
+- **Single-line constructor body formatting** (+4 JS tests):
+  `emit_constructor_body_with_prologue` always expanded constructor bodies to multiline,
+  even when the source was single-line (e.g., `constructor(x) { this.a = x; }`). tsc
+  preserves single-line format for constructors just like methods. Added an early-return
+  path in `emit_constructor_body_with_prologue` that checks: single statement, no param
+  properties, no field inits, no auto accessor inits, no hoisted temps, and `is_single_line`
+  returns true. When all conditions hold, emits `{ stmt }` on one line instead of expanding.
+  Tests fixed: `derivedClassWithoutExplicitConstructor3`,
+  `emitClassDeclarationWithTypeArgumentAndOverloadInES6`,
+  `objectTypesIdentityWithGenericConstructSignaturesDifferingTypeParameterCounts`,
+  `objectTypesIdentityWithGenericConstructSignaturesOptionalParams3`.
+
+- **`// @ts-check` and `// @ts-nocheck` directives stripped from JS output** (+3 JS tests):
+  The header comment filter stripped all `// @` prefixed comments (designed for test harness
+  directives like `// @target: esnext`), but this also caught `// @ts-check` and
+  `// @ts-nocheck` — runtime directives that tsc preserves in output. Fixed by checking
+  if the text after `@` starts with `ts-check` or `ts-nocheck` and preserving those.
+  Tests fixed: `checkJsdocParamOnVariableDeclaredFunctionExpression`, `checkJsdocParamTag1`,
+  `checkJsdocTypedefOnlySourceFile`.
+
+### Previously Fixed
 - **Duplicate leading comments in ES5 class IIFE lowering** (+5 JS, +1 DTS tests):
   When classes were lowered to ES5 IIFEs (`var C = /** @class */ (function () { ... })()`),
   leading comments before the class (e.g., `// No errors`) were emitted twice:
@@ -282,6 +303,7 @@
 - `crates/tsz-emitter/src/declaration_emitter/tests.rs: test_variable_declaration_infers_accessor_object_type_from_initializer_when_type_cache_missing`: this failure predates this pass and is currently blocked by a broader declaration-emitter regression in the same module; skipped to keep this change focused on emitter transform comment ordering.
 - `./scripts/emit/run.sh` full run (`JS+DTs`) and `scripts/emit` broader checks: large pre-existing failure set (6,828 failures total for JS+DTS) plus 2 timeouts remain; deferred for dedicated conformance/reporter work outside this smallest parity pass.
 - **Extra blank lines between JSDoc blocks in .js files (~18 tests)**: When tsz processes `.js` source files, it inserts extra blank lines between JSDoc comment blocks and following declarations. tsc does not add these. Affects `checkJsdocTypeTag1`, `checkJsdocTypeTag2`, `checkJsdocSatisfiesTag15`. Likely a newline-after-statement issue in the emission loop for files where type annotations are erased.
+- **JSDoc comments on object literal properties run together (~1 test)**: `checkJsdocTypeTagOnObjectProperty1` has `// @ts-check` preserved now (fixed this session), but JSDoc comments on object properties (`/** @type {string} */`) are emitted without the preceding newline, concatenating them with the previous property's trailing comma. Likely a comment-before-pos issue in the object literal property emission loop.
 - **Duplicate `//# sourceMappingURL` in multi-file concatenation (~10 tests, runner issue)**: When tests
   use `@outFile` with a non-`out.js` name (e.g., `testfiles/fooResult.js`), the runner doesn't pass
   `--outFile` to tsz (only does so for `out.js`). tsz ignores `--outFile` anyway (bundling not implemented).

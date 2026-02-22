@@ -1612,9 +1612,19 @@ impl<'a> Printer<'a> {
                     let comment_text =
                         crate::printer::safe_slice::slice(text, c_pos as usize, c_end as usize);
                     let trimmed_comment = comment_text.trim_start();
-                    if trimmed_comment.starts_with("//@") || trimmed_comment.starts_with("// @") {
-                        self.comment_emit_idx += 1;
-                        continue;
+                    // Strip test harness `// @option` directives but preserve
+                    // runtime `// @ts-check` and `// @ts-nocheck` directives
+                    // that tsc keeps in JS output.
+                    let after_at = trimmed_comment
+                        .strip_prefix("// @")
+                        .or_else(|| trimmed_comment.strip_prefix("//@"));
+                    if let Some(rest) = after_at {
+                        let is_ts_directive =
+                            rest.starts_with("ts-check") || rest.starts_with("ts-nocheck");
+                        if !is_ts_directive {
+                            self.comment_emit_idx += 1;
+                            continue;
+                        }
                     }
                     if matches!(
                         self.ctx.original_module_kind,
