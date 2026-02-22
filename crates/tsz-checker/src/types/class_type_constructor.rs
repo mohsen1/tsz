@@ -76,7 +76,9 @@ impl<'a> CheckerState<'a> {
             self.ctx.class_constructor_resolution_set.remove(&sym_id);
         }
 
-        if can_use_cache && result != TypeId::ERROR {
+        // Cache all terminal outcomes (including ERROR) so repeated constructor
+        // type queries can short-circuit pathological inheritance recursion.
+        if can_use_cache {
             self.ctx
                 .class_constructor_type_cache
                 .insert(class_idx, result);

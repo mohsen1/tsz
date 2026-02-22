@@ -58,8 +58,9 @@ impl<'a> CheckerState<'a> {
         let result =
             self.get_class_instance_type_inner(class_idx, class, &mut visited, &mut visited_nodes);
 
-        // Cache the result only when not in active resolution and type is valid
-        if can_use_cache && result != TypeId::ERROR {
+        // Cache all terminal outcomes (including ERROR) so pathological
+        // inheritance graphs don't repeatedly recompute the same failing class.
+        if can_use_cache {
             self.ctx.class_instance_type_cache.insert(class_idx, result);
         }
         result

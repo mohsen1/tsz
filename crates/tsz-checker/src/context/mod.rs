@@ -246,6 +246,28 @@ mod tests {
     }
 
     #[test]
+    fn type_cache_merge_keeps_error_class_type_cache_entries() {
+        let mut lhs = empty_cache();
+        let mut rhs = empty_cache();
+
+        rhs.class_instance_type_cache
+            .insert(NodeIndex(10), TypeId::ERROR);
+        rhs.class_constructor_type_cache
+            .insert(NodeIndex(11), TypeId::ERROR);
+
+        lhs.merge(rhs);
+
+        assert_eq!(
+            lhs.class_instance_type_cache.get(&NodeIndex(10)),
+            Some(&TypeId::ERROR)
+        );
+        assert_eq!(
+            lhs.class_constructor_type_cache.get(&NodeIndex(11)),
+            Some(&TypeId::ERROR)
+        );
+    }
+
+    #[test]
     fn invalidate_symbols_clears_class_type_caches() {
         let mut cache = empty_cache();
         let sym = SymbolId(7);
