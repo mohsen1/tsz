@@ -8,6 +8,10 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
+/// Entry for a static field initializer that will be emitted after the class body.
+/// Fields: (name, initializer node, member pos, leading comments, trailing comments)
+type StaticFieldInit = (String, NodeIndex, u32, Vec<String>, Vec<String>);
+
 /// Rewrite enum IIFE IR from `E || (E = {})` to `E = NS.E || (NS.E = {})`
 /// for exported enums in namespaces.
 fn rewrite_enum_iife_for_namespace_export(ir: &mut IRNode, enum_name: &str, ns_name: &str) {
@@ -562,7 +566,7 @@ impl<'a> Printer<'a> {
 
         // Collect property initializers that need lowering
         let mut field_inits: Vec<(String, NodeIndex)> = Vec::new();
-        let mut static_field_inits: Vec<(String, NodeIndex, u32, Vec<String>)> = Vec::new(); // (name, init, member_pos, leading_comments)
+        let mut static_field_inits: Vec<StaticFieldInit> = Vec::new();
         if needs_class_field_lowering {
             for &member_idx in &class.members.nodes {
                 if let Some(member_node) = self.arena.get(member_idx)
@@ -584,6 +588,7 @@ impl<'a> Printer<'a> {
                             prop.initializer,
                             member_node.pos,
                             Vec::new(), // leading_comments filled during class body emission
+                            Vec::new(), // trailing_comments filled during class body emission
                         ));
                     } else {
                         field_inits.push((name, prop.initializer));
@@ -694,9 +699,12 @@ impl<'a> Printer<'a> {
                 && prop.initializer.is_some()
                 && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
             {
-                // For static properties, save leading comments before skipping so they
-                // can be emitted when the initialization is moved after the class body.
-                if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {
+                // For static properties, save leading and trailing comments before
+                // skipping so they can be emitted when the initialization is moved
+                // after the class body.
+                let is_static =
+                    self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16);
+                if is_static {
                     let leading = self.collect_leading_comments(member_node.pos);
                     if let Some(entry) = static_field_inits
                         .iter_mut()
@@ -729,6 +737,33 @@ impl<'a> Printer<'a> {
                     } else {
                         actual_end
                     };
+                    // For static fields, collect trailing comments on the same line
+                    // (e.g. `static x = 1; // ok`) before advancing past them.
+                    if is_static && let Some(text) = self.source_text {
+                        let mut trailing = Vec::new();
+                        let mut idx = self.comment_emit_idx;
+                        while idx < self.all_comments.len() {
+                            let c = &self.all_comments[idx];
+                            if c.pos >= actual_end && c.end <= line_end {
+                                let comment_text = crate::printer::safe_slice::slice(
+                                    text,
+                                    c.pos as usize,
+                                    c.end as usize,
+                                );
+                                trailing.push(comment_text.to_string());
+                            }
+                            if c.end > line_end {
+                                break;
+                            }
+                            idx += 1;
+                        }
+                        if let Some(entry) = static_field_inits
+                            .iter_mut()
+                            .find(|e| e.2 == member_node.pos)
+                        {
+                            entry.4 = trailing;
+                        }
+                    }
                     while self.comment_emit_idx < self.all_comments.len() {
                         let c = &self.all_comments[self.comment_emit_idx];
                         if c.end <= line_end {
@@ -1012,7 +1047,9 @@ impl<'a> Printer<'a> {
             let class_name = self.get_identifier_text_idx(class.name);
             if !class_name.is_empty() {
                 self.write_line();
-                for (name, init_idx, _member_pos, leading_comments) in &static_field_inits {
+                for (name, init_idx, _member_pos, leading_comments, trailing_comments) in
+                    &static_field_inits
+                {
                     // Emit saved leading comments from the original static property declaration
                     for comment_text in leading_comments {
                         self.write_comment(comment_text);
@@ -1044,6 +1081,12 @@ impl<'a> Printer<'a> {
                         self.write(" = ");
                         self.emit_expression(*init_idx);
                         self.write(";");
+                    }
+                    // Emit saved trailing comments (e.g. `// ok` from
+                    // `static intance = new C3(); // ok`)
+                    for comment_text in trailing_comments {
+                        self.write_space();
+                        self.write(comment_text);
                     }
                     self.write_line();
                 }
@@ -2146,6 +2189,7 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
+    use crate::emitter::ScriptTarget;
     use crate::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
 
@@ -2176,6 +2220,87 @@ mod tests {
         assert!(
             output.contains("class C {"),
             "Class C should be emitted inside namespace M2.\nOutput:\n{output}"
+        );
+    }
+
+    /// Regression test: trailing comments on static class fields must be
+    /// preserved when the field is lowered to `ClassName.field = value;`
+    /// for targets < ES2022.
+    #[test]
+    fn static_field_lowering_preserves_trailing_comment() {
+        let source = "class C3 {\n    static intance = new C3(); // ok\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        // The lowered static field should preserve the trailing comment
+        assert!(
+            output.contains("C3.intance = new C3(); // ok"),
+            "Trailing comment '// ok' should be preserved on lowered static field.\nOutput:\n{output}"
+        );
+    }
+
+    /// Test: multiple static fields with trailing comments are all preserved.
+    #[test]
+    fn static_field_lowering_preserves_multiple_trailing_comments() {
+        let source = "class Foo {\n    static a = 1; // first\n    static b = 2; // second\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("Foo.a = 1; // first"),
+            "Trailing comment '// first' should be preserved.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("Foo.b = 2; // second"),
+            "Trailing comment '// second' should be preserved.\nOutput:\n{output}"
+        );
+    }
+
+    /// Test: static fields without trailing comments still emit correctly.
+    #[test]
+    fn static_field_lowering_without_trailing_comment() {
+        let source = "class Bar {\n    static x = 42;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ES2017,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("Bar.x = 42;"),
+            "Static field should be lowered correctly.\nOutput:\n{output}"
+        );
+        // Should NOT have any trailing comment text
+        assert!(
+            !output.contains("Bar.x = 42; //"),
+            "Should not have spurious trailing comment.\nOutput:\n{output}"
         );
     }
 }
