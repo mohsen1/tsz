@@ -1,8 +1,27 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9336/13623 = 68.5% JS, 762/2173 = 35.1% DTS)
+## Pattern Analysis (JS+DTS mode, current 9402/13623 = 69.0% JS, 762/2173 = 35.1% DTS)
 
 ### Fixed This Session
+- **CLI-transpiler spurious "use strict" injection for AMD/UMD/Preserve** (+30 JS tests):
+  The `cli-transpiler.ts` post-processing hack injected `"use strict"` at the top of output
+  for AMD (module=2), UMD (module=3), and Preserve (module=200) module kinds. This was wrong:
+  AMD/UMD modules add `"use strict"` inside their wrapper functions (not at the top level),
+  and Preserve keeps ESM as ESM (implicitly strict, no preamble needed). Only CJS (module=1)
+  needs the top-level compensation. Fixed by restricting `commonJsLikeModule` in
+  `scripts/emit/src/cli-transpiler.ts` from `module === 1 || module === 2 || module === 3 || module === 200`
+  to `module === 1`.
+
+- **ES decorator emission for esnext target** (+36 JS tests):
+  `emit_method_modifiers_js` and `emit_class_member_modifiers_js` in
+  `declarations_class_members.rs` silently skipped DECORATOR nodes, causing all ES (non-legacy)
+  decorators to be dropped from output at esnext target. tsc emits these decorators verbatim
+  when not using `--experimentalDecorators` (legacy mode). Fixed by adding conditional emission
+  of decorator nodes when `!self.ctx.options.legacy_decorators`. Affects method decorators,
+  static method decorators, getter/setter decorators, and property decorators that survive
+  inside the class body.
+
+### Previously Fixed
 - **JSX text whitespace/newline preservation** (+32 JS tests):
   JSX text nodes between opening and closing elements were losing leading whitespace
   and newlines. For example, `<Comp>\n        hi hi hi!\n    </Comp>` was collapsed
@@ -135,7 +154,16 @@
 
 ### Investigated but Deferred
 
-- **Extra `"use strict"` emission (~175 tests, ~59 sole-fix)**: tsz emits `"use strict"` in contexts where tsc does not — AMD/UMD wrapper files (before `define()`), `module=preserve` ESM files, and bundle/outFile mode. Requires untangling the interplay between `alwaysStrict`, `original_module_kind`, and AMD/UMD wrapper paths in `emitter/mod.rs`. Affects `amdDeclarationEmitNoExtraDeclare`, `impliedNodeFormatEmit1(module=amd)`, `emitBundleWithPrologueDirectives1`.
+- **"use strict" deduplication is context-dependent (~145 remaining tests, ~29 sole-fix)**:
+  Investigated removing `dedupeUseStrictPreamble()` from the cli-transpiler and fixing the
+  emitter's `should_emit_use_strict` logic to handle alwaysStrict separately from CJS module
+  "use strict". This caused 56 regressions because tsc's behavior is inconsistent:
+  `alwaysStrictAlreadyUseStrict` expects ONE `"use strict"` (dedup when source has prologue),
+  but `localClassesInLoop` expects TWO (source prologue + alwaysStrict output), both with
+  `alwaysStrict=true`. The difference appears to depend on whether alwaysStrict is set
+  explicitly via `@alwaysStrict: true` comment vs. inferred from other options. Reverted.
+  Affects `amdDeclarationEmitNoExtraDeclare`, `impliedNodeFormatEmit1(module=amd)`,
+  `emitBundleWithPrologueDirectives1`.
 - **Triple-slash reference directives in JS output (~21 tests)**: `/// <reference path="..." />` comments are emitted in JS output where tsc strips them. Affects `augmentExportEquals3_1`, `doNotemitTripleSlashComments`, `jsxEmptyExpressionNotCountedAsChild`.
 - **Const enum value folding (~33 tests)**: Const enum member property accesses (`E.A`) are not replaced with their literal values (`0 /* E.A */`). Requires solver integration. Affects `constEnumPropertyAccess*`.
 - **Node modules CJS/ESM format comment (~21 tests)**: tsz emits `// cjs format file` while tsc emits `// esm format file` for `.js` files inside `node_modules` when the containing package has `"type": "module"` in `package.json`. Module format detection is wrong for these files under `node16`/`node18`/`node20`/`nodenext` module modes. Affects `nodeModulesAllowJs*` family.
@@ -178,8 +206,9 @@
    `__extends`, `__awaiter`, `__generator`, `__spreadArray` etc. Requires implementing
    the helper injection system.
 
-5. **decorator** (~70 tests): Decorator transform not implemented. Related to
-   `missing_helper` — decorators need both the transform and `__decorate` helper.
+5. **decorator** (~34 remaining tests): ES decorator verbatim emission at esnext is
+   now fixed (+36 tests). Remaining failures are legacy (experimental) decorator tests
+   that need `__decorate` helper and the full transform pipeline.
 
 6. **let_var** (~49 tests): `let`/`const` → `var` downlevel transform not applied
    when targeting ES5.
@@ -200,9 +229,9 @@
     inside `define()` callback now works correctly. Remaining failures are outFile-specific
     bundling scenarios where the test runner interaction is complex.
 
-12. **"use strict" for module=preserve** (partially fixed): The `Preserve` module kind
-    mapping bug in `args.rs` is now fixed. Remaining failures are in the test runner's
-    post-processing logic (`cli-transpiler.ts` lines 422-426).
+12. ~~**"use strict" for module=preserve**~~ — **FIXED**: The `Preserve` module kind
+    mapping bug in `args.rs` and the cli-transpiler's spurious `"use strict"` injection
+    for AMD/UMD/Preserve are both now fixed.
 
 13. **Comment preservation on erased constructs** (~13 tests): Comments like
     `// error` and `// no error` attached to type-only declarations are emitted
