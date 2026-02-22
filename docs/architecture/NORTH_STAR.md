@@ -1,4 +1,4 @@
-# TSZ North Star Architecture
+# tsz North Star Architecture
 
 **Version**: 1.2
 **Status**: Corrected Target Architecture (Enforced)
@@ -8,11 +8,11 @@
 
 ## 1. Executive Summary
 
-TSZ is a TypeScript compiler implemented in Rust, designed for high performance, maintainability, and correctness. This document describes the **ideal architecture** that all refactoring efforts should converge toward.
+tsz is a TypeScript compiler implemented in Rust, designed for high performance, maintainability, and correctness. This document describes the **ideal architecture** that all refactoring efforts should converge toward.
 
 ### Core Vision
 
-TSZ achieves its goals through four fundamental architectural principles:
+tsz achieves its goals through four fundamental architectural principles:
 
 1. **Solver-First Architecture**: The Solver is the single source of truth for all type computations
 2. **Thin Wrappers**: Components are orchestration layers, not logic containers
@@ -63,7 +63,7 @@ The following architecture corrections are mandatory and supersede any conflicti
 ### 2.1 Pipeline Data Flow
 
 ```
-                           TSZ COMPILER PIPELINE
+                           tsz COMPILER PIPELINE
 
     Source Text
          |
@@ -342,7 +342,7 @@ For every new change, ask:
 
 ### 3.5 DefId-Centric Type Resolution
 
-TSZ's current architecture is **DefId-first** for semantic type references.
+tsz's current architecture is **DefId-first** for semantic type references.
 
 #### Canonical Model
 

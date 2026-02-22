@@ -1,4 +1,4 @@
-# TSZ Boundary Contract
+# tsz Boundary Contract
 
 This document defines mandatory ownership boundaries for semantic work.
 

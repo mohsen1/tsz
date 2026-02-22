@@ -151,6 +151,21 @@ body {
   padding: 2.5rem 2rem 6rem;
 }
 
+.page-content.architecture {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.page-content.architecture .sidebar {
+  top: 3rem;
+  height: calc(100vh - 3rem);
+}
+
+.page-content.architecture .menu-toggle {
+  top: 3.75rem;
+}
+
 /* ── Typography ── */
 h1 {
   font-size: 2rem;
@@ -373,6 +388,29 @@ tr:nth-child(even) { background: var(--table-stripe); }
   margin: 1.5rem 0;
 }
 
+.bench-category {
+  margin: 2rem 0 2.5rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.bench-category-title {
+  margin: 0 0 0.4rem;
+  font-size: 1.08rem;
+}
+
+.bench-category-desc {
+  margin: 0 0 1rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.bench-notes {
+  padding-bottom: 1rem;
+}
+
 .bench-row {
   margin-bottom: 1.25rem;
 }
@@ -465,13 +503,25 @@ tr:nth-child(even) { background: var(--table-stripe); }
   font-size: 0.9rem;
 }
 
+.benchmark-mean-card {
+  margin: 1.25rem 0 2rem;
+}
+
 /* ── Footer ── */
 .site-footer {
   border-top: 1px solid var(--border-subtle);
   padding: 2rem;
+  display: flex;
+  justify-content: center;
   text-align: center;
   color: var(--text-tertiary);
   font-size: 0.8rem;
+}
+
+.site-footer p {
+  margin: 0;
+  width: 100%;
+  text-align: center;
 }
 
 /* ── Misc ── */

@@ -1,6 +1,6 @@
 # Crate Layout Standard
 
-This document defines the default source layout for crates in the TSZ workspace.
+This document defines the default source layout for crates in the tsz workspace.
 
 ## Goals
 

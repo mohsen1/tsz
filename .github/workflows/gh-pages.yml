@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'website/**'
+      - 'docs/**/*.md'
       - 'docs/architecture.html'
       - 'AGENTS.md'
       - 'README.md'
@@ -168,7 +169,7 @@ jobs:
         run: cd website && npm install
 
       - name: Build website
-        run: cd website && node build.mjs
+        run: cd website && npm run build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
