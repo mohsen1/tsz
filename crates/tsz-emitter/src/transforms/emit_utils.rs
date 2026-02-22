@@ -116,6 +116,89 @@ pub(crate) fn export_clause_is_type_only(arena: &NodeArena, clause_node: &Node) 
     }
 }
 
+/// Check if a module body contains any runtime (non-type-only) statements,
+/// meaning the module is "instantiated" and needs to be emitted.
+///
+/// Recursively walks dotted namespaces (e.g., `namespace Foo.Bar`) to find
+/// the innermost `MODULE_BLOCK` and checks each statement.
+pub(crate) fn is_instantiated_module(arena: &NodeArena, module_body: NodeIndex) -> bool {
+    let Some(body_node) = arena.get(module_body) else {
+        return false;
+    };
+
+    // If body is another MODULE_DECLARATION (dotted namespace like Foo.Bar),
+    // recurse into the inner module
+    if body_node.kind == syntax_kind_ext::MODULE_DECLARATION {
+        if let Some(inner_module) = arena.get_module(body_node) {
+            return is_instantiated_module(arena, inner_module.body);
+        }
+        return false;
+    }
+
+    // MODULE_BLOCK: check if any statement is a value declaration
+    if let Some(block) = arena.get_module_block(body_node)
+        && let Some(ref stmts) = block.statements
+    {
+        for &stmt_idx in &stmts.nodes {
+            if let Some(stmt_node) = arena.get(stmt_idx)
+                && !is_type_only_module_statement(arena, stmt_node)
+            {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Check if a statement inside a module body is purely a type declaration
+/// (interface, type alias, type-only import/export, const/declare enum,
+/// declare/non-instantiated module).
+pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> bool {
+    match node.kind {
+        k if k == syntax_kind_ext::INTERFACE_DECLARATION
+            || k == syntax_kind_ext::TYPE_ALIAS_DECLARATION =>
+        {
+            true
+        }
+        k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+            if let Some(import_decl) = arena.get_import_decl(node)
+                && let Some(clause_node) = arena.get(import_decl.import_clause)
+                && let Some(clause) = arena.get_import_clause(clause_node)
+            {
+                return clause.is_type_only;
+            }
+            false
+        }
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+            if let Some(export_decl) = arena.get_export_decl(node) {
+                if export_decl.is_type_only {
+                    return true;
+                }
+                if let Some(inner_node) = arena.get(export_decl.export_clause) {
+                    return is_type_only_module_statement(arena, inner_node);
+                }
+            }
+            false
+        }
+        k if k == syntax_kind_ext::ENUM_DECLARATION => {
+            if let Some(enum_decl) = arena.get_enum(node) {
+                return arena.has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    || arena.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
+            }
+            false
+        }
+        k if k == syntax_kind_ext::MODULE_DECLARATION => {
+            if let Some(module_decl) = arena.get_module(node) {
+                return arena.has_modifier(&module_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    || !is_instantiated_module(arena, module_decl.body);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 #[path = "../../tests/emit_utils.rs"]
 mod tests;
