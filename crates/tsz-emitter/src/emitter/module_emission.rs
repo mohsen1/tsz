@@ -1797,7 +1797,8 @@ impl<'a> Printer<'a> {
                             .arena
                             .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
                             && !self
-                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+                                .arena
+                                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
                     }) {
                         matched_runtime = true;
                     }

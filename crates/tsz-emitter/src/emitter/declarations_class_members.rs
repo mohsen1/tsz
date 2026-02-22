@@ -60,13 +60,18 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_async = self.has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword as u16);
+        let is_async = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         let needs_async_lowering =
             is_async && self.ctx.needs_async_lowering && !method.asterisk_token;
 
         if needs_async_lowering {
             // Emit static modifier if present
-            if self.has_modifier(&method.modifiers, SyntaxKind::StaticKeyword as u16) {
+            if self
+                .arena
+                .has_modifier(&method.modifiers, SyntaxKind::StaticKeyword)
+            {
                 self.write("static ");
             }
         } else {
@@ -237,7 +242,10 @@ impl<'a> Printer<'a> {
         };
 
         // Skip abstract property declarations (they don't exist at runtime)
-        if self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16) {
+        if self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+        {
             self.skip_comments_for_erased_node(node);
             return;
         }
@@ -252,8 +260,9 @@ impl<'a> Printer<'a> {
                 .arena
                 .get(prop.name)
                 .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-            let has_accessor =
-                self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
+            let has_accessor = self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
             if !is_private && !has_accessor {
                 self.skip_comments_for_erased_node(node);
                 return;

@@ -716,7 +716,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.should_emit_public_api_member(&class.modifiers) {
             return;
         }
-        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
         if is_exported {
@@ -806,9 +808,13 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
 
         // Check if abstract for special handling
-        let is_abstract = self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword);
         // Check if private for type annotation omission
-        let is_private = self.has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword as u16);
+        let is_private = self
+            .arena
+            .has_modifier(&prop.modifiers, SyntaxKind::PrivateKeyword);
 
         // Modifiers
         self.emit_member_modifiers(&prop.modifiers);
@@ -879,8 +885,12 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
 
         // Check if private/abstract
-        let is_private = self.has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword as u16);
-        let _is_abstract = self.has_modifier(&method.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_private = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::PrivateKeyword);
+        let _is_abstract = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AbstractKeyword);
 
         // Modifiers
         self.emit_member_modifiers(&method.modifiers);
@@ -1067,7 +1077,9 @@ impl<'a> DeclarationEmitter<'a> {
         };
 
         // Check if this accessor is private
-        let is_private = self.has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword as u16);
+        let is_private = self
+            .arena
+            .has_modifier(&accessor.modifiers, SyntaxKind::PrivateKeyword);
 
         self.write_indent();
 
@@ -1560,7 +1572,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !self.should_emit_public_api_member(&enum_data.modifiers) {
             return;
         }
-        let is_const = self.has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword as u16);
+        let is_const = self
+            .arena
+            .has_modifier(&enum_data.modifiers, SyntaxKind::ConstKeyword);
 
         self.write_indent();
         if is_exported {
