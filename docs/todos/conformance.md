@@ -110,3 +110,10 @@ tests passing (offset 6000 slice: 3665→3684).
 - **TS2304 (57 extra)**: Over-emission of "cannot find name" — requires broader lib resolution and module resolution improvements.
 - **TS1202 (fixed)**: False TS1202/TS1203 when module was a computed default (not explicitly set). Fixed by adding `module_explicitly_set` flag. +29 tests passing.
 - **TS2322 (focused, unchecked)**: `TypeScript/tests/cases/compiler/checkJsObjectLiteralHasCheckedKeyof.ts` — currently reports `Type 'string'` instead of literal union mismatch for checked JS `@ts-check` with `keyof typeof obj`. Needs deeper JSDoc/`keyof` context handling in checker/solver assignability flow.
+- **TS5102 (fixed)**: Implemented "Option has been removed" diagnostic for TS 5.0-deprecated/5.5-removed options (noImplicitUseStrict, keyofStringsOnly, suppressExcessPropertyErrors, suppressImplicitAnyIndexErrors, noStrictGenericChecks, charset, out, importsNotUsedAsValues, preserveValueImports). +4 tests passing in offset 6000 slice (3737→3741). Remaining TS5102 failures are in tests that have additional unimplemented error codes (verbatimModuleSyntax compat checks, multi-file module resolution).
+
+## TS5102 — Remaining failures (investigated, deferred)
+
+- **verbatimModuleSyntaxCompat*.ts** (4 tests): Need verbatimModuleSyntax validation logic (TS1286, TS1484) beyond just the removed-option diagnostic.
+- **preserveValueImports.ts**, **importsNotUsedAsValues_error.ts**: Have additional TS1484/TS2305 codes that we don't yet emit.
+- **nonPrimitiveIndexingWithForInSupressError.ts**: Has additional TS2304 (lib type resolution gap).
