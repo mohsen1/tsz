@@ -4643,7 +4643,8 @@ mod tests {
             reports_deprecated: None,
         }];
 
-        let candidates = server.collect_import_candidates("/src/index.ts", &diagnostics, &[], &[], None);
+        let candidates =
+            server.collect_import_candidates("/src/index.ts", &diagnostics, &[], &[], None);
         let module_specifiers: Vec<String> = candidates
             .into_iter()
             .filter(|candidate| candidate.local_name == "add")
