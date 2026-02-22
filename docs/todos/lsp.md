@@ -208,3 +208,16 @@ Investigated but punted:
   Reason: needs dedicated anonymous default-class call-hierarchy prepare/incoming/outgoing modeling (constructor/class alias handling) beyond this hover-focused patch.
 - `TypeScript/tests/cases/fourslash/callHierarchyInterfaceMethod.ts`: still creates a local baseline with empty call hierarchy output at interface method declaration marker.
   Reason: requires interface method-signature call-hierarchy declaration modeling, which is broader than this quick-info fix.
+
+## 2026-02-22 (module:none diagnostics span follow-up)
+
+Completed in this pass:
+- Fixed tsserver semantic diagnostics parity for `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts` by:
+  - skipping synthetic `Cannot find name` diagnostics when TS1148 (`module:none`) is already present,
+  - normalizing TS1148 diagnostic spans to stop at statement semicolons/newlines in `semanticDiagnosticsSync`.
+- Added focused tsserver unit coverage in `crates/tsz-cli/src/bin/tsz_server/tests.rs` for module:none fourslash diagnostic payload behavior (no synthetic `Cannot find name`, correct TS1148 message/span).
+- `./scripts/run-fourslash.sh --max=200` improved from `182/200` passing to `183/200` passing in this run, with `autoImportModuleNone1` no longer in failures.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_types.ts` and `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_values.ts`: still generate new local baselines in this run.
+  Reason: remaining gaps are cross-file rename/definition/reference parity for arbitrary module namespace identifiers, which require broader project-wide symbol-resolution behavior beyond this targeted diagnostics fix.
