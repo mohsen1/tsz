@@ -3,6 +3,7 @@ pub(crate) mod judge;
 pub(crate) mod lawyer;
 pub(crate) mod relation_queries;
 pub(crate) mod subtype;
+pub(crate) mod subtype_cache;
 pub(crate) mod subtype_explain;
 pub(crate) mod subtype_helpers;
 pub(crate) mod subtype_overlap;
