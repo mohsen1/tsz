@@ -176,6 +176,17 @@ fn test_hover_contextual_object_literal_property_name() {
 }
 
 #[test]
+fn test_hover_contextual_object_literal_method_name() {
+    let source = "interface IFoo { f(i: number, s: string): string; }\nvar c3t13 = <IFoo>({\n    f: function(i, s) { return s; }\n});";
+    let info =
+        get_hover_at(source, 2, 4).expect("Should find hover info for object-literal method name");
+    assert_eq!(
+        info.display_string, "(method) IFoo.f(i: number, s: string): string",
+        "Function-valued property hover in contextually typed object literal should use interface method signature"
+    );
+}
+
+#[test]
 fn test_hover_best_common_type_object_literal_array_multiline() {
     let source =
         "var a = { name: 'bob', age: 18 };\nvar b = { name: 'jim', age: 20 };\nvar c = [a, b];\nc;";

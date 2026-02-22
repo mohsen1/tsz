@@ -11,6 +11,63 @@ use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn prune_deeper_auto_import_duplicates(items: Vec<CompletionItem>) -> Vec<CompletionItem> {
+        let mut best_rank_by_label: std::collections::HashMap<String, (usize, usize)> =
+            std::collections::HashMap::new();
+
+        for item in &items {
+            let Some(source) = item.source.as_deref() else {
+                continue;
+            };
+            let is_path_like_source = source.starts_with('.') || source.starts_with('/');
+            if !item.has_action || !is_path_like_source {
+                continue;
+            }
+            let depth = source.matches('/').count();
+            let index_penalty = usize::from(
+                source == "."
+                    || source == ".."
+                    || source.ends_with("/index")
+                    || source.ends_with("/index.ts")
+                    || source.ends_with("/index.js"),
+            );
+            best_rank_by_label
+                .entry(item.label.clone())
+                .and_modify(|current| {
+                    if (depth, index_penalty) < *current {
+                        *current = (depth, index_penalty);
+                    }
+                })
+                .or_insert((depth, index_penalty));
+        }
+
+        items
+            .into_iter()
+            .filter(|item| {
+                let Some(source) = item.source.as_deref() else {
+                    return true;
+                };
+                let is_path_like_source = source.starts_with('.') || source.starts_with('/');
+                if !item.has_action || !is_path_like_source {
+                    return true;
+                }
+                let depth = source.matches('/').count();
+                let index_penalty = usize::from(
+                    source == "."
+                        || source == ".."
+                        || source.ends_with("/index")
+                        || source.ends_with("/index.ts")
+                        || source.ends_with("/index.js"),
+                );
+                let Some((best_depth, best_index_penalty)) = best_rank_by_label.get(&item.label)
+                else {
+                    return true;
+                };
+                (depth, index_penalty) <= (*best_depth, *best_index_penalty)
+            })
+            .collect()
+    }
+
     fn merge_non_member_completion_items(
         provider_items: Vec<CompletionItem>,
         project_items: Vec<CompletionItem>,
@@ -501,6 +558,7 @@ impl Server {
             };
             let mut items = items;
             Self::sort_tsserver_completion_items(&mut items);
+            let items = Self::prune_deeper_auto_import_duplicates(items);
 
             let entries: Vec<serde_json::Value> = items
                 .iter()
@@ -1445,5 +1503,38 @@ mod tests {
 
         assert_eq!(items[0].label, "Array");
         assert_eq!(items[1].label, "as");
+    }
+
+    #[test]
+    fn prune_deeper_auto_import_duplicates_keeps_shallow_relative_source() {
+        let items = vec![
+            CompletionItem::new("Button".to_string(), CompletionItemKind::Function)
+                .with_has_action()
+                .with_source("./lib/main".to_string()),
+            CompletionItem::new("Button".to_string(), CompletionItemKind::Function)
+                .with_has_action()
+                .with_source("./lib/components/button/Button".to_string()),
+            CompletionItem::new("foo".to_string(), CompletionItemKind::Function)
+                .with_has_action()
+                .with_source("./a".to_string()),
+            CompletionItem::new("foo".to_string(), CompletionItemKind::Function)
+                .with_has_action()
+                .with_source("./b".to_string()),
+        ];
+
+        let pruned = Server::prune_deeper_auto_import_duplicates(items);
+        let button_sources: Vec<&str> = pruned
+            .iter()
+            .filter(|item| item.label == "Button")
+            .filter_map(|item| item.source.as_deref())
+            .collect();
+        let foo_sources: Vec<&str> = pruned
+            .iter()
+            .filter(|item| item.label == "foo")
+            .filter_map(|item| item.source.as_deref())
+            .collect();
+
+        assert_eq!(button_sources, vec!["./lib/main"]);
+        assert_eq!(foo_sources, vec!["./a", "./b"]);
     }
 }

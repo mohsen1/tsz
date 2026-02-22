@@ -110,6 +110,11 @@ impl<'a> HoverProvider<'a> {
         }
 
         if !crate::utils::is_symbol_query_node(self.arena, node_idx) {
+            if let Some(contextual_property_hover) =
+                self.hover_for_contextual_object_property(node_idx, type_cache)
+            {
+                return Some(contextual_property_hover);
+            }
             return None;
         }
 
@@ -274,18 +279,23 @@ impl<'a> HoverProvider<'a> {
     ) -> Option<HoverInfo> {
         use tsz_parser::syntax_kind_ext;
 
-        let node = self.arena.get(node_idx)?;
-        if node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+        let mut current = node_idx;
+        let mut prop_assign_idx = NodeIndex::NONE;
+        while current.is_some() {
+            let current_node = self.arena.get(current)?;
+            if current_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                prop_assign_idx = current;
+                break;
+            }
+            current = self.arena.get_extended(current)?.parent;
+        }
+        if !prop_assign_idx.is_some() {
             return None;
         }
 
-        let prop_assign_idx = self.arena.get_extended(node_idx)?.parent;
         let prop_assign_node = self.arena.get(prop_assign_idx)?;
-        if prop_assign_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
-            return None;
-        }
         let prop_assign = self.arena.get_property_assignment(prop_assign_node)?;
-        if prop_assign.name != node_idx || !prop_assign.initializer.is_some() {
+        if !prop_assign.initializer.is_some() {
             return None;
         }
 
@@ -334,7 +344,15 @@ impl<'a> HoverProvider<'a> {
         };
 
         let container_type_id = checker.get_type_of_node(contextual_type_idx);
-        let value_type_id = checker.get_type_of_node(prop_assign.initializer);
+        let mut value_type_id = self
+            .contextual_property_type_from_type(container_type_id, &prop_name)
+            .unwrap_or(tsz_solver::TypeId::ERROR);
+        if value_type_id == tsz_solver::TypeId::ERROR {
+            value_type_id = checker.get_type_of_node(prop_assign.initializer);
+            if value_type_id == tsz_solver::TypeId::ERROR {
+                value_type_id = checker.get_type_of_node(prop_assign_idx);
+            }
+        }
         let container_type = checker.format_type(container_type_id);
         let value_type = checker.format_type(value_type_id);
         *type_cache = Some(checker.extract_cache());
@@ -343,18 +361,208 @@ impl<'a> HoverProvider<'a> {
             return None;
         }
 
-        let display_string = format!("(property) {container_type}.{prop_name}: {value_type}");
-        let start = self.line_map.offset_to_position(node.pos, self.source_text);
-        let end = self.line_map.offset_to_position(node.end, self.source_text);
+        let initializer_node = self.arena.get(prop_assign.initializer)?;
+        let is_function_like = initializer_node.kind
+            == tsz_parser::syntax_kind_ext::FUNCTION_EXPRESSION
+            || initializer_node.kind == tsz_parser::syntax_kind_ext::ARROW_FUNCTION;
+        let (display_string, kind) = if is_function_like {
+            let signature = self
+                .contextual_method_signature_text(contextual_type_idx, &prop_name)
+                .unwrap_or_else(|| Self::arrow_to_colon(&value_type));
+            (
+                format!("(method) {container_type}.{prop_name}{signature}"),
+                "method".to_string(),
+            )
+        } else {
+            (
+                format!("(property) {container_type}.{prop_name}: {value_type}"),
+                "property".to_string(),
+            )
+        };
+        let name_node = self.arena.get(prop_assign.name)?;
+        let start = self
+            .line_map
+            .offset_to_position(name_node.pos, self.source_text);
+        let end = self
+            .line_map
+            .offset_to_position(name_node.end, self.source_text);
         Some(HoverInfo {
             contents: vec![format!("```typescript\n{display_string}\n```")],
             range: Some(Range::new(start, end)),
             display_string,
-            kind: "property".to_string(),
+            kind,
             kind_modifiers: String::new(),
             documentation: String::new(),
             tags: Vec::new(),
         })
+    }
+
+    fn contextual_property_type_from_type(
+        &self,
+        container_type_id: tsz_solver::TypeId,
+        prop_name: &str,
+    ) -> Option<tsz_solver::TypeId> {
+        use tsz_solver::visitor;
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, container_type_id)
+            .or_else(|| visitor::object_with_index_shape_id(self.interner, container_type_id))
+        {
+            let shape = self.interner.object_shape(shape_id);
+            for prop in &shape.properties {
+                if self.interner.resolve_atom(prop.name) == prop_name {
+                    return Some(prop.type_id);
+                }
+            }
+        }
+
+        if let Some(list_id) = visitor::union_list_id(self.interner, container_type_id)
+            .or_else(|| visitor::intersection_list_id(self.interner, container_type_id))
+        {
+            for &member in self.interner.type_list(list_id).iter() {
+                if let Some(member_type) =
+                    self.contextual_property_type_from_type(member, prop_name)
+                {
+                    return Some(member_type);
+                }
+            }
+        }
+
+        if let Some(app_id) = visitor::application_id(self.interner, container_type_id) {
+            let app = self.interner.type_application(app_id);
+            return self.contextual_property_type_from_type(app.base, prop_name);
+        }
+
+        None
+    }
+
+    fn contextual_method_signature_text(
+        &self,
+        contextual_type_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
+        let contextual_type_idx = self.unwrap_parenthesized_type_node(contextual_type_idx)?;
+        let contextual_node = self.arena.get(contextual_type_idx)?;
+
+        if contextual_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let literal = self.arena.get_type_literal(contextual_node)?;
+            for &member_idx in &literal.members.nodes {
+                if let Some(sig_text) =
+                    self.signature_text_if_matching_member(member_idx, prop_name)
+                {
+                    return Some(sig_text);
+                }
+            }
+            return None;
+        }
+
+        if contextual_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.arena.get_type_ref(contextual_node)?;
+        let target = type_ref.type_name;
+        let sym_id = self
+            .binder
+            .node_symbols
+            .get(&target.0)
+            .copied()
+            .or_else(|| self.binder.resolve_identifier(self.arena, target))?;
+        let symbol = self.binder.symbols.get(sym_id)?;
+
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            if decl_node.kind == syntax_kind_ext::INTERFACE_DECLARATION {
+                let iface = self.arena.get_interface(decl_node)?;
+                for &member_idx in &iface.members.nodes {
+                    if let Some(sig_text) =
+                        self.signature_text_if_matching_member(member_idx, prop_name)
+                    {
+                        return Some(sig_text);
+                    }
+                }
+            } else if decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                let alias = self.arena.get_type_alias(decl_node)?;
+                if let Some(sig_text) =
+                    self.signature_text_if_matching_type_literal(alias.type_node, prop_name)
+                {
+                    return Some(sig_text);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn signature_text_if_matching_type_literal(
+        &self,
+        type_node_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        use tsz_parser::syntax_kind_ext;
+
+        let type_node_idx = self.unwrap_parenthesized_type_node(type_node_idx)?;
+        let type_node = self.arena.get(type_node_idx)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let literal = self.arena.get_type_literal(type_node)?;
+        for &member_idx in &literal.members.nodes {
+            if let Some(sig_text) = self.signature_text_if_matching_member(member_idx, prop_name) {
+                return Some(sig_text);
+            }
+        }
+        None
+    }
+
+    fn signature_text_if_matching_member(
+        &self,
+        member_idx: NodeIndex,
+        prop_name: &str,
+    ) -> Option<String> {
+        let member_node = self.arena.get(member_idx)?;
+        let signature = self.arena.get_signature(member_node)?;
+        let name = self
+            .arena
+            .get_identifier_text(signature.name)
+            .or_else(|| self.arena.get_literal_text(signature.name))?;
+        if name != prop_name {
+            return None;
+        }
+        self.signature_data_to_text(signature)
+    }
+
+    fn signature_data_to_text(
+        &self,
+        signature: &tsz_parser::parser::node::SignatureData,
+    ) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(params) = signature.parameters.as_ref() {
+            for &param_idx in &params.nodes {
+                let param_node = self.arena.get(param_idx)?;
+                let param = self.arena.get_parameter(param_node)?;
+                let name = self
+                    .arena
+                    .get_identifier_text(param.name)
+                    .or_else(|| self.arena.get_literal_text(param.name))
+                    .unwrap_or("arg");
+                let ty = if param.type_annotation.is_some() {
+                    self.type_node_text(param.type_annotation)
+                        .map(Self::normalize_annotation_text)?
+                } else {
+                    "any".to_string()
+                };
+                parts.push(format!("{name}: {ty}"));
+            }
+        }
+
+        let ret = if signature.type_annotation.is_some() {
+            self.type_node_text(signature.type_annotation)
+                .map(Self::normalize_annotation_text)?
+        } else {
+            "any".to_string()
+        };
+        Some(format!("({}): {ret}", parts.join(", ")))
     }
 
     fn contextual_type_for_object_literal(
@@ -382,6 +590,13 @@ impl<'a> HoverProvider<'a> {
             if assertion.expression == object_literal_idx {
                 return Some(assertion.type_node);
             }
+        }
+
+        if parent.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(grand_parent_idx) = self.arena.get_extended(parent_idx).map(|e| e.parent)
+            && grand_parent_idx.is_some()
+        {
+            return self.contextual_type_for_object_literal(parent_idx, property_assignment_idx);
         }
 
         if parent.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
