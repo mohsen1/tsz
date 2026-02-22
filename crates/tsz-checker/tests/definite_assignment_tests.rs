@@ -203,3 +203,125 @@ for ({x, y: y = E.x} of array) {
         println!("DIAG: {} - {}", d.0, d.1);
     }
 }
+
+/// TS2454 must fire for variables with type annotations but no initializers,
+/// even when the identifier reference has no direct flow node (parent-walk fallback).
+#[test]
+fn test_ts2454_var_with_type_annotation_no_initializer() {
+    let source = r"
+        interface Foo { (): string; }
+        var a: Foo;
+        var x = a();
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 1,
+        "Expected TS2454 for `a` used without initialization, got: {diags:?}"
+    );
+}
+
+/// TS2454 must not fire when the variable has an initializer.
+#[test]
+fn test_ts2454_not_emitted_when_initialized() {
+    let source = r"
+        var a: number = 5;
+        var b = a + 1;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Should not emit TS2454 when variable is initialized, got: {diags:?}"
+    );
+}
+
+/// TS2454 should not fire when the type includes `undefined` (assignment is not required).
+#[test]
+fn test_ts2454_skipped_for_undefined_type() {
+    let source = r"
+        var a: number | undefined;
+        var b = a;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "Should not emit TS2454 when type includes undefined, got: {diags:?}"
+    );
+}
+
+/// TS2454 should not fire when `strictNullChecks` is off.
+#[test]
+fn test_ts2454_not_emitted_without_strict_null_checks() {
+    let source = r"
+        var a: number;
+        var b = a;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: false,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ),
+        0,
+        "TS2454 requires strictNullChecks, got: {diags:?}"
+    );
+}
+
+/// TS2454 must fire for multiple uninitialized variables used in expressions.
+#[test]
+fn test_ts2454_multiple_uninitialized_vars() {
+    let source = r"
+        var a: number;
+        var b: string;
+        var c = a + 1;
+        var d = b.length;
+    ";
+    let diags = diagnostics_with_options(
+        source,
+        CheckerOptions {
+            strict_null_checks: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        count_code(
+            &diags,
+            diagnostic_codes::VARIABLE_IS_USED_BEFORE_BEING_ASSIGNED
+        ) >= 2,
+        "Expected TS2454 for both `a` and `b`, got: {diags:?}"
+    );
+}

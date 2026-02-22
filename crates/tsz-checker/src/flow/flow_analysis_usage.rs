@@ -639,12 +639,32 @@ impl<'a> CheckerState<'a> {
     /// This performs flow-sensitive analysis to determine if a variable
     /// has been assigned on all code paths leading to the usage point.
     pub(crate) fn is_definitely_assigned_at(&self, idx: NodeIndex) -> bool {
-        // Get the flow node for this identifier usage
-        let flow_node = match self.ctx.binder.get_node_flow(idx) {
-            Some(flow) => flow,
-            None => {
-                tracing::debug!("No flow info for {idx:?}");
-                return true;
+        // Get the flow node for this identifier usage.
+        // Identifier reference nodes (e.g., `a` in `console.log(a)`) typically
+        // don't have direct flow nodes recorded — the binder only records flow
+        // for statements and declarations. Walk up the AST to find the nearest
+        // ancestor with a flow node, mirroring `apply_flow_narrowing`'s fallback.
+        let flow_node = if let Some(flow) = self.ctx.binder.get_node_flow(idx) {
+            flow
+        } else {
+            let mut current = self.ctx.arena.get_extended(idx).map(|ext| ext.parent);
+            let mut found = None;
+            while let Some(parent) = current {
+                if parent.is_none() {
+                    break;
+                }
+                if let Some(flow) = self.ctx.binder.get_node_flow(parent) {
+                    found = Some(flow);
+                    break;
+                }
+                current = self.ctx.arena.get_extended(parent).map(|ext| ext.parent);
+            }
+            match found {
+                Some(flow) => flow,
+                None => {
+                    tracing::debug!("No flow info for {idx:?} or its ancestors");
+                    return true;
+                }
             }
         };
 
