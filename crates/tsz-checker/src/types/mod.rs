@@ -20,6 +20,7 @@ pub(crate) mod type_checking_utilities_enum;
 pub(crate) mod type_checking_utilities_jsdoc;
 pub mod type_computation;
 pub(crate) mod type_computation_access;
+pub(crate) mod type_computation_binary;
 pub(crate) mod type_computation_call;
 pub(crate) mod type_computation_call_helpers;
 pub(crate) mod type_computation_complex;
