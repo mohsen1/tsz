@@ -47,6 +47,7 @@
 pub mod arrow_es5;
 pub mod async_es5;
 pub mod async_es5_ir;
+mod async_es5_ir_convert;
 pub mod block_scoping_es5;
 pub mod class_es5;
 pub mod class_es5_ir;
