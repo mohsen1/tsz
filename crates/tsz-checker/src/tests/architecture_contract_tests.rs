@@ -828,6 +828,10 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
             .expect("failed to read implicit_any_checks.rs for architecture guard"),
     );
     state_checking_members_src.push_str(
+        &fs::read_to_string("src/state_checking_members/overload_compatibility.rs")
+            .expect("failed to read overload_compatibility.rs for architecture guard"),
+    );
+    state_checking_members_src.push_str(
         &fs::read_to_string("src/state_checking_members/member_access.rs")
             .expect("failed to read member_access.rs for architecture guard"),
     );
@@ -1290,8 +1294,12 @@ fn test_solver_sources_forbid_parser_checker_imports() {
 
 #[test]
 fn test_ambient_signature_checks_uses_assignability_query_boundary_helpers() {
-    let src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
+    let mut src = fs::read_to_string("src/state_checking_members/ambient_signature_checks.rs")
         .expect("failed to read ambient signature checker for architecture guard");
+    src.push_str(
+        &fs::read_to_string("src/state_checking_members/overload_compatibility.rs")
+            .expect("failed to read overload_compatibility.rs for architecture guard"),
+    );
     assert!(
         !src.contains("tsz_solver::type_queries::rewrite_function_error_slots_to_any"),
         "ambient_signature_checks should route function error-slot rewrite via query boundaries"
