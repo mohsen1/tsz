@@ -18,7 +18,8 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, apparent_primitive_members, visitor,
+    ApparentMemberKind, IntrinsicKind, TypeId, TypeInterner, Visibility,
+    apparent_primitive_members, visitor,
 };
 
 /// The kind of completion item, matching tsserver's `ScriptElementKind` values.
@@ -886,6 +887,9 @@ impl<'a> Completions<'a> {
         {
             let shape = interner.object_shape(shape_id);
             for prop in &shape.properties {
+                if prop.visibility != Visibility::Public {
+                    continue;
+                }
                 let name = interner.resolve_atom(prop.name);
                 self.add_property_completion(props, interner, name, prop.type_id, prop.is_method);
             }

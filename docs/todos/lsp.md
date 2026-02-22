@@ -9,6 +9,8 @@ Completed in this pass:
 - Added focused unit tests in `crates/tsz-lsp/src/project_operations.rs` for the above cases.
 - Fixed quick-info hover parity for contextually-typed function-expression parameters in type-asserted callsites.
 - Added focused hover unit test in `crates/tsz-lsp/tests/hover_tests.rs` for contextual parameter quick info (`(parameter) bb: number`).
+- Fixed tsserver `completionInfo` member-entry selection to prefer provider member completions over project-level fallback entries, avoiding private class member leakage (`basicClassMembers`).
+- Added focused completion regression tests in `crates/tsz-cli/src/bin/tsz_server/tests.rs` and `crates/tsz-lsp/tests/completions_tests.rs` for private constructor-parameter properties.
 
 Investigated but punted:
 - `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` in `module:none` + `target:es5` scenario.
