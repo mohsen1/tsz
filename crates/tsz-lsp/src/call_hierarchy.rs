@@ -27,6 +27,8 @@ pub struct CallHierarchyItem {
     pub range: Range,
     /// The range of the function/method name (selection range).
     pub selection_range: Range,
+    /// Optional containing symbol name (class/module/function).
+    pub container_name: Option<String>,
 }
 
 /// An incoming call (a caller of the target function).
@@ -192,15 +194,28 @@ impl<'a> CallHierarchyProvider<'a> {
             None => return results,
         };
 
-        // Get the function body
-        let body_idx = match self.get_function_body(func_idx) {
-            Some(idx) => idx,
-            None => return results,
-        };
+        let prepared_bounds = self.prepare(_root, position).and_then(|item| {
+            let start = self
+                .line_map
+                .position_to_offset(item.range.start, self.source_text)?;
+            let end = self
+                .line_map
+                .position_to_offset(item.range.end, self.source_text)?;
+            Some((start, end))
+        });
 
-        // Collect all CallExpression nodes within the body
+        // Collect all CallExpression nodes within the callable's body bounds.
         let mut call_nodes = Vec::new();
-        self.collect_call_expressions(body_idx, &mut call_nodes);
+        if let Some((start, end)) = prepared_bounds.or_else(|| self.callable_range_bounds(func_idx))
+        {
+            self.collect_call_expressions_in_bounds(start, end, &mut call_nodes);
+        } else {
+            let body_idx = match self.get_function_body(func_idx) {
+                Some(idx) => idx,
+                None => return results,
+            };
+            self.collect_call_expressions(body_idx, &mut call_nodes);
+        }
 
         // Group calls by the resolved callee.
         // Key: NodeIndex of the callee's declaration, Value: list of call-site ranges.
@@ -258,6 +273,7 @@ impl<'a> CallHierarchyProvider<'a> {
                             uri: self.file_name.clone(),
                             range: ident_range,
                             selection_range: ident_range,
+                            container_name: None,
                         };
                         (Some(item), Vec::new())
                     });
@@ -337,6 +353,11 @@ impl<'a> CallHierarchyProvider<'a> {
             && let Some(ext) = self.arena.get_extended(node_idx)
         {
             let parent = ext.parent;
+            if let Some(property_initializer) =
+                self.property_initializer_function_for_name(node_idx, parent)
+            {
+                return Some(property_initializer);
+            }
             if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
                 && parent_node.is_function_like()
@@ -347,6 +368,124 @@ impl<'a> CallHierarchyProvider<'a> {
 
         // Walk up through parents to find an enclosing function-like node.
         self.find_containing_function(node_idx)
+    }
+
+    fn property_initializer_function_for_name(
+        &self,
+        ident_idx: NodeIndex,
+        parent_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        if parent.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return None;
+        }
+        let prop = self.arena.get_property_decl(parent)?;
+        if prop.name != ident_idx || prop.initializer.is_none() {
+            return None;
+        }
+        let init_node = self.arena.get(prop.initializer)?;
+        init_node.is_function_like().then_some(prop.initializer)
+    }
+
+    fn property_declaration_for_function_initializer(
+        &self,
+        func_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        if func_idx.is_none() {
+            return None;
+        }
+        let ext = self.arena.get_extended(func_idx)?;
+        let parent_idx = ext.parent;
+        if parent_idx.is_none() {
+            return None;
+        }
+        let parent = self.arena.get(parent_idx)?;
+        if parent.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            return None;
+        }
+        let prop = self.arena.get_property_decl(parent)?;
+        (prop.initializer == func_idx).then_some(parent_idx)
+    }
+
+    fn property_name_selection_range(&self, prop_idx: NodeIndex) -> Option<Range> {
+        let prop_node = self.arena.get(prop_idx)?;
+        let prop_decl = self.arena.get_property_decl(prop_node)?;
+        let name_text = self.get_identifier_text(prop_decl.name)?;
+        let name_node = self.arena.get(prop_decl.name)?;
+        let start_offset = name_node.pos;
+        let end_offset = start_offset.saturating_add(name_text.len() as u32);
+        Some(Range::new(
+            self.line_map
+                .offset_to_position(start_offset, self.source_text),
+            self.line_map
+                .offset_to_position(end_offset, self.source_text),
+        ))
+    }
+
+    fn find_function_body_end_offset_from_source(&self, func_start_offset: u32) -> Option<u32> {
+        let bytes = self.source_text.as_bytes();
+        let mut i = func_start_offset as usize;
+        while i < bytes.len() && bytes[i] != b'{' {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            return None;
+        }
+        let mut depth = 0i32;
+        for (idx, ch) in bytes.iter().enumerate().skip(i) {
+            if *ch == b'{' {
+                depth += 1;
+            } else if *ch == b'}' {
+                depth -= 1;
+                if depth == 0 {
+                    return Some((idx + 1) as u32);
+                }
+            }
+        }
+        None
+    }
+
+    fn callable_range_bounds(&self, func_idx: NodeIndex) -> Option<(u32, u32)> {
+        if let Some(prop_idx) = self.property_declaration_for_function_initializer(func_idx) {
+            let prop_node = self.arena.get(prop_idx)?;
+            let prop_decl = self.arena.get_property_decl(prop_node)?;
+            let init_node = self.arena.get(prop_decl.initializer)?;
+            let start = init_node.pos;
+            let end = self
+                .find_function_body_end_offset_from_source(start)
+                .unwrap_or(init_node.end);
+            return Some((start, end));
+        }
+
+        let body = self.get_function_body(func_idx)?;
+        let body_node = self.arena.get(body)?;
+        let func_node = self.arena.get(func_idx)?;
+        Some((func_node.pos, body_node.end))
+    }
+
+    fn container_name_for_callable(&self, callable_idx: NodeIndex) -> Option<String> {
+        let mut current = callable_idx;
+        loop {
+            let ext = self.arena.get_extended(current)?;
+            let parent = ext.parent;
+            if parent.is_none() {
+                return None;
+            }
+            let parent_node = self.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            {
+                let class_decl = self.arena.get_class(parent_node)?;
+                if class_decl.name.is_some() {
+                    return self.get_identifier_text(class_decl.name);
+                }
+                return Some("<class>".to_string());
+            }
+            current = parent;
+        }
     }
 
     /// Walk up the parent chain to find the nearest containing function-like node.
@@ -402,11 +541,16 @@ impl<'a> CallHierarchyProvider<'a> {
                 || k == syntax_kind_ext::ARROW_FUNCTION =>
             {
                 let func = self.arena.get_function(node)?;
-                if func.name.is_none() {
-                    None
-                } else {
-                    Some(func.name)
+                if func.name.is_some() {
+                    return Some(func.name);
                 }
+                if let Some(prop_idx) = self.property_declaration_for_function_initializer(func_idx)
+                    && let Some(prop_node) = self.arena.get(prop_idx)
+                    && let Some(prop_decl) = self.arena.get_property_decl(prop_node)
+                {
+                    return Some(prop_decl.name);
+                }
+                None
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let method = self.arena.get_method_decl(node)?;
@@ -498,6 +642,15 @@ impl<'a> CallHierarchyProvider<'a> {
         }
     }
 
+    fn collect_call_expressions_in_bounds(&self, start: u32, end: u32, out: &mut Vec<NodeIndex>) {
+        for (i, node) in self.arena.nodes.iter().enumerate() {
+            if node.kind == syntax_kind_ext::CALL_EXPRESSION && node.pos >= start && node.end <= end
+            {
+                out.push(NodeIndex(i as u32));
+            }
+        }
+    }
+
     /// Extract the callee identifier from a call expression's `expression` field.
     ///
     /// Handles:
@@ -542,8 +695,8 @@ impl<'a> CallHierarchyProvider<'a> {
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
                 || k == syntax_kind_ext::ARROW_FUNCTION =>
             {
-                if let Some(func) = self.arena.get_function(node) {
-                    self.get_identifier_text(func.name)
+                if let Some(name_idx) = self.get_function_name_idx(func_idx) {
+                    self.get_identifier_text(name_idx)
                         .unwrap_or_else(|| "<anonymous>".to_string())
                 } else {
                     "<anonymous>".to_string()
@@ -613,19 +766,30 @@ impl<'a> CallHierarchyProvider<'a> {
 
         let name = self.get_function_name(func_idx);
         let kind = self.get_function_symbol_kind(func_idx);
-        let range = self.get_range(func_idx);
+        let range = if let Some((start, end)) = self.callable_range_bounds(func_idx) {
+            Range::new(
+                self.line_map.offset_to_position(start, self.source_text),
+                self.line_map.offset_to_position(end, self.source_text),
+            )
+        } else {
+            self.get_range(func_idx)
+        };
 
         // Selection range is the name identifier range, or the keyword range
-        let selection_range = if let Some(name_idx) = self.get_function_name_idx(func_idx) {
-            self.get_range(name_idx)
-        } else {
-            // For constructors or anonymous functions, use a small range at the start
-            let start = self.line_map.offset_to_position(node.pos, self.source_text);
-            let end = self
-                .line_map
-                .offset_to_position(node.pos.saturating_add(11), self.source_text); // "constructor" or similar
-            Range::new(start, end)
-        };
+        let selection_range =
+            if let Some(prop_idx) = self.property_declaration_for_function_initializer(func_idx) {
+                self.property_name_selection_range(prop_idx)
+                    .unwrap_or_else(|| self.get_range(func_idx))
+            } else if let Some(name_idx) = self.get_function_name_idx(func_idx) {
+                self.get_range(name_idx)
+            } else {
+                // For constructors or anonymous functions, use a small range at the start
+                let start = self.line_map.offset_to_position(node.pos, self.source_text);
+                let end = self
+                    .line_map
+                    .offset_to_position(node.pos.saturating_add(11), self.source_text); // "constructor" or similar
+                Range::new(start, end)
+            };
 
         Some(CallHierarchyItem {
             name,
@@ -633,6 +797,7 @@ impl<'a> CallHierarchyProvider<'a> {
             uri: self.file_name.clone(),
             range,
             selection_range,
+            container_name: self.container_name_for_callable(func_idx),
         })
     }
 
@@ -658,6 +823,7 @@ impl<'a> CallHierarchyProvider<'a> {
             uri: self.file_name.clone(),
             range,
             selection_range: range,
+            container_name: self.container_name_for_callable(decl_idx),
         })
     }
 

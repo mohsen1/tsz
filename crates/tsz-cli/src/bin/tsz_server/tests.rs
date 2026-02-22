@@ -769,6 +769,40 @@ fn test_quickinfo_arrow_token_uses_contextual_signature() {
 }
 
 #[test]
+fn test_prepare_call_hierarchy_class_property_arrow_function() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "class C {\n    caller = () => {\n        this.callee();\n    }\n\n    callee = () => {\n    }\n}\n"
+            .to_string(),
+    );
+
+    let req = make_request(
+        "prepareCallHierarchy",
+        serde_json::json!({
+            "file": "/test.ts",
+            "line": 6,
+            "offset": 5
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("prepareCallHierarchy should return a body");
+    let items = body
+        .as_array()
+        .expect("prepareCallHierarchy body should be an array");
+    assert!(
+        !items.is_empty(),
+        "Expected at least one call hierarchy item for class property arrow function"
+    );
+    let first = &items[0];
+    assert_eq!(first["name"].as_str().unwrap_or(""), "callee");
+    assert_eq!(first["kind"].as_str().unwrap_or(""), "function");
+}
+
+#[test]
 fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let mut server = make_server();
     let file = "/test.ts";
@@ -803,6 +837,255 @@ fn test_format_range_paste_matches_fourslash_auto_formatting_on_paste() {
     let updated = apply_tsserver_text_edits(source.to_string(), &edits);
     let expected = "namespace TestModule {\n    class TestClass {\n        private foo;\n        public testMethod() { }\n    }\n}\n";
     assert_eq!(updated, expected);
+}
+
+#[test]
+fn test_format_with_explicit_range_preserves_inline_markers_on_indent_only_lines() {
+    let mut server = make_server();
+    let file = "/test.ts";
+    let source = "class TestClass {\n    private testMethod1(param1: boolean,\n                        param2/*1*/: boolean) {\n    }\n\n    public testMethod2(a: number, b: number, c: number) {\n        if (a === b) {\n        }\n        else if (a != c &&\n                 a/*2*/ > b &&\n                 b/*3*/ < c) {\n        }\n\n    }\n}\n";
+    server
+        .open_files
+        .insert(file.to_string(), source.to_string());
+
+    let req = make_request(
+        "format",
+        serde_json::json!({
+            "file": file,
+            "line": 1,
+            "offset": 1,
+            "endLine": 15,
+            "endOffset": 1,
+            "options": {
+                "tabSize": 4,
+                "insertSpaces": true
+            }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let edits = resp
+        .body
+        .expect("format should return edits")
+        .as_array()
+        .expect("format body should be array")
+        .clone();
+    let updated = apply_tsserver_text_edits(source.to_string(), &edits);
+
+    assert!(
+        updated.contains("/*1*/"),
+        "marker /*1*/ must survive formatting edits"
+    );
+    assert!(
+        updated.contains("/*2*/"),
+        "marker /*2*/ must survive formatting edits"
+    );
+    assert!(
+        updated.contains("/*3*/"),
+        "marker /*3*/ must survive formatting edits"
+    );
+}
+
+#[test]
+fn test_format_with_explicit_range_does_not_invalidate_fourslash_markers() {
+    fn strip_markers(source: &str) -> (String, Vec<usize>) {
+        let mut out = String::with_capacity(source.len());
+        let mut markers = Vec::new();
+        let bytes = source.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if i + 4 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j + 1 < bytes.len() && bytes[j] == b'*' && bytes[j + 1] == b'/' && j > i + 2 {
+                    markers.push(out.len());
+                    i = j + 2;
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        (out, markers)
+    }
+
+    fn update_position(
+        position: usize,
+        edit_start: usize,
+        edit_end: usize,
+        new_text: &str,
+    ) -> Option<usize> {
+        if position <= edit_start {
+            return Some(position);
+        }
+        if position < edit_end {
+            return None;
+        }
+        Some(position + new_text.len() - (edit_end - edit_start))
+    }
+
+    let source_with_markers = "class TestClass {\n    private testMethod1(param1: boolean,\n                        param2/*1*/: boolean) {\n    }\n\n    public testMethod2(a: number, b: number, c: number) {\n        if (a === b) {\n        }\n        else if (a != c &&\n                 a/*2*/ > b &&\n                 b/*3*/ < c) {\n        }\n\n    }\n}\n";
+    let (source, mut marker_positions) = strip_markers(source_with_markers);
+
+    let mut server = make_server();
+    let file = "/test.ts";
+    server.open_files.insert(file.to_string(), source.clone());
+
+    let req = make_request(
+        "format",
+        serde_json::json!({
+            "file": file,
+            "line": 1,
+            "offset": 1,
+            "endLine": 15,
+            "endOffset": 1,
+            "options": {
+                "tabSize": 4,
+                "insertSpaces": true
+            }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("format should return edits");
+    let edits = body.as_array().expect("format body should be array");
+
+    let mut changes: Vec<(usize, usize, String)> = edits
+        .iter()
+        .filter_map(|edit| {
+            let start = edit.get("start")?;
+            let end = edit.get("end")?;
+            let start_line = start.get("line")?.as_u64()? as u32;
+            let start_offset = start.get("offset")?.as_u64()? as u32;
+            let end_line = end.get("line")?.as_u64()? as u32;
+            let end_offset = end.get("offset")?.as_u64()? as u32;
+            let new_text = edit.get("newText")?.as_str()?.to_string();
+            let start_byte = Server::line_offset_to_byte(&source, start_line, start_offset);
+            let end_byte = Server::line_offset_to_byte(&source, end_line, end_offset);
+            Some((start_byte, end_byte.saturating_sub(start_byte), new_text))
+        })
+        .collect();
+
+    for i in 0..changes.len() {
+        let (start, len, new_text) = changes[i].clone();
+        let end = start + len;
+        for marker in &mut marker_positions {
+            let next = update_position(*marker, start, end, &new_text);
+            assert!(
+                next.is_some(),
+                "fourslash marker invalidated by edit span ({start}, {end}) -> {:?}",
+                changes[i]
+            );
+            *marker = next.unwrap_or(0);
+        }
+        let delta = new_text.len() as isize - len as isize;
+        for change in changes.iter_mut().skip(i + 1) {
+            if change.0 >= start {
+                change.0 = (change.0 as isize + delta) as usize;
+            }
+        }
+    }
+}
+
+#[test]
+fn test_format_document_does_not_invalidate_fourslash_markers() {
+    fn strip_markers(source: &str) -> (String, Vec<usize>) {
+        let mut out = String::with_capacity(source.len());
+        let mut markers = Vec::new();
+        let bytes = source.as_bytes();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            if i + 4 < bytes.len() && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                let mut j = i + 2;
+                while j < bytes.len() && bytes[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j + 1 < bytes.len() && bytes[j] == b'*' && bytes[j + 1] == b'/' && j > i + 2 {
+                    markers.push(out.len());
+                    i = j + 2;
+                    continue;
+                }
+            }
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+        (out, markers)
+    }
+
+    fn update_position(
+        position: usize,
+        edit_start: usize,
+        edit_end: usize,
+        new_text: &str,
+    ) -> Option<usize> {
+        if position <= edit_start {
+            return Some(position);
+        }
+        if position < edit_end {
+            return None;
+        }
+        Some(position + new_text.len() - (edit_end - edit_start))
+    }
+
+    let source_with_markers = "class TestClass {\n    private testMethod1(param1: boolean,\n                        param2/*1*/: boolean) {\n    }\n\n    public testMethod2(a: number, b: number, c: number) {\n        if (a === b) {\n        }\n        else if (a != c &&\n                 a/*2*/ > b &&\n                 b/*3*/ < c) {\n        }\n\n    }\n}\n";
+    let (source, mut marker_positions) = strip_markers(source_with_markers);
+
+    let mut server = make_server();
+    let file = "/test.ts";
+    server.open_files.insert(file.to_string(), source.clone());
+
+    let req = make_request(
+        "format",
+        serde_json::json!({
+            "file": file,
+            "options": {
+                "tabSize": 4,
+                "insertSpaces": true
+            }
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp.body.expect("format should return edits");
+    let edits = body.as_array().expect("format body should be array");
+
+    let mut changes: Vec<(usize, usize, String)> = edits
+        .iter()
+        .filter_map(|edit| {
+            let start = edit.get("start")?;
+            let end = edit.get("end")?;
+            let start_line = start.get("line")?.as_u64()? as u32;
+            let start_offset = start.get("offset")?.as_u64()? as u32;
+            let end_line = end.get("line")?.as_u64()? as u32;
+            let end_offset = end.get("offset")?.as_u64()? as u32;
+            let new_text = edit.get("newText")?.as_str()?.to_string();
+            let start_byte = Server::line_offset_to_byte(&source, start_line, start_offset);
+            let end_byte = Server::line_offset_to_byte(&source, end_line, end_offset);
+            Some((start_byte, end_byte.saturating_sub(start_byte), new_text))
+        })
+        .collect();
+
+    for i in 0..changes.len() {
+        let (start, len, new_text) = changes[i].clone();
+        let end = start + len;
+        for marker in &mut marker_positions {
+            let next = update_position(*marker, start, end, &new_text);
+            assert!(
+                next.is_some(),
+                "fourslash marker invalidated by edit span ({start}, {end}) -> {:?}",
+                changes[i]
+            );
+            *marker = next.unwrap_or(0);
+        }
+        let delta = new_text.len() as isize - len as isize;
+        for change in changes.iter_mut().skip(i + 1) {
+            if change.0 >= start {
+                change.0 = (change.0 as isize + delta) as usize;
+            }
+        }
+    }
 }
 
 #[test]

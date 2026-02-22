@@ -166,10 +166,6 @@ impl Server {
         let result = (|| -> Option<serde_json::Value> {
             let file = request.arguments.get("file")?.as_str()?;
             let source_text = self.open_files.get(file)?.clone();
-            let has_explicit_range = request.arguments.get("line").is_some()
-                && request.arguments.get("offset").is_some()
-                && request.arguments.get("endLine").is_some()
-                && request.arguments.get("endOffset").is_some();
 
             let options = tsz::lsp::formatting::FormattingOptions {
                 tab_size: request
@@ -197,15 +193,12 @@ impl Server {
                     let body: Vec<serde_json::Value> = edits
                         .iter()
                         .map(|edit| {
-                            let (normalized_range, normalized_text) = if has_explicit_range {
-                                (edit.range, edit.new_text.clone())
-                            } else {
+                            let (normalized_range, normalized_text) =
                                 Self::narrow_to_indentation_only_edit_if_possible(
                                     &source_text,
                                     &line_map,
                                     edit,
-                                )
-                            };
+                                );
                             serde_json::json!({
                                 "start": Self::lsp_to_tsserver_position(normalized_range.start),
                                 "end": Self::lsp_to_tsserver_position(normalized_range.end),
@@ -246,26 +239,46 @@ impl Server {
             return (edit.range, edit.new_text.clone());
         }
 
-        let old_trimmed = old_text.trim_start_matches([' ', '\t']);
-        let new_trimmed = edit.new_text.trim_start_matches([' ', '\t']);
-        if old_trimmed != new_trimmed {
+        let mut prefix = 0usize;
+        for ((old_idx, old_ch), (_, new_ch)) in
+            old_text.char_indices().zip(edit.new_text.char_indices())
+        {
+            if old_ch != new_ch {
+                break;
+            }
+            prefix = old_idx + old_ch.len_utf8();
+        }
+
+        let old_after_prefix = &old_text[prefix..];
+        let new_after_prefix = &edit.new_text[prefix..];
+
+        let mut old_suffix_bytes = 0usize;
+        let mut new_suffix_bytes = 0usize;
+        let mut old_rev = old_after_prefix.char_indices().rev();
+        let mut new_rev = new_after_prefix.char_indices().rev();
+        while let (Some((old_idx, old_ch)), Some((new_idx, new_ch))) =
+            (old_rev.next(), new_rev.next())
+        {
+            if old_ch != new_ch {
+                break;
+            }
+            old_suffix_bytes = old_after_prefix.len() - old_idx;
+            new_suffix_bytes = new_after_prefix.len() - new_idx;
+        }
+
+        let old_mid_end = old_text.len().saturating_sub(old_suffix_bytes);
+        let new_mid_end = edit.new_text.len().saturating_sub(new_suffix_bytes);
+        let narrowed_start = start_off + prefix as u32;
+        let narrowed_end = start_off + old_mid_end as u32;
+        let start_pos = line_map.offset_to_position(narrowed_start, source_text);
+        let end_pos = line_map.offset_to_position(narrowed_end, source_text);
+        let new_text = edit.new_text[prefix..new_mid_end].to_string();
+
+        if narrowed_start == start_off && narrowed_end == end_off && new_text == edit.new_text {
             return (edit.range, edit.new_text.clone());
         }
 
-        let old_indent_len = old_text.len().saturating_sub(old_trimmed.len());
-        let new_indent_len = edit.new_text.len().saturating_sub(new_trimmed.len());
-        if old_indent_len == 0 && new_indent_len == 0 {
-            return (edit.range, edit.new_text.clone());
-        }
-
-        let indent_start = start_off;
-        let indent_end = start_off + old_indent_len as u32;
-        let start_pos = line_map.offset_to_position(indent_start, source_text);
-        let end_pos = line_map.offset_to_position(indent_end, source_text);
-        (
-            Range::new(start_pos, end_pos),
-            edit.new_text[..new_indent_len].to_string(),
-        )
+        (Range::new(start_pos, end_pos), new_text)
     }
 
     pub(crate) fn handle_format_on_key(
@@ -633,8 +646,31 @@ impl Server {
             let position = Self::tsserver_to_lsp_position(line, offset);
             let provider =
                 CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
-            let item = provider.prepare(root, position)?;
-            Some(serde_json::json!([{
+            let mut item = provider.prepare(root, position);
+            if item.is_none()
+                && let Some(base_offset) = line_map.position_to_offset(position, &source_text)
+            {
+                let len = source_text.len() as u32;
+                let mut probes = [base_offset; 2];
+                let mut probe_count = 0usize;
+                if base_offset < len {
+                    probes[probe_count] = base_offset.saturating_add(1).min(len);
+                    probe_count += 1;
+                }
+                if base_offset > 0 {
+                    probes[probe_count] = base_offset - 1;
+                    probe_count += 1;
+                }
+                for probe_offset in probes.into_iter().take(probe_count) {
+                    let probe = line_map.offset_to_position(probe_offset, &source_text);
+                    item = provider.prepare(root, probe);
+                    if item.is_some() {
+                        break;
+                    }
+                }
+            }
+            let item = item?;
+            let mut body_item = serde_json::json!({
                 "name": item.name,
                 "kind": format!("{:?}", item.kind).to_lowercase(),
                 "file": item.uri,
@@ -646,7 +682,11 @@ impl Server {
                     "start": Self::lsp_to_tsserver_position(item.selection_range.start),
                     "end": Self::lsp_to_tsserver_position(item.selection_range.end),
                 },
-            }]))
+            });
+            if let Some(container_name) = item.container_name {
+                body_item["containerName"] = serde_json::json!(container_name);
+            }
+            Some(serde_json::json!([body_item]))
         })();
         self.stub_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
     }
@@ -665,9 +705,30 @@ impl Server {
                 CallHierarchyProvider::new(&arena, &binder, &line_map, file, &source_text);
 
             let is_incoming = request.command == "provideCallHierarchyIncomingCalls";
+            let mut positions = vec![position];
+            if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
+                let len = source_text.len() as u32;
+                if base_offset < len {
+                    positions.push(
+                        line_map.offset_to_position(
+                            base_offset.saturating_add(1).min(len),
+                            &source_text,
+                        ),
+                    );
+                }
+                if base_offset > 0 {
+                    positions.push(line_map.offset_to_position(base_offset - 1, &source_text));
+                }
+            }
 
             if is_incoming {
-                let calls = provider.incoming_calls(root, position);
+                let mut calls = Vec::new();
+                for probe in &positions {
+                    calls = provider.incoming_calls(root, *probe);
+                    if !calls.is_empty() {
+                        break;
+                    }
+                }
                 let body: Vec<serde_json::Value> = calls
                     .iter()
                     .map(|call| {
@@ -681,7 +742,7 @@ impl Server {
                                 })
                             })
                             .collect();
-                        serde_json::json!({
+                        let mut from = serde_json::json!({
                             "from": {
                                 "name": call.from.name,
                                 "kind": format!("{:?}", call.from.kind).to_lowercase(),
@@ -696,11 +757,17 @@ impl Server {
                                 },
                             },
                             "fromSpans": from_ranges,
-                        })
+                        });
+                        if let Some(container_name) = &call.from.container_name {
+                            from["from"]["containerName"] = serde_json::json!(container_name);
+                        }
+                        from
                     })
                     .collect();
                 Some(serde_json::json!(body))
             } else {
+                // Keep outgoing calls pinned to the exact requested position:
+                // probing nearby offsets can spuriously jump to neighboring call sites.
                 let calls = provider.outgoing_calls(root, position);
                 let body: Vec<serde_json::Value> = calls
                     .iter()
@@ -715,7 +782,7 @@ impl Server {
                                 })
                             })
                             .collect();
-                        serde_json::json!({
+                        let mut to = serde_json::json!({
                             "to": {
                                 "name": call.to.name,
                                 "kind": format!("{:?}", call.to.kind).to_lowercase(),
@@ -730,7 +797,11 @@ impl Server {
                                 },
                             },
                             "fromSpans": from_ranges,
-                        })
+                        });
+                        if let Some(container_name) = &call.to.container_name {
+                            to["to"]["containerName"] = serde_json::json!(container_name);
+                        }
+                        to
                     })
                     .collect();
                 Some(serde_json::json!(body))

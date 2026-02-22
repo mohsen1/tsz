@@ -44,6 +44,24 @@ pub struct ScopeWalker<'a> {
 }
 
 impl<'a> ScopeWalker<'a> {
+    fn resolve_module_namespace_string_symbol(&self, target: NodeIndex) -> Option<SymbolId> {
+        let node = self.arena.get(target)?;
+        if node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+
+        let ext = self.arena.get_extended(target)?;
+        let parent = ext.parent;
+        let parent_node = self.arena.get(parent)?;
+        if parent_node.kind != syntax_kind_ext::IMPORT_SPECIFIER
+            && parent_node.kind != syntax_kind_ext::EXPORT_SPECIFIER
+        {
+            return None;
+        }
+
+        self.binder.node_symbols.get(&parent.0).copied()
+    }
+
     /// Create a new scope walker.
     pub fn new(arena: &'a NodeArena, binder: &'a BinderState) -> Self {
         Self {
@@ -164,6 +182,9 @@ impl<'a> ScopeWalker<'a> {
         if let Some(&sym_id) = self.binder.node_symbols.get(&target.0) {
             return Some(sym_id);
         }
+        if let Some(sym_id) = self.resolve_module_namespace_string_symbol(target) {
+            return Some(sym_id);
+        }
 
         // Otherwise, we need to walk the tree to build scope context
         self.walk_to_node(root, target, &mut Vec::new())
@@ -177,6 +198,9 @@ impl<'a> ScopeWalker<'a> {
         mut stats: Option<&mut ScopeCacheStats>,
     ) -> Option<SymbolId> {
         if let Some(&sym_id) = self.binder.node_symbols.get(&target.0) {
+            return Some(sym_id);
+        }
+        if let Some(sym_id) = self.resolve_module_namespace_string_symbol(target) {
             return Some(sym_id);
         }
 

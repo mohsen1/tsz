@@ -70,3 +70,27 @@ Investigated but punted:
   Reason: requires deeper hover/member symbol resolution for property access nodes (current small boundary probing in tsserver quickinfo handler cannot recover `(property) I.m: () => void` without resolver-level member lookup parity).
 - `TypeScript/tests/cases/fourslash/quickInfoCallProperty.ts` (related gap): declaration-site quick info on interface property signature (`m` in `interface I { m: ... }`) still returns empty via `HoverProvider`.
   Reason: this pass patched tsserver quickinfo parity for call-site marker behavior; declaration-node property hover needs a resolver/hover-layer symbol-resolution fix beyond this targeted handler fallback.
+
+## 2026-02-22 (follow-up)
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/alignmentAfterFormattingOnMultilineExpressionAndParametersList.ts`: still returns `Marker "1" has been invalidated by unrecoverable edits to the file`.
+  Reason: tsserver-format handler now narrows single-line edits to minimal diffs and has unit coverage for marker-stability simulation, but fourslash still invalidates marker positions in harness; remaining gap appears to be in request/option/edit-shaping parity specific to `format.document()` beyond the direct handler path tested.
+- `TypeScript/tests/cases/fourslash/arbitraryModuleNamespaceIdentifiers_{types,values}.ts`: still creates new local baselines with missing rename/definition/reference highlighting.
+  Reason: current tsserver bridge resolves and binds one file per request (`parse_and_bind_file`), so cross-file alias symbol navigation for arbitrary module namespace identifiers is still absent and needs project-wide symbol resolution in handlers (or project-backed provider wiring), which is broader than this targeted formatting pass.
+
+## 2026-02-22 (call hierarchy follow-up)
+
+Completed in this pass:
+- Fixed class-property arrow-function call hierarchy parity for `TypeScript/tests/cases/fourslash/callHierarchyClassPropertyArrowFunction.ts`.
+- Added class-property initializer awareness in `crates/tsz-lsp/src/call_hierarchy.rs` so `prepare/incoming/outgoing` can treat `callee = () => {}` as a callable with:
+  - correct callable range bounds (initializer/body),
+  - precise property-name selection span,
+  - `containerName` (`C`) propagation.
+- Updated tsserver call-hierarchy response shaping in `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs` to emit `containerName` and avoid outgoing-call probe fallbacks that jumped to unrelated nearby call sites.
+- Added focused unit coverage:
+  - `crates/tsz-lsp/tests/call_hierarchy_tests.rs`
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs`
+
+Investigated but punted:
+- None in this pass.
