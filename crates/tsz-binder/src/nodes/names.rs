@@ -1,6 +1,6 @@
 //! AST name collection utilities and modifier helpers for the binder.
 //!
-//! Extracted from `state_node_binding.rs` — provides functions for:
+//! Provides functions for:
 //! - Extracting property/identifier names from AST nodes
 //! - Collecting binding identifiers from destructuring patterns
 //! - Collecting file-scope names and hoisted names
@@ -15,7 +15,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-use super::state::BinderState;
+use crate::state::BinderState;
 
 impl BinderState {
     /// Get property name from a node index.

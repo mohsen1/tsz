@@ -7,7 +7,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
-use super::state::{BinderState, FileFeatures};
+use crate::state::{BinderState, FileFeatures};
 
 impl BinderState {
     /// Collect hoisted declarations from statements.
