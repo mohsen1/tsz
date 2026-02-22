@@ -914,6 +914,41 @@ fn test_prepare_call_hierarchy_class_property_arrow_function() {
 }
 
 #[test]
+fn test_prepare_call_hierarchy_marker_comment_before_interface_method() {
+    let mut server = make_server();
+    server.open_files.insert(
+        "/test.ts".to_string(),
+        "interface I {\n    /**/foo(): void;\n}\n\nconst obj: I = { foo() {} };\nobj.foo();\n"
+            .to_string(),
+    );
+
+    let req = make_request(
+        "prepareCallHierarchy",
+        // Cursor on the `/` in `/**/foo`.
+        serde_json::json!({
+            "file": "/test.ts",
+            "line": 2,
+            "offset": 5
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(resp.success);
+    let body = resp
+        .body
+        .expect("prepareCallHierarchy should return a body");
+    let items = body
+        .as_array()
+        .expect("prepareCallHierarchy body should be an array");
+    assert!(
+        !items.is_empty(),
+        "Expected call hierarchy item for interface method marker comment probe"
+    );
+    let first = &items[0];
+    assert_eq!(first["name"].as_str().unwrap_or(""), "foo");
+    assert_eq!(first["kind"].as_str().unwrap_or(""), "method");
+}
+
+#[test]
 fn test_call_hierarchy_outgoing_includes_constructor_call_target() {
     let mut server = make_server();
     server.open_files.insert(

@@ -327,3 +327,19 @@ Completed in this pass:
 
 Investigated but punted:
 - None in this pass.
+
+## 2026-02-22 (callHierarchyInterfaceMethod marker probe follow-up)
+
+Completed in this pass:
+- Fixed `TypeScript/tests/cases/fourslash/callHierarchyInterfaceMethod.ts` by adding interface `METHOD_SIGNATURE` support to LSP call hierarchy prepare/incoming resolution in `crates/tsz-lsp/src/call_hierarchy.rs`.
+- Fixed tsserver call-hierarchy marker-comment probing (`/**/foo`) in `crates/tsz-cli/src/bin/tsz_server/handlers_structure.rs` so `prepareCallHierarchy`/incoming/outgoing requests can resolve marker-adjacent symbols.
+- Added focused Rust unit tests:
+  - `crates/tsz-lsp/tests/call_hierarchy_tests.rs` (`test_interface_method_signature_prepare_and_incoming_calls`)
+  - `crates/tsz-cli/src/bin/tsz_server/tests.rs` (`test_prepare_call_hierarchy_marker_comment_before_interface_method`)
+- Verified targeted parity improvement with:
+  - `./scripts/run-fourslash.sh --filter=callHierarchyInterfaceMethod --max=20` (now passing)
+- Re-ran capped sample: `./scripts/run-fourslash.sh --skip-build --max=200` stayed at `188/200` in this run.
+
+Investigated but punted:
+- `TypeScript/tests/cases/fourslash/autoImportCompletionAmbientMergedModule1.ts`: still missing completion `execActionWithCount`.
+  Reason: appears blocked on broader class-member snippet completion parity (`includeCompletionsWithClassMemberSnippets` completion source + entry detail shaping), which is larger than this targeted call-hierarchy fix.

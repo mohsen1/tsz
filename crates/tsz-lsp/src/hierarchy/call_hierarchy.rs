@@ -52,6 +52,16 @@ pub struct CallHierarchyOutgoingCall {
 define_lsp_provider!(binder CallHierarchyProvider, "Provider for call hierarchy operations.");
 
 impl<'a> CallHierarchyProvider<'a> {
+    const fn is_call_hierarchy_callable_kind(kind: u16) -> bool {
+        kind == syntax_kind_ext::METHOD_SIGNATURE
+    }
+
+    fn is_call_hierarchy_callable_node(&self, node_idx: NodeIndex) -> bool {
+        self.arena.get(node_idx).is_some_and(|node| {
+            node.is_function_like() || Self::is_call_hierarchy_callable_kind(node.kind)
+        })
+    }
+
     /// Prepare a call hierarchy item at the given position.
     ///
     /// Finds the function, method, or constructor at the cursor and returns
@@ -139,10 +149,14 @@ impl<'a> CallHierarchyProvider<'a> {
         let target_namespace_hint = self.enclosing_namespace_name(func_idx);
         let target_member_container_hint = self.member_container_hint_for_callable(func_idx);
         let target_is_member_like =
-            matches!(target_kind, SymbolKind::Method | SymbolKind::Property)
+            (matches!(target_kind, SymbolKind::Method | SymbolKind::Property)
                 || self
                     .property_declaration_for_function_initializer(func_idx)
-                    .is_some();
+                    .is_some())
+                && self
+                    .arena
+                    .get(func_idx)
+                    .is_some_and(|node| node.kind != syntax_kind_ext::METHOD_SIGNATURE);
 
         // Scan all identifier nodes in the arena that match the target name and
         // appear in a relevant call/reference context, grouping by containing function.
@@ -439,7 +453,7 @@ impl<'a> CallHierarchyProvider<'a> {
         let node = self.arena.get(node_idx)?;
 
         // If we are directly on a function-like node, return it.
-        if node.is_function_like() {
+        if node.is_function_like() || Self::is_call_hierarchy_callable_kind(node.kind) {
             return Some(node_idx);
         }
 
@@ -468,6 +482,12 @@ impl<'a> CallHierarchyProvider<'a> {
                 self.variable_initializer_function_for_name(node_idx, parent)
             {
                 return Some(variable_initializer);
+            }
+            if parent.is_some()
+                && let Some(parent_node) = self.arena.get(parent)
+                && parent_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+            {
+                return Some(parent);
             }
             if parent.is_some()
                 && let Some(parent_node) = self.arena.get(parent)
@@ -704,7 +724,9 @@ impl<'a> CallHierarchyProvider<'a> {
                 return None;
             }
             let parent_node = self.arena.get(parent)?;
-            if parent_node.is_function_like() {
+            if parent_node.is_function_like()
+                || Self::is_call_hierarchy_callable_kind(parent_node.kind)
+            {
                 return Some(parent);
             }
             current = parent;
@@ -892,6 +914,14 @@ impl<'a> CallHierarchyProvider<'a> {
                     Some(method.name)
                 }
             }
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
+                let signature = self.arena.get_signature(node)?;
+                if signature.name.is_none() {
+                    None
+                } else {
+                    Some(signature.name)
+                }
+            }
             k if k == syntax_kind_ext::CONSTRUCTOR => {
                 // Constructors don't have a name node, return the function node itself
                 None
@@ -1046,6 +1076,10 @@ impl<'a> CallHierarchyProvider<'a> {
                     "<method>".to_string()
                 }
             }
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => self
+                .get_function_name_idx(func_idx)
+                .and_then(|name_idx| self.get_identifier_text(name_idx))
+                .unwrap_or_else(|| "<method>".to_string()),
             k if k == syntax_kind_ext::CONSTRUCTOR => "constructor".to_string(),
             k if k == syntax_kind_ext::GET_ACCESSOR => {
                 if let Some(accessor) = self.arena.get_accessor(node) {
@@ -1085,6 +1119,7 @@ impl<'a> CallHierarchyProvider<'a> {
                 SymbolKind::Function
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => SymbolKind::Method,
+            k if k == syntax_kind_ext::METHOD_SIGNATURE => SymbolKind::Method,
             k if k == syntax_kind_ext::CONSTRUCTOR => SymbolKind::Constructor,
             k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
                 SymbolKind::Property
@@ -1096,7 +1131,7 @@ impl<'a> CallHierarchyProvider<'a> {
     /// Build a `CallHierarchyItem` for a function-like node.
     fn make_call_hierarchy_item(&self, func_idx: NodeIndex) -> Option<CallHierarchyItem> {
         let node = self.arena.get(func_idx)?;
-        if !node.is_function_like() {
+        if !(node.is_function_like() || Self::is_call_hierarchy_callable_kind(node.kind)) {
             return None;
         }
         if let Some(module_item) = self.export_equals_anonymous_function_item(func_idx) {
@@ -1334,7 +1369,7 @@ impl<'a> CallHierarchyProvider<'a> {
 
     fn callable_from_declaration(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
         let node = self.arena.get(decl_idx)?;
-        if node.is_function_like() {
+        if self.is_call_hierarchy_callable_node(decl_idx) {
             return Some(decl_idx);
         }
 
