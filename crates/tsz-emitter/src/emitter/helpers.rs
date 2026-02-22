@@ -2,7 +2,7 @@ use super::{ModuleKind, Printer};
 use crate::printer::safe_slice;
 use crate::source_writer::{SourcePosition, source_position_from_offset};
 use tsz_parser::parser::node::{Node, NodeAccess};
-use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -706,7 +706,9 @@ impl<'a> Printer<'a> {
                 if let Some(enum_decl) = self.arena.get_enum(node) {
                     self.arena
                         .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                        || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+                        || self
+                            .arena
+                            .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
                 } else {
                     false
                 }
@@ -932,20 +934,6 @@ impl<'a> Printer<'a> {
             }
         }
         None
-    }
-
-    /// Check if modifiers include a specific keyword
-    pub(super) fn has_modifier(&self, modifiers: &Option<NodeList>, kind: u16) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == kind
-                {
-                    return true;
-                }
-            }
-        }
-        false
     }
 
     /// Check if the source text has a trailing comma after the last element

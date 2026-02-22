@@ -894,19 +894,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
-    pub(crate) fn has_modifier(&self, modifiers: &Option<NodeList>, kind: u16) -> bool {
-        if let Some(mods) = modifiers {
-            for &mod_idx in &mods.nodes {
-                if let Some(mod_node) = self.arena.get(mod_idx)
-                    && mod_node.kind == kind
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// Check if an import specifier should be emitted based on usage analysis.
     ///
     /// Returns true if:

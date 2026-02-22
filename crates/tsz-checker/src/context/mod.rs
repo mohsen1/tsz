@@ -1528,24 +1528,6 @@ impl<'a> CheckerContext<'a> {
         self.recursion_depth.borrow_mut().leave();
     }
 
-    /// Check if a modifier list contains a specific modifier kind.
-    pub fn has_modifier(
-        &self,
-        modifiers: &Option<tsz_parser::parser::NodeList>,
-        kind: u16,
-    ) -> bool {
-        if let Some(mods) = modifiers {
-            for &idx in &mods.nodes {
-                if let Some(node) = self.arena.get(idx)
-                    && node.kind == kind
-                {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     // =========================================================================
     // Flow Graph Queries
     // =========================================================================

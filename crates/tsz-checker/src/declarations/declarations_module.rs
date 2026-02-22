@@ -45,10 +45,12 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // Check this FIRST before early returns so we can emit multiple errors
             let has_declare = self
                 .ctx
-                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16);
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword);
             let has_export = self
                 .ctx
-                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword as u16);
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::ExportKeyword);
 
             // Only check for TS2668 if this is a string-literal-named module
             let is_string_named = if let Some(name_node) = self.ctx.arena.get(module.name) {
@@ -102,10 +104,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             if let Some(gp_node) = self.ctx.arena.get(gp)
                                 && gp_node.kind == syntax_kind_ext::MODULE_DECLARATION
                                 && let Some(gp_module) = self.ctx.arena.get_module(gp_node)
-                                && self.ctx.has_modifier(
-                                    &gp_module.modifiers,
-                                    SyntaxKind::DeclareKeyword as u16,
-                                )
+                                && self
+                                    .ctx
+                                    .arena
+                                    .has_modifier(&gp_module.modifiers, SyntaxKind::DeclareKeyword)
                             {
                                 let gp_name_node = self.ctx.arena.get(gp_module.name);
                                 let gp_is_string_named = gp_name_node.is_some_and(|name_node| {
@@ -250,7 +252,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
             // an ambient module declaration, and relative paths are valid.
             if self
                 .ctx
-                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
+                .arena
+                .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
                 && let Some(name_node) = self.ctx.arena.get(module.name)
                 && name_node.kind == SyntaxKind::StringLiteral as u16
                 && let Some(lit) = self.ctx.arena.get_literal(name_node)
@@ -588,10 +591,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             }
                         } else if kind == syntax_kind_ext::VARIABLE_STATEMENT {
                             if let Some(var_stmt) = self.ctx.arena.get_variable(stmt_node)
-                                && self.ctx.has_modifier(
-                                    &var_stmt.modifiers,
-                                    SyntaxKind::ExportKeyword as u16,
-                                )
+                                && self
+                                    .ctx
+                                    .arena
+                                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
                             {
                                 for &decl_list_idx in &var_stmt.declarations.nodes {
                                     let Some(decl_list_node) = self.ctx.arena.get(decl_list_idx)
@@ -652,7 +655,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             if let Some(func) = self.ctx.arena.get_function(stmt_node)
                                 && self
                                     .ctx
-                                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword as u16)
+                                    .arena
+                                    .has_modifier(&func.modifiers, SyntaxKind::ExportKeyword)
                                 && let Some(name_node) = self.ctx.arena.get(func.name)
                                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                 && register_value_name(&ident.escaped_text, func.name)
@@ -668,10 +672,10 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             }
                         } else if kind == syntax_kind_ext::CLASS_DECLARATION {
                             if let Some(class) = self.ctx.arena.get_class(stmt_node)
-                                && self.ctx.has_modifier(
-                                    &class.modifiers,
-                                    SyntaxKind::ExportKeyword as u16,
-                                )
+                                && self
+                                    .ctx
+                                    .arena
+                                    .has_modifier(&class.modifiers, SyntaxKind::ExportKeyword)
                                 && let Some(name_node) = self.ctx.arena.get(class.name)
                                 && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                                 && register_value_name(&ident.escaped_text, class.name)
@@ -689,7 +693,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                             && let Some(enm) = self.ctx.arena.get_enum(stmt_node)
                             && self
                                 .ctx
-                                .has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword as u16)
+                                .arena
+                                .has_modifier(&enm.modifiers, SyntaxKind::ExportKeyword)
                             && let Some(name_node) = self.ctx.arena.get(enm.name)
                             && let Some(ident) = self.ctx.arena.get_identifier(name_node)
                             && register_value_name(&ident.escaped_text, enm.name)

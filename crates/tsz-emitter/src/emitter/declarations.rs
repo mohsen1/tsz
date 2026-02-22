@@ -550,12 +550,17 @@ impl<'a> Printer<'a> {
                     continue;
                 };
                 let Some(prop) = self.arena.get_property_decl(member_node).filter(|prop| {
-                    self.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16)
+                    self.arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
                 }) else {
                     continue;
                 };
-                if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
-                    || self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                if self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                    || self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
                 {
                     continue;
                 }
@@ -669,7 +674,9 @@ impl<'a> Printer<'a> {
                     && let Some(prop) = self.arena.get_property_decl(member_node)
                 {
                     if prop.initializer.is_none()
-                        || self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
                     {
                         continue;
                     }
@@ -677,7 +684,10 @@ impl<'a> Printer<'a> {
                     if name.is_empty() {
                         continue;
                     }
-                    if self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {
+                    if self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                    {
                         static_field_inits.push((
                             name,
                             prop.initializer,
@@ -806,13 +816,16 @@ impl<'a> Printer<'a> {
                     .iter()
                     .any(|(accessor_idx, _, _)| *accessor_idx == member_idx)
                 && prop.initializer.is_some()
-                && !self.has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
             {
                 // For static properties, save leading and trailing comments before
                 // skipping so they can be emitted when the initialization is moved
                 // after the class body.
-                let is_static =
-                    self.has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16);
+                let is_static = self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword);
                 if is_static {
                     let leading = self.collect_leading_comments(member_node.pos);
                     if let Some(entry) = static_field_inits
@@ -901,7 +914,8 @@ impl<'a> Printer<'a> {
                     // Abstract methods and bodyless overloads are erased
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
                         self.arena.get_function(member_node).is_some_and(|f| {
-                            self.has_modifier(&f.modifiers, SyntaxKind::AbstractKeyword as u16)
+                            self.arena
+                                .has_modifier(&f.modifiers, SyntaxKind::AbstractKeyword)
                                 || f.body.is_none()
                         })
                     }
@@ -909,13 +923,17 @@ impl<'a> Printer<'a> {
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
                         self.arena.get_accessor(member_node).is_some_and(|a| {
-                            self.has_modifier(&a.modifiers, SyntaxKind::AbstractKeyword as u16)
+                            self.arena
+                                .has_modifier(&a.modifiers, SyntaxKind::AbstractKeyword)
                         })
                     }
                     k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                         if let Some(p) = self.arena.get_property_decl(member_node) {
                             // Abstract properties: erased
-                            if self.has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword as u16) {
+                            if self
+                                .arena
+                                .has_modifier(&p.modifiers, SyntaxKind::AbstractKeyword)
+                            {
                                 true
                             } else {
                                 // Type-only properties (no initializer, not private, not accessor): erased
@@ -927,10 +945,9 @@ impl<'a> Printer<'a> {
                                     let is_private = self.arena.get(p.name).is_some_and(|n| {
                                         n.kind == SyntaxKind::PrivateIdentifier as u16
                                     });
-                                    let has_accessor = self.has_modifier(
-                                        &p.modifiers,
-                                        SyntaxKind::AccessorKeyword as u16,
-                                    );
+                                    let has_accessor = self
+                                        .arena
+                                        .has_modifier(&p.modifiers, SyntaxKind::AccessorKeyword);
                                     p.initializer.is_none() && !is_private && !has_accessor
                                 }
                             }
@@ -1277,9 +1294,15 @@ impl<'a> Printer<'a> {
             let Some(prop_data) = self.arena.get_property_decl(member_node) else {
                 continue;
             };
-            if self.has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword as u16)
-                && !self.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword as u16)
-                && !self.has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword as u16)
+            if self
+                .arena
+                .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
             {
                 let Some(name_node) = self.arena.get(prop_data.name) else {
                     continue;
@@ -1443,7 +1466,9 @@ impl<'a> Printer<'a> {
         if self
             .arena
             .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-            || self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16)
+            || self
+                .arena
+                .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword)
         {
             self.skip_comments_for_erased_node(node);
             return;
@@ -2263,7 +2288,9 @@ impl<'a> Printer<'a> {
                 let runtime = !self
                     .arena
                     .has_modifier(&enum_decl.modifiers, SyntaxKind::DeclareKeyword)
-                    && !self.has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword as u16);
+                    && !self
+                        .arena
+                        .has_modifier(&enum_decl.modifiers, SyntaxKind::ConstKeyword);
                 Some((runtime, None))
             }
             k if k == syntax_kind_ext::INTERFACE_DECLARATION => {

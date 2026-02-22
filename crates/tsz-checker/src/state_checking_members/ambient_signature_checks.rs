@@ -39,10 +39,11 @@ impl<'a> CheckerState<'a> {
             use crate::diagnostics::{diagnostic_messages, format_message};
 
             // TS8009: Modifiers like 'declare' can only be used in TypeScript files
-            if self.ctx.has_modifier(
-                &prop.modifiers,
-                tsz_scanner::SyntaxKind::DeclareKeyword as u16,
-            ) {
+            if self
+                .ctx
+                .arena
+                .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::DeclareKeyword)
+            {
                 let message = format_message(
                     diagnostic_messages::THE_MODIFIER_CAN_ONLY_BE_USED_IN_TYPESCRIPT_FILES,
                     &["declare"],
@@ -268,10 +269,10 @@ impl<'a> CheckerState<'a> {
             // `class Foo { name = "" }` infers `name: string`, not `name: ""`.
             // Readonly properties preserve literal types:
             // `class Foo { readonly tag = "x" }` infers `tag: "x"`.
-            let is_readonly = self.ctx.has_modifier(
-                &prop.modifiers,
-                tsz_scanner::SyntaxKind::ReadonlyKeyword as u16,
-            );
+            let is_readonly = self
+                .ctx
+                .arena
+                .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::ReadonlyKeyword);
             if is_readonly {
                 init_type
             } else {

@@ -288,7 +288,8 @@ impl<'a, 'ctx> DeclarationChecker<'a, 'ctx> {
                 && let Some(module) = self.ctx.arena.get_module(parent_node)
                 && self
                     .ctx
-                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword as u16)
+                    .arena
+                    .has_modifier(&module.modifiers, SyntaxKind::DeclareKeyword)
             {
                 return true;
             }

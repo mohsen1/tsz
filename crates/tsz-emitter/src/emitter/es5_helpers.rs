@@ -248,7 +248,9 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        let is_async = self.has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword as u16);
+        let is_async = self
+            .arena
+            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword);
         if is_async {
             self.emit_async_function_es5_body("", &method.parameters.nodes, method.body, "this");
             return;

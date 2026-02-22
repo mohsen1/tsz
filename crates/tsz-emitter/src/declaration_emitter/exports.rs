@@ -218,7 +218,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
         self.write("export default ");
@@ -377,7 +379,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
-        let is_abstract = self.has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword as u16);
+        let is_abstract = self
+            .arena
+            .has_modifier(&class.modifiers, SyntaxKind::AbstractKeyword);
 
         self.write_indent();
         if !self.inside_declare_namespace {
