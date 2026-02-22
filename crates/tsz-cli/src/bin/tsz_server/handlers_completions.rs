@@ -1,14 +1,42 @@
 //! Completions and signature help handlers for tsz-server.
 
 use super::{Server, TsServerRequest, TsServerResponse};
+use rustc_hash::FxHashSet;
 use std::path::Path;
 use tsz::lsp::Project;
-use tsz::lsp::completions::Completions;
+use tsz::lsp::completions::{CompletionItem, Completions};
 use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz_solver::TypeInterner;
 
 impl Server {
+    fn merge_non_member_completion_items(
+        provider_items: Vec<CompletionItem>,
+        project_items: Vec<CompletionItem>,
+    ) -> Vec<CompletionItem> {
+        if project_items.is_empty() {
+            return provider_items;
+        }
+        if provider_items.is_empty() {
+            return project_items;
+        }
+
+        let mut merged = provider_items;
+        let mut seen = FxHashSet::default();
+        for item in &merged {
+            seen.insert((item.label.clone(), item.source.clone()));
+        }
+
+        for item in project_items {
+            let key = (item.label.clone(), item.source.clone());
+            if seen.insert(key) {
+                merged.push(item);
+            }
+        }
+
+        merged
+    }
+
     fn string_pref(preferences: Option<&serde_json::Value>, key: &str) -> Option<String> {
         preferences
             .and_then(|p| p.get(key))
@@ -278,6 +306,28 @@ impl Server {
             .unwrap_or_default()
     }
 
+    fn sort_tsserver_completion_items(items: &mut [CompletionItem]) {
+        fn kind_rank(kind: tsz::lsp::completions::CompletionItemKind) -> u8 {
+            match kind {
+                tsz::lsp::completions::CompletionItemKind::Keyword => 0,
+                _ => 1,
+            }
+        }
+
+        items.sort_by(|a, b| {
+            a.effective_sort_text()
+                .cmp(b.effective_sort_text())
+                .then_with(|| kind_rank(a.kind).cmp(&kind_rank(b.kind)))
+                .then_with(|| {
+                    a.label
+                        .to_ascii_lowercase()
+                        .cmp(&b.label.to_ascii_lowercase())
+                })
+                .then_with(|| a.label.cmp(&b.label))
+                .then_with(|| a.source.cmp(&b.source))
+        });
+    }
+
     fn completion_entry_from_item(
         item: &tsz::lsp::completions::CompletionItem,
         line_map: &LineMap,
@@ -350,15 +400,16 @@ impl Server {
                 position,
                 request.arguments.get("preferences"),
             );
-            let items = if completion_result
+            let is_member_completion = completion_result
                 .as_ref()
-                .is_some_and(|result| result.is_member_completion)
-                || project_items.is_empty()
-            {
+                .is_some_and(|result| result.is_member_completion);
+            let items = if is_member_completion {
                 provider_items
             } else {
-                project_items
+                Self::merge_non_member_completion_items(provider_items, project_items)
             };
+            let mut items = items;
+            Self::sort_tsserver_completion_items(&mut items);
 
             let entries: Vec<serde_json::Value> = items
                 .iter()
@@ -413,15 +464,16 @@ impl Server {
                 .unwrap_or_default();
             let project_items =
                 self.project_completion_items(file, position, request.arguments.get("preferences"));
-            let items = if completion_result
+            let is_member_completion = completion_result
                 .as_ref()
-                .is_some_and(|result| result.is_member_completion)
-                || project_items.is_empty()
-            {
+                .is_some_and(|result| result.is_member_completion);
+            let items = if is_member_completion {
                 provider_items
             } else {
-                project_items
+                Self::merge_non_member_completion_items(provider_items, project_items)
             };
+            let mut items = items;
+            Self::sort_tsserver_completion_items(&mut items);
             let member_parent = completion_result
                 .as_ref()
                 .and_then(|result| {

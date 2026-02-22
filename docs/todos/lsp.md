@@ -46,3 +46,7 @@ Investigated but punted:
   Reason: likely blocked on symlinked pnpm package topology resolution (`/node_modules/.pnpm/... -> /node_modules/...`) in missing-import candidate discovery; needs module-resolution parity work beyond this targeted CommonJS JS import-fix pass.
 - `TypeScript/tests/cases/fourslash/autoImportSymlinkCaseSensitive.ts`: still returns `No codefixes returned`.
   Reason: appears to require case-sensitive symlink/node_modules symbol surfacing alignment for auto-import candidate collection; deferred due broader resolver/indexing impact.
+- `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` under `module:none` + `target:es5`.
+  Reason: inferred-project module/target gating appears to be missed in this fourslash path even after server-side inferred-option wiring; needs deeper request/bridge trace to identify where module/target options are dropped.
+- `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns{2,3}.ts` and `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fail exact completion-list comparison after keyword/global ordering fix.
+  Reason: ordering parity is now closer (`abstract, any, Array...`), but list cardinality/content still diverges (`globalsPlus` surface mismatch), which requires broader tsserver global-table parity work beyond this targeted completion ordering adjustment.
