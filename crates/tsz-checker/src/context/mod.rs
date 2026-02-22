@@ -3,6 +3,15 @@
 //! Holds the shared state used throughout the type checking process.
 //! This separates state from logic, allowing specialized checkers (expressions, statements)
 //! to borrow the context mutably.
+//!
+//! Sub-modules:
+//! - `constructors` - `CheckerContext` constructor methods
+//! - `resolver` - `TypeResolver` trait implementation
+//! - `def_mapping` - DefId migration helpers
+
+mod constructors;
+mod def_mapping;
+mod resolver;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
