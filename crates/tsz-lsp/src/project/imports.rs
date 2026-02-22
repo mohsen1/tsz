@@ -62,7 +62,10 @@ impl Project {
         let mut seen = FxHashSet::default();
 
         for diag in diagnostics {
-            if diag.code != Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME) {
+            let diag_code = diag.code.unwrap_or_default();
+            if diag_code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME
+                && diag_code != tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE
+            {
                 continue;
             }
 
@@ -70,9 +73,10 @@ impl Project {
                 continue;
             };
 
-            self.collect_import_candidates_for_name(
+            self.collect_import_candidates_for_name_with_mode(
                 file,
                 &missing_name,
+                diag_code == tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE,
                 &mut candidates,
                 &mut seen,
             );
@@ -81,10 +85,11 @@ impl Project {
         candidates
     }
 
-    pub(crate) fn collect_import_candidates_for_name(
+    fn collect_import_candidates_for_name_with_mode(
         &self,
         from_file: &ProjectFile,
         missing_name: &str,
+        is_namespace_missing: bool,
         output: &mut Vec<ImportCandidate>,
         seen: &mut FxHashSet<(String, String, String, bool)>,
     ) {
@@ -150,7 +155,7 @@ impl Project {
 
             let mut visited = FxHashSet::default();
             let matches = self.matching_exports_in_file(&file_name, missing_name, &mut visited);
-            if matches.is_empty() {
+            if matches.is_empty() && !is_namespace_missing {
                 continue;
             }
 
@@ -174,6 +179,26 @@ impl Project {
                     ImportCandidateKind::Namespace => "namespace".to_string(),
                 };
 
+                if seen.insert((
+                    candidate.module_specifier.clone(),
+                    candidate.local_name.clone(),
+                    kind_key,
+                    candidate.is_type_only,
+                )) {
+                    output.push(candidate);
+                }
+            }
+
+            if is_namespace_missing
+                && let Some(is_type_only) = self.export_star_as_default_is_type_only(&file_name)
+            {
+                let candidate = ImportCandidate {
+                    module_specifier: module_specifier.clone(),
+                    local_name: missing_name.to_string(),
+                    kind: ImportCandidateKind::Default,
+                    is_type_only,
+                };
+                let kind_key = "default".to_string();
                 if seen.insert((
                     candidate.module_specifier.clone(),
                     candidate.local_name.clone(),
@@ -901,6 +926,33 @@ impl Project {
             .any(|export_match| matches!(export_match.kind, ImportCandidateKind::Named { .. }))
     }
 
+    fn export_star_as_default_is_type_only(&self, file_name: &str) -> Option<bool> {
+        let file = self.files.get(file_name)?;
+        let arena = file.arena();
+        let source_file = arena.get_source_file_at(file.root())?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = arena.get(stmt_idx)?;
+            if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
+                continue;
+            }
+            let export = arena.get_export_decl(stmt_node)?;
+            if export.module_specifier.is_none() || export.export_clause.is_none() {
+                continue;
+            }
+            let clause_node = arena.get(export.export_clause)?;
+            if clause_node.kind != SyntaxKind::Identifier as u16 {
+                continue;
+            }
+            let export_text = arena.get_identifier_text(export.export_clause)?;
+            if export_text == "default" {
+                return Some(export.is_type_only);
+            }
+        }
+
+        None
+    }
+
     fn identifier_at_range(&self, file: &ProjectFile, range: Range) -> Option<String> {
         let offset = file
             .line_map()
@@ -1259,6 +1311,42 @@ export = ts;
         assert!(
             has_ts_default,
             "expected default auto-import candidate `ts` from `./ts` for `export = ts` declarations"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_include_default_from_export_star_as_default() {
+        let mut project = Project::new();
+        project.set_file("/a.ts".to_string(), "export class A {}\n".to_string());
+        project.set_file(
+            "/ns.ts".to_string(),
+            "export * as default from \"./a\";\n".to_string(),
+        );
+        project.set_file("/e.ts".to_string(), "let x: ns.A;\n".to_string());
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 7), Position::new(0, 9)),
+            message: "Cannot find name 'ns'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAMESPACE),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let has_default_ns = project
+            .get_import_candidates_for_diagnostics("/e.ts", &diagnostics)
+            .into_iter()
+            .any(|candidate| {
+                candidate.local_name == "ns"
+                    && candidate.module_specifier == "./ns"
+                    && matches!(candidate.kind, ImportCandidateKind::Default)
+            });
+
+        assert!(
+            has_default_ns,
+            "expected default import candidate for `ns` from `./ns` when re-exported via `export * as default`"
         );
     }
 }
