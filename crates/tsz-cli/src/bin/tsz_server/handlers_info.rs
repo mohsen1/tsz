@@ -1015,6 +1015,39 @@ impl Server {
         (!ty.is_empty()).then(|| (ty.to_string(), is_optional))
     }
 
+    fn extract_param_type_from_fn_type(type_text: &str, param_index: usize) -> Option<(String, bool)> {
+        let trimmed = Self::strip_outer_parens(type_text);
+        let open = trimmed.find('(')?;
+        let mut depth = 0i32;
+        let mut close = None;
+        for (i, ch) in trimmed[open..].char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(open + i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
+        let params = trimmed[open + 1..close].trim();
+        if params.is_empty() {
+            return None;
+        }
+        let param = Self::split_top_level_bytes(params, b',')
+            .into_iter()
+            .nth(param_index)?;
+        let (name_part, type_part) = param.split_once(':')?;
+        let name_part = name_part.trim().trim_start_matches("...");
+        let is_optional = name_part.ends_with('?');
+        let ty = type_part.trim();
+        (!ty.is_empty()).then(|| (ty.to_string(), is_optional))
+    }
+
     fn contextual_first_parameter_type_from_text(type_text: &str) -> Option<String> {
         let type_text = type_text.trim();
         if type_text.is_empty() {
@@ -1036,6 +1069,272 @@ impl Server {
             return None;
         }
         Some(Self::normalize_union_type_text(&union_parts.join(" | ")))
+    }
+
+    fn contextual_parameter_type_from_text(type_text: &str, param_index: usize) -> Option<String> {
+        let type_text = type_text.trim();
+        if type_text.is_empty() {
+            return None;
+        }
+        let mut union_parts = Vec::new();
+        for part in Self::split_top_level_bytes(type_text, b'&') {
+            let Some((ty, optional)) = Self::extract_param_type_from_fn_type(&part, param_index)
+            else {
+                continue;
+            };
+            let ty = Self::normalize_parameter_type_text(&ty);
+            if !union_parts.iter().any(|existing| existing == &ty) {
+                union_parts.push(ty);
+            }
+            if optional && !union_parts.iter().any(|existing| existing == "undefined") {
+                union_parts.push("undefined".to_string());
+            }
+        }
+        if union_parts.is_empty() {
+            return None;
+        }
+        Some(Self::normalize_union_type_text(&union_parts.join(" | ")))
+    }
+
+    fn parameter_name_if_any(display: &str) -> Option<String> {
+        let rest = display.strip_prefix("(parameter) ")?;
+        let (name, ty) = rest.split_once(':')?;
+        let name = name.trim();
+        let ty = ty.trim();
+        if ty == "any" && !name.is_empty() {
+            Some(name.to_string())
+        } else {
+            None
+        }
+    }
+
+    fn find_parameter_context_from_offset(
+        arena: &tsz::parser::node::NodeArena,
+        source_text: &str,
+        offset: u32,
+        expected_name: &str,
+    ) -> Option<(tsz::parser::NodeIndex, tsz::parser::NodeIndex, usize)> {
+        let len = source_text.len() as u32;
+        let mut probes = [offset, offset.saturating_sub(1), offset.saturating_add(1)];
+        if offset >= len {
+            probes[0] = len.saturating_sub(1);
+        }
+
+        for probe in probes {
+            if probe >= len {
+                continue;
+            }
+            let mut current = tsz::lsp::utils::find_node_at_offset(arena, probe);
+            while current.is_some() {
+                let node = arena.get(current)?;
+                if node.kind == syntax_kind_ext::PARAMETER {
+                    let parameter_node = arena.get_parameter(node)?;
+                    let parameter_name = arena.get_identifier_text(parameter_node.name)?;
+                    if parameter_name != expected_name {
+                        break;
+                    }
+                    let mut fn_cursor = arena.get_extended(current)?.parent;
+                    while fn_cursor.is_some() {
+                        let fn_node = arena.get(fn_cursor)?;
+                        if fn_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                            || fn_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                            || fn_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                        {
+                            let function = arena.get_function(fn_node)?;
+                            if let Some(index) = function
+                                .parameters
+                                .nodes
+                                .iter()
+                                .position(|param| *param == current)
+                            {
+                                return Some((current, fn_cursor, index));
+                            }
+                            break;
+                        }
+                        fn_cursor = arena.get_extended(fn_cursor)?.parent;
+                    }
+                    break;
+                }
+                current = arena.get_extended(current)?.parent;
+            }
+        }
+        None
+    }
+
+    fn contextual_parameter_hover_from_function_like(
+        arena: &tsz::parser::node::NodeArena,
+        binder: &tsz::binder::BinderState,
+        line_map: &LineMap,
+        source_text: &str,
+        file: &str,
+        parameter_probe_offset: u32,
+        parameter_name: &str,
+        root: tsz::parser::NodeIndex,
+        provider: &HoverProvider<'_>,
+        interner: &TypeInterner,
+        type_cache: &mut Option<tsz::checker::TypeCache>,
+    ) -> Option<HoverInfo> {
+        let (parameter_idx, function_idx, parameter_index) =
+            Self::find_parameter_context_from_offset(
+                arena,
+                source_text,
+                parameter_probe_offset,
+                parameter_name,
+            )?;
+
+        let compiler_options = Self::checker_options_for_source(source_text);
+        let mut checker = if let Some(cache) = type_cache.take() {
+            tsz::checker::state::CheckerState::with_cache(
+                arena,
+                binder,
+                interner,
+                file.to_string(),
+                cache,
+                compiler_options,
+            )
+        } else {
+            tsz::checker::state::CheckerState::new(
+                arena,
+                binder,
+                interner,
+                file.to_string(),
+                compiler_options,
+            )
+        };
+        let function_type = checker.get_type_of_node(function_idx);
+        let type_text = checker.format_type(function_type);
+        *type_cache = Some(checker.extract_cache());
+        let mut parameter_type =
+            Self::contextual_parameter_type_from_text(&type_text, parameter_index)?;
+        if parameter_type == "any"
+            && let Some(from_hover) = Self::contextual_parameter_type_from_enclosing_callable_hover(
+                arena,
+                line_map,
+                source_text,
+                root,
+                provider,
+                type_cache,
+                function_idx,
+                parameter_index,
+            )
+        {
+            parameter_type = from_hover;
+        }
+        if parameter_type == "any" {
+            return None;
+        }
+
+        let parameter_node = arena.get(parameter_idx)?;
+        let parameter = arena.get_parameter(parameter_node)?;
+        let name_node = arena.get(parameter.name)?;
+        let start = line_map.offset_to_position(name_node.pos, source_text);
+        let end = line_map.offset_to_position(name_node.end, source_text);
+        let display_string = format!("(parameter) {}: {}", parameter_name, parameter_type);
+        Some(HoverInfo {
+            contents: vec![format!("```typescript\n{display_string}\n```")],
+            range: Some(tsz::lsp::position::Range::new(start, end)),
+            display_string,
+            kind: "parameter".to_string(),
+            kind_modifiers: String::new(),
+            documentation: String::new(),
+            tags: Vec::new(),
+        })
+    }
+
+    fn parameter_type_from_callable_display(
+        display: &str,
+        parameter_index: usize,
+    ) -> Option<String> {
+        let close = display.rfind("):")?;
+        let open = display[..close].rfind('(')?;
+        let params = display[open + 1..close].trim();
+        if params.is_empty() {
+            return None;
+        }
+        let param = Self::split_top_level_bytes(params, b',')
+            .into_iter()
+            .nth(parameter_index)?;
+        let (_, ty) = param.split_once(':')?;
+        let ty = Self::normalize_parameter_type_text(ty.trim());
+        (ty != "any").then_some(ty)
+    }
+
+    fn property_name_offset_before_function(source_text: &str, function_pos: u32) -> Option<u32> {
+        let bytes = source_text.as_bytes();
+        let mut cursor = function_pos as i32 - 1;
+        while cursor >= 0 && bytes[cursor as usize].is_ascii_whitespace() {
+            cursor -= 1;
+        }
+        if cursor < 0 || bytes[cursor as usize] != b':' {
+            return None;
+        }
+        cursor -= 1;
+        while cursor >= 0 && bytes[cursor as usize].is_ascii_whitespace() {
+            cursor -= 1;
+        }
+        let end = cursor + 1;
+        while cursor >= 0 && Self::is_js_identifier_char(bytes[cursor as usize]) {
+            cursor -= 1;
+        }
+        let start = cursor + 1;
+        (start < end).then_some(start as u32)
+    }
+
+    fn nearest_identifier_offset(source_text: &str, base_offset: u32) -> Option<u32> {
+        let bytes = source_text.as_bytes();
+        let len = bytes.len() as u32;
+        if len == 0 {
+            return None;
+        }
+        let offset = base_offset.min(len.saturating_sub(1));
+        if Self::is_js_identifier_char(bytes[offset as usize]) {
+            return Some(offset);
+        }
+        for step in 1..=32u32 {
+            let forward = offset.saturating_add(step);
+            if forward < len && Self::is_js_identifier_char(bytes[forward as usize]) {
+                return Some(forward);
+            }
+            let backward = offset.saturating_sub(step);
+            if backward < len && Self::is_js_identifier_char(bytes[backward as usize]) {
+                return Some(backward);
+            }
+        }
+        None
+    }
+
+    fn contextual_parameter_type_from_enclosing_callable_hover(
+        arena: &tsz::parser::node::NodeArena,
+        line_map: &LineMap,
+        source_text: &str,
+        root: tsz::parser::NodeIndex,
+        provider: &HoverProvider<'_>,
+        type_cache: &mut Option<tsz::checker::TypeCache>,
+        function_idx: tsz::parser::NodeIndex,
+        parameter_index: usize,
+    ) -> Option<String> {
+        let function_node = arena.get(function_idx)?;
+        let len = source_text.len() as u32;
+        let mut probes = Vec::with_capacity(2);
+        if function_node.pos < len {
+            probes.push(function_node.pos);
+        }
+        if let Some(prop_offset) =
+            Self::property_name_offset_before_function(source_text, function_node.pos)
+            && prop_offset < len
+        {
+            probes.push(prop_offset);
+        }
+        for probe in probes {
+            let probe_pos = line_map.offset_to_position(probe, source_text);
+            if let Some(hover) = provider.get_hover(root, probe_pos, type_cache)
+                && let Some(param_type) =
+                    Self::parameter_type_from_callable_display(&hover.display_string, parameter_index)
+            {
+                return Some(param_type);
+            }
+        }
+        None
     }
 
     fn contextual_first_parameter_type_from_assignment(
@@ -1422,6 +1721,7 @@ impl Server {
             let bytes = source_text.as_bytes();
             if let Some(base_offset) = line_map.position_to_offset(position, &source_text) {
                 let len = bytes.len() as u32;
+                let mut parameter_probe_offset = base_offset;
 
                 // Fourslash quickinfo markers are commonly comment-based (`/*1*/`).
                 // Probe the identifier immediately after the marker so we don't keep
@@ -1442,6 +1742,7 @@ impl Server {
                         probe += 1;
                     }
                     if probe < len {
+                        parameter_probe_offset = probe;
                         let probe_pos = line_map.offset_to_position(probe, &source_text);
                         if let Some(marker_hover) =
                             provider.get_hover(root, probe_pos, &mut type_cache)
@@ -1725,6 +2026,29 @@ impl Server {
                             &mut type_cache,
                         );
                     }
+                }
+
+                if let Some(parameter_name) = info
+                    .as_ref()
+                    .and_then(|hover| Self::parameter_name_if_any(&hover.display_string))
+                    && let Some(normalized_probe_offset) =
+                        Self::nearest_identifier_offset(&source_text, parameter_probe_offset)
+                    && let Some(parameter_hover) =
+                        Self::contextual_parameter_hover_from_function_like(
+                            &arena,
+                            &binder,
+                            &line_map,
+                            &source_text,
+                            &file,
+                            normalized_probe_offset,
+                            &parameter_name,
+                            root,
+                            &provider,
+                            &interner,
+                            &mut type_cache,
+                        )
+                {
+                    info = Some(parameter_hover);
                 }
             }
             let info = match info {

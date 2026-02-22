@@ -880,6 +880,40 @@ fn test_quickinfo_marker_comment_before_parameter_uses_contextual_type() {
 }
 
 #[test]
+fn test_quickinfo_contextual_object_literal_function_parameter() {
+    let mut server = make_server();
+    let source =
+        "interface IFoo { f(i: number, s: string): string; }\nvar c = <IFoo>({ f: function(/*31*/i, s) { return s; } });\n";
+    server
+        .open_files
+        .insert("/test.ts".to_string(), source.to_string());
+
+    let second_line = source
+        .lines()
+        .nth(1)
+        .expect("source should contain second line");
+    let identifier_offset = second_line
+        .find("/*31*/i")
+        .expect("marker+identifier should exist in source second line") as u32
+        + "/*31*/".len() as u32
+        + 1;
+
+    let req_at_identifier = make_request(
+        "quickinfo",
+        serde_json::json!({"file": "/test.ts", "line": 2, "offset": identifier_offset}),
+    );
+    let resp_at_identifier = server.handle_tsserver_request(req_at_identifier);
+    assert!(resp_at_identifier.success);
+    let body_at_identifier = resp_at_identifier
+        .body
+        .expect("quickinfo should return a body at identifier");
+    assert_eq!(
+        body_at_identifier["displayString"].as_str().unwrap_or(""),
+        "(parameter) i: number"
+    );
+}
+
+#[test]
 fn test_prepare_call_hierarchy_class_property_arrow_function() {
     let mut server = make_server();
     server.open_files.insert(
