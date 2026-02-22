@@ -119,6 +119,70 @@ fn test_class_with_private_field() {
 }
 
 #[test]
+fn test_class_with_auto_accessor_field() {
+    let source = r#"class RegularClass {
+            accessor shouldError: string;
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    assert!(output.contains("var _RegularClass_shouldError_accessor_storage"));
+    assert!(output.contains("_RegularClass_shouldError_accessor_storage.set(this, void 0)"));
+    assert!(output.contains("Object.defineProperty(RegularClass.prototype, \"shouldError\", {"));
+    assert!(output.contains(
+        "__classPrivateFieldGet(this, _RegularClass_shouldError_accessor_storage, \"f\")"
+    ));
+    assert!(output.contains(
+        "__classPrivateFieldSet(this, _RegularClass_shouldError_accessor_storage, value, \"f\")"
+    ));
+}
+
+#[test]
+fn test_auto_accessor_without_initializer_does_not_emit_set_undefined() {
+    let source = r#"class RegularClass {
+            accessor shouldError: string;
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    assert!(output.contains("_RegularClass_shouldError_accessor_storage.set(this, void 0)"));
+    assert!(!output.contains(
+        "__classPrivateFieldSet(this, _RegularClass_shouldError_accessor_storage, undefined, \"f\")"
+    ));
+}
+
+#[test]
+fn test_auto_accessor_comment_and_function_bodies() {
+    let source = r#"class RegularClass {
+            accessor shouldError: string; // Should still error
+        }"#;
+
+    let output = transform_class(source);
+    assert!(output.is_some());
+    let output = output.expect("transform should succeed in test");
+
+    assert!(
+        output.contains("// Should still error"),
+        "Trailing property comment should be preserved for auto accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "get: function () { return __classPrivateFieldGet(this, _RegularClass_shouldError_accessor_storage, \"f\"); } // Should still error",
+        ),
+        "Auto accessor trailing comment should attach to getter descriptor.\nOutput:\n{output}"
+    );
+    assert!(output.contains("set: function (value) { __classPrivateFieldSet(this, _RegularClass_shouldError_accessor_storage, value, \"f\"); }"));
+    assert!(
+        !output
+            .contains("var RegularClass = /** @class */ (function () {\n    // Should still error")
+    );
+}
+
+#[test]
 fn test_class_with_parameter_property() {
     let source = r#"class Point {
             constructor(public x: number, public y: number) {}

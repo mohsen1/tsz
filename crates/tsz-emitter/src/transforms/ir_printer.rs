@@ -486,11 +486,22 @@ impl<'a> IRPrinter<'a> {
                 if !has_defaults
                     && should_emit_single_line
                     && body.len() == 1
-                    && let IRNode::ReturnStatement(Some(expr)) = &body[0]
+                    && match &body[0] {
+                        IRNode::ReturnStatement(Some(expr)) => {
+                            self.write("{ return ");
+                            self.emit_node(expr);
+                            self.write("; }");
+                            true
+                        }
+                        IRNode::ExpressionStatement(expr) => {
+                            self.write("{ ");
+                            self.emit_node(expr);
+                            self.write("; }");
+                            true
+                        }
+                        _ => false,
+                    }
                 {
-                    self.write("{ return ");
-                    self.emit_node(expr);
-                    self.write("; }");
                     return;
                 }
                 let force_multiline_empty = self.force_iife_multiline_empty
@@ -726,6 +737,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 weakmap_decls,
                 weakmap_inits,
+                leading_comment,
                 deferred_static_blocks,
             } => {
                 // Emit WeakMap declarations if any
@@ -733,6 +745,10 @@ impl<'a> IRPrinter<'a> {
                     self.write("var ");
                     self.write(&weakmap_decls.join(", "));
                     self.write(";");
+                    self.write_line();
+                }
+                if let Some(comment) = leading_comment {
+                    self.write(comment);
                     self.write_line();
                 }
 
@@ -884,9 +900,13 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("get: ");
                     self.emit_node(get);
-                    if let Some(comment) = self.extract_trailing_comment_from_function(get) {
+                    let trailing_comment = descriptor
+                        .trailing_comment
+                        .clone()
+                        .or_else(|| self.extract_trailing_comment_from_function(get));
+                    if let Some(comment) = trailing_comment.as_deref() {
                         self.write(" ");
-                        self.write(&comment);
+                        self.write(comment);
                         self.write_line();
                         self.write_indent();
                         self.write(",");

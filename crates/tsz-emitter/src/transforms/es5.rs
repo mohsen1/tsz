@@ -154,6 +154,7 @@ impl<'a> ES5ClassTransformer<'a> {
             body,
             weakmap_decls,
             weakmap_inits,
+            leading_comment: None,
             deferred_static_blocks: Vec::new(),
         })
     }

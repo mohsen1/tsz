@@ -1154,6 +1154,104 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(crate) fn infer_fallback_type_text(&self, node_id: NodeIndex) -> Option<String> {
+        if !node_id.is_some() {
+            return None;
+        }
+
+        let node = self.arena.get(node_id)?;
+        match node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::StringLiteral as u16 => Some("string".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean".to_string())
+            }
+            k if k == SyntaxKind::NullKeyword as u16
+                || k == SyntaxKind::UndefinedKeyword as u16 =>
+            {
+                Some("any".to_string())
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                self.infer_object_literal_type_text(node_id)
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => Some("any[]".to_string()),
+            _ => self
+                .get_node_type(node_id)
+                .map(|type_id| self.print_type_id(type_id)),
+        }
+    }
+
+    fn infer_object_literal_type_text(&self, object_expr_idx: NodeIndex) -> Option<String> {
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            if let Some(member_text) = self.infer_object_member_type_text(member_idx) {
+                members.push(member_text);
+            }
+        }
+
+        if members.is_empty() {
+            Some("{}".to_string())
+        } else {
+            Some(format!("{{ {} }}", members.join("; ")))
+        }
+    }
+
+    fn infer_object_member_type_text(&self, member_idx: NodeIndex) -> Option<String> {
+        let member_node = self.arena.get(member_idx)?;
+
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let data = self.arena.get_property_assignment(member_node)?;
+                let name = self.infer_property_name_text(data.name)?;
+                let type_text = self
+                    .infer_fallback_type_text(data.initializer)
+                    .unwrap_or_else(|| "any".to_string());
+                Some(format!("{name}: {type_text}"))
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let data = self.arena.get_shorthand_property(member_node)?;
+                let name = self.infer_property_name_text(data.name)?;
+                let type_text = self
+                    .infer_fallback_type_text(data.object_assignment_initializer)
+                    .unwrap_or_else(|| "any".to_string());
+                Some(format!("{name}: {type_text}"))
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                let data = self.arena.get_accessor(member_node)?;
+                let name = self.infer_property_name_text(data.name)?;
+                let type_text = self
+                    .infer_fallback_type_text(data.body)
+                    .unwrap_or_else(|| "any".to_string());
+                Some(format!("readonly {name}: {type_text}"))
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let data = self.arena.get_method_decl(member_node)?;
+                let name = self.infer_property_name_text(data.name)?;
+                let type_text = if data.parameters.nodes.is_empty() {
+                    "readonly ".to_string()
+                } else {
+                    String::new()
+                };
+                Some(format!("{type_text}{name}: any"))
+            }
+            _ => None,
+        }
+    }
+
+    fn infer_property_name_text(&self, node_id: NodeIndex) -> Option<String> {
+        let node = self.arena.get(node_id)?;
+        if let Some(ident) = self.arena.get_identifier(node) {
+            return Some(ident.escaped_text.clone());
+        }
+        if let Some(literal) = self.arena.get_literal(node) {
+            return Some(format!("\"{}\"", literal.text));
+        }
+        self.get_source_slice(node.pos, node.end)
+    }
+
     pub(crate) fn get_node_type_or_names(
         &self,
         node_ids: &[NodeIndex],

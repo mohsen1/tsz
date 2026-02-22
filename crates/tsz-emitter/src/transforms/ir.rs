@@ -239,6 +239,8 @@ pub enum IRNode {
         weakmap_decls: Vec<String>,
         /// `WeakMap` instantiations (after the IIFE)
         weakmap_inits: Vec<String>,
+        /// Optional comment emitted between weakmap declarations and class var declaration.
+        leading_comment: Option<String>,
         /// Static block IIFEs deferred to after the class IIFE
         /// (used when the class has no non-block static members)
         deferred_static_blocks: Vec<Self>,
@@ -529,6 +531,9 @@ pub struct IRPropertyDescriptor {
     pub set: Option<Box<IRNode>>,
     pub enumerable: bool,
     pub configurable: bool,
+    /// Optional trailing comment to emit after the getter function in
+    /// `Object.defineProperty(..., { get: ..., ... })` shapes.
+    pub trailing_comment: Option<String>,
 }
 
 /// Generator case (for async state machine)

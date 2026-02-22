@@ -198,6 +198,10 @@ impl<'a> LoweringPass<'a> {
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {
+        if self.class_has_auto_accessor_members(class_data) {
+            return true;
+        }
+
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -230,6 +234,47 @@ impl<'a> LoweringPass<'a> {
         }
 
         false
+    }
+
+    pub(super) fn class_has_auto_accessor_members(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+
+            let has_accessor =
+                self.has_class_member_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16);
+            if !has_accessor {
+                continue;
+            }
+
+            // Skip static accessor fields. Static accessor syntax is currently emitted
+            // as instance-compatible descriptor assignments and does not require private-field helpers.
+            if self.has_class_member_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16) {
+                continue;
+            }
+
+            return true;
+        }
+
+        false
+    }
+
+    fn has_class_member_modifier(&self, modifiers: &Option<NodeList>, modifier: u16) -> bool {
+        let Some(mods) = modifiers else {
+            return false;
+        };
+
+        mods.nodes
+            .iter()
+            .any(|&mod_idx| self.arena.get(mod_idx).is_some_and(|n| n.kind == modifier))
     }
 
     pub(super) fn needs_es5_object_literal_transform(&self, elements: &[NodeIndex]) -> bool {

@@ -91,6 +91,14 @@ use tsz_parser::syntax::transform_utils::contains_this_reference;
 use tsz_parser::syntax::transform_utils::is_private_identifier;
 use tsz_scanner::SyntaxKind;
 
+#[derive(Debug, Clone)]
+struct AutoAccessorFieldInfo {
+    member_idx: NodeIndex,
+    weakmap_name: String,
+    initializer: Option<NodeIndex>,
+    is_static: bool,
+}
+
 /// Context for ES5 class transformation
 pub struct ES5ClassTransformer<'a> {
     arena: &'a NodeArena,
@@ -98,6 +106,7 @@ pub struct ES5ClassTransformer<'a> {
     has_extends: bool,
     private_fields: Vec<PrivateFieldInfo>,
     private_accessors: Vec<PrivateAccessorInfo>,
+    auto_accessors: Vec<AutoAccessorFieldInfo>,
     /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
     /// Source text for extracting comments
@@ -112,6 +121,7 @@ impl<'a> ES5ClassTransformer<'a> {
             has_extends: false,
             private_fields: Vec::new(),
             private_accessors: Vec::new(),
+            auto_accessors: Vec::new(),
             transforms: None,
             source_text: None,
         }
@@ -249,6 +259,80 @@ impl<'a> ES5ClassTransformer<'a> {
         trailing
     }
 
+    fn extract_trailing_comment_for_node(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Option<String> {
+        let source_text = self.source_text?;
+        for comment in crate::emitter::get_trailing_comment_ranges(source_text, node.end as usize) {
+            let comment_text = &source_text[comment.pos as usize..comment.end as usize];
+            let trimmed = comment_text.trim_start();
+            if trimmed.starts_with("//") || trimmed.starts_with("/*") {
+                return Some(comment_text.to_string());
+            }
+        }
+
+        None
+    }
+
+    fn extract_leading_class_comment(
+        &self,
+        class_node: &tsz_parser::parser::node::Node,
+    ) -> Option<String> {
+        let source_text = self.source_text?;
+        let limit = std::cmp::min(class_node.pos as usize, source_text.len());
+        let mut comments: Vec<(u32, u32)> = Vec::new();
+        let bytes = source_text.as_bytes();
+        let mut i = 0usize;
+
+        while i < limit {
+            if bytes[i].is_ascii_whitespace() {
+                i += 1;
+                continue;
+            }
+
+            if bytes[i] == b'/' && i + 1 < limit {
+                if bytes[i + 1] == b'/' {
+                    let start = i as u32;
+                    i += 2;
+                    while i < limit && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                        i += 1;
+                    }
+                    comments.push((start, i as u32));
+                    continue;
+                }
+
+                if bytes[i + 1] == b'*' {
+                    let start = i as u32;
+                    i += 2;
+                    while i + 1 < limit {
+                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                            i += 2;
+                            break;
+                        }
+                        i += 1;
+                    }
+                    comments.push((start, i as u32));
+                    continue;
+                }
+            }
+
+            // Non-comment token content. Continue past it to find the last
+            // leading comment before the class node.
+            i += 1;
+        }
+
+        comments
+            .into_iter()
+            .rev()
+            .find(|&(_, end)| {
+                source_text[end as usize..limit]
+                    .bytes()
+                    .all(|b| b.is_ascii_whitespace())
+            })
+            .map(|(start, end)| source_text[start as usize..end as usize].to_string())
+    }
+
     /// Convert an AST statement to IR (avoids `ASTRef` when possible)
     fn convert_statement(&self, idx: NodeIndex) -> IRNode {
         let mut converter = AstToIr::new(self.arena).with_super(self.has_extends);
@@ -352,6 +436,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Collect private fields and accessors
         self.private_fields = collect_private_fields(self.arena, class_idx, &self.class_name);
         self.private_accessors = collect_private_accessors(self.arena, class_idx, &self.class_name);
+        self.auto_accessors = collect_auto_accessor_fields(self.arena, class_idx, &self.class_name);
 
         // Check for extends clause
         let base_class = self.get_extends_class(&class_data.heritage_clauses);
@@ -397,6 +482,11 @@ impl<'a> ES5ClassTransformer<'a> {
                 weakmap_decls.push(set_var.clone());
             }
         }
+        for accessor in &self.auto_accessors {
+            if !accessor.is_static {
+                weakmap_decls.push(accessor.weakmap_name.clone());
+            }
+        }
 
         // WeakMap instantiations for instance fields
         let mut weakmap_inits: Vec<String> = self
@@ -417,6 +507,13 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+        for accessor in &self.auto_accessors {
+            if !accessor.is_static {
+                weakmap_inits.push(format!("{} = new WeakMap()", accessor.weakmap_name));
+            }
+        }
+
+        let class_leading_comment = self.extract_leading_class_comment(class_node);
 
         Some(IRNode::ES5ClassIIFE {
             name: self.class_name.clone(),
@@ -424,6 +521,7 @@ impl<'a> ES5ClassTransformer<'a> {
             body,
             weakmap_decls,
             weakmap_inits,
+            leading_comment: class_leading_comment,
             deferred_static_blocks,
         })
     }
@@ -454,6 +552,14 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
                 // Skip private fields (they use WeakMap pattern)
                 if is_private_identifier(self.arena, prop_data.name) {
+                    return None;
+                }
+                // Skip accessor fields (emitted as getter/setter pair + backing storage)
+                if has_modifier(
+                    self.arena,
+                    &prop_data.modifiers,
+                    SyntaxKind::AccessorKeyword as u16,
+                ) {
                     return None;
                 }
                 // Include if has initializer
@@ -545,6 +651,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Private field initializations
                     self.emit_private_field_initializations_ir(&mut ctor_body, true);
                     self.emit_private_accessor_initializations_ir(&mut ctor_body, true);
+                    self.emit_auto_accessor_initializations_ir(&mut ctor_body, true);
 
                     // Instance property initializations
                     for &prop_idx in &instance_props {
@@ -566,6 +673,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Emit private field initializations
                 self.emit_private_field_initializations_ir(&mut ctor_body, false);
                 self.emit_private_accessor_initializations_ir(&mut ctor_body, false);
+                self.emit_auto_accessor_initializations_ir(&mut ctor_body, false);
 
                 // Instance property initializations
                 for &prop_idx in &instance_props {
@@ -644,6 +752,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit private field initializations
         self.emit_private_field_initializations_ir(body, true);
         self.emit_private_accessor_initializations_ir(body, true);
+        self.emit_auto_accessor_initializations_ir(body, true);
 
         // Emit instance property initializers
         for &prop_idx in instance_props {
@@ -694,6 +803,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit private field initializations
         self.emit_private_field_initializations_ir(body, false);
         self.emit_private_accessor_initializations_ir(body, false);
+        self.emit_auto_accessor_initializations_ir(body, false);
 
         // Emit parameter properties
         self.emit_parameter_properties_ir(body, params, false);
@@ -892,6 +1002,69 @@ impl<'a> ES5ClassTransformer<'a> {
                     }),
                 }));
             }
+        }
+    }
+
+    /// Emit auto-accessor field initializations using `WeakMap.set()`
+    fn emit_auto_accessor_initializations_ir(&self, body: &mut Vec<IRNode>, use_this: bool) {
+        let key = if use_this {
+            IRNode::id("_this")
+        } else {
+            IRNode::this()
+        };
+
+        for accessor in &self.auto_accessors {
+            if accessor.is_static {
+                continue;
+            }
+
+            // _Class_accessor_storage.set(this, void 0);
+            body.push(IRNode::expr_stmt(IRNode::WeakMapSet {
+                weakmap_name: accessor.weakmap_name.clone(),
+                key: Box::new(key.clone()),
+                value: Box::new(IRNode::Undefined),
+            }));
+
+            if let Some(initializer) = accessor.initializer {
+                body.push(IRNode::expr_stmt(IRNode::PrivateFieldSet {
+                    receiver: Box::new(key.clone()),
+                    weakmap_name: accessor.weakmap_name.clone(),
+                    value: Box::new(self.convert_expression(initializer)),
+                }));
+            }
+        }
+    }
+
+    fn find_auto_accessor(&self, member_idx: NodeIndex) -> Option<&AutoAccessorFieldInfo> {
+        self.auto_accessors
+            .iter()
+            .find(|acc| acc.member_idx == member_idx && !acc.is_static)
+    }
+
+    fn build_auto_accessor_getter_function(&self, weakmap_name: &str) -> IRNode {
+        IRNode::FunctionExpr {
+            name: None,
+            parameters: vec![],
+            body: vec![IRNode::ret(Some(IRNode::PrivateFieldGet {
+                receiver: Box::new(IRNode::this()),
+                weakmap_name: weakmap_name.to_string(),
+            }))],
+            is_expression_body: true,
+            body_source_range: None,
+        }
+    }
+
+    fn build_auto_accessor_setter_function(&self, weakmap_name: &str) -> IRNode {
+        IRNode::FunctionExpr {
+            name: None,
+            parameters: vec![IRParam::new("value")],
+            body: vec![IRNode::expr_stmt(IRNode::PrivateFieldSet {
+                receiver: Box::new(IRNode::this()),
+                weakmap_name: weakmap_name.to_string(),
+                value: Box::new(IRNode::id("value")),
+            })],
+            is_expression_body: true,
+            body_source_range: None,
         }
     }
 
@@ -1329,6 +1502,7 @@ impl<'a> ES5ClassTransformer<'a> {
                                 set: set_fn.map(Box::new),
                                 enumerable: false,
                                 configurable: true,
+                                trailing_comment: None,
                             },
                         });
 
@@ -1367,6 +1541,36 @@ impl<'a> ES5ClassTransformer<'a> {
                         emitted_accessors.insert(accessor_name);
                     }
                 }
+            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let Some(accessor) = self.find_auto_accessor(member_idx) else {
+                    continue;
+                };
+                let Some(prop_data) = self.arena.get_property_decl(member_node) else {
+                    continue;
+                };
+                if has_static_modifier(self.arena, &prop_data.modifiers)
+                    || has_abstract_modifier(self.arena, &prop_data.modifiers)
+                    || is_private_identifier(self.arena, prop_data.name)
+                {
+                    continue;
+                }
+
+                let property_name = self.get_method_name_ir(prop_data.name);
+                body.push(IRNode::DefineProperty {
+                    target: Box::new(IRNode::prop(IRNode::id(&self.class_name), "prototype")),
+                    property_name,
+                    descriptor: IRPropertyDescriptor {
+                        get: Some(Box::new(
+                            self.build_auto_accessor_getter_function(&accessor.weakmap_name),
+                        )),
+                        set: Some(Box::new(
+                            self.build_auto_accessor_setter_function(&accessor.weakmap_name),
+                        )),
+                        enumerable: false,
+                        configurable: true,
+                        trailing_comment: self.extract_trailing_comment_for_node(member_node),
+                    },
+                });
             } else if member_node.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT {
                 body.push(IRNode::EmptyStatement);
             }
@@ -1508,6 +1712,11 @@ impl<'a> ES5ClassTransformer<'a> {
                     return has_static_modifier(self.arena, &prop_data.modifiers)
                         && !has_abstract_modifier(self.arena, &prop_data.modifiers)
                         && !is_private_identifier(self.arena, prop_data.name)
+                        && !has_modifier(
+                            self.arena,
+                            &prop_data.modifiers,
+                            SyntaxKind::AccessorKeyword as u16,
+                        )
                         && prop_data.initializer.is_some();
                 }
             } else if (m_node.kind == syntax_kind_ext::GET_ACCESSOR
@@ -1616,6 +1825,14 @@ impl<'a> ES5ClassTransformer<'a> {
                 if is_private_identifier(self.arena, prop_data.name) {
                     continue;
                 }
+                // Skip accessor fields - currently emitted via auto-accessor lowering
+                if has_modifier(
+                    self.arena,
+                    &prop_data.modifiers,
+                    SyntaxKind::AccessorKeyword as u16,
+                ) {
+                    continue;
+                }
 
                 // Skip if no initializer
                 if prop_data.initializer.is_none() {
@@ -1709,6 +1926,7 @@ impl<'a> ES5ClassTransformer<'a> {
                                 set: set_fn.map(Box::new),
                                 enumerable: false,
                                 configurable: true,
+                                trailing_comment: None,
                             },
                         });
 
@@ -1861,6 +2079,74 @@ fn collect_accessor_pairs(
     }
 
     accessor_map
+}
+
+fn collect_auto_accessor_fields(
+    arena: &NodeArena,
+    class_idx: NodeIndex,
+    class_name: &str,
+) -> Vec<AutoAccessorFieldInfo> {
+    let mut accessors = Vec::new();
+
+    let Some(class_node) = arena.get(class_idx) else {
+        return accessors;
+    };
+    let Some(class_data) = arena.get_class(class_node) else {
+        return accessors;
+    };
+
+    for &member_idx in &class_data.members.nodes {
+        let Some(member_node) = arena.get(member_idx) else {
+            continue;
+        };
+        if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+            continue;
+        }
+        let Some(prop_data) = arena.get_property_decl(member_node) else {
+            continue;
+        };
+        if has_abstract_modifier(arena, &prop_data.modifiers) {
+            continue;
+        }
+        if is_private_identifier(arena, prop_data.name) {
+            continue;
+        }
+        if has_static_modifier(arena, &prop_data.modifiers) {
+            continue;
+        }
+        let has_accessor = has_modifier(
+            arena,
+            &prop_data.modifiers,
+            SyntaxKind::AccessorKeyword as u16,
+        );
+        if !has_accessor {
+            continue;
+        }
+        let Some(name_node) = arena.get(prop_data.name) else {
+            continue;
+        };
+        if name_node.kind != SyntaxKind::Identifier as u16 {
+            continue;
+        }
+        let Some(name) = arena
+            .get_identifier(name_node)
+            .map(|id| id.escaped_text.clone())
+        else {
+            continue;
+        };
+
+        accessors.push(AutoAccessorFieldInfo {
+            member_idx,
+            weakmap_name: format!("_{class_name}_{name}_accessor_storage"),
+            initializer: prop_data
+                .initializer
+                .is_some()
+                .then_some(prop_data.initializer),
+            is_static: false,
+        });
+    }
+
+    accessors
 }
 
 fn has_parameter_property_modifier(arena: &NodeArena, modifiers: &Option<NodeList>) -> bool {

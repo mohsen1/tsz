@@ -828,6 +828,9 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 self.write(": ");
                 self.write(&self.print_type_id(type_id));
+            } else if let Some(type_text) = self.infer_fallback_type_text(prop.initializer) {
+                self.write(": ");
+                self.write(&type_text);
             }
         }
 
@@ -897,6 +900,22 @@ impl<'a> DeclarationEmitter<'a> {
         if method.type_annotation.is_some() && !is_private {
             self.write(": ");
             self.emit_type(method.type_annotation);
+        } else if !is_private
+            && let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache)
+        {
+            let method_type_id = cache
+                .node_types
+                .get(&method_idx.0)
+                .copied()
+                .or_else(|| self.get_node_type_or_names(&[method.name]));
+
+            if let Some(method_type_id) = method_type_id
+                && let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, method_type_id)
+            {
+                self.write(": ");
+                self.write(&self.print_type_id(return_type_id));
+            }
         }
 
         self.write(";");
@@ -1760,6 +1779,11 @@ impl<'a> DeclarationEmitter<'a> {
                             {
                                 self.write(": ");
                                 self.write(&self.print_type_id(type_id));
+                            } else if let Some(type_text) =
+                                self.infer_fallback_type_text(decl.initializer)
+                            {
+                                self.write(": ");
+                                self.write(&type_text);
                             }
                         }
                     }
