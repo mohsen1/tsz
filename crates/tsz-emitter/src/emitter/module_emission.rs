@@ -2,6 +2,7 @@ use super::is_valid_identifier_name;
 use super::{ModuleKind, Printer};
 use crate::transform_context::IdentifierId;
 use crate::transforms::ClassES5Emitter;
+use crate::transforms::emit_utils;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -1956,7 +1957,8 @@ impl<'a> Printer<'a> {
                     if !self.import_decl_has_runtime_value(import_decl) {
                         continue;
                     }
-                    if let Some(text) = self.get_module_specifier_text(import_decl.module_specifier)
+                    if let Some(text) =
+                        emit_utils::module_specifier_text(self.arena, import_decl.module_specifier)
                         && !deps.contains(&text)
                     {
                         deps.push(text);
@@ -1971,7 +1973,8 @@ impl<'a> Printer<'a> {
                 if !self.export_decl_has_runtime_value(export_decl) {
                     continue;
                 }
-                if let Some(text) = self.get_module_specifier_text(export_decl.module_specifier)
+                if let Some(text) =
+                    emit_utils::module_specifier_text(self.arena, export_decl.module_specifier)
                     && !deps.contains(&text)
                 {
                     deps.push(text);
@@ -1980,17 +1983,6 @@ impl<'a> Printer<'a> {
         }
 
         deps
-    }
-
-    fn get_module_specifier_text(&self, specifier: NodeIndex) -> Option<String> {
-        if specifier.is_none() {
-            return None;
-        }
-
-        let node = self.arena.get(specifier)?;
-        let literal = self.arena.get_literal(node)?;
-
-        Some(literal.text.clone())
     }
 
     pub(super) fn import_decl_has_runtime_value(

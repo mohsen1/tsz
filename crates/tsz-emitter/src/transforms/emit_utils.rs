@@ -216,6 +216,53 @@ pub(crate) fn is_type_only_module_statement(arena: &NodeArena, node: &Node) -> b
     }
 }
 
+/// Get the text of a module specifier (string literal) node.
+///
+/// Returns `None` if the index is null or the node is not a string literal.
+pub(crate) fn module_specifier_text(arena: &NodeArena, specifier: NodeIndex) -> Option<String> {
+    if specifier.is_none() {
+        return None;
+    }
+    let node = arena.get(specifier)?;
+    let literal = arena.get_literal(node)?;
+    Some(literal.text.clone())
+}
+
+/// Check if a property member (property assignment, method, or accessor) has a computed name.
+pub(crate) fn is_computed_property_member(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+
+    let name_idx = match node.kind {
+        k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+            arena.get_property_assignment(node).map(|p| p.name)
+        }
+        k if k == syntax_kind_ext::METHOD_DECLARATION => {
+            arena.get_method_decl(node).map(|m| m.name)
+        }
+        k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+            arena.get_accessor(node).map(|a| a.name)
+        }
+        _ => None,
+    };
+
+    if let Some(name_idx) = name_idx
+        && let Some(name_node) = arena.get(name_idx)
+    {
+        return name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME;
+    }
+    false
+}
+
+/// Check if a node is a spread element or spread assignment.
+pub(crate) fn is_spread_element(arena: &NodeArena, idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+    node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT || node.kind == syntax_kind_ext::SPREAD_ELEMENT
+}
+
 #[cfg(test)]
 #[path = "../../tests/emit_utils.rs"]
 mod tests;
