@@ -19,8 +19,7 @@ export const b = 1;
     let diags = check_with_module_sources(source, "main.ts", vec![("./module", module_source)]);
     assert!(
         diags.is_empty(),
-        "Default import with named import from module with both exports should produce no errors, got: {:?}",
-        diags
+        "Default import with named import from module with both exports should produce no errors, got: {diags:?}"
     );
 }
 
@@ -44,8 +43,7 @@ function f() {
 
     assert!(
         codes.contains(&diagnostic_codes::LINE_BREAK_NOT_PERMITTED_HERE),
-        "Should emit TS1142 for line break after throw, got: {:?}",
-        codes
+        "Should emit TS1142 for line break after throw, got: {codes:?}"
     );
 }
 
@@ -64,8 +62,7 @@ function f() {
 
     assert!(
         !codes.contains(&diagnostic_codes::EXPRESSION_EXPECTED),
-        "Should NOT emit TS1109 for throw on same line, got: {:?}",
-        codes
+        "Should NOT emit TS1109 for throw on same line, got: {codes:?}"
     );
 }
 
@@ -227,10 +224,7 @@ fn test_asi_comprehensive_edge_cases() {
         let has_errors = !parser.get_diagnostics().is_empty();
 
         if *should_have_errors && !has_errors {
-            panic!(
-                "Test case {} ({}) expected errors but got none: {:?}",
-                i, description, source
-            );
+            panic!("Test case {i} ({description}) expected errors but got none: {source:?}");
         }
     }
 }
@@ -257,10 +251,7 @@ fn test_asi_ts1005_token_expected_patterns() {
         let has_errors = !diagnostics.is_empty();
 
         if *should_have_errors && !has_errors {
-            panic!(
-                "Test case {} ({}) expected errors but got none",
-                i, description
-            );
+            panic!("Test case {i} ({description}) expected errors but got none");
         }
     }
 }
@@ -527,8 +518,8 @@ var foo = async (): Promise<void> => {
         .filter(|d| d.code == diagnostic_codes::EXPECTED)
         .count();
 
-    println!("TS1109 count: {}", ts1109_count);
-    println!("TS1005 count: {}", ts1005_count);
+    println!("TS1109 count: {ts1109_count}");
+    println!("TS1005 count: {ts1005_count}");
 }
 
 /// Test incomplete expression patterns that should emit TS1109
@@ -559,7 +550,7 @@ fn test_incomplete_expressions_ts1109() {
         .iter()
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
-    println!("TS1109 count: {}", ts1109_count);
+    println!("TS1109 count: {ts1109_count}");
 }
 
 /// Test new expression without identifier
@@ -584,7 +575,7 @@ fn test_new_missing_identifier_ts1109() {
         .iter()
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
-    println!("TS1109 count: {}", ts1109_count);
+    println!("TS1109 count: {ts1109_count}");
 
     // Should have exactly 1 TS1109 error
     assert!(
@@ -644,8 +635,8 @@ fn test_await_yield_missing_value_ts1109() {
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
 
-    println!("Await TS1109 count: {}", await_ts1109);
-    println!("Yield* TS1109 count: {}", yield_star_ts1109);
+    println!("Await TS1109 count: {await_ts1109}");
+    println!("Yield* TS1109 count: {yield_star_ts1109}");
 }
 
 #[test]
@@ -716,5 +707,5 @@ fn test_await_parameter_default_ts1109() {
         .iter()
         .filter(|d| d.code == diagnostic_codes::EXPRESSION_EXPECTED)
         .count();
-    println!("TS1109 count: {}", ts1109_count);
+    println!("TS1109 count: {ts1109_count}");
 }

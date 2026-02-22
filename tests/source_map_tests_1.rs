@@ -30,7 +30,7 @@ fn test_vlq_decode() {
     for value in [-100, -1, 0, 1, 100, 1000] {
         let encoded = vlq::encode(value);
         let (decoded, consumed) = vlq::decode(&encoded).unwrap();
-        assert_eq!(decoded, value, "Failed for value {}", value);
+        assert_eq!(decoded, value, "Failed for value {value}");
         assert_eq!(consumed, encoded.len());
     }
 }
@@ -485,23 +485,19 @@ fn test_source_map_simple() {
     let json = generator.to_json();
     assert!(
         json.contains("\"version\":3") || json.contains("\"version\": 3"),
-        "Should be v3 source map: {}",
-        json
+        "Should be v3 source map: {json}"
     );
     assert!(
         json.contains("\"file\":\"output.js\"") || json.contains("\"file\": \"output.js\""),
-        "Should have file: {}",
-        json
+        "Should have file: {json}"
     );
     assert!(
         json.contains("\"sources\":[\"input.ts\"]") || json.contains("\"sources\": [\"input.ts\"]"),
-        "Should have sources: {}",
-        json
+        "Should have sources: {json}"
     );
     assert!(
         json.contains("\"mappings\""),
-        "Should have mappings: {}",
-        json
+        "Should have mappings: {json}"
     );
 }
 
@@ -528,8 +524,7 @@ fn test_source_map_with_names() {
     let json = generator.to_json();
     assert!(
         json.contains("\"names\":[\"myVariable\"]") || json.contains("\"names\": [\"myVariable\"]"),
-        "Should have names: {}",
-        json
+        "Should have names: {json}"
     );
 }
 
@@ -11306,9 +11301,7 @@ fn test_source_map_names_array_multiple_identifiers() {
     for expected in expected_names {
         assert!(
             names.iter().any(|n| n.as_str() == Some(expected)),
-            "expected names array to include '{}'. names: {:?}",
-            expected,
-            names
+            "expected names array to include '{expected}'. names: {names:?}"
         );
     }
 
@@ -11994,8 +11987,7 @@ async function processItems(items: string[]) {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 3,
-        "expected mappings from at least 3 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 3 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -12157,8 +12149,7 @@ function* infiniteSequence() {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 2,
-        "expected mappings from at least 2 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 2 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -12417,8 +12408,7 @@ fn test_source_map_class_static_block_mapping() {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         !unique_source_lines.is_empty(),
-        "expected at least one source line covered in mappings, got: {:?}",
-        unique_source_lines
+        "expected at least one source line covered in mappings, got: {unique_source_lines:?}"
     );
 }
 
@@ -12840,8 +12830,7 @@ function format(value: string, options: { uppercase?: boolean } = {}): string {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 3,
-        "expected mappings from at least 3 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 3 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -13055,8 +13044,7 @@ const merged = { ...coords, z: 30 };"#;
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 3,
-        "expected mappings from at least 3 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 3 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -13151,8 +13139,7 @@ class Counter {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 5,
-        "expected mappings from at least 5 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 5 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -13236,8 +13223,7 @@ async function processItems(items: number[]) {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 5,
-        "expected mappings from at least 5 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 5 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -13537,8 +13523,7 @@ fn test_source_map_block_scoping_function_scope_mapping() {
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 2,
-        "expected mappings from at least 2 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 2 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -14205,8 +14190,7 @@ const app = <Button onClick={() => console.log("clicked")}>Click me</Button>;"#;
         decoded.iter().map(|m| m.original_line).collect();
     assert!(
         unique_source_lines.len() >= 2,
-        "expected mappings from at least 2 different source lines, got: {:?}",
-        unique_source_lines
+        "expected mappings from at least 2 different source lines, got: {unique_source_lines:?}"
     );
 }
 
@@ -16406,14 +16390,12 @@ else if (i == 20) {
     // The brace should be on the same line as `if (i == 10)`
     assert!(
         output.contains("if (i == 10) {"),
-        "Expected 'if (i == 10) {{' but got:\n{}",
-        output
+        "Expected 'if (i == 10) {{' but got:\n{output}"
     );
     // Should NOT have the brace on its own line
     assert!(
         !output.contains("if (i == 10)\n{"),
-        "Brace should not be on its own line:\n{}",
-        output
+        "Brace should not be on its own line:\n{output}"
     );
 }
 
@@ -16448,14 +16430,12 @@ namespace Shapes {
     // The interface comment should be erased
     assert!(
         !output.contains("// Interface"),
-        "Interface comment should be erased with the interface declaration:\n{}",
-        output
+        "Interface comment should be erased with the interface declaration:\n{output}"
     );
     // The module comment should be preserved
     assert!(
         output.contains("// Module"),
-        "Module comment should be preserved:\n{}",
-        output
+        "Module comment should be preserved:\n{output}"
     );
 }
 
@@ -16486,8 +16466,7 @@ fn test_static_member_comment_preserved_after_class() {
     // The static member comment should appear before the static init
     assert!(
         output.contains("// Static member\nPoint.origin"),
-        "Static member comment should be preserved before the initialization.\nOutput:\n{}",
-        output
+        "Static member comment should be preserved before the initialization.\nOutput:\n{output}"
     );
 }
 
@@ -16515,8 +16494,7 @@ for ({ name = "noName" } of robots) {
 
     assert!(
         output.contains(r#"name = "noName""#),
-        "Shorthand property default value should be emitted.\nOutput:\n{}",
-        output
+        "Shorthand property default value should be emitted.\nOutput:\n{output}"
     );
 }
 
@@ -16549,14 +16527,12 @@ fn test_non_exported_inner_namespace_no_parent_assignment() {
     // Exported namespace should have parent assignment
     assert!(
         output.contains("M.Exported"),
-        "Exported namespace should be assigned to parent.\nOutput:\n{}",
-        output
+        "Exported namespace should be assigned to parent.\nOutput:\n{output}"
     );
     // Non-exported namespace should NOT have parent assignment
     assert!(
         !output.contains("M.NotExported"),
-        "Non-exported namespace should NOT be assigned to parent.\nOutput:\n{}",
-        output
+        "Non-exported namespace should NOT be assigned to parent.\nOutput:\n{output}"
     );
 }
 
@@ -16592,14 +16568,12 @@ var x = 1;"#;
     // Block comment (detached by blank line) should be preserved
     assert!(
         output.contains("Copyright notice"),
-        "Detached block comment should be preserved:\n{}",
-        output
+        "Detached block comment should be preserved:\n{output}"
     );
     // The actual code should still be emitted
     assert!(
         output.contains("var x = 1;"),
-        "Code after erased declarations should be emitted:\n{}",
-        output
+        "Code after erased declarations should be emitted:\n{output}"
     );
 }
 
@@ -16629,13 +16603,11 @@ var x = 1;"#;
     // Comment attached to erased declaration should be erased
     assert!(
         !output.contains("// Ambient variable"),
-        "Attached comment should be erased with declaration:\n{}",
-        output
+        "Attached comment should be erased with declaration:\n{output}"
     );
     assert!(
         output.contains("var x = 1;"),
-        "Code after erased declarations should be emitted:\n{}",
-        output
+        "Code after erased declarations should be emitted:\n{output}"
     );
 }
 
@@ -16677,8 +16649,7 @@ const x = ts.version;"#;
         .expect("__esModule should be present");
     assert!(
         comment_pos < esmod_pos,
-        "Detached comment should appear before __esModule marker:\n{}",
-        output
+        "Detached comment should appear before __esModule marker:\n{output}"
     );
 }
 
@@ -16715,8 +16686,7 @@ var x = 1;"#;
         .expect("__esModule should be present");
     assert!(
         esmod_pos < comment_pos,
-        "__esModule marker should appear before attached comment:\n{}",
-        output
+        "__esModule marker should appear before attached comment:\n{output}"
     );
 }
 
@@ -16760,9 +16730,8 @@ fn test_computed_property_name_bracket_source_mapping() {
 
     assert!(
         has_closing_bracket_mapping,
-        "Expected a source map mapping for the closing `]` at source line {} col {}\n\
-         Decoded mappings: {:#?}\nOutput:\n{}",
-        bracket_line, bracket_col, decoded, output
+        "Expected a source map mapping for the closing `]` at source line {bracket_line} col {bracket_col}\n\
+         Decoded mappings: {decoded:#?}\nOutput:\n{output}"
     );
 }
 
@@ -16804,9 +16773,8 @@ fn test_computed_property_name_getter_bracket_mapping() {
 
     assert!(
         has_closing_bracket_mapping,
-        "Expected a source map mapping for the closing `]` at source line {} col {}\n\
-         Decoded mappings: {:#?}\nOutput:\n{}",
-        bracket_line, bracket_col, decoded, output
+        "Expected a source map mapping for the closing `]` at source line {bracket_line} col {bracket_col}\n\
+         Decoded mappings: {decoded:#?}\nOutput:\n{output}"
     );
 }
 
@@ -16848,9 +16816,8 @@ fn test_computed_property_object_literal_bracket_mapping() {
 
     assert!(
         has_closing_bracket_mapping,
-        "Expected a source map mapping for closing `]` at source line {} col {}\n\
-         Decoded mappings: {:#?}\nOutput:\n{}",
-        bracket_line, bracket_col, decoded, output
+        "Expected a source map mapping for closing `]` at source line {bracket_line} col {bracket_col}\n\
+         Decoded mappings: {decoded:#?}\nOutput:\n{output}"
     );
 }
 

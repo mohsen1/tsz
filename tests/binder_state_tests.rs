@@ -2360,8 +2360,7 @@ class MyClass { value: number = 42; }
     let errors = binder.validate_symbol_table();
     assert!(
         errors.is_empty(),
-        "Valid code should have no validation errors: {:?}",
-        errors
+        "Valid code should have no validation errors: {errors:?}"
     );
     assert!(binder.is_symbol_table_valid());
 }
@@ -2793,8 +2792,7 @@ export * from './moduleC';
     assert_eq!(
         reexports.len(),
         3,
-        "Should have 3 wildcard re-exports, got: {:?}",
-        reexports
+        "Should have 3 wildcard re-exports, got: {reexports:?}"
     );
 
     assert!(
@@ -2916,7 +2914,7 @@ fn test_export_resolution_multiple_wildcards() {
 // Lib Symbol Merging Tests (SymbolId Collision Fix)
 // =============================================================================
 
-/// Regression test: Two lib files with overlapping local SymbolIds must resolve
+/// Regression test: Two lib files with overlapping local `SymbolIds` must resolve
 /// to the correct global symbols after merge.
 ///
 /// This tests the fix for the SymbolId collision bug where lib files had

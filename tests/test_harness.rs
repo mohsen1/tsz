@@ -5,7 +5,7 @@
 //! - Shared test fixtures and setup helpers
 //! - Conformance test runner integration
 //! - Test result collection and reporting
-//! - Isolated test execution with resource limits (via isolated_test_runner)
+//! - Isolated test execution with resource limits (via `isolated_test_runner`)
 //!
 //! # Basic Usage
 //!
@@ -349,13 +349,13 @@ impl TestReport {
             for (name, result) in &self.failures {
                 match result {
                     TestResult::Failed { message, .. } => {
-                        println!("  FAIL {}: {}", name, message);
+                        println!("  FAIL {name}: {message}");
                     }
                     TestResult::TimedOut { timeout } => {
-                        println!("  TIMEOUT {}: exceeded {:?}", name, timeout);
+                        println!("  TIMEOUT {name}: exceeded {timeout:?}");
                     }
                     TestResult::Panicked { message, .. } => {
-                        println!("  PANIC {}: {}", name, message);
+                        println!("  PANIC {name}: {message}");
                     }
                     _ => {}
                 }
@@ -412,8 +412,7 @@ mod tests {
         debug!(?result, "test result");
         assert!(
             matches!(result, TestResult::Panicked { .. }),
-            "Expected Panicked, got: {:?}",
-            result
+            "Expected Panicked, got: {result:?}"
         );
     }
 

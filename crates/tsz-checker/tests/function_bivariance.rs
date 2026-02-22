@@ -29,10 +29,7 @@ fn test_function_variance(source: &str, expected_error_code: u32) {
     // Remove any existing @strictFunctionTypes from source to avoid duplication
     let source_clean = source.replace("// @strictFunctionTypes: true", "");
     let source_clean = source_clean.trim();
-    let source = format!(
-        "// @strictFunctionTypes: true\n{}\n{}",
-        GLOBAL_TYPE_MOCKS, source_clean
-    );
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
     let ctx = TestContext::new();
 
@@ -88,10 +85,7 @@ fn test_no_errors(source: &str) {
     // Remove any existing @strictFunctionTypes from source to avoid duplication
     let source_clean = source.replace("// @strictFunctionTypes: true", "");
     let source_clean = source_clean.trim();
-    let source = format!(
-        "// @strictFunctionTypes: true\n{}\n{}",
-        GLOBAL_TYPE_MOCKS, source_clean
-    );
+    let source = format!("// @strictFunctionTypes: true\n{GLOBAL_TYPE_MOCKS}\n{source_clean}");
 
     let ctx = TestContext::new();
 

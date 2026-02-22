@@ -32,8 +32,7 @@ var x: string = "string"; // TS2403
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2403),
-        "Expected TS2403 for incompatible redeclaration, got: {:?}",
-        codes
+        "Expected TS2403 for incompatible redeclaration, got: {codes:?}"
     );
 }
 
@@ -64,7 +63,6 @@ var x: number = 2; // OK
     let codes: Vec<u32> = checker.ctx.diagnostics.iter().map(|d| d.code).collect();
     assert!(
         !codes.contains(&2403),
-        "Unexpected TS2403 for compatible redeclaration, got: {:?}",
-        codes
+        "Unexpected TS2403 for compatible redeclaration, got: {codes:?}"
     );
 }

@@ -452,7 +452,7 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
                 return normalized.clone();
             };
             // Simple ../ resolution for paths that can't be canonicalized
-            let mut parts: Vec<&str> = abs.split('/').collect();
+            let parts: Vec<&str> = abs.split('/').collect();
             let mut resolved_parts: Vec<&str> = Vec::new();
             for part in &parts {
                 if *part == ".." {

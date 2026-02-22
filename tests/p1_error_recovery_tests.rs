@@ -259,7 +259,7 @@ const { a: { x y }, b } = obj;
 
     match result {
         TestResult::Passed { .. } => {}
-        other => panic!("Nested destructuring test did not finish: {:?}", other),
+        other => panic!("Nested destructuring test did not finish: {other:?}"),
     }
 }
 

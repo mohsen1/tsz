@@ -25,7 +25,7 @@ interface IArguments {}
 "#;
 
 fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
-    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
+    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
 
     let ctx = TestContext::new(); // This loads lib files
 
@@ -76,7 +76,7 @@ fn test_constructor_accessibility(source: &str, expected_error_code: u32) {
 }
 
 fn test_no_errors(source: &str) {
-    let source = format!("{}\n{}", GLOBAL_TYPE_MOCKS, source);
+    let source = format!("{GLOBAL_TYPE_MOCKS}\n{source}");
 
     let ctx = TestContext::new(); // This loads lib files
 

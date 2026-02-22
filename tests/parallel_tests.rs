@@ -55,7 +55,7 @@ fn test_parallel_parsing_consistency() {
     let source =
         "const x: number = 42; function add(a: number, b: number): number { return a + b; }";
     let files: Vec<_> = (0..10)
-        .map(|i| (format!("file{}.ts", i), source.to_string()))
+        .map(|i| (format!("file{i}.ts"), source.to_string()))
         .collect();
 
     let results = parse_files_parallel(files);
@@ -73,11 +73,8 @@ fn test_large_batch_parsing() {
     // Test with a larger batch to exercise parallelism
     let files: Vec<_> = (0..100)
         .map(|i| {
-            let source = format!(
-                "function fn{}(x: number): number {{ return x * {}; }}",
-                i, i
-            );
-            (format!("module{}.ts", i), source)
+            let source = format!("function fn{i}(x: number): number {{ return x * {i}; }}");
+            (format!("module{i}.ts"), source)
         })
         .collect();
 
@@ -161,7 +158,7 @@ fn test_parallel_binding_consistency() {
     let source =
         "const x: number = 42; function add(a: number, b: number): number { return a + b; }";
     let files: Vec<_> = (0..10)
-        .map(|i| (format!("file{}.ts", i), source.to_string()))
+        .map(|i| (format!("file{i}.ts"), source.to_string()))
         .collect();
 
     let results = parse_and_bind_parallel(files);
@@ -180,10 +177,9 @@ fn test_large_batch_binding() {
     let files: Vec<_> = (0..100)
         .map(|i| {
             let source = format!(
-                "function fn{}(x: number): number {{ return x * {}; }} let val{} = fn{}(10);",
-                i, i, i, i
+                "function fn{i}(x: number): number {{ return x * {i}; }} let val{i} = fn{i}(10);"
             );
-            (format!("module{}.ts", i), source)
+            (format!("module{i}.ts"), source)
         })
         .collect();
 
@@ -198,19 +194,15 @@ fn test_large_batch_binding() {
 
     // Each file should have its function and variable
     for (i, result) in results.iter().enumerate() {
-        let fn_name = format!("fn{}", i);
-        let var_name = format!("val{}", i);
+        let fn_name = format!("fn{i}");
+        let var_name = format!("val{i}");
         assert!(
             result.file_locals.has(&fn_name),
-            "File {} missing {}",
-            i,
-            fn_name
+            "File {i} missing {fn_name}"
         );
         assert!(
             result.file_locals.has(&var_name),
-            "File {} missing {}",
-            i,
-            var_name
+            "File {i} missing {var_name}"
         );
     }
 }
@@ -297,11 +289,8 @@ fn test_compile_large_program() {
     // Simulate a larger program with many files
     let files: Vec<_> = (0..50)
         .map(|i| {
-            let source = format!(
-                "function fn{}() {{ return {}; }} const val{} = fn{}();",
-                i, i, i, i
-            );
-            (format!("module{}.ts", i), source)
+            let source = format!("function fn{i}() {{ return {i}; }} const val{i} = fn{i}();");
+            (format!("module{i}.ts"), source)
         })
         .collect();
 
@@ -317,10 +306,10 @@ fn test_compile_large_program() {
 
     // All function and value names should be in globals
     for i in 0..50 {
-        let fn_name = format!("fn{}", i);
-        let val_name = format!("val{}", i);
-        assert!(program.globals.has(&fn_name), "Missing {}", fn_name);
-        assert!(program.globals.has(&val_name), "Missing {}", val_name);
+        let fn_name = format!("fn{i}");
+        let val_name = format!("val{i}");
+        assert!(program.globals.has(&fn_name), "Missing {fn_name}");
+        assert!(program.globals.has(&val_name), "Missing {val_name}");
     }
 }
 
@@ -652,10 +641,9 @@ fn test_check_large_program_parallel() {
     let files: Vec<_> = (0..50)
         .map(|i| {
             let source = format!(
-                "function fn{}(x: number): number {{ return x * {}; }} const val{} = fn{}(10);",
-                i, i, i, i
+                "function fn{i}(x: number): number {{ return x * {i}; }} const val{i} = fn{i}(10);"
             );
-            (format!("module{}.ts", i), source)
+            (format!("module{i}.ts"), source)
         })
         .collect();
 
@@ -754,7 +742,7 @@ fn test_parallel_type_interner_concurrent_access() {
             // Each thread interns various types
             for j in 0..100 {
                 let _ = interner_clone.literal_number(j as f64);
-                let _ = interner_clone.literal_string(&format!("str_{}_{}", i, j));
+                let _ = interner_clone.literal_string(&format!("str_{i}_{j}"));
                 let _ = interner_clone.union(vec![
                     interner_clone.literal_number((j % 10) as f64),
                     interner_clone.literal_number(((j + 1) % 10) as f64),
@@ -772,8 +760,8 @@ fn test_parallel_type_interner_concurrent_access() {
     // Verify the interner has the expected number of types
     // (exact count depends on deduplication, but should be reasonable)
     let len = interner.len();
-    assert!(len > 100, "Expected at least 100 types, got {}", len);
-    assert!(len < 2000, "Expected fewer than 2000 types, got {}", len);
+    assert!(len > 100, "Expected at least 100 types, got {len}");
+    assert!(len < 2000, "Expected fewer than 2000 types, got {len}");
 }
 
 #[test]
@@ -877,8 +865,7 @@ fn test_parallel_binding_produces_consistent_symbols() {
         for (name, _) in r1.file_locals.iter() {
             assert!(
                 r2.file_locals.has(name),
-                "Symbol {} should be present in both results",
-                name
+                "Symbol {name} should be present in both results"
             );
         }
     }

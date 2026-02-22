@@ -30,8 +30,7 @@ with (x) {}
     // Should have TS1101 (with not allowed in strict mode)
     assert!(
         codes.contains(&1101),
-        "Expected TS1101 for 'with' in alwaysStrict mode, got: {:?}",
-        codes
+        "Expected TS1101 for 'with' in alwaysStrict mode, got: {codes:?}"
     );
 }
 
@@ -62,7 +61,6 @@ module {
     // Should have TS2591 (detailed node types error)
     assert!(
         codes.contains(&2591),
-        "Expected TS2591 for anonymous module, got: {:?}",
-        codes
+        "Expected TS2591 for anonymous module, got: {codes:?}"
     );
 }
