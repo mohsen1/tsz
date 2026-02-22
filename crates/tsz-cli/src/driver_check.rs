@@ -463,7 +463,7 @@ pub(super) fn collect_diagnostics(
             if work_items.len() <= 1 {
                 work_items
                     .iter()
-                    .zip(per_file_binders.into_iter())
+                    .zip(per_file_binders)
                     .map(|(&file_idx, binder)| {
                         let context = CheckFileForParallelContext {
                             file_idx,

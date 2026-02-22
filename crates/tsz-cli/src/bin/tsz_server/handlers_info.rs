@@ -13,6 +13,16 @@ use tsz::lsp::rename::RenameProvider;
 use tsz::parser::node::NodeAccess;
 use tsz_solver::TypeInterner;
 
+/// Bundled context for a parsed file, reducing parameter count in helpers.
+struct ParsedFileContext<'a> {
+    arena: &'a tsz::parser::node::NodeArena,
+    binder: &'a tsz::binder::BinderState,
+    line_map: &'a LineMap,
+    root: tsz::parser::NodeIndex,
+    source_text: &'a str,
+    file: &'a str,
+}
+
 impl Server {
     fn is_offset_inside_comment(source_text: &str, offset: u32) -> bool {
         let idx = offset as usize;
@@ -176,38 +186,37 @@ impl Server {
 
     fn maybe_remap_alias_to_ambient_module(
         &self,
-        arena: &tsz::parser::node::NodeArena,
-        binder: &tsz::binder::BinderState,
-        line_map: &LineMap,
-        root: tsz::parser::NodeIndex,
-        source_text: &str,
-        file: &str,
+        ctx: &ParsedFileContext<'_>,
         position: tsz_common::position::Position,
         infos: &[tsz::lsp::definition::DefinitionInfo],
     ) -> Option<Vec<tsz::lsp::definition::DefinitionInfo>> {
         let interner = TypeInterner::new();
         let provider = HoverProvider::new(
-            arena,
-            binder,
-            line_map,
+            ctx.arena,
+            ctx.binder,
+            ctx.line_map,
             &interner,
-            source_text,
-            file.to_string(),
+            ctx.source_text,
+            ctx.file.to_string(),
         );
         let mut type_cache = None;
-        let hover = provider.get_hover(root, position, &mut type_cache);
+        let hover = provider.get_hover(ctx.root, position, &mut type_cache);
         let mut alias_name = hover
             .as_ref()
             .and_then(|hover_info| Self::extract_alias_name(&hover_info.display_string));
         if alias_name.is_none() {
             alias_name = hover.as_ref().and_then(|hover_info| {
                 let range = hover_info.range?;
-                let start = line_map.position_to_offset(range.start, source_text)?;
-                let end = line_map.position_to_offset(range.end, source_text)?;
-                if start >= end || end as usize > source_text.len() {
+                let start = ctx
+                    .line_map
+                    .position_to_offset(range.start, ctx.source_text)?;
+                let end = ctx
+                    .line_map
+                    .position_to_offset(range.end, ctx.source_text)?;
+                if start >= end || end as usize > ctx.source_text.len() {
                     return None;
                 }
-                Some(source_text[start as usize..end as usize].to_string())
+                Some(ctx.source_text[start as usize..end as usize].to_string())
             });
         }
         if alias_name.is_none() {
@@ -220,15 +229,17 @@ impl Server {
             alias_name = None;
         }
         let alias_name = alias_name.or_else(|| infos.first().map(|info| info.name.clone()))?;
-        let namespace_decl = Self::find_namespace_alias_decl_offsets(source_text, &alias_name);
-        let offset = line_map.position_to_offset(position, source_text)?;
+        let namespace_decl = Self::find_namespace_alias_decl_offsets(ctx.source_text, &alias_name);
+        let offset = ctx.line_map.position_to_offset(position, ctx.source_text)?;
         let on_declaration = if let Some(first) = infos.first() {
             if first.kind != "alias" {
                 return None;
             }
             match (
-                line_map.position_to_offset(first.location.range.start, source_text),
-                line_map.position_to_offset(first.location.range.end, source_text),
+                ctx.line_map
+                    .position_to_offset(first.location.range.start, ctx.source_text),
+                ctx.line_map
+                    .position_to_offset(first.location.range.end, ctx.source_text),
             ) {
                 (Some(start), Some(end)) => offset >= start && offset <= end,
                 _ => false,
@@ -244,16 +255,19 @@ impl Server {
             && !on_declaration
         {
             let alias_range = tsz::lsp::position::Range::new(
-                line_map.offset_to_position(alias_start, source_text),
-                line_map.offset_to_position(alias_end, source_text),
+                ctx.line_map
+                    .offset_to_position(alias_start, ctx.source_text),
+                ctx.line_map.offset_to_position(alias_end, ctx.source_text),
             );
             let context_range = tsz::lsp::position::Range::new(
-                line_map.offset_to_position(context_start, source_text),
-                line_map.offset_to_position(context_end, source_text),
+                ctx.line_map
+                    .offset_to_position(context_start, ctx.source_text),
+                ctx.line_map
+                    .offset_to_position(context_end, ctx.source_text),
             );
             return Some(vec![tsz::lsp::definition::DefinitionInfo {
                 location: tsz_common::position::Location {
-                    file_path: file.to_string(),
+                    file_path: ctx.file.to_string(),
                     range: alias_range,
                 },
                 context_span: Some(context_range),
@@ -270,7 +284,7 @@ impl Server {
             .as_ref()
             .and_then(|hover_info| Self::extract_alias_module_name(&hover_info.display_string))
             .or_else(|| {
-                Self::extract_module_name_from_source_for_alias(source_text, &alias_name)
+                Self::extract_module_name_from_source_for_alias(ctx.source_text, &alias_name)
             })?;
 
         self.find_ambient_module_definition_info(&module_name)
@@ -416,16 +430,17 @@ impl Server {
             let mut infos = provider
                 .get_definition_info(root, position)
                 .unwrap_or_default();
-            if let Some(remapped) = self.maybe_remap_alias_to_ambient_module(
-                &arena,
-                &binder,
-                &line_map,
+            let file_ctx = ParsedFileContext {
+                arena: &arena,
+                binder: &binder,
+                line_map: &line_map,
                 root,
-                &source_text,
-                &file,
-                position,
-                &infos,
-            ) {
+                source_text: &source_text,
+                file: &file,
+            };
+            if let Some(remapped) =
+                self.maybe_remap_alias_to_ambient_module(&file_ctx, position, &infos)
+            {
                 infos = remapped;
             }
             if infos.is_empty() {
@@ -459,16 +474,17 @@ impl Server {
             let mut infos = provider
                 .get_definition_info(root, position)
                 .unwrap_or_default();
-            if let Some(remapped) = self.maybe_remap_alias_to_ambient_module(
-                &arena,
-                &binder,
-                &line_map,
+            let file_ctx = ParsedFileContext {
+                arena: &arena,
+                binder: &binder,
+                line_map: &line_map,
                 root,
-                &source_text,
-                &file,
-                position,
-                &infos,
-            ) {
+                source_text: &source_text,
+                file: &file,
+            };
+            if let Some(remapped) =
+                self.maybe_remap_alias_to_ambient_module(&file_ctx, position, &infos)
+            {
                 infos = remapped;
             }
             if infos.is_empty() {
