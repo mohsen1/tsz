@@ -232,6 +232,7 @@ impl<'a> SignatureHelpProvider<'a> {
         } else {
             (checker.get_type_of_node(callee_expr), access_docs)
         };
+        let callee_type = checker.resolve_lazy_type(callee_type);
 
         // 6. Resolve the callee name for display
         let callee_name = self.resolve_callee_name(callee_expr, call_kind);
@@ -387,27 +388,23 @@ impl<'a> SignatureHelpProvider<'a> {
                     // Only provide signature help if cursor is after the opening
                     // `(` or `<` of the call. We find the delimiter by scanning
                     // the source text within the call node range.
-                    let has_args_or_type_args =
-                        data.arguments.is_some() || data.type_arguments.is_some();
-                    if has_args_or_type_args {
-                        let call_start = node.pos as usize;
-                        let call_end = (node.end as usize).min(self.source_text.len());
-                        let call_text = &self.source_text[call_start..call_end];
-                        let delimiter = if data.type_arguments.is_some() {
-                            call_text.find('<')
-                        } else {
-                            call_text.find('(')
-                        };
-                        if let Some(delim_offset) = delimiter {
-                            let delim_pos = (call_start + delim_offset) as u32;
-                            if cursor_offset > delim_pos {
-                                let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
-                                    CallKind::New
-                                } else {
-                                    CallKind::Call
-                                };
-                                return Some((current, CallSite::Regular(data), kind));
-                            }
+                    let call_start = node.pos as usize;
+                    let call_end = (node.end as usize).min(self.source_text.len());
+                    let call_text = &self.source_text[call_start..call_end];
+                    let delimiter = if data.type_arguments.is_some() {
+                        call_text.find('<')
+                    } else {
+                        call_text.find('(')
+                    };
+                    if let Some(delim_offset) = delimiter {
+                        let delim_pos = (call_start + delim_offset) as u32;
+                        if cursor_offset > delim_pos {
+                            let kind = if node.kind == syntax_kind_ext::NEW_EXPRESSION {
+                                CallKind::New
+                            } else {
+                                CallKind::Call
+                            };
+                            return Some((current, CallSite::Regular(data), kind));
                         }
                     }
                 }

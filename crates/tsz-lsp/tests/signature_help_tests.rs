@@ -182,6 +182,42 @@ fn test_signature_help_incomplete_member_call() {
 }
 
 #[test]
+fn test_signature_help_incomplete_callable_interface_call() {
+    let source = "interface C { (): number; }\ndeclare const c: C;\nc(";
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+
+    let interner = TypeInterner::new();
+    let line_map = LineMap::build(source);
+
+    let provider = SignatureHelpProvider::new(
+        parser.get_arena(),
+        &binder,
+        &line_map,
+        &interner,
+        source,
+        "test.ts".to_string(),
+    );
+
+    let pos = Position::new(2, 2); // After the opening paren.
+    let mut cache = None;
+    let help = provider.get_signature_help(root, pos, &mut cache);
+
+    assert!(
+        help.is_some(),
+        "Should find signature help for incomplete callable interface call"
+    );
+    if let Some(h) = help {
+        assert_eq!(h.active_parameter, 0, "Should be on first parameter");
+        assert_eq!(h.signatures.len(), 1, "Should expose one call signature");
+        assert_eq!(h.signatures[0].label, "c(): number");
+    }
+}
+
+#[test]
 fn test_signature_help_between_arguments() {
     // Test edge case: cursor between arguments (after comma, before next arg)
     // function process(a: any, b: number, c: string): void {}
