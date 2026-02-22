@@ -1,8 +1,8 @@
 # Architecture Audit Report
 
-**Date**: 2026-02-21 (11th audit)
-**Branch**: main (commit 84ed883ec)
-**Status**: ALL CLEAR — no violations found
+**Date**: 2026-02-22 (12th audit)
+**Branch**: main (commit b9db67920)
+**Status**: CI FIX — corrected emit baselines
 
 ---
 
@@ -34,25 +34,19 @@ No `TypeKey` or `TypeData` type imports found outside the solver crate. All refe
 
 The binder crate (`tsz-binder`) depends only on `tsz-common`, `tsz-scanner`, and `tsz-parser`. Zero imports of solver or checker types found. No `TypeId`, `TypeData`, `TypeInterner`, or solver module references in any binder source file.
 
-### 3. Checker File Sizes — COMPLIANT (11 near-threshold files)
+### 3. Checker File Sizes — COMPLIANT (5 near-threshold files)
 
-All checker files are under the 2000-line limit. Eleven files are approaching the threshold and need monitoring:
+All checker files are under the 2000-line limit. Many previously near-threshold files have been successfully split. Current files to monitor:
 
 | File | Lines | Headroom |
 |------|-------|----------|
-| `state/state_class_checking.rs` | 1,995 | 5 lines |
-| `types/type_computation_call.rs` | 1,994 | 6 lines |
-| `state_checking_members/member_declaration_checks.rs` | 1,994 | 6 lines |
-| `types/type_computation_access.rs` | 1,972 | 28 lines |
-| ~~`state/state_type_resolution_module.rs`~~ | ~~1,908~~ | ✅ Split — extracted constructor/class type ops (~767 LOC) into `state_type_resolution_constructors.rs`, reducing to ~1,140 LOC |
-| `types/type_checking_queries_lib.rs` | 1,901 | 99 lines |
-| `flow/control_flow_narrowing.rs` | 1,883 | 117 lines |
-| `types/type_computation.rs` | 1,882 | 118 lines |
-| `flow/control_flow_assignment.rs` | 1,837 | 163 lines |
-| ~~`context.rs`~~ | ~~1,830~~ | ✅ Split — `context/mod.rs` now 1,546 LOC (extracted `compiler_options.rs` + `lib_queries.rs`) |
-| `types/class_type.rs` | 1,803 | 197 lines |
+| `state_checking_members/ambient_signature_checks.rs` | 1,767 | 233 lines |
+| `types/type_node.rs` | 1,765 | 235 lines |
+| `flow/control_flow.rs` | 1,734 | 266 lines |
+| `types/type_checking_utilities_jsdoc.rs` | 1,728 | 272 lines |
+| `types/type_checking_queries_class.rs` | 1,713 | 287 lines |
 
-Total checker codebase: ~148 files, ~106,525 LOC.
+Previously near-threshold files (all successfully split): `state_class_checking.rs` (919), `type_computation_call.rs` (796), `member_declaration_checks.rs` (1,695), `type_computation_access.rs` (889), `type_checking_queries_lib.rs` (1,313), `control_flow_narrowing.rs` (1,204), `type_computation.rs` (1,119), `control_flow_assignment.rs` (878), `class_type.rs` (1,026).
 
 **Note**: The `type_checking_queries_lib.rs` file remains stable at 1,901 lines. The perf commit (b81760973) extracted new logic into a separate `type_checking_queries_lib_prime.rs` (113 lines), keeping the near-threshold file from growing. Good architectural practice.
 
@@ -90,15 +84,9 @@ The `collect_infer_bindings` method was moved from `tsz-lowering` into `tsz-solv
 
 ## CI Health
 
-All recent CI runs green. One perf commit (b81760973) run still in progress at time of audit.
+CI was red for ~15 runs due to emit JS baseline mismatch. Commit 117acf1a4 manually set README baseline to 67.9% (9,254) based on local results, but CI consistently measured 67.8% (9,242-9,243). Fixed by updating README baseline to 67.8% (9,243) and DTS to 35.1% (762) in commit b9db67920.
 
-| Run | Status | Description |
-|-----|--------|-------------|
-| 22264969121 | completed/success | docs(arch): 10th architecture audit |
-| 22264898602 | completed/success | docs(arch): 9th architecture audit |
-| 22264859539 | in_progress | perf(checker): avoid full lib lowering when priming generic params |
-| 22264836885 | completed/success | docs(arch): 8th architecture audit |
-| 22264779796 | completed/success | docs(arch): 7th architecture audit |
+**Lesson**: Always let CI/automated scripts set baselines. Manual baseline overrides from local results can diverge from CI environment behavior (timeout sensitivity, parallelism differences).
 
 ---
 
@@ -128,5 +116,5 @@ All recent CI runs green. One perf commit (b81760973) run still in progress at t
 12. **DRY violation: `emit_exported_variable` vs `emit_variable_declaration_statement`** — `exports.rs:602-692` and `mod.rs:1648-1796` in `declaration_emitter/` share heavily duplicated variable declaration emission logic. The exported path was missing type inference fallbacks that the non-exported path had (fixed in ef72ac342). These two functions should ideally be refactored to share a common inner helper.
 13. ~~**Emit JS pass rate regression**: Commit 92ba86966 ("Fix auto-accessor emit ordering") caused JS emit pass rate to drop from 67.9% → 67.7% (23 fewer passing tests).~~ ✅ Fixed — root cause was unconditional `mark_class_helpers` call for auto-accessor classes at ALL targets. The `__classPrivateFieldGet`/`Set` helpers were emitted even for ES2022+/ESNext where native syntax should be used. Fix gates both helper marking (`lowering_pass.rs`) and WeakMap emission (`declarations.rs`) behind `needs_es2022_lowering`. Pass rate restored to 67.9% (9,254 tests, +8 net improvement).
 14. ~~**Misplaced non-source files in checker `src/`**: `keyof-type-checking/` (scaffolded skill template with placeholders) and `state_orchestration_docs.md` (orphaned architectural doc) were sitting inside `crates/tsz-checker/src/`.~~ ✅ Removed (c0cc2fb4c).
-15. **Checker top-level file sprawl**: 23 loose `.rs` files at `crates/tsz-checker/src/` alongside full subdirectories. Natural grouping candidates: assignability/assignment checkers, call/param/signature checkers, type-related checkers (generic, iterable, promise, subtype_identity). Consider organizing into subdirectories as the module grows.
+15. ~~**Checker top-level file sprawl**: assignability/assignment/subtype_identity checkers~~ ✅ Done (d45a73578) — moved `assignability_checker.rs`, `assignment_checker.rs`, `subtype_identity_checker.rs` into `assignability/` subdirectory (24 → 21 loose files). Remaining grouping candidates: call/param/signature checkers, type-related checkers (generic, iterable, promise). Consider organizing into subdirectories as the module grows.
 16. **Solver re-export shims**: `judge.rs` and `visitor.rs` in solver `src/` are 1-line `pub use` shims (`pub use crate::relations::judge::*` / `pub use crate::visitors::visitor::*`). Used from ~20 call sites in checker/emitter. Low priority — they provide stable convenience paths.

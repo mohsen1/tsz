@@ -263,8 +263,8 @@ fn test_array_helpers_avoid_direct_typekey_interning() {
         "type_node should use solver index_access constructor API, not TypeData::IndexAccess"
     );
 
-    let jsx_checker_src =
-        fs::read_to_string("src/jsx_checker.rs").expect("failed to read src/jsx_checker.rs");
+    let jsx_checker_src = fs::read_to_string("src/checkers/jsx_checker.rs")
+        .expect("failed to read src/checkers/jsx_checker.rs");
     assert!(
         !jsx_checker_src.contains("TypeData::IndexAccess"),
         "jsx_checker should use solver index_access constructor API, not TypeData::IndexAccess"
@@ -599,8 +599,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "type_checking should not manually orchestrate application-symbol preconditions"
     );
 
-    let parameter_checker_src = fs::read_to_string("src/parameter_checker.rs")
-        .expect("failed to read src/parameter_checker.rs for architecture guard");
+    let parameter_checker_src = fs::read_to_string("src/checkers/parameter_checker.rs")
+        .expect("failed to read src/checkers/parameter_checker.rs for architecture guard");
     assert!(
         parameter_checker_src.contains("check_assignable_or_report("),
         "parameter initializer assignability should route through check_assignable_or_report"
@@ -738,8 +738,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         .expect("failed to read src/state/state_heritage_checking.rs for architecture guard");
     let property_access_type_src = fs::read_to_string("src/types/property_access_type.rs")
         .expect("failed to read src/types/property_access_type.rs for architecture guard");
-    let property_checker_src = fs::read_to_string("src/property_checker.rs")
-        .expect("failed to read src/property_checker.rs for architecture guard");
+    let property_checker_src = fs::read_to_string("src/checkers/property_checker.rs")
+        .expect("failed to read src/checkers/property_checker.rs for architecture guard");
     assert!(
         state_variable_checking_src.contains("query::array_element_type("),
         "state_variable_checking array element checks should route through query_boundaries::state_checking"
@@ -930,8 +930,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "error_handler should not directly emit TS2322 diagnostics; use assignability gateway helpers"
     );
 
-    let call_checker_src =
-        fs::read_to_string("src/call_checker.rs").expect("failed to read src/call_checker.rs");
+    let call_checker_src = fs::read_to_string("src/checkers/call_checker.rs")
+        .expect("failed to read src/checkers/call_checker.rs");
     assert!(
         call_checker_src.contains("ensure_relation_input_ready(")
             && call_checker_src.contains("ensure_relation_inputs_ready("),
@@ -977,8 +977,8 @@ fn test_assignment_and_binding_default_assignability_use_central_gateway_helpers
         "query_boundaries/assignability failure analysis should route through solver relation-query helpers"
     );
 
-    let generic_checker_src = fs::read_to_string("src/generic_checker.rs")
-        .expect("failed to read src/generic_checker.rs for architecture guard");
+    let generic_checker_src = fs::read_to_string("src/checkers/generic_checker.rs")
+        .expect("failed to read src/checkers/generic_checker.rs for architecture guard");
     assert!(
         !generic_checker_src.contains("self.ensure_refs_resolved(type_arg);")
             && !generic_checker_src.contains("self.ensure_refs_resolved(instantiated_constraint);"),
