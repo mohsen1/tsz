@@ -117,3 +117,11 @@ tests passing (offset 6000 slice: 3665→3684).
 - **verbatimModuleSyntaxCompat*.ts** (4 tests): Need verbatimModuleSyntax validation logic (TS1286, TS1484) beyond just the removed-option diagnostic.
 - **preserveValueImports.ts**, **importsNotUsedAsValues_error.ts**: Have additional TS1484/TS2305 codes that we don't yet emit.
 - **nonPrimitiveIndexingWithForInSupressError.ts**: Has additional TS2304 (lib type resolution gap).
+- **keyofDoesntContainSymbols.ts**: Expects TS5102 + TS2345. TS5102 now emitted but TS2345 requires `keyofStringsOnly` semantic behavior changes.
+
+## TS5103 — Invalid value for '--ignoreDeprecations' (Not implemented)
+
+**Error code:** TS5103 ("Invalid value for '--ignoreDeprecations'.")
+**Tests**: 48 failing tests reference this code but few are single-code quick wins.
+**Reason**: Requires validating `ignoreDeprecations` option value is exactly "5.0" or "6.0".
+Simple validation in `parse_tsconfig_with_diagnostics`. Deferred for a future session.

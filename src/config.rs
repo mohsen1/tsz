@@ -858,7 +858,8 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
         }
 
         // Check for removed compiler options (TS5102)
-        // These options were deprecated in TS 5.0 and removed in TS 5.5.
+        // These options were deprecated in TS 5.0 and removed in TS 5.5/6.0.
+        let mut removed_keys: Vec<String> = Vec::new();
         for key in compiler_opts.keys().cloned().collect::<Vec<_>>() {
             if removed_compiler_option(&key).is_some() {
                 let value = compiler_opts.get(&key);
@@ -883,7 +884,12 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                         diagnostic_codes::OPTION_HAS_BEEN_REMOVED_PLEASE_REMOVE_IT_FROM_YOUR_CONFIGURATION,
                     ));
                 }
+                removed_keys.push(key);
             }
+        }
+        // Strip removed options so they don't reach serde or subsequent validation
+        for key in &removed_keys {
+            compiler_opts.remove(key);
         }
 
         // Check compiler option value types (TS5024)
@@ -1072,8 +1078,8 @@ fn compiler_option_expected_type(key: &str) -> &'static str {
         // String options
         "baseUrl" | "charset" | "declarationDir" | "jsx" | "jsxFactory" | "jsxFragmentFactory"
         | "jsxImportSource" | "mapRoot" | "module" | "moduleDetection" | "moduleResolution"
-        | "newLine" | "outDir" | "outFile" | "reactNamespace" | "rootDir" | "sourceRoot"
-        | "target" | "tsBuildInfoFile" | "ignoreDeprecations" => "string",
+        | "newLine" | "out" | "outDir" | "outFile" | "reactNamespace" | "rootDir"
+        | "sourceRoot" | "target" | "tsBuildInfoFile" | "ignoreDeprecations" => "string",
         // List options (arrays)
         "lib" | "types" | "typeRoots" | "rootDirs" | "moduleSuffixes" | "customConditions" => {
             "list"
@@ -1094,9 +1100,9 @@ fn removed_compiler_option(key: &str) -> Option<&'static str> {
         | "suppressExcessPropertyErrors"
         | "suppressImplicitAnyIndexErrors"
         | "noStrictGenericChecks"
-        | "charset"
-        | "out" => Some(""),
+        | "charset" => Some(""),
         "importsNotUsedAsValues" | "preserveValueImports" => Some("verbatimModuleSyntax"),
+        "out" => Some("outFile"),
         _ => None,
     }
 }
@@ -1189,6 +1195,7 @@ fn known_compiler_option(key_lower: &str) -> Option<&'static str> {
         "nouncheckedsideeffectimports" => Some("noUncheckedSideEffectImports"),
         "nounusedlocals" => Some("noUnusedLocals"),
         "nounusedparameters" => Some("noUnusedParameters"),
+        "out" => Some("out"),
         "outdir" => Some("outDir"),
         "outfile" => Some("outFile"),
         "paths" => Some("paths"),
