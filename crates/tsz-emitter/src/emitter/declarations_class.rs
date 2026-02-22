@@ -670,20 +670,23 @@ impl<'a> Printer<'a> {
             // Check if this member is erased (no runtime representation)
             if let Some(member_node) = self.arena.get(member_idx) {
                 let is_erased = match member_node.kind {
-                    // Abstract methods and bodyless overloads are erased
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        self.arena.get_method_decl(member_node).is_some_and(|m| {
-                            self.arena
-                                .has_modifier(&m.modifiers, SyntaxKind::AbstractKeyword)
-                                || m.body.is_none()
-                        })
-                    }
+                    // Bodyless methods are erased (abstract methods without body,
+                    // overload signatures). Abstract methods WITH a body (an error
+                    // in TS) are still emitted by tsc, so we must not erase them.
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .is_some_and(|m| m.body.is_none()),
+                    // Abstract accessors without body are erased. Bodyless non-abstract
+                    // accessors (error case) are kept — tsc emits them with `{ }`.
+                    // Abstract accessors WITH a body (error case) are also kept.
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
                         self.arena.get_accessor(member_node).is_some_and(|a| {
                             self.arena
                                 .has_modifier(&a.modifiers, SyntaxKind::AbstractKeyword)
+                                && a.body.is_none()
                         })
                     }
                     k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
@@ -1607,6 +1610,77 @@ mod tests {
         assert!(
             !output.contains("// type-only"),
             "Trailing comment on erased interface should be suppressed.\nOutput:\n{output}"
+        );
+    }
+
+    /// Abstract methods WITH a body (an error in TS, but tsc still emits them)
+    /// must NOT be erased — only bodyless methods should be erased.
+    #[test]
+    fn abstract_method_with_body_is_emitted() {
+        let source = "abstract class H {\n    abstract baz(): number { return 1; }\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("baz()"),
+            "Abstract method with body should be emitted (tsc parity).\nOutput:\n{output}"
+        );
+    }
+
+    /// Abstract methods WITHOUT a body should be erased (standard behavior).
+    #[test]
+    fn abstract_method_without_body_is_erased() {
+        let source = "abstract class G {\n    abstract qux(): number;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            !output.contains("qux"),
+            "Abstract method without body should be erased.\nOutput:\n{output}"
+        );
+    }
+
+    /// Bodyless non-abstract accessors (error case in TS) must NOT be erased —
+    /// tsc emits them with an empty body `{ }`.
+    #[test]
+    fn bodyless_non_abstract_accessor_is_not_erased() {
+        let source = "class C {\n    get foo(): string;\n}\n";
+
+        let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+
+        let opts = PrintOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        };
+        let mut printer = Printer::new(&parser.arena, opts);
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        assert!(
+            output.contains("foo"),
+            "Bodyless non-abstract accessor should be emitted (tsc parity).\nOutput:\n{output}"
         );
     }
 }
