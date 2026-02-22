@@ -148,7 +148,7 @@ impl Default for CheckerOptions {
             resolve_json_module: false,
             check_js: false,
             no_resolve: false,
-            no_unchecked_side_effect_imports: true,
+            no_unchecked_side_effect_imports: false,
             no_implicit_override: false,
             jsx_factory: "React.createElement".to_string(),
             jsx_fragment_factory: "React.Fragment".to_string(),
