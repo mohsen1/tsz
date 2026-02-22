@@ -29,6 +29,18 @@ const fn exceeds_class_inheritance_depth_limit(depth: usize) -> bool {
     depth > 256
 }
 
+#[inline]
+fn in_progress_class_instance_result(
+    in_resolution_set: bool,
+    cached: Option<TypeId>,
+) -> Option<TypeId> {
+    if in_resolution_set {
+        Some(cached.unwrap_or(TypeId::ERROR))
+    } else {
+        None
+    }
+}
+
 // =============================================================================
 // Class Type Resolution
 // =============================================================================
@@ -54,17 +66,22 @@ impl<'a> CheckerState<'a> {
         class_idx: NodeIndex,
         class: &tsz_parser::parser::node::ClassData,
     ) -> TypeId {
-        // Prefer cache misses only for the class currently being resolved.
-        // When resolving a different class while some other class is on the stack,
-        // reusing cached instance types is safe and avoids duplicate non-canonical
-        // allocations (for example, parser fixtures like `Dataset | Dataset`).
         let current_sym = self.ctx.binder.get_node_symbol(class_idx);
+        let is_in_resolution_set = current_sym
+            .is_some_and(|sym_id| self.ctx.class_instance_resolution_set.contains(&sym_id));
+
+        // Fast path for re-entrant class instance queries: avoid re-entering
+        // the full inheritance walk while the class is already being resolved.
+        if let Some(result) = in_progress_class_instance_result(
+            is_in_resolution_set,
+            self.ctx.class_instance_type_cache.get(&class_idx).copied(),
+        ) {
+            return result;
+        }
+
         if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
             return cached;
         }
-        let can_use_cache = current_sym
-            .map(|sym_id| !self.ctx.class_instance_resolution_set.contains(&sym_id))
-            .unwrap_or(true);
 
         let mut visited = FxHashSet::default();
         let mut visited_nodes = FxHashSet::default();
@@ -73,9 +90,7 @@ impl<'a> CheckerState<'a> {
 
         // Cache all terminal outcomes (including ERROR) so pathological
         // inheritance graphs don't repeatedly recompute the same failing class.
-        if can_use_cache {
-            self.ctx.class_instance_type_cache.insert(class_idx, result);
-        }
+        self.ctx.class_instance_type_cache.insert(class_idx, result);
         result
     }
 
@@ -973,7 +988,11 @@ impl<'a> CheckerState<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{can_skip_base_instantiation, exceeds_class_inheritance_depth_limit};
+    use super::{
+        can_skip_base_instantiation, exceeds_class_inheritance_depth_limit,
+        in_progress_class_instance_result,
+    };
+    use tsz_solver::TypeId;
 
     #[test]
     fn skip_base_instantiation_only_without_generics() {
@@ -989,5 +1008,18 @@ mod tests {
         assert!(!exceeds_class_inheritance_depth_limit(100));
         assert!(!exceeds_class_inheritance_depth_limit(256));
         assert!(exceeds_class_inheritance_depth_limit(257));
+    }
+
+    #[test]
+    fn in_progress_class_instance_uses_cached_or_error() {
+        assert_eq!(
+            in_progress_class_instance_result(true, Some(TypeId(42))),
+            Some(TypeId(42))
+        );
+        assert_eq!(
+            in_progress_class_instance_result(true, None),
+            Some(TypeId::ERROR)
+        );
+        assert_eq!(in_progress_class_instance_result(false, None), None);
     }
 }
