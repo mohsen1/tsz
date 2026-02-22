@@ -555,6 +555,74 @@ fn type_only_named_import_is_elided_in_ir_commonjs_transform() {
 }
 
 #[test]
+fn test_collect_export_names_deduplicates_overloaded_functions() {
+    use tsz_parser::parser::ParserState;
+
+    // Overloaded functions produce multiple FUNCTION_DECLARATION nodes with the same name.
+    // The collector must deduplicate to avoid repeated `exports.X = X;` lines.
+    let source = r#"
+export function foo(a: string): string;
+export function foo(a: number): number;
+export function foo(a: any): any { return a; }
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(source_file) = parser.arena.get_source_file(
+        parser
+            .arena
+            .get(root)
+            .expect("root node must exist in arena"),
+    ) else {
+        panic!("Failed to get source file");
+    };
+
+    let export_names = collect_export_names(&parser.arena, &source_file.statements.nodes);
+    assert_eq!(
+        export_names,
+        vec!["foo"],
+        "Overloaded function should produce only one export name"
+    );
+}
+
+#[test]
+fn test_collect_export_names_categorized_deduplicates_overloaded_functions() {
+    use tsz_parser::parser::ParserState;
+
+    let source = r#"
+export function foo(a: string): string;
+export function foo(a: number): number;
+export function foo(a: any): any { return a; }
+export const bar = 42;
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let Some(source_file) = parser.arena.get_source_file(
+        parser
+            .arena
+            .get(root)
+            .expect("root node must exist in arena"),
+    ) else {
+        panic!("Failed to get source file");
+    };
+
+    let (func_exports, other_exports) =
+        collect_export_names_categorized(&parser.arena, &source_file.statements.nodes);
+
+    assert_eq!(
+        func_exports,
+        vec!["foo"],
+        "Overloaded function should produce only one func_export entry"
+    );
+    assert_eq!(
+        other_exports,
+        vec!["bar"],
+        "Non-function exports should be unaffected"
+    );
+}
+
+#[test]
 fn ir_commonjs_does_not_preinit_function_exports_with_void_zero() {
     let source = "export function f() {}";
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
