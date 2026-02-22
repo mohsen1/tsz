@@ -549,6 +549,56 @@ class E2<T> extends D2<T> { baz: T; }
 }
 
 #[test]
+fn test_class_extends_export_default_base_resolves_instance_members() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+export default class Base {
+    value: number = 1;
+}
+
+class Derived extends Base {
+    read(): number {
+        return this.value;
+    }
+}
+        ",
+    );
+
+    let unexpected: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| matches!(*code, 2339 | 2506 | 2449))
+        .collect();
+
+    assert!(
+        unexpected.is_empty(),
+        "Expected extends/default-base instance resolution without TS2339/TS2506/TS2449. Actual diagnostics: {unexpected:#?}"
+    );
+}
+
+#[test]
+fn test_class_used_before_declaration_does_not_also_report_cycle_error() {
+    let diagnostics = compile_and_get_diagnostics(
+        r"
+class A extends B {}
+class B extends C {}
+class C {}
+        ",
+    );
+
+    let has_ts2449 = diagnostics.iter().any(|(code, _)| *code == 2449);
+    let has_ts2506 = diagnostics.iter().any(|(code, _)| *code == 2506);
+
+    assert!(
+        has_ts2449,
+        "Expected TS2449 for class used before declaration. Actual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_ts2506,
+        "Did not expect TS2506 for non-cyclic before-declaration extends. Actual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_interface_extends_primitive_reports_ts2840() {
     let diagnostics = compile_and_get_diagnostics(
         r"
