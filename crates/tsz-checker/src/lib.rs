@@ -17,7 +17,6 @@
 extern crate self as tsz_checker;
 
 pub mod context;
-pub mod decorators;
 pub mod dispatch;
 pub mod error_reporter;
 pub mod expr;
