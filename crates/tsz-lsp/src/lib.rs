@@ -26,7 +26,6 @@
 
 #[macro_use]
 pub mod provider_macro;
-pub mod call_hierarchy;
 pub mod code_actions;
 pub mod code_lens;
 pub mod completions;
@@ -37,6 +36,7 @@ pub mod export_signature;
 pub mod file_rename;
 pub mod folding;
 pub mod formatting;
+pub mod hierarchy;
 pub mod highlighting;
 pub mod hover;
 pub mod inlay_hints;
@@ -52,7 +52,6 @@ pub mod selection_range;
 pub mod semantic_tokens;
 pub mod signature_help;
 pub mod symbols;
-pub mod type_hierarchy;
 pub mod utils;
 
 #[cfg(test)]
@@ -114,12 +113,12 @@ pub use symbols::{SymbolInformation, WorkspaceSymbolsProvider};
 pub use navigation::implementation::GoToImplementationProvider;
 
 // Call Hierarchy
-pub use call_hierarchy::{
+pub use hierarchy::call_hierarchy::{
     CallHierarchyIncomingCall, CallHierarchyItem, CallHierarchyOutgoingCall, CallHierarchyProvider,
 };
 
 // Type Hierarchy
-pub use type_hierarchy::{TypeHierarchyItem, TypeHierarchyProvider};
+pub use hierarchy::type_hierarchy::{TypeHierarchyItem, TypeHierarchyProvider};
 
 // Linked Editing
 pub use linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
