@@ -18,6 +18,7 @@ pub mod canonicalize;
 mod class_hierarchy;
 pub mod compound_assignment;
 mod contextual;
+mod contextual_extractors;
 pub mod def;
 mod diagnostics;
 pub mod element_access;
