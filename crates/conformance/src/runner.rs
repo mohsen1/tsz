@@ -582,12 +582,15 @@ impl Runner {
                             }
                         } else {
                             // Subprocess fallback — spawn fresh tsz per compilation
+                            // Set cwd to project dir so diagnostic file paths are
+                            // relative to project root (matching cache generator behavior)
                             let child = tokio::process::Command::new(&tsz_binary)
                                 .arg("--project")
                                 .arg(prepared.temp_dir.path())
                                 .arg("--noEmit")
                                 .arg("--pretty")
                                 .arg("false")
+                                .current_dir(prepared.temp_dir.path())
                                 .stdout(std::process::Stdio::piped())
                                 .stderr(std::process::Stdio::piped())
                                 .kill_on_drop(true)
@@ -821,6 +824,7 @@ impl Runner {
                             .arg("--noEmit")
                             .arg("--pretty")
                             .arg("false")
+                            .current_dir(prepared.temp_dir.path())
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
                             .kill_on_drop(true)
@@ -979,6 +983,7 @@ impl Runner {
                             .arg("--noEmit")
                             .arg("--pretty")
                             .arg("false")
+                            .current_dir(prepared.temp_dir.path())
                             .stdout(std::process::Stdio::piped())
                             .stderr(std::process::Stdio::piped())
                             .kill_on_drop(true)

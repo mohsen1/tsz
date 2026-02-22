@@ -446,17 +446,46 @@ fn normalize_diagnostic_path(raw: &str, project_root: &Path) -> String {
         }
     }
 
-    // If the diagnostic path is absolute, try canonicalizing it and strip again.
+    // If the diagnostic path is absolute or relative with ../ components,
+    // try resolving to an absolute path and strip the project root.
     let diag_path = Path::new(&normalized);
-    if diag_path.is_absolute() {
-        if let Ok(canon_diag) = diag_path.canonicalize() {
-            let canon_diag = canon_diag.to_string_lossy().replace('\\', "/");
-            for root in &expanded_roots {
-                if canon_diag.starts_with(root) {
-                    return canon_diag[root.len()..].trim_start_matches('/').to_string();
+    let resolved = if diag_path.is_absolute() {
+        diag_path.to_path_buf()
+    } else if normalized.contains("../") {
+        // Relative path with ../ — resolve against project_root to get absolute
+        project_root.join(&normalized)
+    } else {
+        // Simple relative path (e.g., "test.ts") — already normalized
+        return normalized;
+    };
+
+    // Try canonicalizing the resolved path and strip the project root
+    let canon_diag = resolved
+        .canonicalize()
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| {
+            // If canonicalize fails (file doesn't exist), manually resolve ../ components
+            let abs = if resolved.is_absolute() {
+                resolved.to_string_lossy().replace('\\', "/")
+            } else {
+                return normalized.clone();
+            };
+            // Simple ../ resolution for paths that can't be canonicalized
+            let mut parts: Vec<&str> = abs.split('/').collect();
+            let mut resolved_parts: Vec<&str> = Vec::new();
+            for part in &parts {
+                if *part == ".." {
+                    resolved_parts.pop();
+                } else if *part != "." {
+                    resolved_parts.push(part);
                 }
             }
-            return canon_diag;
+            resolved_parts.join("/")
+        });
+
+    for root in &expanded_roots {
+        if canon_diag.starts_with(root) {
+            return canon_diag[root.len()..].trim_start_matches('/').to_string();
         }
     }
 
