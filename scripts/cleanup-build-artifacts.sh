@@ -124,28 +124,32 @@ human_size() {
   fi
 }
 
-# Check if a directory has an active cargo/rustc build targeting its .target dir.
-# Returns 0 (true) if active, 1 (false) if idle.
+# Capture all cargo/rustc process args once (expensive to call ps repeatedly).
+# Called once at script start; functions below use this cached value.
+_CARGO_PROCS=""
+cache_active_procs() {
+  _CARGO_PROCS=$(ps -eo args 2>/dev/null | grep -E '(cargo|rustc)' | grep -v grep || true)
+}
+
+# Get the set of active build profiles for a given repo's .target dir.
+# Prints one profile name per line (e.g. "debug", "dist-fast").
+get_active_profiles() {
+  local target_dir="$1/.target"
+  if [[ -z "$_CARGO_PROCS" ]]; then
+    return
+  fi
+  echo "$_CARGO_PROCS" \
+    | grep -oE "$target_dir/[a-zA-Z_-]+" \
+    | sed "s|$target_dir/||" \
+    | sort -u \
+    || true
+}
+
+# Check if ANY build is active for a repo (used by --status)
 is_build_active() {
-  local dir="$1"
-  local target_dir="$dir/.target"
-  # Look specifically for cargo or rustc processes referencing this .target dir.
-  # Using ps + grep instead of pgrep -f to avoid self-matching.
-  local procs
-  procs=$(ps -eo pid,comm,args 2>/dev/null \
-    | grep -E '(cargo|rustc)' \
-    | grep -F "$target_dir" \
-    | grep -v grep || true)
-  if [[ -n "$procs" ]]; then
-    return 0
-  fi
-  # Also check for a cargo lock file (cargo creates .cargo-lock in target dir)
-  if [[ -f "$target_dir/.cargo-lock" ]]; then
-    if lsof "$target_dir/.cargo-lock" > /dev/null 2>&1; then
-      return 0
-    fi
-  fi
-  return 1
+  local profiles
+  profiles=$(get_active_profiles "$1")
+  [[ -n "$profiles" ]]
 }
 
 # Find all tsz copies — prints one directory per line for safe iteration
@@ -221,11 +225,15 @@ show_status() {
   df -h / | head -2
 }
 
-# Clean build artifacts
+# Clean build artifacts — profile-aware.
+# For repos with active builds, deletes inactive profiles and incremental caches.
+# For idle repos, deletes the entire .target directory.
 clean_artifacts() {
-  local cleaned=0
-  local skipped=0
   local total_freed=0
+  local cleaned_profiles=0
+  local cleaned_dirs=0
+  local now
+  now=$(date +%s)
 
   while IFS= read -r d; do
     # Skip current if mode is "others"
@@ -236,18 +244,22 @@ clean_artifacts() {
     local name
     name="$(basename "$d")"
 
-    # Clean .target directory
-    if [[ -d "$d/.target" ]]; then
-      # Safety: skip directories with active builds unless --force
-      if [[ "$FORCE" != true ]] && is_build_active "$d"; then
-        log "Skipping $name/.target — active build detected"
-        ((skipped++))
-        continue
-      fi
+    if [[ ! -d "$d/.target" ]]; then
+      continue
+    fi
 
-      # Check staleness (hours since last modification)
+    # Determine which profiles are actively building
+    local active_profiles
+    if [[ "$FORCE" == true ]]; then
+      active_profiles=""
+    else
+      active_profiles=$(get_active_profiles "$d")
+    fi
+
+    if [[ -z "$active_profiles" ]]; then
+      # No active builds — check staleness and delete entire .target
       local target_age_hours
-      target_age_hours=$(( ( $(date +%s) - $(stat -f %m "$d/.target" 2>/dev/null || echo "0") ) / 3600 ))
+      target_age_hours=$(( ( now - $(stat -f %m "$d/.target" 2>/dev/null || echo "0") ) / 3600 ))
 
       if (( target_age_hours >= STALE_HOURS )); then
         local size
@@ -255,17 +267,60 @@ clean_artifacts() {
         size=${size:-0}
 
         if [[ "$DRY_RUN" == true ]]; then
-          log "[DRY RUN] Would clean $name/.target ($(human_size $((size * 1024))), ${target_age_hours}h old)"
+          log "[DRY RUN] Would delete $name/.target ($(human_size $((size * 1024))), ${target_age_hours}h idle)"
         else
-          log "Cleaning $name/.target ($(human_size $((size * 1024))), ${target_age_hours}h old)..."
-          if rm -rf "$d/.target" 2>/dev/null; then
-            total_freed=$((total_freed + size))
-            ((cleaned++))
-          else
-            log "  Warning: could not fully remove $name/.target (files may be in use)"
-          fi
+          log "Deleting $name/.target ($(human_size $((size * 1024))), ${target_age_hours}h idle)..."
+          rm -rf "$d/.target" 2>/dev/null || true
+          total_freed=$((total_freed + size))
+          cleaned_dirs=$((cleaned_dirs + 1))
         fi
       fi
+    else
+      # Active build — clean per-profile
+      log "$name: active profiles: $(echo "$active_profiles" | tr '\n' ' ')"
+
+      for profile_dir in "$d/.target"/*/; do
+        [[ -d "$profile_dir" ]] || continue
+        local profile
+        profile="$(basename "$profile_dir")"
+
+        # Skip non-profile dirs (e.g. tmp/)
+        [[ "$profile" == "tmp" ]] && continue
+
+        if echo "$active_profiles" | grep -qxF "$profile"; then
+          # Active profile — only clean incremental caches
+          if [[ -d "$profile_dir/incremental" ]]; then
+            local incr_size
+            incr_size=$(du -sk "$profile_dir/incremental" 2>/dev/null | awk '{print $1}')
+            incr_size=${incr_size:-0}
+
+            if (( incr_size > 102400 )); then  # only bother if >100MB
+              if [[ "$DRY_RUN" == true ]]; then
+                log "[DRY RUN] Would clean $name/.target/$profile/incremental ($(human_size $((incr_size * 1024))))"
+              else
+                log "Cleaning $name/.target/$profile/incremental ($(human_size $((incr_size * 1024))))..."
+                rm -rf "$profile_dir/incremental" 2>/dev/null || true
+                total_freed=$((total_freed + incr_size))
+                cleaned_profiles=$((cleaned_profiles + 1))
+              fi
+            fi
+          fi
+        else
+          # Inactive profile — delete entirely
+          local prof_size
+          prof_size=$(du -sk "$profile_dir" 2>/dev/null | awk '{print $1}')
+          prof_size=${prof_size:-0}
+
+          if [[ "$DRY_RUN" == true ]]; then
+            log "[DRY RUN] Would delete $name/.target/$profile ($(human_size $((prof_size * 1024))), inactive)"
+          else
+            log "Deleting $name/.target/$profile ($(human_size $((prof_size * 1024))), inactive)..."
+            rm -rf "$profile_dir" 2>/dev/null || true
+            total_freed=$((total_freed + prof_size))
+            cleaned_profiles=$((cleaned_profiles + 1))
+          fi
+        fi
+      done
     fi
 
     # Git GC on TypeScript submodule
@@ -282,10 +337,7 @@ clean_artifacts() {
   if [[ "$DRY_RUN" == true ]]; then
     log "Dry run complete. No files were deleted."
   else
-    log "Cleaned $cleaned target directories, freed $(human_size $((total_freed * 1024)))"
-    if (( skipped > 0 )); then
-      log "Skipped $skipped directories with active builds"
-    fi
+    log "Freed $(human_size $((total_freed * 1024))) ($cleaned_dirs whole targets, $cleaned_profiles profiles/caches)"
   fi
 }
 
@@ -361,10 +413,12 @@ rotate_log() {
 # Main
 case "$ACTION" in
   status)
+    cache_active_procs
     show_status
     ;;
   clean)
     rotate_log
+    cache_active_procs
     clean_artifacts
     ;;
   install-daemon)
