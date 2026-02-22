@@ -1,8 +1,18 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 5063/7163 = 70.7% JS, 416/1036 = 40.2% DTS)
+## Pattern Analysis (JS+DTS mode, current 5065/7163 = 70.7% JS, 416/1036 = 40.2% DTS)
 
 ### Fixed This Session
+- **Switch-case leading comment placement** (+3 JS, +1 DTS):
+  Comments between case/default clauses were being emitted inside the clause body
+  instead of before the case/default label. tsc emits `// comment\ncase X:` but tsz
+  was emitting `case X:\n    // comment`. Fix: call `emit_comments_before_pos` at the
+  start of each clause iteration in `emit_case_block`, using `skip_trivia_forward` to
+  find the actual token start position. Two unit tests added.
+  Tests fixed: `commaOperatorLeftSideUnused`, `switchCaseWithUnionTypes01`, and others.
+  JS: 5062→5065, DTS: 415→416, zero regressions.
+
+### Previously Fixed
 - **Numeric separator downleveling for hex/octal/binary literals** (+7 JS):
   When numeric literals contain separators (`_`, an ES2021 feature) and the target is < ES2021,
   tsc converts all prefixed forms (`0b`, `0o`, `0x`) to their decimal equivalents. tsz was
