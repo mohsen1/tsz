@@ -167,6 +167,73 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
+            // Constructor type: `new (...) => T`
+            k if k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
+                if let Some(func) = self.arena.get_function_type(type_node) {
+                    if func.is_abstract {
+                        self.write("abstract ");
+                    }
+                    self.write("new ");
+                    if let Some(ref type_params) = func.type_parameters {
+                        self.emit_type_parameters(type_params);
+                    }
+                    self.write("(");
+                    self.emit_parameters(&func.parameters);
+                    self.write(") => ");
+                    self.emit_type(func.type_annotation);
+                }
+            }
+
+            // Template literal type: `` `prefix${T}suffix` ``
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                if let Some(tlt) = self.arena.get_template_literal_type(type_node) {
+                    // Emit the head text (includes opening backtick + text before first `${`)
+                    if let Some(head_node) = self.arena.get(tlt.head)
+                        && let Some(lit) = self.arena.get_literal(head_node) {
+                            if head_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16 {
+                                self.write("`");
+                                self.write(&lit.text);
+                                self.write("`");
+                            } else {
+                                // TemplateHead: text before first substitution
+                                self.write("`");
+                                self.write(&lit.text);
+                                self.write("${");
+                            }
+                        }
+                    // Emit each span: type + middle/tail literal
+                    for (i, &span_idx) in tlt.template_spans.nodes.iter().enumerate() {
+                        if let Some(span_node) = self.arena.get(span_idx)
+                            && let Some(span) = self.arena.get_template_span(span_node) {
+                                // Emit the type inside ${...}
+                                self.emit_type(span.expression);
+                                // Emit the literal part (TemplateMiddle or TemplateTail)
+                                if let Some(lit_node) = self.arena.get(span.literal)
+                                    && let Some(lit) = self.arena.get_literal(lit_node) {
+                                        let is_last = i == tlt.template_spans.nodes.len() - 1;
+                                        if is_last {
+                                            self.write("}");
+                                            self.write(&lit.text);
+                                            self.write("`");
+                                        } else {
+                                            self.write("}");
+                                            self.write(&lit.text);
+                                            self.write("${");
+                                        }
+                                    }
+                            }
+                    }
+                }
+            }
+
+            // Infer type: `infer U`
+            k if k == syntax_kind_ext::INFER_TYPE => {
+                if let Some(infer) = self.arena.get_infer_type(type_node) {
+                    self.write("infer ");
+                    self.emit_node(infer.type_parameter);
+                }
+            }
+
             // Type literal - inline format without newlines
             k if k == syntax_kind_ext::TYPE_LITERAL => {
                 if let Some(lit) = self.arena.get_type_literal(type_node) {

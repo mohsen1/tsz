@@ -1,8 +1,21 @@
 # Emitter TODO — Skipped / Investigated Issues
 
-## Pattern Analysis (JS+DTS mode, current 9527/13623 = 69.9% JS, 762/1990 = 38.3% DTS)
+## Pattern Analysis (JS+DTS mode, current 9531/13623 = 70.0% JS, 766/1990 = 38.5% DTS)
 
 ### Fixed This Session
+- **DTS double semicolons on constructor/template-literal/infer types** (+2 JS, +5 DTS tests):
+  The declaration emitter's `emit_type()` method was missing handler arms for `CONSTRUCTOR_TYPE`,
+  `TEMPLATE_LITERAL_TYPE`, and `INFER_TYPE`. These fell through to `emit_node()` which used
+  `get_source_slice(node.pos, node.end)` — but the parser sets `node.end` past the trailing `;`
+  (due to `parse_template_literal_head()` calling `self.next_token()` then `self.token_end()`).
+  The source slice included the `;`, and then the type alias/declare statement emitter added its
+  own `;`, producing `;;`. Fixed by adding proper `emit_type` handlers:
+  - `CONSTRUCTOR_TYPE`: emits `[abstract] new <Params>(...) => ReturnType`
+  - `TEMPLATE_LITERAL_TYPE`: emits `` `head${Type}middle${Type}tail` `` by walking head + spans
+  - `INFER_TYPE`: emits `infer TypeParam`
+  Five unit tests added in `declaration_emitter/tests.rs`.
+
+### Previously Fixed
 - **Single-line constructor body formatting** (+4 JS tests):
   `emit_constructor_body_with_prologue` always expanded constructor bodies to multiline,
   even when the source was single-line (e.g., `constructor(x) { this.a = x; }`). tsc
@@ -282,6 +295,15 @@
   (skip trailing-semicolon consumption when member is itself a `SEMICOLON_CLASS_ELEMENT`).
 
 ### Investigated but Deferred
+
+- **JS-side double semicolons on IIFEs/yield/await (~29 tests)**: The `})();;` pattern on static
+  block IIFE lowering, `yield;;`/`await ...;;` in async downlevel transforms, and
+  `_this.memberClass = class { };;` in class expression lowering are all caused by the same root
+  issue: both the inner expression/block emitter and the outer statement/wrapper emitter add `;`.
+  The yield/await `;;` cases are part of the existing deferred "async_transform" pattern. The IIFE
+  `;;` cases require careful audit of the static block lowering path in `declarations.rs` line 1240
+  and the expression statement semicolon logic. The `for (var x;;)` cases in the cache are actually
+  valid JS infinite loops — not bugs.
 
 - **`declared_namespace_names` set is file-global, not scope-local (~5-10 tests)**:
   The `declared_namespace_names` set in the Printer tracks enum names for namespace/enum merges,
