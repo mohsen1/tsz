@@ -1144,6 +1144,109 @@ pub fn parse_tsconfig_with_diagnostics(source: &str, file_path: &str) -> Result<
                 ));
             }
         }
+
+        // TS5070: Option '--resolveJsonModule' cannot be specified when 'moduleResolution' is set to 'classic'.
+        // TS5071: Option '--resolveJsonModule' cannot be specified when 'module' is set to 'none', 'system', or 'umd'.
+        if option_is_truthy(compiler_opts.get("resolveJsonModule")) {
+            // Compute effective moduleResolution from raw JSON options
+            let effective_mr = if let Some(serde_json::Value::String(mr_value)) =
+                compiler_opts.get("moduleResolution")
+            {
+                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim())
+            } else {
+                // Default moduleResolution based on module setting
+                let effective_module = if let Some(serde_json::Value::String(mod_value)) =
+                    compiler_opts.get("module")
+                {
+                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim())
+                } else {
+                    String::new() // no module set
+                };
+                match effective_module.as_str() {
+                    "none" | "amd" | "umd" | "system" | "" => "classic".to_string(),
+                    "commonjs" => "node".to_string(),
+                    "node16" => "node16".to_string(),
+                    "nodenext" => "nodenext".to_string(),
+                    _ => "bundler".to_string(),
+                }
+            };
+
+            if effective_mr == "classic" {
+                let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
+                let key_len = "resolveJsonModule".len() as u32 + 2;
+                diagnostics.push(Diagnostic::error(
+                    file_path,
+                    start,
+                    key_len,
+                    diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA.to_string(),
+                    diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULERESOLUTION_IS_SET_TO_CLA,
+                ));
+            }
+
+            // Check module setting for TS5071 (none/system/umd)
+            if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+                let mod_normalized =
+                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                if matches!(mod_normalized.as_str(), "none" | "system" | "umd") {
+                    let start = find_key_offset_in_source(&stripped, "resolveJsonModule");
+                    let key_len = "resolveJsonModule".len() as u32 + 2;
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        diagnostic_messages::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O.to_string(),
+                        diagnostic_codes::OPTION_RESOLVEJSONMODULE_CANNOT_BE_SPECIFIED_WHEN_MODULE_IS_SET_TO_NONE_SYSTEM_O,
+                    ));
+                }
+            }
+        }
+
+        // TS5098: Option '{0}' can only be used when 'moduleResolution' is set to 'node16', 'nodenext', or 'bundler'.
+        let requires_modern_mr: &[&str] = &[
+            "resolvePackageJsonExports",
+            "resolvePackageJsonImports",
+            "customConditions",
+        ];
+        let mr_is_modern = if let Some(serde_json::Value::String(mr_value)) =
+            compiler_opts.get("moduleResolution")
+        {
+            let mr_normalized =
+                normalize_option(mr_value.split(',').next().unwrap_or(mr_value).trim());
+            matches!(mr_normalized.as_str(), "node16" | "nodenext" | "bundler")
+        } else {
+            // When moduleResolution is not set, the default depends on module.
+            // For modern module settings (es2015+, preserve), default is bundler → OK.
+            // For classic module settings (none, amd, umd, system, commonjs), default is classic/node → NOT OK.
+            if let Some(serde_json::Value::String(mod_value)) = compiler_opts.get("module") {
+                let mod_normalized =
+                    normalize_option(mod_value.split(',').next().unwrap_or(mod_value).trim());
+                !matches!(
+                    mod_normalized.as_str(),
+                    "none" | "amd" | "umd" | "system" | "commonjs"
+                )
+            } else {
+                false // no module set → default is classic-ish
+            }
+        };
+        if !mr_is_modern {
+            for &opt in requires_modern_mr {
+                if option_is_truthy(compiler_opts.get(opt)) {
+                    let start = find_key_offset_in_source(&stripped, opt);
+                    let key_len = opt.len() as u32 + 2;
+                    let msg = format_message(
+                        diagnostic_messages::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL,
+                        &[opt],
+                    );
+                    diagnostics.push(Diagnostic::error(
+                        file_path,
+                        start,
+                        key_len,
+                        msg,
+                        diagnostic_codes::OPTION_CAN_ONLY_BE_USED_WHEN_MODULERESOLUTION_IS_SET_TO_NODE16_NODENEXT_OR_BUNDL,
+                    ));
+                }
+            }
+        }
     }
 
     let config: TsConfig = serde_json::from_value(raw).context("failed to parse tsconfig JSON")?;
@@ -2675,6 +2778,80 @@ mod tests {
         assert!(
             codes.contains(&5053),
             "Expected TS5053 for allowJs with isolatedDeclarations, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5070_resolve_json_module_with_classic_module_resolution() {
+        let source =
+            r#"{"compilerOptions":{"resolveJsonModule":true,"moduleResolution":"classic"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5070),
+            "Expected TS5070 for resolveJsonModule with classic moduleResolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5070_resolve_json_module_with_amd_module() {
+        // module=amd defaults to moduleResolution=classic
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"amd"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5070),
+            "Expected TS5070 for resolveJsonModule with module=amd (implies classic), got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5071_resolve_json_module_with_system_module() {
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"system"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5071),
+            "Expected TS5071 for resolveJsonModule with module=system, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5071_resolve_json_module_with_none_module() {
+        let source = r#"{"compilerOptions":{"resolveJsonModule":true,"module":"none"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5071),
+            "Expected TS5071 for resolveJsonModule with module=none, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5098_resolve_package_json_with_classic() {
+        let source = r#"{"compilerOptions":{"resolvePackageJsonExports":true,"moduleResolution":"classic"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&5098),
+            "Expected TS5098 for resolvePackageJsonExports with classic moduleResolution, got: {:?}",
+            codes
+        );
+    }
+
+    #[test]
+    fn test_ts5098_not_emitted_with_bundler() {
+        let source = r#"{"compilerOptions":{"resolvePackageJsonExports":true,"moduleResolution":"bundler"}}"#;
+        let parsed = parse_tsconfig_with_diagnostics(source, "tsconfig.json").unwrap();
+        let codes: Vec<u32> = parsed.diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&5098),
+            "Should NOT emit TS5098 with bundler moduleResolution, got: {:?}",
             codes
         );
     }
