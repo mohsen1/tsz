@@ -50,3 +50,5 @@ Investigated but punted:
   Reason: inferred-project module/target gating appears to be missed in this fourslash path even after server-side inferred-option wiring; needs deeper request/bridge trace to identify where module/target options are dropped.
 - `TypeScript/tests/cases/fourslash/autoImportFileExcludePatterns{2,3}.ts` and `TypeScript/tests/cases/fourslash/autoImportSameNameDefaultExported.ts`: still fail exact completion-list comparison after keyword/global ordering fix.
   Reason: ordering parity is now closer (`abstract, any, Array...`), but list cardinality/content still diverges (`globalsPlus` surface mismatch), which requires broader tsserver global-table parity work beyond this targeted completion ordering adjustment.
+- `TypeScript/tests/cases/fourslash/autoImportModuleNone1.ts`: still returns unexpected completion `x` under `module:none` + `target:es5`.
+  Reason: fixing this path robustly appears to require adapter-level inferred compiler option propagation for fourslash virtual files; quick bridge patches caused harness regressions and need a dedicated, isolated bridge follow-up.
