@@ -4,7 +4,10 @@
 #
 # The tsz orchestrator creates multiple copies (tsz-1, tsz-2, ...) for parallel
 # development. Each accumulates its own .target/ directory (Rust build artifacts)
-# which can consume 1-11 GB each. This script reclaims that disk space.
+# which can consume 10-60+ GB each. This script reclaims that disk space.
+#
+# Safety: Automatically detects active cargo/rustc builds and skips those
+# directories to avoid corrupting in-progress compilations.
 #
 # Usage:
 #   ./scripts/cleanup-build-artifacts.sh [OPTIONS]
@@ -12,9 +15,10 @@
 # Options:
 #   --all           Clean ALL tsz copies including the current one
 #   --others        Clean only OTHER tsz copies (default)
-#   --stale DAYS    Only clean .target dirs older than DAYS days (default: 1)
+#   --stale HOURS   Only clean .target dirs older than HOURS hours (default: 0)
 #   --git-gc        Also run git gc on TypeScript submodules
 #   --dry-run       Show what would be cleaned without actually deleting
+#   --force         Skip active-build check (dangerous)
 #   --daemon        Install a launchd agent for periodic automatic cleanup
 #   --uninstall     Remove the launchd agent
 #   --status        Show disk usage across all tsz copies
@@ -29,8 +33,8 @@
 #   # Clean everything including current worktree
 #   ./scripts/cleanup-build-artifacts.sh --all
 #
-#   # Only clean targets not modified in 3+ days
-#   ./scripts/cleanup-build-artifacts.sh --stale 3
+#   # Only clean targets not modified in 4+ hours
+#   ./scripts/cleanup-build-artifacts.sh --stale 4
 #
 #   # Install automatic daily cleanup
 #   ./scripts/cleanup-build-artifacts.sh --daemon
@@ -48,9 +52,10 @@ LAUNCHD_PLIST="$HOME/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
 
 # Defaults
 MODE="others"
-STALE_DAYS=0
+STALE_HOURS=0
 GIT_GC=false
 DRY_RUN=false
+FORCE=false
 ACTION="clean"
 
 # Parse arguments
@@ -65,7 +70,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --stale)
-      STALE_DAYS="$2"
+      STALE_HOURS="$2"
       shift 2
       ;;
     --git-gc)
@@ -74,6 +79,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --dry-run)
       DRY_RUN=true
+      shift
+      ;;
+    --force)
+      FORCE=true
       shift
       ;;
     --daemon)
@@ -89,7 +98,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      head -40 "$0" | tail -35
+      head -45 "$0" | tail -40
       exit 0
       ;;
     *)
@@ -115,33 +124,55 @@ human_size() {
   fi
 }
 
-# Find all tsz copies
+# Check if a directory has an active cargo/rustc build targeting its .target dir.
+# Returns 0 (true) if active, 1 (false) if idle.
+is_build_active() {
+  local dir="$1"
+  local target_dir="$dir/.target"
+  # Look specifically for cargo or rustc processes referencing this .target dir.
+  # Using ps + grep instead of pgrep -f to avoid self-matching.
+  local procs
+  procs=$(ps -eo pid,comm,args 2>/dev/null \
+    | grep -E '(cargo|rustc)' \
+    | grep -F "$target_dir" \
+    | grep -v grep || true)
+  if [[ -n "$procs" ]]; then
+    return 0
+  fi
+  # Also check for a cargo lock file (cargo creates .cargo-lock in target dir)
+  if [[ -f "$target_dir/.cargo-lock" ]]; then
+    if lsof "$target_dir/.cargo-lock" > /dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# Find all tsz copies — prints one directory per line for safe iteration
 find_tsz_dirs() {
-  local dirs=()
   for d in "$PARENT_DIR"/tsz-*/; do
     [[ -d "$d" ]] || continue
-    # Must look like a tsz checkout (has Cargo.toml)
     [[ -f "$d/Cargo.toml" ]] || continue
-    dirs+=("${d%/}")
+    echo "${d%/}"
   done
-  echo "${dirs[@]}"
 }
 
 # Show status
 show_status() {
   echo "=== TSZ Worktree Disk Usage ==="
   echo ""
-  printf "%-25s %10s %10s %10s %s\n" "DIRECTORY" "TOTAL" ".target" "TS/.git" "BRANCH"
-  printf "%-25s %10s %10s %10s %s\n" "---------" "-----" "-------" "-------" "------"
+  printf "%-20s %10s %10s %10s %-8s %s\n" "DIRECTORY" "TOTAL" ".target" "TS/.git" "BUILD" "BRANCH"
+  printf "%-20s %10s %10s %10s %-8s %s\n" "---------" "-----" "-------" "-------" "-----" "------"
 
   local total_target=0
   local total_overall=0
+  local total_reclaimable=0
 
-  for d in $(find_tsz_dirs); do
+  while IFS= read -r d; do
     local name
     name="$(basename "$d")"
     local marker=""
-    [[ "$d" == "$REPO_ROOT" ]] && marker=" ←"
+    [[ "$d" == "$REPO_ROOT" ]] && marker=" *"
 
     local overall
     overall=$(du -sk "$d" 2>/dev/null | awk '{print $1}')
@@ -161,23 +192,31 @@ show_status() {
       ts_git_size=${ts_git_size:-0}
     fi
 
+    local build_status="idle"
+    if is_build_active "$d"; then
+      build_status="ACTIVE"
+    else
+      total_reclaimable=$((total_reclaimable + target_size))
+    fi
+
     local branch
     branch=$(git -C "$d" branch --show-current 2>/dev/null || echo "?")
 
-    printf "%-25s %10s %10s %10s %s\n" \
+    printf "%-20s %10s %10s %10s %-8s %s\n" \
       "${name}${marker}" \
       "$(human_size $((overall * 1024)))" \
       "$(human_size $((target_size * 1024)))" \
       "$(human_size $((ts_git_size * 1024)))" \
+      "$build_status" \
       "$branch"
-  done
+  done < <(find_tsz_dirs)
 
   echo ""
-  printf "%-25s %10s %10s\n" "TOTAL" \
+  printf "%-20s %10s %10s\n" "TOTAL" \
     "$(human_size $((total_overall * 1024)))" \
     "$(human_size $((total_target * 1024)))"
   echo ""
-  echo "Reclaimable (.target dirs): $(human_size $((total_target * 1024)))"
+  echo "Reclaimable (idle .target dirs): $(human_size $((total_reclaimable * 1024)))"
   echo ""
   df -h / | head -2
 }
@@ -185,9 +224,10 @@ show_status() {
 # Clean build artifacts
 clean_artifacts() {
   local cleaned=0
+  local skipped=0
   local total_freed=0
 
-  for d in $(find_tsz_dirs); do
+  while IFS= read -r d; do
     # Skip current if mode is "others"
     if [[ "$MODE" == "others" && "$d" == "$REPO_ROOT" ]]; then
       continue
@@ -198,27 +238,32 @@ clean_artifacts() {
 
     # Clean .target directory
     if [[ -d "$d/.target" ]]; then
-      # Check staleness
-      local target_age_days
-      target_age_days=$(( ( $(date +%s) - $(stat -f %m "$d/.target" 2>/dev/null || echo "0") ) / 86400 ))
+      # Safety: skip directories with active builds unless --force
+      if [[ "$FORCE" != true ]] && is_build_active "$d"; then
+        log "Skipping $name/.target — active build detected"
+        ((skipped++))
+        continue
+      fi
 
-      if (( target_age_days >= STALE_DAYS )); then
+      # Check staleness (hours since last modification)
+      local target_age_hours
+      target_age_hours=$(( ( $(date +%s) - $(stat -f %m "$d/.target" 2>/dev/null || echo "0") ) / 3600 ))
+
+      if (( target_age_hours >= STALE_HOURS )); then
         local size
         size=$(du -sk "$d/.target" 2>/dev/null | awk '{print $1}')
         size=${size:-0}
 
         if [[ "$DRY_RUN" == true ]]; then
-          log "[DRY RUN] Would clean $name/.target ($(human_size $((size * 1024))), ${target_age_days}d old)"
+          log "[DRY RUN] Would clean $name/.target ($(human_size $((size * 1024))), ${target_age_hours}h old)"
         else
-          log "Cleaning $name/.target ($(human_size $((size * 1024))), ${target_age_days}d old)..."
-          rm -rf "$d/.target" 2>/dev/null || {
-            # Some files may be locked by running processes; clean what we can
-            find "$d/.target" -type f -delete 2>/dev/null || true
-            find "$d/.target" -type d -empty -delete 2>/dev/null || true
-            log "  Warning: some files in $name/.target could not be removed (may be in use)"
-          }
-          total_freed=$((total_freed + size))
-          ((cleaned++))
+          log "Cleaning $name/.target ($(human_size $((size * 1024))), ${target_age_hours}h old)..."
+          if rm -rf "$d/.target" 2>/dev/null; then
+            total_freed=$((total_freed + size))
+            ((cleaned++))
+          else
+            log "  Warning: could not fully remove $name/.target (files may be in use)"
+          fi
         fi
       fi
     fi
@@ -232,12 +277,15 @@ clean_artifacts() {
         git -C "$d/TypeScript" gc --auto --quiet 2>/dev/null || true
       fi
     fi
-  done
+  done < <(find_tsz_dirs)
 
   if [[ "$DRY_RUN" == true ]]; then
     log "Dry run complete. No files were deleted."
   else
     log "Cleaned $cleaned target directories, freed $(human_size $((total_freed * 1024)))"
+    if (( skipped > 0 )); then
+      log "Skipped $skipped directories with active builds"
+    fi
   fi
 }
 
@@ -260,7 +308,7 @@ install_daemon() {
         <string>${script_path}</string>
         <string>--all</string>
         <string>--stale</string>
-        <string>1</string>
+        <string>4</string>
     </array>
     <key>StartInterval</key>
     <integer>21600</integer>
@@ -280,7 +328,7 @@ PLIST
 
   log "Installed launchd agent: $LAUNCHD_LABEL"
   log "  Schedule: Every 6 hours"
-  log "  Cleans: All tsz-*/.target dirs older than 1 day"
+  log "  Cleans: All tsz-*/.target dirs older than 4 hours (skips active builds)"
   log "  Plist: $LAUNCHD_PLIST"
   log "  Log: ~/.tsz-cleanup.log"
   log ""
@@ -298,12 +346,25 @@ uninstall_daemon() {
   fi
 }
 
+# Rotate log file if it exceeds 1MB
+rotate_log() {
+  local log_file="$HOME/.tsz-cleanup.log"
+  if [[ -f "$log_file" ]]; then
+    local size
+    size=$(stat -f %z "$log_file" 2>/dev/null || echo "0")
+    if (( size > 1048576 )); then
+      mv "$log_file" "${log_file}.old"
+    fi
+  fi
+}
+
 # Main
 case "$ACTION" in
   status)
     show_status
     ;;
   clean)
+    rotate_log
     clean_artifacts
     ;;
   install-daemon)
